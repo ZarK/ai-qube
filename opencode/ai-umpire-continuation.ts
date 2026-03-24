@@ -80,8 +80,23 @@ interface PromptTarget {
   model?: PromptModel;
 }
 
+interface PriorityOrderIssue {
+  component: string;
+  labels: string[];
+  number: number;
+  priority: string;
+  score: number;
+  status: string;
+  title: string;
+}
+
 interface PriorityOrderSummary {
+  blockedIssues: number[];
+  inProgress: number[];
+  issues: PriorityOrderIssue[];
+  nextIssue: number | null;
   readyIssues: number[];
+  version: 1;
 }
 
 type ContinuationClient = {
@@ -1181,7 +1196,7 @@ export class ContinuationController {
       stdout: truncateForLog(priorityOrder.stdout),
     });
 
-    const readyIssues = parsePriorityOrderOutput(priorityOrder.stdout).readyIssues;
+    const readyIssues = parsePriorityOrderSummary(priorityOrder.stdout).readyIssues;
     if (readyIssues.length > 0) {
       this.logger.debug("Selected continuation prompt from ready issues.", {
         readyIssues,
@@ -1359,7 +1374,7 @@ async function promptSession(
 }
 
 async function runPriorityOrderScript(cwd: string, scriptPath: string): Promise<CommandRunResult> {
-  return runCommand("bash", [scriptPath], cwd);
+  return runCommand("bash", [scriptPath, "--json"], cwd);
 }
 
 async function fetchSessionInfo(
@@ -1425,27 +1440,165 @@ async function runCommand(
   }
 }
 
-function parsePriorityOrderOutput(output: string): PriorityOrderSummary {
-  const readyIssues: number[] = [];
+function parsePriorityOrderSummary(output: string): PriorityOrderSummary {
+  let parsed: unknown;
 
-  for (const line of output.split(/\r?\n/)) {
-    const match = /^\d+\.\s+#(\d+):.*\[(.+)\]\s*$/.exec(line.trim());
-    if (match === null) {
-      continue;
-    }
-
-    const issueNumber = Number.parseInt(match[1], 10);
-    const labels = match[2]
-      .split(",")
-      .map((value) => value.trim())
-      .filter((value) => value.length > 0);
-
-    if (labels.includes("S-Ready")) {
-      readyIssues.push(issueNumber);
-    }
+  try {
+    parsed = JSON.parse(output) as unknown;
+  } catch (error) {
+    throw new Error(`Invalid priority order JSON: ${formatError(error)}`);
   }
 
-  return { readyIssues };
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error("Invalid priority order summary.");
+  }
+
+  const summary = parsed as {
+    blockedIssues?: unknown;
+    inProgress?: unknown;
+    issues?: unknown;
+    nextIssue?: unknown;
+    readyIssues?: unknown;
+    version?: unknown;
+  };
+
+  if (summary.version !== 1) {
+    throw new Error("Invalid priority order summary version.");
+  }
+
+  const issues = parsePriorityOrderIssues(summary.issues);
+  const parsedSummary: PriorityOrderSummary = {
+    blockedIssues: parsePriorityOrderIssueNumbers(summary.blockedIssues, "blockedIssues"),
+    inProgress: parsePriorityOrderIssueNumbers(summary.inProgress, "inProgress"),
+    issues,
+    nextIssue: parsePriorityOrderOptionalIssueNumber(summary.nextIssue, "nextIssue"),
+    readyIssues: parsePriorityOrderIssueNumbers(summary.readyIssues, "readyIssues"),
+    version: 1,
+  };
+
+  assertPriorityOrderSummaryConsistency(parsedSummary);
+  return parsedSummary;
+}
+
+function parsePriorityOrderIssues(raw: unknown): PriorityOrderIssue[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("Invalid priority order summary issues.");
+  }
+
+  return raw.map((issue, index) => parsePriorityOrderIssue(issue, index));
+}
+
+function parsePriorityOrderIssue(raw: unknown, index: number): PriorityOrderIssue {
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error(`Invalid priority order issue at index ${index}.`);
+  }
+
+  const issue = raw as {
+    component?: unknown;
+    labels?: unknown;
+    number?: unknown;
+    priority?: unknown;
+    score?: unknown;
+    status?: unknown;
+    title?: unknown;
+  };
+
+  if (typeof issue.component !== "string") {
+    throw new Error(`Invalid priority order issue component at index ${index}.`);
+  }
+
+  if (!Array.isArray(issue.labels) || issue.labels.some((label) => typeof label !== "string" || label.length === 0)) {
+    throw new Error(`Invalid priority order issue labels at index ${index}.`);
+  }
+
+  if (!isPositiveInteger(issue.number)) {
+    throw new Error(`Invalid priority order issue number at index ${index}.`);
+  }
+
+  if (typeof issue.priority !== "string" || issue.priority.length === 0) {
+    throw new Error(`Invalid priority order issue priority at index ${index}.`);
+  }
+
+  if (typeof issue.score !== "number" || !Number.isInteger(issue.score)) {
+    throw new Error(`Invalid priority order issue score at index ${index}.`);
+  }
+
+  const labels = issue.labels.slice();
+  const score = issue.score;
+
+  if (typeof issue.status !== "string" || issue.status.length === 0) {
+    throw new Error(`Invalid priority order issue status at index ${index}.`);
+  }
+
+  if (typeof issue.title !== "string" || issue.title.length === 0) {
+    throw new Error(`Invalid priority order issue title at index ${index}.`);
+  }
+
+  return {
+    component: issue.component,
+    labels,
+    number: issue.number,
+    priority: issue.priority,
+    score,
+    status: issue.status,
+    title: issue.title,
+  };
+}
+
+function parsePriorityOrderIssueNumbers(raw: unknown, fieldName: string): number[] {
+  if (!Array.isArray(raw) || raw.some((value) => !isPositiveInteger(value))) {
+    throw new Error(`Invalid priority order summary ${fieldName}.`);
+  }
+
+  return raw;
+}
+
+function parsePriorityOrderOptionalIssueNumber(raw: unknown, fieldName: string): number | null {
+  if (raw === null) {
+    return null;
+  }
+
+  if (!isPositiveInteger(raw)) {
+    throw new Error(`Invalid priority order summary ${fieldName}.`);
+  }
+
+  return raw;
+}
+
+function assertPriorityOrderSummaryConsistency(summary: PriorityOrderSummary): void {
+  const expectedReadyIssues = summary.issues.filter((issue) => issue.status === "S-Ready").map((issue) => issue.number);
+  if (!areNumberArraysEqual(summary.readyIssues, expectedReadyIssues)) {
+    throw new Error("Invalid priority order summary readyIssues.");
+  }
+
+  const expectedBlockedIssues = summary.issues
+    .filter((issue) => issue.status === "S-Blocked")
+    .map((issue) => issue.number);
+  if (!areNumberArraysEqual(summary.blockedIssues, expectedBlockedIssues)) {
+    throw new Error("Invalid priority order summary blockedIssues.");
+  }
+
+  const expectedInProgress = summary.issues
+    .filter((issue) => issue.status === "S-InProgress")
+    .map((issue) => issue.number);
+  if (!areNumberArraysEqual(summary.inProgress, expectedInProgress)) {
+    throw new Error("Invalid priority order summary inProgress.");
+  }
+
+  const expectedNextIssue = summary.issues.find(
+    (issue) => issue.status !== "S-InProgress" && issue.status !== "S-Blocked",
+  )?.number ?? null;
+  if (summary.nextIssue !== expectedNextIssue) {
+    throw new Error("Invalid priority order summary nextIssue.");
+  }
+}
+
+function areNumberArraysEqual(left: readonly number[], right: readonly number[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function isPositiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
 function hasActiveTodos(todos: readonly TodoItem[]): boolean {

@@ -1,8 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -10,6 +11,7 @@ import { AiUmpireContinuationPlugin } from "../.opencode/plugins/ai-umpire-conti
 import type { WhipState, WhipTask } from "../opencode/ai-umpire-continuation.ts";
 
 const tempDirs: string[] = [];
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 type PromptRecord = {
   agent?: string;
@@ -43,6 +45,23 @@ type SeededFixtureState = {
   capturedContinuationState: StoredContinuationState;
   continuationState: StoredContinuationState;
   whipState?: WhipState;
+};
+
+type QueueSummaryFixture = {
+  blockedIssues: number[];
+  inProgress: number[];
+  issues: Array<{
+    component: string;
+    labels: string[];
+    number: number;
+    priority: string;
+    score: number;
+    status: string;
+    title: string;
+  }>;
+  nextIssue: number | null;
+  readyIssues: number[];
+  version: 1;
 };
 
 type ContextOverrides = {
@@ -112,6 +131,79 @@ describe("AiUmpireContinuationPlugin", () => {
     expect(prompts[0]?.text).toContain("## Issue Todo Template (ALWAYS USE THIS STRUCTURE)");
     expect(prompts[0]?.text).toContain("todowrite({ todos: [");
     expect(prompts[0]?.text).toContain("Never stage, commit, or push `.umpire/**` files.");
+  });
+
+  it("consumes the real priority-order script JSON contract when selecting issue work", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+
+    await installRealPriorityOrderScript(repoDir);
+    const restorePath = await installFakeGhBinary(`
+process.stdout.write(JSON.stringify([
+  { number: 42, title: "Medium blocked", priority: "P3-Medium", status: "S-Blocked", component: "", labels: [] },
+  { number: 41, title: "Low but blocking", priority: "P4-Low", status: "S-Blocking", component: "", labels: [] },
+  { number: 77, title: "High in progress", priority: "P2-High", status: "S-InProgress", component: "", labels: [] },
+  { number: 43, title: "High ready", priority: "P2-High", status: "S-Ready", component: "C-Infrastructure", labels: [] }
+]));
+`);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_ready" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionID).toBe("ses_ready");
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:43");
+  });
+
+  it("rejects inconsistent priority-order summaries instead of enqueueing issue work", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+
+    await installStubPriorityOrderScript(
+      repoDir,
+      {
+        blockedIssues: [],
+        inProgress: [],
+        issues: [
+          {
+            component: "",
+            labels: ["P2-High", "S-Blocked"],
+            number: 26,
+            priority: "P2-High",
+            score: 400,
+            status: "S-Blocked",
+            title: "Blocked issue masquerading as ready",
+          },
+        ],
+        nextIssue: 26,
+        readyIssues: [26],
+        version: 1,
+      },
+      "1. #26: Blocked issue masquerading as ready [P2-High, S-Blocked]",
+    );
+
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+    await plugin.event?.({
+      event: {
+        properties: { sessionID: "ses_ready" },
+        type: "session.idle",
+      },
+    });
+
+    expect(prompts).toHaveLength(0);
+    await waitForContinuationLogToContain(repoDir, "Invalid priority order summary readyIssues.");
   });
 
   it("starts continuation from an idle session.status event and dedupes the later session.idle event", async () => {
@@ -1585,18 +1677,93 @@ async function createTempDir(withReadyIssue: boolean): Promise<string> {
   execFileSync("git", ["init", "-q"], { cwd: tempDir });
 
   const scriptDir = path.join(tempDir, "scripts");
+  const queueSummary: QueueSummaryFixture = withReadyIssue
+    ? {
+        blockedIssues: [],
+        inProgress: [],
+        issues: [
+          {
+            component: "",
+            labels: ["P2-High", "S-Ready"],
+            number: 26,
+            priority: "P2-High",
+            score: 550,
+            status: "S-Ready",
+            title: "Ship continuation plugin",
+          },
+        ],
+        nextIssue: 26,
+        readyIssues: [26],
+        version: 1,
+      }
+    : {
+        blockedIssues: [],
+        inProgress: [],
+        issues: [],
+        nextIssue: null,
+        readyIssues: [],
+        version: 1,
+      };
+  const humanOutput = withReadyIssue
+    ? "1. #26: Ship continuation plugin [P2-High, S-Ready]"
+    : "Commands:\n  ./scripts/gh-priority-order.sh --help";
   await mkdir(scriptDir, { recursive: true });
   await rm(path.join(tempDir, ".umpire"), { force: true, recursive: true });
+  await installStubPriorityOrderScript(tempDir, queueSummary, humanOutput);
+  return tempDir;
+}
+
+async function installStubPriorityOrderScript(
+  repoDir: string,
+  queueSummary: QueueSummaryFixture,
+  humanOutput: string,
+): Promise<void> {
   await writeFile(
-    path.join(scriptDir, "gh-priority-order.sh"),
-    withReadyIssue
-      ? '#!/bin/bash\nprintf \'1. #26: Ship continuation plugin [P2-High, S-Ready]\\n\'\n'
-      : '#!/bin/bash\nprintf \'Commands:\\n  ./scripts/gh-priority-order.sh --help\\n\'\n',
+    path.join(repoDir, "scripts", "gh-priority-order.sh"),
+    `#!/usr/bin/env bash
+if [ "\${1:-}" = "--json" ]; then
+  cat <<'EOF'
+${JSON.stringify(queueSummary)}
+EOF
+else
+  cat <<'EOF'
+${humanOutput}
+EOF
+fi
+`,
     "utf8",
   );
-  await chmod(path.join(scriptDir, "gh-priority-order.sh"), 0o755);
+  await chmod(path.join(repoDir, "scripts", "gh-priority-order.sh"), 0o755);
+}
 
-  return tempDir;
+async function installRealPriorityOrderScript(repoDir: string): Promise<void> {
+  const targetPath = path.join(repoDir, "scripts", "gh-priority-order.sh");
+  await copyFile(path.join(repoRoot, "scripts", "gh-priority-order.sh"), targetPath);
+  await chmod(targetPath, 0o755);
+}
+
+async function installFakeGhBinary(ghBody: string): Promise<() => void> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "ai-umpire-gh-bin-"));
+  tempDirs.push(tempDir);
+
+  const binDir = path.join(tempDir, "bin");
+  const ghPath = path.join(binDir, "gh");
+  const previousPath = process.env.PATH;
+
+  await mkdir(binDir, { recursive: true });
+  await writeFile(ghPath, `#!/usr/bin/env node\n${ghBody.trim()}\n`, "utf8");
+  await chmod(ghPath, 0o755);
+
+  process.env.PATH = `${binDir}:${previousPath ?? ""}`;
+
+  return () => {
+    if (previousPath === undefined) {
+      delete process.env.PATH;
+      return;
+    }
+
+    process.env.PATH = previousPath;
+  };
 }
 
 function createContext(
