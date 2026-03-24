@@ -67,14 +67,10 @@ process.exit(0);
   it("orders issues by computed score and preserves recommendation state in gh-priority-order.sh", async () => {
     const env = await createGhEnv(`
 const args = process.argv.slice(2);
-const joined = args.join(" ");
-if (joined.includes("--label S-InProgress")) {
-  process.stdout.write("#77\\n");
-  process.exit(0);
-}
 process.stdout.write(JSON.stringify([
   { number: 42, title: "Medium blocked", priority: "P3-Medium", status: "S-Blocked", component: "", labels: [] },
   { number: 41, title: "Low but blocking", priority: "P4-Low", status: "S-Blocking", component: "", labels: [] },
+  { number: 77, title: "High in progress", priority: "P2-High", status: "S-InProgress", component: "", labels: [] },
   { number: 43, title: "High ready", priority: "P2-High", status: "S-Ready", component: "C-Infrastructure", labels: [] }
 ]));
 `);
@@ -87,17 +83,81 @@ process.stdout.write(JSON.stringify([
 
     expect(result.status).toBe(0);
     expect(lines).toContain("1. #43: High ready [P2-High, C-Infrastructure, S-Ready]");
-    expect(lines).toContain("2. #41: Low but blocking [P4-Low, S-Blocking]");
-    expect(lines).toContain("3. #42: Medium blocked [P3-Medium, S-Blocked]");
+    expect(lines).toContain("2. #77: High in progress [P2-High, S-InProgress]");
+    expect(lines).toContain("3. #41: Low but blocking [P4-Low, S-Blocking]");
+    expect(lines).toContain("4. #42: Medium blocked [P3-Medium, S-Blocked]");
     expect(lines.indexOf("1. #43: High ready [P2-High, C-Infrastructure, S-Ready]")).toBeLessThan(
-      lines.indexOf("2. #41: Low but blocking [P4-Low, S-Blocking]"),
+      lines.indexOf("2. #77: High in progress [P2-High, S-InProgress]"),
     );
-    expect(lines.indexOf("2. #41: Low but blocking [P4-Low, S-Blocking]")).toBeLessThan(
-      lines.indexOf("3. #42: Medium blocked [P3-Medium, S-Blocked]"),
+    expect(lines.indexOf("2. #77: High in progress [P2-High, S-InProgress]")).toBeLessThan(
+      lines.indexOf("3. #41: Low but blocking [P4-Low, S-Blocking]"),
+    );
+    expect(lines.indexOf("3. #41: Low but blocking [P4-Low, S-Blocking]")).toBeLessThan(
+      lines.indexOf("4. #42: Medium blocked [P3-Medium, S-Blocked]"),
     );
     expect(result.stdout).toContain("💡 Next recommended work: #43 (ready to start)");
     expect(result.stdout).toContain("🚫 Blocked issues: #42 (resolve dependencies first)");
     expect(result.stdout).toContain("🔄 Currently in progress: #77");
+  });
+
+  it("emits structured queue data in --json mode for automation consumers", async () => {
+    const env = await createGhEnv(`
+process.stdout.write(JSON.stringify([
+  { number: 42, title: "Medium blocked", priority: "P3-Medium", status: "S-Blocked", component: "", labels: [] },
+  { number: 41, title: "Low but blocking", priority: "P4-Low", status: "S-Blocking", component: "", labels: [] },
+  { number: 77, title: "High in progress", priority: "P2-High", status: "S-InProgress", component: "", labels: [] },
+  { number: 43, title: "High ready", priority: "P2-High", status: "S-Ready", component: "C-Infrastructure", labels: [] }
+]));
+`);
+
+    const result = runScript("scripts/gh-priority-order.sh", ["--json"], env);
+
+    expect(result.status).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      blockedIssues: [42],
+      inProgress: [77],
+      issues: [
+        {
+          component: "C-Infrastructure",
+          labels: ["P2-High", "C-Infrastructure", "S-Ready"],
+          number: 43,
+          priority: "P2-High",
+          score: 550,
+          status: "S-Ready",
+          title: "High ready",
+        },
+        {
+          component: "",
+          labels: ["P2-High", "S-InProgress"],
+          number: 77,
+          priority: "P2-High",
+          score: 525,
+          status: "S-InProgress",
+          title: "High in progress",
+        },
+        {
+          component: "",
+          labels: ["P4-Low", "S-Blocking"],
+          number: 41,
+          priority: "P4-Low",
+          score: 210,
+          status: "S-Blocking",
+          title: "Low but blocking",
+        },
+        {
+          component: "",
+          labels: ["P3-Medium", "S-Blocked"],
+          number: 42,
+          priority: "P3-Medium",
+          score: 0,
+          status: "S-Blocked",
+          title: "Medium blocked",
+        },
+      ],
+      nextIssue: 43,
+      readyIssues: [43],
+      version: 1,
+    });
   });
 });
 
