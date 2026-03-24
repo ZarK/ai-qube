@@ -338,6 +338,8 @@ const OWNER_SESSION_STALE_MS = 10 * 60_000;
 
 const RECENT_OWNER_HANDOFF_QUIET_MS = 20_000;
 
+const SESSION_STATE_STALE_MS = 30 * 60_000;
+
 const DEFAULT_CONTINUATION_LOCK_PATH = path.join(".umpire", "continuation.lock");
 
 const DEFAULT_CONTINUATION_STATE_PATH = path.join(".umpire", "continuation-state.json");
@@ -1004,7 +1006,9 @@ export class ContinuationController {
   private async handleEventSerial(event: ContinuationTriggerEvent): Promise<void> {
     const sessionID = getContinuationEventSessionID(event);
     const state = this.getSessionState(sessionID);
-    state.lastEventAt = Date.now();
+    const observedAt = Date.now();
+    state.lastEventAt = observedAt;
+    this.pruneStaleSessionStates(sessionID, observedAt);
 
     this.logger.debug("Handling continuation event.", {
       hasTodos: state.todos !== undefined,
@@ -1192,6 +1196,55 @@ export class ContinuationController {
     const created: SessionState = { idle: false };
     this.sessionStates.set(sessionID, created);
     return created;
+  }
+
+  private pruneStaleSessionStates(activeSessionID: string, observedAt: number): void {
+    if (this.sessionStates.size <= 1) {
+      return;
+    }
+
+    const staleBefore = observedAt - SESSION_STATE_STALE_MS;
+    let evictedSessionCount = 0;
+
+    for (const [sessionID, state] of this.sessionStates.entries()) {
+      if (sessionID === activeSessionID) {
+        continue;
+      }
+
+      if (state.scheduledPrompt !== undefined) {
+        continue;
+      }
+
+      if (state.lastEventAt === undefined || state.lastEventAt > staleBefore) {
+        continue;
+      }
+
+      this.evictSessionState(sessionID, state, "stale session state");
+      evictedSessionCount += 1;
+    }
+
+    if (evictedSessionCount === 0) {
+      return;
+    }
+
+    this.logger.debug("Evicted stale continuation session state entries.", {
+      activeSessionID,
+      evictedSessionCount,
+      sessionStateStaleMs: SESSION_STATE_STALE_MS,
+    });
+  }
+
+  private evictSessionState(sessionID: string, state: SessionState, reason: string): void {
+    this.clearScheduledPrompt(state, sessionID, reason);
+    state.preparedDecision = undefined;
+    state.promptTarget = undefined;
+    state.promptTargetReady = undefined;
+    state.todos = undefined;
+    this.sessionStates.delete(sessionID);
+    this.logger.debug("Evicted continuation session state.", {
+      reason,
+      sessionID,
+    });
   }
 
   private getIdleDelayMs(state: SessionState): number {
@@ -1436,6 +1489,7 @@ export class ContinuationController {
       allowMissing: true,
     });
     if (sessionInfo === undefined) {
+      this.evictSessionState(sessionID, state, "missing session metadata");
       this.logger.debug("Treating session as non-continuation target because metadata is missing.", {
         sessionID,
       });
@@ -1544,6 +1598,11 @@ export class ContinuationController {
   ): Promise<ContinuationState> {
     if (continuationState.pendingWhipTaskID !== undefined) {
       await updateWhipTaskStatus(this.whipPath, continuationState.pendingWhipTaskID, "in_progress");
+    }
+
+    const ownerState = this.sessionStates.get(details.ownerSessionID);
+    if (ownerState !== undefined) {
+      this.evictSessionState(details.ownerSessionID, ownerState, "released continuation owner");
     }
 
     this.logger.info(details.message, details);
