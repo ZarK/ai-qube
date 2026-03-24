@@ -150,7 +150,9 @@ interface QueuePolicyTransition {
 }
 
 interface QueueStatusNames {
+  all: string[];
   blocked: string;
+  defaultStatus: string;
   inProgress: string;
   ready: string;
 }
@@ -839,7 +841,9 @@ function assertQueuePolicyReferences(policy: QueuePolicy, source: string): void 
 
 function resolveQueueStatusNames(policy: QueuePolicy): QueueStatusNames {
   return {
+    all: policy.statuses.map((status) => status.name),
     blocked: getQueueStatusName(policy, "blocked"),
+    defaultStatus: getQueueStatusName(policy, policy.defaults.statusKey),
     inProgress: getQueueStatusName(policy, "in_progress"),
     ready: getQueueStatusName(policy, "ready"),
   };
@@ -1680,28 +1684,22 @@ export class ContinuationController {
   }
 
   private async resolveDecision(): Promise<ContinuationDecision | undefined> {
-    const priorityOrder = await runPriorityOrderScript(this.cwd, this.priorityOrderScript);
-    if (priorityOrder.exitCode !== 0) {
-      throw new Error(
-        `Failed to run ${path.relative(this.cwd, this.priorityOrderScript) || this.priorityOrderScript}: ${priorityOrder.stderr.trim() || `exit code ${priorityOrder.exitCode}`}`,
-      );
-    }
+    const readyIssueProbe = await this.probeReadyIssueAvailability();
+    if (readyIssueProbe.kind !== "empty") {
+      const priorityOrderSummary = await this.loadPriorityOrderSummary();
+      if (priorityOrderSummary.readyIssues.length > 0) {
+        this.logger.debug("Selected continuation prompt from ready issues.", {
+          readyIssues: priorityOrderSummary.readyIssues,
+        });
+        return buildIssueDecision(priorityOrderSummary.readyIssues, this.issuePrompt);
+      }
 
-    this.logger.debug("Priority order script completed.", {
-      stderr: truncateForLog(priorityOrder.stderr),
-      stdout: truncateForLog(priorityOrder.stdout),
-    });
-
-    const readyIssues = parsePriorityOrderSummary(priorityOrder.stdout, this.queueStatusNames).readyIssues;
-    if (readyIssues.length > 0) {
-      this.logger.debug("Selected continuation prompt from ready issues.", {
-        readyIssues,
-      });
-      return {
-        fingerprint: `issues:${readyIssues.join(",")}`,
-        kind: "issue",
-        prompt: this.issuePrompt,
-      };
+      if (readyIssueProbe.kind === "ready") {
+        this.logger.info("Ready issue probe changed before priority ordering completed.", {
+          readyIssueCount: readyIssueProbe.readyIssueCount,
+        });
+        return undefined;
+      }
     }
 
     const whipState = await ensureWhipState(this.whipPath);
@@ -1715,12 +1713,44 @@ export class ContinuationController {
       whipTaskID: nextTask.id,
     });
 
-    return {
-      fingerprint: `whip:${nextTask.id}`,
-      kind: "whip",
-      prompt: buildWhipTaskPrompt(nextTask, this.issueCreationTemplate),
-      whipTaskID: nextTask.id,
-    };
+    return buildWhipDecision(nextTask, this.issueCreationTemplate);
+  }
+
+  private async probeReadyIssueAvailability(): Promise<{
+    kind: "empty" | "ready" | "unknown";
+    readyIssueCount?: number;
+  }> {
+    try {
+      const readyIssues = await listReadyIssueNumbers(this.cwd, this.queueStatusNames);
+      this.logger.debug("Checked ready GitHub issue availability.", {
+        readyIssueCount: readyIssues.length,
+      });
+
+      return readyIssues.length === 0
+        ? { kind: "empty", readyIssueCount: 0 }
+        : { kind: "ready", readyIssueCount: readyIssues.length };
+    } catch (error) {
+      this.logger.info("Ready issue probe failed; falling back to full priority order summary.", {
+        error: formatError(error),
+      });
+      return { kind: "unknown" };
+    }
+  }
+
+  private async loadPriorityOrderSummary(): Promise<PriorityOrderSummary> {
+    const priorityOrder = await runPriorityOrderScript(this.cwd, this.priorityOrderScript);
+    if (priorityOrder.exitCode !== 0) {
+      throw new Error(
+        `Failed to run ${path.relative(this.cwd, this.priorityOrderScript) || this.priorityOrderScript}: ${priorityOrder.stderr.trim() || `exit code ${priorityOrder.exitCode}`}`,
+      );
+    }
+
+    this.logger.debug("Priority order script completed.", {
+      stderr: truncateForLog(priorityOrder.stderr),
+      stdout: truncateForLog(priorityOrder.stdout),
+    });
+
+    return parsePriorityOrderSummary(priorityOrder.stdout, this.queueStatusNames);
   }
 }
 
@@ -1873,6 +1903,21 @@ async function runPriorityOrderScript(cwd: string, scriptPath: string): Promise<
   return runCommand("bash", [scriptPath, "--json"], cwd);
 }
 
+async function listReadyIssueNumbers(cwd: string, queueStatusNames: QueueStatusNames): Promise<number[]> {
+  const result = await runCommand(
+    "gh",
+    ["issue", "list", "--state", "open", "--limit", "100", "--json", "number,labels"],
+    cwd,
+  );
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `Failed to probe ready GitHub issues: ${result.stderr.trim() || `exit code ${result.exitCode}`}`,
+    );
+  }
+
+  return parseReadyIssueNumbers(result.stdout, queueStatusNames);
+}
+
 async function fetchSessionInfo(
   client: ContinuationClient,
   sessionID: string,
@@ -1934,6 +1979,91 @@ async function runCommand(
 
     throw error;
   }
+}
+
+function buildIssueDecision(
+  readyIssues: readonly number[],
+  issuePrompt: string,
+): ContinuationDecision {
+  return {
+    fingerprint: `issues:${readyIssues.join(",")}`,
+    kind: "issue",
+    prompt: issuePrompt,
+  };
+}
+
+function buildWhipDecision(
+  nextTask: WhipTask,
+  issueCreationTemplate: string,
+): ContinuationDecision {
+  return {
+    fingerprint: `whip:${nextTask.id}`,
+    kind: "whip",
+    prompt: buildWhipTaskPrompt(nextTask, issueCreationTemplate),
+    whipTaskID: nextTask.id,
+  };
+}
+
+function parseReadyIssueNumbers(output: string, queueStatusNames: QueueStatusNames): number[] {
+  let parsed: unknown;
+
+  try {
+    parsed = JSON.parse(output) as unknown;
+  } catch (error) {
+    throw new Error(`Invalid ready issue JSON: ${formatError(error)}`);
+  }
+
+  if (!Array.isArray(parsed)) {
+    throw new Error("Invalid ready issue list.");
+  }
+
+  return parsed.flatMap((entry) => {
+    if (typeof entry !== "object" || entry === null || !("number" in entry) || !("labels" in entry)) {
+      throw new Error("Invalid ready issue entry.");
+    }
+
+    const issue = entry as { labels?: unknown; number?: unknown };
+    const number = issue.number;
+    if (!isPositiveInteger(number)) {
+      throw new Error("Invalid ready issue number.");
+    }
+
+    const labels = parseIssueLabelNames(issue.labels);
+    const status = resolveEffectiveIssueStatus(labels, queueStatusNames);
+    return status === queueStatusNames.ready ? [number] : [];
+  });
+}
+
+function parseIssueLabelNames(raw: unknown): string[] {
+  if (!Array.isArray(raw)) {
+    throw new Error("Invalid ready issue labels.");
+  }
+
+  return raw.map((entry) => {
+    if (typeof entry !== "object" || entry === null || !("name" in entry)) {
+      throw new Error("Invalid ready issue label.");
+    }
+
+    const name = (entry as { name?: unknown }).name;
+    if (typeof name !== "string" || name.length === 0) {
+      throw new Error("Invalid ready issue label name.");
+    }
+
+    return name;
+  });
+}
+
+function resolveEffectiveIssueStatus(
+  labelNames: readonly string[],
+  queueStatusNames: QueueStatusNames,
+): string {
+  for (const labelName of labelNames) {
+    if (queueStatusNames.all.includes(labelName)) {
+      return labelName;
+    }
+  }
+
+  return queueStatusNames.defaultStatus;
 }
 
 function parsePriorityOrderSummary(output: string, queueStatusNames: QueueStatusNames): PriorityOrderSummary {

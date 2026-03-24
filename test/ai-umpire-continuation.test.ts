@@ -11,6 +11,7 @@ import { AiUmpireContinuationPlugin } from "../.opencode/plugins/ai-umpire-conti
 import type { WhipState, WhipTask } from "../opencode/ai-umpire-continuation.ts";
 
 const tempDirs: string[] = [];
+const pathRestorers: Array<() => void> = [];
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const queuePolicy = readQueuePolicy(repoRoot);
 const issuePriorityLabels = queuePolicy.priorities
@@ -86,6 +87,13 @@ type QueuePolicyFixture = {
   statuses: Array<{ createIssue: boolean; key: string; name: string }>;
 };
 
+type GhIssueListEntryFixture =
+  | number
+  | {
+      labels?: string[];
+      number: number;
+    };
+
 type ContextOverrides = {
   appLog?: (input: { body: { level: "debug" | "error" | "info"; message: string } }) => unknown;
   get?: (input: { path: { id: string }; query?: { directory?: string } }) => Promise<{
@@ -128,6 +136,9 @@ type ContextOverrides = {
 afterEach(async () => {
   vi.restoreAllMocks();
   vi.useRealTimers();
+  while (pathRestorers.length > 0) {
+    pathRestorers.pop()?.();
+  }
   await new Promise((resolve) => setTimeout(resolve, 0));
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
@@ -195,9 +206,73 @@ process.stdout.write(JSON.stringify([
     expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:43");
   });
 
+  it("falls back to the full priority-order summary when the ready-issue probe fails", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhBinary(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "list") {
+  process.stderr.write("gh probe unavailable\\n");
+  process.exit(1);
+}
+process.stderr.write("Unexpected gh invocation: " + args.join(" ") + "\\n");
+process.exit(1);
+`);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_ready" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    await waitForContinuationLogToContain(repoDir, "Ready issue probe failed; falling back to full priority order summary.");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:26");
+  });
+
+  it("falls back to whip work when the ready-issue probe fails and the full summary is empty", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhBinary(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "list") {
+  process.stderr.write("gh probe unavailable\\n");
+  process.exit(1);
+}
+process.stderr.write("Unexpected gh invocation: " + args.join(" ") + "\\n");
+process.exit(1);
+`);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_whip" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.text).toContain("Continue the selected WHIP backlog task.");
+    await waitForContinuationLogToContain(repoDir, "Ready issue probe failed; falling back to full priority order summary.");
+  });
+
   it("uses the repo-local queue policy when validating queue summaries and generating prompts", async () => {
     const repoDir = await createTempDir(false);
     const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhIssueListSequence([[26]]);
     const customPolicy = readQueuePolicyDocument(repoDir);
     const statuses = Array.isArray(customPolicy.statuses)
       ? customPolicy.statuses as Array<Record<string, unknown>>
@@ -243,14 +318,18 @@ process.stdout.write(JSON.stringify([
       "1. #26: Ship continuation plugin [P2-High, Ready-Now]",
     );
 
-    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
 
-    await plugin.event?.({
-      event: {
-        properties: { sessionID: "ses_ready" },
-        type: "session.idle",
-      },
-    });
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_ready" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
 
     expect(prompts).toHaveLength(1);
     expect(prompts[0]?.text).toContain("start next Ready-Now issue");
@@ -263,6 +342,7 @@ process.stdout.write(JSON.stringify([
   it("rejects inconsistent priority-order summaries instead of enqueueing issue work", async () => {
     const repoDir = await createTempDir(false);
     const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhIssueListSequence([[26]]);
 
     await installStubPriorityOrderScript(
       repoDir,
@@ -287,14 +367,18 @@ process.stdout.write(JSON.stringify([
       "1. #26: Blocked issue masquerading as ready [P2-High, S-Blocked]",
     );
 
-    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
 
-    await plugin.event?.({
-      event: {
-        properties: { sessionID: "ses_ready" },
-        type: "session.idle",
-      },
-    });
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_ready" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
 
     expect(prompts).toHaveLength(0);
     await waitForContinuationLogToContain(repoDir, "Invalid priority order summary readyIssues.");
@@ -596,11 +680,23 @@ process.stdout.write(JSON.stringify([
     expect(gitInfoExcludeRaw).toContain(".umpire/");
   });
 
-  it("resumes an in-progress whip task from whip state on a cold start", async () => {
+  it("resumes an in-progress whip task from whip state on a cold start without rerunning priority ordering", async () => {
     const repoDir = await createTempDir(false);
     const prompts: PromptRecord[] = [];
 
     const seededState = await seedInProgressWhipState(repoDir);
+    const markerPath = path.join(repoDir, ".priority-order-called");
+
+    await writeFile(
+      path.join(repoDir, "scripts", "gh-priority-order.sh"),
+      `#!/usr/bin/env bash
+MARKER_PATH=${JSON.stringify(markerPath)}
+touch "$MARKER_PATH"
+exit 99
+`,
+      "utf8",
+    );
+    await chmod(path.join(repoDir, "scripts", "gh-priority-order.sh"), 0o755);
 
     const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
 
@@ -627,6 +723,7 @@ process.stdout.write(JSON.stringify([
       seededState.capturedContinuationState.lastPromptFingerprint,
     );
     expect(continuationState.pendingPromptFingerprint).toBeUndefined();
+    await expect(readFile(markerPath, "utf8")).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("completes the active whip task in the controller before prompting the next one", async () => {
@@ -666,6 +763,109 @@ process.stdout.write(JSON.stringify([
     expect(prompts[1]?.text).toContain(
       "Selected task: Create validation issues for all 9 AIQ stages when @tjalve/aiq is in use.",
     );
+  });
+
+  it("skips priority ordering while local whip work continues when no ready issues exist", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const priorityOrderCountPath = await installCountingPriorityOrderScript(repoDir, [
+      {
+        blockedIssues: [],
+        inProgress: [],
+        issues: [],
+        nextIssue: null,
+        readyIssues: [],
+        version: 1,
+      },
+    ]);
+
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+    await emitIdle(plugin, "ses_whip");
+    await plugin.event?.({
+      event: {
+        properties: {
+          sessionID: "ses_whip",
+          status: { type: "busy" },
+        },
+        type: "session.status",
+      },
+    });
+    await emitIdle(plugin, "ses_whip");
+
+    expect(prompts).toHaveLength(2);
+    expect(readPriorityOrderInvocationCount(priorityOrderCountPath)).toBe(0);
+    expect(prompts[1]?.text).toContain(
+      "Selected task: Create validation issues for all 9 AIQ stages when @tjalve/aiq is in use.",
+    );
+  });
+
+  it("rechecks ready issue availability before advancing whip work", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const priorityOrderCountPath = await installCountingPriorityOrderScript(repoDir, [
+      {
+        blockedIssues: [],
+        inProgress: [],
+        issues: [
+          {
+            component: "",
+            labels: ["P2-High", "S-Ready"],
+            number: 71,
+            priority: "P2-High",
+            score: 550,
+            status: "S-Ready",
+            title: "Ship queued issue work",
+          },
+        ],
+        nextIssue: 71,
+        readyIssues: [71],
+        version: 1,
+      },
+    ]);
+    const restorePath = await installFakeGhIssueListSequence([[], [71]]);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await emitIdle(plugin, "ses_whip");
+      await plugin.event?.({
+        event: {
+          properties: {
+            sessionID: "ses_whip",
+            status: { type: "busy" },
+          },
+          type: "session.status",
+        },
+      });
+      await emitIdle(plugin, "ses_whip");
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(2);
+    expect(readPriorityOrderInvocationCount(priorityOrderCountPath)).toBe(1);
+    expect(prompts[1]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:71");
+  });
+
+  it("defers continuation instead of advancing whip when the ready probe and summary disagree", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhIssueListSequence([[71]]);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await emitIdle(plugin, "ses_whip");
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(0);
+    expect(maybeReadWhipState(repoDir)).toBeUndefined();
+    expect(maybeReadContinuationState(repoDir)?.lastPromptFingerprint).toBeUndefined();
+    await waitForContinuationLogToContain(repoDir, "Ready issue probe changed before priority ordering completed.");
   });
 
   it("ignores the trailing session.idle after a whip prompt was already enqueued on session.status idle", async () => {
@@ -1495,10 +1695,12 @@ process.stdout.write(JSON.stringify([
     await vi.advanceTimersByTimeAsync(44_000);
     expect(prompts).toHaveLength(0);
 
-    await vi.advanceTimersByTimeAsync(1_000);
     vi.useRealTimers();
-    await waitForPromptCount(prompts, 1);
-    expect(prompts[0]?.sessionID).toBe("ses_tui");
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const log = await readFile(path.join(repoDir, ".umpire", "continuation.log"), "utf8");
+    expect(log).toContain("Delaying continuation prompt after idle TUI event.");
+    expect(log).toContain('"delayMs":45000');
   });
 
   it("recovers with a later live root session after ignoring a missing current session event", async () => {
@@ -1843,6 +2045,7 @@ async function createTempDir(withReadyIssue: boolean): Promise<string> {
   await installQueuePolicyFiles(tempDir);
   await rm(path.join(tempDir, ".umpire"), { force: true, recursive: true });
   await installStubPriorityOrderScript(tempDir, queueSummary, humanOutput);
+  await installFakeGhIssueListSequence([withReadyIssue ? [26] : []]);
   return tempDir;
 }
 
@@ -1876,6 +2079,54 @@ async function installRealPriorityOrderScript(repoDir: string): Promise<void> {
   await chmod(targetPath, 0o755);
 }
 
+async function installCountingPriorityOrderScript(
+  repoDir: string,
+  queueSummaries: QueueSummaryFixture[],
+): Promise<string> {
+  const countPath = path.join(repoDir, ".priority-order-count");
+  const outputPaths: string[] = [];
+
+  for (const [index, summary] of queueSummaries.entries()) {
+    const outputPath = path.join(repoDir, `.priority-order-output-${index}.json`);
+    await writeFile(outputPath, JSON.stringify(summary), "utf8");
+    outputPaths.push(outputPath);
+  }
+
+  const caseArms = outputPaths
+    .map((outputPath, index) => `  ${index}) cat ${JSON.stringify(outputPath)} ;;
+`)
+    .join("");
+
+  await writeFile(
+    path.join(repoDir, "scripts", "gh-priority-order.sh"),
+    `#!/usr/bin/env bash
+COUNT_PATH=${JSON.stringify(countPath)}
+count=0
+if [ -f "$COUNT_PATH" ]; then
+  count=$(cat "$COUNT_PATH")
+fi
+printf '%s' "$((count + 1))" > "$COUNT_PATH"
+
+index="$count"
+max_index=${Math.max(outputPaths.length - 1, 0)}
+if [ "$index" -gt "$max_index" ]; then
+  index="$max_index"
+fi
+
+if [ "\${1:-}" = "--json" ]; then
+  case "$index" in
+${caseArms}  esac
+else
+  printf 'Commands:\n  ./scripts/gh-priority-order.sh --help'
+fi
+`,
+    "utf8",
+  );
+  await chmod(path.join(repoDir, "scripts", "gh-priority-order.sh"), 0o755);
+
+  return countPath;
+}
+
 async function installQueuePolicyFiles(repoDir: string): Promise<void> {
   await mkdir(path.join(repoDir, "scripts"), { recursive: true });
   await copyFile(path.join(repoRoot, "queue-policy.json"), path.join(repoDir, "queue-policy.json"));
@@ -1900,7 +2151,13 @@ async function installFakeGhBinary(ghBody: string): Promise<() => void> {
 
   process.env.PATH = `${binDir}:${previousPath ?? ""}`;
 
-  return () => {
+  let restored = false;
+  const restorePath = () => {
+    if (restored) {
+      return;
+    }
+    restored = true;
+
     if (previousPath === undefined) {
       delete process.env.PATH;
       return;
@@ -1908,6 +2165,59 @@ async function installFakeGhBinary(ghBody: string): Promise<() => void> {
 
     process.env.PATH = previousPath;
   };
+
+  pathRestorers.push(restorePath);
+  return restorePath;
+}
+
+async function installFakeGhIssueListSequence(
+  readyIssuesByInvocation: readonly (readonly GhIssueListEntryFixture[])[],
+): Promise<() => void> {
+  const countPath = path.join(
+    await mkdtemp(path.join(os.tmpdir(), "ai-umpire-gh-count-")),
+    "issue-list-count.txt",
+  );
+  tempDirs.push(path.dirname(countPath));
+
+  return installFakeGhBinary(`
+const fs = require("node:fs");
+
+const outputs = ${JSON.stringify(
+    readyIssuesByInvocation.map((issues) => issues.map((issue) => {
+      if (typeof issue === "number") {
+        return { labels: [], number: issue };
+      }
+
+      return {
+        labels: (issue.labels ?? []).map((name) => ({ name })),
+        number: issue.number,
+      };
+    })),
+  )};
+const countPath = ${JSON.stringify(countPath)};
+const args = process.argv.slice(2);
+
+if (args[0] !== "issue" || args[1] !== "list") {
+  process.stderr.write("Unexpected gh invocation: " + args.join(" ") + "\\n");
+  process.exit(1);
+}
+
+let count = 0;
+try {
+  count = Number(fs.readFileSync(countPath, "utf8"));
+  if (!Number.isFinite(count) || count < 0) {
+    count = 0;
+  }
+} catch (error) {
+  if (!error || error.code !== "ENOENT") {
+    throw error;
+  }
+}
+
+fs.writeFileSync(countPath, String(count + 1));
+const index = Math.min(count, Math.max(outputs.length - 1, 0));
+process.stdout.write(JSON.stringify(outputs[index] ?? []));
+`);
 }
 
 function createContext(
@@ -2030,6 +2340,23 @@ function readContinuationState(repoDir: string) {
   ) as StoredContinuationState;
 }
 
+function readPriorityOrderInvocationCount(countPath: string): number {
+  try {
+    return Number(readFileSync(countPath, "utf8"));
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ENOENT"
+    ) {
+      return 0;
+    }
+
+    throw error;
+  }
+}
+
 function maybeReadWhipState(repoDir: string) {
   try {
     return readWhipState(repoDir);
@@ -2098,18 +2425,6 @@ async function waitForContinuationLogToContain(repoDir: string, text: string): P
   }
 
   expect(await readContinuationLog(repoDir)).toContain(text);
-}
-
-async function waitForPromptCount(prompts: PromptRecord[], expectedCount: number): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (prompts.length === expectedCount) {
-      return;
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 0));
-  }
-
-  expect(prompts).toHaveLength(expectedCount);
 }
 
 function expectPendingPromptFingerprint(continuationState: StoredContinuationState): string {
