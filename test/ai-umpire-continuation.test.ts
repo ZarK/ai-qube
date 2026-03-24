@@ -1703,6 +1703,54 @@ exit 99
     expect(log).toContain('"delayMs":45000');
   });
 
+  it("preserves a delayed prompt when another session triggers stale-session pruning", async () => {
+    vi.useFakeTimers();
+    const baseTime = new Date("2026-03-24T00:00:00.000Z");
+    vi.setSystemTime(baseTime);
+
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const plugin = await AiUmpireContinuationPlugin({
+      ...createContext(repoDir, prompts, []),
+      idleDelayMs: 31 * 60 * 1000,
+    });
+
+    await plugin.event?.({
+      event: {
+        properties: { sessionID: "ses_delayed" },
+        type: "tui.prompt.append",
+      },
+    });
+
+    await emitIdle(plugin, "ses_delayed");
+    await vi.advanceTimersByTimeAsync(30 * 60 * 1000 + 1_000);
+
+    await plugin.event?.({
+      event: {
+        properties: {
+          info: {
+            role: "assistant",
+            sessionID: "ses_other",
+            time: { completed: Date.now() },
+          },
+        },
+        type: "message.updated",
+      },
+    });
+
+    expect(prompts).toHaveLength(0);
+
+    await vi.advanceTimersByTimeAsync(60 * 1000);
+    vi.useRealTimers();
+
+    for (let attempt = 0; attempt < 20 && prompts.length === 0; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionID).toBe("ses_delayed");
+  });
+
   it("recovers with a later live root session after ignoring a missing current session event", async () => {
     const repoDir = await createTempDir(true);
     const prompts: PromptRecord[] = [];
@@ -1737,6 +1785,69 @@ exit 99
     expect(readContinuationState(repoDir).lastPromptFingerprint).toBe(
       expectPendingPromptFingerprint(seededState.capturedContinuationState),
     );
+  });
+
+  it("evicts stale session state so expired sessions reload cached metadata and todos", async () => {
+    vi.useFakeTimers();
+    const baseTime = new Date("2026-03-24T00:00:00.000Z");
+    vi.setSystemTime(baseTime);
+
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const activeTodos = [{ content: "Keep working", id: "todo-1", priority: "high", status: "in_progress" }];
+    let sessionInfoLookups = 0;
+    let todoFetches = 0;
+    const plugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, activeTodos, {}, {
+        get: async (input) => {
+          sessionInfoLookups += 1;
+          return { data: { id: input.path.id } };
+        },
+        todo: async () => {
+          todoFetches += 1;
+          return { data: activeTodos };
+        },
+      }),
+    );
+
+    await emitIdle(plugin, "ses_stale");
+
+    expect(prompts).toHaveLength(0);
+    expect(sessionInfoLookups).toBe(1);
+    expect(todoFetches).toBe(1);
+
+    vi.setSystemTime(new Date(baseTime.getTime() + 24 * 60 * 60 * 1000));
+    await emitIdle(plugin, "ses_fresh");
+    await emitIdle(plugin, "ses_stale");
+
+    expect(sessionInfoLookups).toBe(3);
+    expect(todoFetches).toBe(3);
+
+    vi.useRealTimers();
+    await waitForContinuationLogToContain(repoDir, "Evicted stale continuation session state entries.");
+  });
+
+  it("logs how many stale session states were pruned on a later event", async () => {
+    vi.useFakeTimers();
+    const baseTime = new Date("2026-03-24T00:00:00.000Z");
+    vi.setSystemTime(baseTime);
+
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const activeTodos = [{ content: "Keep working", id: "todo-1", priority: "high", status: "in_progress" }];
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, activeTodos));
+
+    for (const sessionID of ["ses_1", "ses_2", "ses_3", "ses_4", "ses_5"]) {
+      await emitIdle(plugin, sessionID);
+    }
+
+    vi.setSystemTime(new Date(baseTime.getTime() + 24 * 60 * 60 * 1000));
+    await emitIdle(plugin, "ses_trigger");
+
+    vi.useRealTimers();
+    await waitForContinuationLogToContain(repoDir, "Evicted stale continuation session state entries.");
+    const log = await readContinuationLog(repoDir);
+    expect(log).toContain('"evictedSessionCount":5');
   });
 
   it("re-prompts the pending whip task when the previous owner disappears before reservation finalization", async () => {
