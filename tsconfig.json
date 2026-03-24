@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "allowImportingTsExtensions": true,
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "noEmit": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node", "vitest/globals"]
+  },
+  "include": [
+    ".opencode/plugins/**/*.ts",
+    "opencode/**/*.ts",
+    "test/**/*.ts",
+    "vitest.config.ts"
+  ]
+}
