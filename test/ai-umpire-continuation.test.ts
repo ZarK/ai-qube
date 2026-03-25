@@ -2114,6 +2114,121 @@ exit 99
       "Removed stale continuation lock before retrying acquisition.",
     );
   });
+
+  it("times out a hung ready-issue probe and falls back to full priority ordering", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const commandTimeoutMs = 75;
+    const restorePath = await installFakeGhBinary(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "list") {
+  setInterval(() => {}, 1000);
+} else {
+  process.stderr.write("Unexpected gh invocation: " + args.join(" ") + "\\n");
+  process.exit(1);
+}
+`);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin({
+        ...createContext(repoDir, prompts, []),
+        commandTimeoutMs,
+      });
+
+      await emitIdle(plugin, "ses_root");
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionID).toBe("ses_root");
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:26");
+    await waitForContinuationLogToContain(repoDir, "Ready issue probe failed; falling back to full priority order summary.");
+    await waitForContinuationLogToContain(repoDir, `Command gh timed out after ${commandTimeoutMs}ms and was killed with SIGKILL.`);
+  });
+
+  it("releases the serialized event chain after a hung priority-order script times out", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const commandTimeoutMs = 75;
+    const childPidPath = path.join(repoDir, ".priority-order-child.pid");
+    const scriptPath = path.join(repoDir, "scripts", "gh-priority-order.sh");
+    const restorePath = await installFakeGhBinary(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "list") {
+  process.stdout.write(JSON.stringify([{ labels: [{ name: "S-Ready" }], number: 26 }]));
+} else {
+  process.stderr.write("Unexpected gh invocation: " + args.join(" ") + "\\n");
+  process.exit(1);
+}
+`);
+
+    await writeFile(
+      scriptPath,
+      `#!/usr/bin/env bash
+CHILD_PID_PATH=${JSON.stringify(childPidPath)}
+if [ "\${1:-}" = "--json" ]; then
+  node -e 'setInterval(() => {}, 1000)' &
+  child_pid=$!
+  printf '%s' "$child_pid" > "$CHILD_PID_PATH"
+  wait "$child_pid"
+  exit 0
+fi
+printf 'Commands:\n  ./scripts/gh-priority-order.sh --help'
+`,
+      "utf8",
+    );
+    await chmod(scriptPath, 0o755);
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin({
+        ...createContext(repoDir, prompts, []),
+        commandTimeoutMs,
+      });
+
+      await emitIdle(plugin, "ses_timeout");
+
+      expect(prompts).toHaveLength(0);
+      await waitForContinuationLogToContain(repoDir, `Command bash timed out after ${commandTimeoutMs}ms and was killed with SIGKILL.`);
+      const childPID = Number.parseInt(await readFile(childPidPath, "utf8"), 10);
+      expect(childPID).toBeGreaterThan(0);
+      await waitForProcessToExit(childPID);
+
+      await installStubPriorityOrderScript(
+        repoDir,
+        {
+          blockedIssues: [],
+          inProgress: [],
+          issues: [
+            {
+              component: "",
+              labels: ["P2-High", "S-Ready"],
+              number: 26,
+              priority: "P2-High",
+              score: 550,
+              status: "S-Ready",
+              title: "Ship continuation plugin",
+            },
+          ],
+          nextIssue: 26,
+          readyIssues: [26],
+          version: 1,
+        },
+        "1. #26: Ship continuation plugin [P2-High, S-Ready]",
+      );
+
+      await emitIdle(plugin, "ses_timeout");
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionID).toBe("ses_timeout");
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:26");
+    expect(readContinuationState(repoDir).ownerSessionID).toBe("ses_timeout");
+  });
 });
 
 async function createTempDir(withReadyIssue: boolean): Promise<string> {
@@ -2536,6 +2651,36 @@ async function waitForContinuationLogToContain(repoDir: string, text: string): P
   }
 
   expect(await readContinuationLog(repoDir)).toContain(text);
+}
+
+async function waitForProcessToExit(pid: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!isProcessRunning(pid)) {
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  }
+
+  expect(isProcessRunning(pid)).toBe(false);
+}
+
+function isProcessRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (
+      typeof error === "object" &&
+      error !== null &&
+      "code" in error &&
+      error.code === "ESRCH"
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
 }
 
 function expectPendingPromptFingerprint(continuationState: StoredContinuationState): string {
