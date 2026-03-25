@@ -213,6 +213,89 @@ queue_join_with_delimiter() {
 	printf '%s\n' "$joined"
 }
 
+QUEUE_LAST_GH_OUTPUT=""
+QUEUE_LAST_GH_STATUS=0
+
+queue_capture_gh() {
+	if QUEUE_LAST_GH_OUTPUT=$(gh "$@" 2>&1); then
+		QUEUE_LAST_GH_STATUS=0
+	else
+		QUEUE_LAST_GH_STATUS=$?
+	fi
+}
+
+queue_is_missing_issue_output() {
+	local output="$1"
+
+	case "$output" in
+	*"Could not resolve to an issue with the number of "* | *"Could not resolve to an Issue with the number of "* | *"Could not resolve to an issue or pull request"*)
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+queue_fail_gh() {
+	local message="$1"
+	local details="${2:-$QUEUE_LAST_GH_OUTPUT}"
+	local status="${3:-$QUEUE_LAST_GH_STATUS}"
+
+	if [ -n "$details" ]; then
+		printf '❌ %s\n%s\n' "$message" "$details" >&2
+	else
+		printf '❌ %s (gh exit code %s)\n' "$message" "$status" >&2
+	fi
+
+	return "$status" 2>/dev/null || exit "$status"
+}
+
+queue_issue_view_json_or_fail() {
+	local issue_num="$1"
+	shift
+
+	queue_capture_gh issue view "$issue_num" "$@"
+	if [ "$QUEUE_LAST_GH_STATUS" -eq 0 ]; then
+		printf '%s\n' "$QUEUE_LAST_GH_OUTPUT"
+		return 0
+	fi
+
+	if queue_is_missing_issue_output "$QUEUE_LAST_GH_OUTPUT"; then
+		printf '❌ Issue #%s not found\n' "$issue_num" >&2
+		return "$QUEUE_LAST_GH_STATUS" 2>/dev/null || exit "$QUEUE_LAST_GH_STATUS"
+	fi
+
+	queue_fail_gh "Failed to load issue #${issue_num}."
+}
+
+queue_issue_label_names_or_fail() {
+	local issue_num="$1"
+
+	queue_capture_gh issue view "$issue_num" --json labels --jq '.labels[].name'
+	if [ "$QUEUE_LAST_GH_STATUS" -ne 0 ]; then
+		queue_fail_gh "Failed to read labels for issue #${issue_num}."
+	fi
+
+	printf '%s\n' "$QUEUE_LAST_GH_OUTPUT"
+}
+
+queue_remove_issue_labels() {
+	local issue_num="$1"
+	local labels_csv="$2"
+	local context="$3"
+
+	if [ -z "$labels_csv" ]; then
+		return 0
+	fi
+
+	queue_capture_gh issue edit "$issue_num" --remove-label "$labels_csv"
+	if [ "$QUEUE_LAST_GH_STATUS" -eq 0 ]; then
+		return 0
+	fi
+
+	queue_fail_gh "Failed to remove labels ${labels_csv} for issue #${issue_num} while ${context}."
+}
+
 queue_priority_name_by_key() {
 	local wanted_key="$1"
 	local index
