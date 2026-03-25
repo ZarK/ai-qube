@@ -495,6 +495,7 @@ process.exit(1);
     const rotatedPath = path.join(repoDir, ".umpire", "continuation.log.1");
 
     await waitForFileToExist(rotatedPath);
+    await waitForFileToExist(logPath);
 
     const [logStats, rotatedStats, log, rotatedLog] = await Promise.all([
       stat(logPath),
@@ -2008,6 +2009,11 @@ exit 99
       repoDir,
       "Failed to enqueue continuation prompt for session ses_root (error={\"name\":\"PromptError\"}).",
     );
+    const errorLog = await readContinuationLog(repoDir);
+    expect(errorLog).toContain('"fingerprint":"issues:26"');
+    expect(errorLog).toContain('"kind":"issue"');
+    expect(errorLog).toContain('"sessionID":"ses_root"');
+    expect(errorLog).toContain('"type":"session.idle"');
     expect(readContinuationState(repoDir).pendingPromptFingerprint).toBeUndefined();
 
     await plugin.event?.({
@@ -2019,6 +2025,59 @@ exit 99
 
     expect(prompts).toHaveLength(1);
     expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:26");
+  });
+
+  it("forwards structured delayed prompt failures to client.app.log", async () => {
+    vi.useFakeTimers();
+
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const appLog = vi.fn();
+    let promptAttempts = 0;
+    const plugin = await AiUmpireContinuationPlugin({
+      ...createContext(repoDir, prompts, [], {}, {
+        appLog,
+        promptAsync: async () => {
+          promptAttempts += 1;
+          return { error: { name: "PromptError" } };
+        },
+      }),
+      idleDelayMs: 1_000,
+    });
+
+    await plugin.event?.({
+      event: {
+        properties: { sessionID: "ses_delayed_error" },
+        type: "tui.prompt.append",
+      },
+    });
+
+    await emitIdle(plugin, "ses_delayed_error");
+    await vi.advanceTimersByTimeAsync(1_001);
+    vi.useRealTimers();
+
+    let errorMessages: string[] = [];
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      errorMessages = appLog.mock.calls
+        .map(([input]) => input.body)
+        .filter((body) => body.level === "error")
+        .map((body) => body.message);
+      if (promptAttempts === 1 && errorMessages.length === 1) {
+        break;
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+
+    expect(promptAttempts).toBe(1);
+    expect(errorMessages).toHaveLength(1);
+    expect(errorMessages[0]).toContain(
+      "Failed to enqueue continuation prompt for session ses_delayed_error (error={\"name\":\"PromptError\"}).",
+    );
+    expect(errorMessages[0]).toContain('"fingerprint":"issues:26"');
+    expect(errorMessages[0]).toContain('"kind":"issue"');
+    expect(errorMessages[0]).toContain('"sessionID":"ses_delayed_error"');
+    expect(errorMessages[0]).not.toContain('"type":');
   });
 
   it("logs HTTP status, URL, and error payload when session fetch fails for a non-404 response", async () => {
