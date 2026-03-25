@@ -12,7 +12,7 @@ remove_labels_by_prefix() {
 	local labels
 	local label
 
-	labels=$(gh issue view "$issue_num" --json labels --jq '.labels[].name' 2>/dev/null || true)
+	labels="$(queue_issue_label_names_or_fail "$issue_num")"
 	if [ -z "$labels" ]; then
 		return
 	fi
@@ -23,7 +23,7 @@ remove_labels_by_prefix() {
 		"${prefix}"*) ;;
 		*) continue ;;
 		esac
-		gh issue edit "$issue_num" --remove-label "$label" 2>/dev/null || true
+		queue_remove_issue_labels "$issue_num" "$label" "removing ${prefix} labels"
 	done <<<"$labels"
 }
 
@@ -64,7 +64,7 @@ case "$ACTION" in
 "priority")
 	if queue_is_priority_label "$VALUE"; then
 		# Remove existing priority labels
-		gh issue edit "$ISSUE_NUM" --remove-label "$(queue_priority_labels_csv)" 2>/dev/null
+		queue_remove_issue_labels "$ISSUE_NUM" "$(queue_priority_labels_csv)" "setting priority"
 		gh issue edit "$ISSUE_NUM" --add-label "$VALUE"
 		echo "✅ Set issue #$ISSUE_NUM priority to $VALUE"
 	else
@@ -75,7 +75,7 @@ case "$ACTION" in
 "status")
 	if queue_is_status_label "$VALUE"; then
 		# Remove existing status labels
-		gh issue edit "$ISSUE_NUM" --remove-label "$(queue_status_labels_csv)" 2>/dev/null
+		queue_remove_issue_labels "$ISSUE_NUM" "$(queue_status_labels_csv)" "setting status"
 		gh issue edit "$ISSUE_NUM" --add-label "$VALUE"
 		echo "✅ Set issue #$ISSUE_NUM status to $VALUE"
 	else
@@ -107,22 +107,22 @@ case "$ACTION" in
 	fi
 	;;
 "ready")
-	gh issue edit "$ISSUE_NUM" --remove-label "$(queue_transition_remove_csv ready)" 2>/dev/null
+	queue_remove_issue_labels "$ISSUE_NUM" "$(queue_transition_remove_csv ready)" "marking issue ready"
 	gh issue edit "$ISSUE_NUM" --add-label "$(queue_transition_add_label ready)"
 	echo "✅ Marked issue #$ISSUE_NUM as ready"
 	;;
 "start")
-	gh issue edit "$ISSUE_NUM" --remove-label "$(queue_transition_remove_csv start)" 2>/dev/null
+	queue_remove_issue_labels "$ISSUE_NUM" "$(queue_transition_remove_csv start)" "starting issue"
 	gh issue edit "$ISSUE_NUM" --add-label "$(queue_transition_add_label start)"
 	echo "✅ Started work on issue #$ISSUE_NUM"
 	;;
 "block")
-	gh issue edit "$ISSUE_NUM" --remove-label "$(queue_transition_remove_csv block)" 2>/dev/null
+	queue_remove_issue_labels "$ISSUE_NUM" "$(queue_transition_remove_csv block)" "blocking issue"
 	gh issue edit "$ISSUE_NUM" --add-label "$(queue_transition_add_label block)"
 	echo "🚫 Marked issue #$ISSUE_NUM as blocked"
 	;;
 "unblock")
-	gh issue edit "$ISSUE_NUM" --remove-label "$(queue_transition_remove_csv unblock)" 2>/dev/null
+	queue_remove_issue_labels "$ISSUE_NUM" "$(queue_transition_remove_csv unblock)" "unblocking issue"
 	gh issue edit "$ISSUE_NUM" --add-label "$(queue_transition_add_label unblock)"
 	echo "✅ Unblocked issue #$ISSUE_NUM (marked as ready)"
 	;;

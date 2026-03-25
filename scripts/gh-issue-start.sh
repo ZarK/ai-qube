@@ -36,10 +36,7 @@ fi
 # Check if issue exists and get current state
 echo "🔍 Checking issue #$ISSUE_NUM..."
 
-if ! issue_data=$(gh issue view "$ISSUE_NUM" --json number,title,state,labels,body 2>/dev/null); then
-	echo "❌ Issue #$ISSUE_NUM not found"
-	exit 1
-fi
+issue_data="$(queue_issue_view_json_or_fail "$ISSUE_NUM" --json number,title,state,labels,body)"
 
 issue_state=$(echo "$issue_data" | jq -r '.state')
 issue_title=$(echo "$issue_data" | jq -r '.title')
@@ -71,7 +68,11 @@ if printf '%s\n' "$labels" | grep -Fxq "$QUEUE_IN_PROGRESS_STATUS"; then
 fi
 
 # Check for other in-progress issues
-in_progress=$(gh issue list --label "$QUEUE_IN_PROGRESS_STATUS" --state open --json number,title --jq '.[] | "#\(.number): \(.title)"' 2>/dev/null)
+queue_capture_gh issue list --label "$QUEUE_IN_PROGRESS_STATUS" --state open --json number,title --jq '.[] | "#\(.number): \(.title)"'
+if [ "$QUEUE_LAST_GH_STATUS" -ne 0 ]; then
+	queue_fail_gh "Failed to list issues already marked ${QUEUE_IN_PROGRESS_STATUS}."
+fi
+in_progress="$QUEUE_LAST_GH_OUTPUT"
 if [ -n "$in_progress" ]; then
 	echo "⚠️  Other issues are currently in progress:"
 	echo "$in_progress"
@@ -86,7 +87,7 @@ fi
 
 # Update labels
 echo "📝 Setting ${QUEUE_IN_PROGRESS_STATUS}..."
-gh issue edit "$ISSUE_NUM" --remove-label "$(queue_transition_remove_csv start)" 2>/dev/null || true
+queue_remove_issue_labels "$ISSUE_NUM" "$(queue_transition_remove_csv start)" "starting work"
 gh issue edit "$ISSUE_NUM" --add-label "$(queue_transition_add_label start)"
 
 # Add start comment

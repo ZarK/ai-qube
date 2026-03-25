@@ -15,11 +15,11 @@ done < <(
 	jq -r '.priorities[], .statuses[], .components.labels[]? | [.name, .color, .description] | @tsv' "$QUEUE_POLICY_PATH"
 )
 
-existing_labels="$(gh label list --limit 200 --json name --jq '.[].name' 2>/dev/null || true)"
-
-if [ -z "$existing_labels" ]; then
-	echo "⚠️  Could not read existing labels with gh. Ensure gh is authenticated and the current directory points at the target repository."
+queue_capture_gh label list --limit 200 --json name --jq '.[].name'
+if [ "$QUEUE_LAST_GH_STATUS" -ne 0 ]; then
+	queue_fail_gh "Failed to read existing labels from GitHub."
 fi
+existing_labels="$QUEUE_LAST_GH_OUTPUT"
 
 for entry in "${labels[@]}"; do
 	IFS='|' read -r name color description <<<"$entry"

@@ -125,21 +125,145 @@ fs.appendFileSync(process.env.GH_LOG_PATH, JSON.stringify(args) + "\\n");
     expect(renderedInvocations).toContain("Blocked-Later");
   });
 
-  it("prints a friendly error when gh-issue-start.sh cannot load the issue", async () => {
-    const repoDir = await createScriptRepo(["gh-issue-start.sh"]);
-    const env = await createGhEnv(`
+	it("prints not-found only for actual missing issues in gh-issue-start.sh", async () => {
+		const repoDir = await createScriptRepo(["gh-issue-start.sh"]);
+		const env = await createGhEnv(`
 const args = process.argv.slice(2);
 if (args[0] === "issue" && args[1] === "view") {
-  process.exit(1);
+	console.error("graphql error: Could not resolve to an Issue with the number of 999.");
+	process.exit(1);
 }
 process.exit(0);
 `);
 
-    const result = runScript(repoDir, "scripts/gh-issue-start.sh", ["999"], env);
+		const result = runScript(repoDir, "scripts/gh-issue-start.sh", ["999"], env);
 
-    expect(result.status).toBe(1);
-    expect(result.stdout).toContain("Issue #999 not found");
-  });
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("Issue #999 not found");
+		expect(result.stderr).not.toContain("Failed to load issue #999");
+	});
+
+	it("surfaces non-not-found gh-issue-start.sh load failures with stderr context", async () => {
+		const repoDir = await createScriptRepo(["gh-issue-start.sh"]);
+		const env = await createGhEnv(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "view") {
+	console.error("error: not authenticated");
+	process.exit(4);
+}
+process.exit(0);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-issue-start.sh", ["999"], env);
+
+		expect(result.status).toBe(4);
+		expect(result.stderr).toContain("Failed to load issue #999");
+		expect(result.stderr).toContain("not authenticated");
+		expect(result.stderr).not.toContain("Issue #999 not found");
+	});
+
+	it("does not treat generic 404 gh-issue-start.sh failures as missing issues", async () => {
+		const repoDir = await createScriptRepo(["gh-issue-start.sh"]);
+		const env = await createGhEnv(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "view") {
+	console.error("HTTP 404: Not Found (https://api.github.com/repos/octo/private-repo/issues/999)");
+	process.exit(1);
+}
+process.exit(0);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-issue-start.sh", ["999"], env);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("Failed to load issue #999");
+		expect(result.stderr).toContain("HTTP 404: Not Found");
+		expect(result.stderr).not.toContain("Issue #999 not found");
+	});
+
+	it("fails when gh-issue-start.sh cannot list existing in-progress issues", async () => {
+		const repoDir = await createScriptRepo(["gh-issue-start.sh"]);
+		const env = await createGhEnv(`
+const args = process.argv.slice(2);
+if (args[0] === "issue" && args[1] === "view") {
+	process.stdout.write(JSON.stringify({ number: 24, title: "Queue failure contracts", state: "OPEN", labels: [] }));
+	process.exit(0);
+}
+if (args[0] === "issue" && args[1] === "list") {
+	console.error("error: rate limit exceeded");
+	process.exit(1);
+}
+process.exit(0);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-issue-start.sh", ["24"], env);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("Failed to list issues already marked S-InProgress");
+		expect(result.stderr).toContain("rate limit exceeded");
+	});
+
+	it("fails when gh-update-labels.sh cannot remove labels that are still present", async () => {
+		const repoDir = await createScriptRepo(["gh-update-labels.sh"]);
+		const env = await createGhEnv(`
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.GH_LOG_PATH, JSON.stringify(args) + "\\n");
+if (args[0] === "issue" && args[1] === "edit" && args.includes("--remove-label")) {
+	console.error("error: permission denied removing labels");
+	process.exit(1);
+}
+if (args[0] === "issue" && args[1] === "view") {
+	process.stdout.write("S-Ready\\n");
+	process.exit(0);
+}
+process.exit(0);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-update-labels.sh", ["14", "start"], env);
+		const invocations = await readJsonLines<string[]>(env.GH_LOG_PATH!);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("Failed to remove labels S-Ready,S-Blocked for issue #14 while starting issue");
+		expect(result.stderr).toContain("permission denied removing labels");
+		expect(invocations).toEqual([["issue", "edit", "14", "--remove-label", "S-Ready,S-Blocked"]]);
+	});
+
+	it("fails when gh-update-labels.sh remove-label reports missing repository labels", async () => {
+		const repoDir = await createScriptRepo(["gh-update-labels.sh"]);
+		const env = await createGhEnv(`
+const fs = require("node:fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.GH_LOG_PATH, JSON.stringify(args) + "\\n");
+if (args[0] === "issue" && args[1] === "edit" && args.includes("--remove-label")) {
+	console.error("failed to update https://github.com/octo/repo/issues/14: 'S-Ready' not found");
+	process.exit(1);
+}
+process.exit(0);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-update-labels.sh", ["14", "start"], env);
+		const invocations = await readJsonLines<string[]>(env.GH_LOG_PATH!);
+
+		expect(result.status).toBe(1);
+		expect(result.stderr).toContain("Failed to remove labels S-Ready,S-Blocked for issue #14 while starting issue");
+		expect(result.stderr).toContain("'S-Ready' not found");
+		expect(invocations).toEqual([["issue", "edit", "14", "--remove-label", "S-Ready,S-Blocked"]]);
+	});
+
+	it("fails fast when gh-ensure-labels.sh cannot read existing labels", async () => {
+		const repoDir = await createScriptRepo(["gh-ensure-labels.sh"]);
+		const env = await createGhEnv(`
+console.error("error: not authenticated");
+process.exit(4);
+`);
+
+		const result = runScript(repoDir, "scripts/gh-ensure-labels.sh", [], env);
+
+		expect(result.status).toBe(4);
+		expect(result.stderr).toContain("Failed to read existing labels from GitHub");
+		expect(result.stderr).toContain("not authenticated");
+	});
 
   it("orders issues by computed score and preserves recommendation state in gh-priority-order.sh", async () => {
     const repoDir = await createScriptRepo(["gh-priority-order.sh"]);
