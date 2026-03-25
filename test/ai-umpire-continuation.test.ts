@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -139,8 +139,8 @@ afterEach(async () => {
   while (pathRestorers.length > 0) {
     pathRestorers.pop()?.();
   }
-  await new Promise((resolve) => setTimeout(resolve, 0));
-  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  await Promise.all(tempDirs.splice(0).map((dir) => removePathEventually(dir)));
 });
 
 describe("AiUmpireContinuationPlugin", () => {
@@ -465,6 +465,49 @@ process.exit(1);
     expect(consoleLog).not.toHaveBeenCalled();
     expect(consoleError).not.toHaveBeenCalled();
     await waitForContinuationLogToContain(repoDir, "Initialized continuation controller.");
+  });
+
+  it("rotates and trims continuation logs when they exceed the configured byte budget", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const continuationLogMaxBytes = 320;
+    const logPath = path.join(repoDir, ".umpire", "continuation.log");
+
+    await mkdir(path.join(repoDir, ".umpire"), { recursive: true });
+    await writeFile(logPath, "x".repeat(continuationLogMaxBytes * 2), "utf8");
+
+    const plugin = await AiUmpireContinuationPlugin({
+      ...createContext(repoDir, prompts, []),
+      continuationLogMaxBytes,
+    });
+
+    for (let index = 0; index < 12; index += 1) {
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: `ses_log_${index}` },
+          type: "tui.prompt.append",
+        },
+      });
+    }
+
+    await waitForContinuationLogToContain(repoDir, '"sessionID":"ses_log_11"');
+
+    const rotatedPath = path.join(repoDir, ".umpire", "continuation.log.1");
+
+    await waitForFileToExist(rotatedPath);
+
+    const [logStats, rotatedStats, log, rotatedLog] = await Promise.all([
+      stat(logPath),
+      stat(rotatedPath),
+      readFile(logPath, "utf8"),
+      readFile(rotatedPath, "utf8"),
+    ]);
+
+    expect(logStats.size).toBeLessThanOrEqual(continuationLogMaxBytes);
+    expect(rotatedStats.size).toBeLessThanOrEqual(continuationLogMaxBytes);
+    expect(logStats.size + rotatedStats.size).toBeLessThanOrEqual(continuationLogMaxBytes * 2);
+    expect(log).toContain('"sessionID":"ses_log_11"');
+    expect(rotatedLog).toContain('"sessionID":"ses_log_');
   });
 
   it("forwards log lines to client.app.log", async () => {
@@ -2629,7 +2672,7 @@ async function readContinuationLog(repoDir: string): Promise<string> {
         "code" in error &&
         error.code === "ENOENT"
       ) {
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await waitForPollingTurn();
         continue;
       }
 
@@ -2647,10 +2690,56 @@ async function waitForContinuationLogToContain(repoDir: string, text: string): P
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForPollingTurn();
   }
 
   expect(await readContinuationLog(repoDir)).toContain(text);
+}
+
+async function waitForFileToExist(filePath: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await stat(filePath);
+      return;
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
+        await waitForPollingTurn();
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  await stat(filePath);
+}
+
+async function removePathEventually(targetPath: string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    try {
+      await rm(targetPath, { force: true, recursive: true });
+      return;
+    } catch (error) {
+      if (
+        typeof error === "object" &&
+        error !== null &&
+        "code" in error &&
+        (error.code === "ENOTEMPTY" || error.code === "EPERM")
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        continue;
+      }
+
+      throw error;
+    }
+  }
+
+  await rm(targetPath, { force: true, recursive: true });
 }
 
 async function waitForProcessToExit(pid: number): Promise<void> {
@@ -2659,7 +2748,7 @@ async function waitForProcessToExit(pid: number): Promise<void> {
       return;
     }
 
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await waitForPollingTurn();
   }
 
   expect(isProcessRunning(pid)).toBe(false);
@@ -2681,6 +2770,15 @@ function isProcessRunning(pid: number): boolean {
 
     throw error;
   }
+}
+
+async function waitForPollingTurn(): Promise<void> {
+  if (vi.isFakeTimers()) {
+    await vi.advanceTimersByTimeAsync(0);
+    return;
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 0));
 }
 
 function expectPendingPromptFingerprint(continuationState: StoredContinuationState): string {
