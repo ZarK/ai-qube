@@ -1,11 +1,12 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { appendFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export interface PluginContext {
   commandTimeoutMs?: number;
+  continuationLogMaxBytes?: number;
   continuationLogPath?: string;
   client: ContinuationClient;
   directory: string;
@@ -353,6 +354,8 @@ const DEFAULT_CONTINUATION_LOCK_PATH = path.join(".umpire", "continuation.lock")
 const DEFAULT_CONTINUATION_STATE_PATH = path.join(".umpire", "continuation-state.json");
 
 const DEFAULT_WHIP_PATH = path.join(".umpire", "whip.json");
+
+const DEFAULT_CONTINUATION_LOG_MAX_BYTES = 512 * 1024;
 
 const DEFAULT_INTERACTIVE_IDLE_DELAY_MS = 0;
 
@@ -950,6 +953,8 @@ function formatCodeList(values: readonly string[]): string {
 }
 
 const managedStateRootReady = new Map<string, Promise<void>>();
+
+const continuationLogWriteChains = new Map<string, Promise<void>>();
 
 export class ContinuationController {
   private readonly client: ContinuationClient;
@@ -1901,6 +1906,7 @@ export async function AiUmpireContinuationPlugin(
   );
   const logger = new ContinuationLogger(context.logLevel, {
     client: context.client,
+    logMaxBytes: context.continuationLogMaxBytes,
     logPath,
   });
   const controller = new ContinuationController(context, logger);
@@ -3102,8 +3108,101 @@ function normalizeCommandTimeoutMs(value: number | undefined): number {
   return Math.max(1, Math.floor(value));
 }
 
+function normalizeContinuationLogMaxBytes(value: number | undefined): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_CONTINUATION_LOG_MAX_BYTES;
+  }
+
+  return Math.max(1, Math.floor(value));
+}
+
 function getManagedStateRootCacheKey(repoRoot: string, commandTimeoutMs: number): string {
   return `${repoRoot}\u0000${commandTimeoutMs}`;
+}
+
+function getRotatedContinuationLogPath(logPath: string): string {
+  return `${logPath}.1`;
+}
+
+function enqueueContinuationLogWrite(logPath: string, line: string, logMaxBytes: number): void {
+  const previous = continuationLogWriteChains.get(logPath) ?? Promise.resolve();
+  const next = previous
+    .catch(() => undefined)
+    .then(() => writeContinuationLogLine(logPath, line, logMaxBytes));
+  continuationLogWriteChains.set(logPath, next);
+
+  const settled = next.finally(() => {
+    if (continuationLogWriteChains.get(logPath) === next) {
+      continuationLogWriteChains.delete(logPath);
+    }
+  });
+  void settled.catch(() => undefined);
+}
+
+async function writeContinuationLogLine(
+  logPath: string,
+  line: string,
+  logMaxBytes: number,
+): Promise<void> {
+  await mkdir(path.dirname(logPath), { recursive: true });
+
+  const nextLine = clampContinuationLogLine(line, logMaxBytes);
+  const nextLineBytes = Buffer.byteLength(nextLine, "utf8");
+  let currentSize = 0;
+
+  try {
+    currentSize = (await stat(logPath)).size;
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+  }
+
+  if (currentSize + nextLineBytes > logMaxBytes) {
+    await rotateContinuationLog(logPath, logMaxBytes);
+  }
+
+  await appendFile(logPath, nextLine, "utf8");
+}
+
+async function rotateContinuationLog(logPath: string, logMaxBytes: number): Promise<void> {
+  const rotatedPath = getRotatedContinuationLogPath(logPath);
+  await rm(rotatedPath, { force: true });
+
+  try {
+    await rename(logPath, rotatedPath);
+  } catch (error) {
+    if (!isMissingFileError(error)) {
+      throw error;
+    }
+
+    return;
+  }
+
+  const rotatedBuffer = clampContinuationLogBuffer(await readFile(rotatedPath), logMaxBytes);
+  await writeFile(rotatedPath, rotatedBuffer);
+}
+
+function clampContinuationLogBuffer(buffer: Buffer, logMaxBytes: number): Buffer {
+  if (buffer.byteLength <= logMaxBytes) {
+    return buffer;
+  }
+
+  return buffer.subarray(buffer.byteLength - logMaxBytes);
+}
+
+function clampContinuationLogLine(line: string, logMaxBytes: number): string {
+  const buffer = Buffer.from(line, "utf8");
+  if (buffer.byteLength <= logMaxBytes) {
+    return line;
+  }
+
+  let candidate = clampContinuationLogBuffer(buffer, logMaxBytes).toString("utf8");
+  while (Buffer.byteLength(candidate, "utf8") > logMaxBytes) {
+    candidate = candidate.slice(1);
+  }
+
+  return candidate;
 }
 
 function killCommandProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -3220,15 +3319,18 @@ function formatError(error: unknown): string {
 class ContinuationLogger {
   private readonly client?: ContinuationClient;
 
+  private readonly logMaxBytes: number;
+
   private readonly logPath?: string;
 
   private readonly logLevel: ContinuationLogLevel;
 
   constructor(
     logLevel: ContinuationLogLevel | undefined,
-    options: { client?: ContinuationClient; logPath?: string } = {},
+    options: { client?: ContinuationClient; logMaxBytes?: number; logPath?: string } = {},
   ) {
     this.client = options.client;
+    this.logMaxBytes = normalizeContinuationLogMaxBytes(options.logMaxBytes);
     this.logPath = options.logPath;
     this.logLevel = logLevel ?? "silent";
   }
@@ -3284,13 +3386,12 @@ class ContinuationLogger {
   }
 
   private writeToDisk(message: string): void {
-    if (this.logPath === undefined) {
+    const logPath = this.logPath;
+    if (logPath === undefined) {
       return;
     }
 
-    void mkdir(path.dirname(this.logPath), { recursive: true })
-      .then(() => appendFile(this.logPath!, `${message}\n`, "utf8"))
-      .catch(() => undefined);
+    enqueueContinuationLogWrite(logPath, `${message}\n`, this.logMaxBytes);
   }
 }
 
