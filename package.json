@@ -1,10 +1,37 @@
 {
-  "name": "ai-umpire",
-  "private": true,
+  "name": "@tjalve/aiu",
+  "version": "0.0.0",
+  "description": "AI Umpire continuation plugin, queue assets, and installer CLI for OpenCode repos.",
   "type": "module",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "bin": {
+    "aiu": "./dist/src/bin/aiu.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/src/index.d.ts",
+      "import": "./dist/src/index.js"
+    },
+    "./opencode": {
+      "types": "./dist/src/opencode/index.d.ts",
+      "import": "./dist/src/opencode/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "queue-policy.json"
+  ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepack": "npm run build",
+    "pack:dry-run": "npm pack --dry-run",
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit --pretty false"
   },
   "devDependencies": {
     "@types/node": "^25.5.0",
