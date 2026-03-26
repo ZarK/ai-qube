@@ -3,6 +3,13 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+
+const BUNDLED_QUEUE_POLICY_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "queue-policy.json",
+);
 
 export interface PluginContext {
   commandTimeoutMs?: number;
@@ -478,17 +485,37 @@ const INITIAL_WHIP_TASKS: WhipTask[] = [
   },
 ];
 
-function loadQueuePolicy(repoRoot: string): QueuePolicy {
+function parseQueuePolicyFile(raw: string, queuePolicyPath: string, sourceRoot: string): QueuePolicy {
+  return parseQueuePolicy(raw, path.relative(sourceRoot, queuePolicyPath) || queuePolicyPath);
+}
+
+function loadQueuePolicy(repoRoot: string, logger?: ContinuationLogger): QueuePolicy {
   const queuePolicyPath = path.resolve(repoRoot, "queue-policy.json");
   let raw: string;
 
   try {
     raw = readFileSync(queuePolicyPath, "utf8");
   } catch (error) {
-    throw new Error(`Failed to read ${path.relative(repoRoot, queuePolicyPath) || queuePolicyPath}: ${formatError(error)}`);
+    if (!isMissingFileError(error) || queuePolicyPath === BUNDLED_QUEUE_POLICY_PATH) {
+      throw new Error(`Failed to read ${path.relative(repoRoot, queuePolicyPath) || queuePolicyPath}: ${formatError(error)}`);
+    }
+
+    logger?.info("Repo queue-policy.json is missing; using bundled default queue policy.", {
+      fallbackPath: BUNDLED_QUEUE_POLICY_PATH,
+      repoRoot,
+    });
+
+    try {
+      raw = readFileSync(BUNDLED_QUEUE_POLICY_PATH, "utf8");
+      return parseQueuePolicyFile(raw, BUNDLED_QUEUE_POLICY_PATH, repoRoot);
+    } catch (fallbackError) {
+      throw new Error(
+        `Failed to read ${path.relative(repoRoot, BUNDLED_QUEUE_POLICY_PATH) || BUNDLED_QUEUE_POLICY_PATH}: ${formatError(fallbackError)}`,
+      );
+    }
   }
 
-  return parseQueuePolicy(raw, path.relative(repoRoot, queuePolicyPath) || queuePolicyPath);
+  return parseQueuePolicyFile(raw, queuePolicyPath, repoRoot);
 }
 
 function parseQueuePolicy(raw: string, source: string): QueuePolicy {
@@ -991,8 +1018,8 @@ export class ContinuationController {
     this.client = context.client;
     this.cwd = path.resolve(context.worktree ?? context.directory);
     this.commandTimeoutMs = normalizeCommandTimeoutMs(context.commandTimeoutMs);
-    const queuePolicy = loadQueuePolicy(this.cwd);
     this.logger = logger;
+    const queuePolicy = loadQueuePolicy(this.cwd, this.logger);
     this.continuationLockPath = path.resolve(this.cwd, DEFAULT_CONTINUATION_LOCK_PATH);
     this.continuationStatePath = path.resolve(this.cwd, DEFAULT_CONTINUATION_STATE_PATH);
     this.issueCreationTemplate = buildIssueCreationTemplate(queuePolicy);
@@ -1368,18 +1395,6 @@ export class ContinuationController {
           return;
         }
 
-        if (continuationState.ownerSessionID === undefined) {
-          continuationState = await writeContinuationState(
-            this.continuationStatePath,
-            {
-              ...continuationState,
-              ownerSessionID: sessionID,
-            },
-            this.commandTimeoutMs,
-          );
-          this.logger.info("Claimed continuation ownership.", { sessionID });
-        }
-
         continuationState = await this.completeWhipTaskIfNeeded(sessionID, continuationState);
         if (continuationState.pendingPromptFingerprint !== undefined) {
           this.logger.info("Skipping continuation because a prompt reservation is already pending.", {
@@ -1404,6 +1419,18 @@ export class ContinuationController {
             sessionID,
           });
           return;
+        }
+
+        if (continuationState.ownerSessionID === undefined) {
+          continuationState = await writeContinuationState(
+            this.continuationStatePath,
+            {
+              ...continuationState,
+              ownerSessionID: sessionID,
+            },
+            this.commandTimeoutMs,
+          );
+          this.logger.info("Claimed continuation ownership.", { sessionID });
         }
 
         continuationState = await writeContinuationState(
@@ -2315,10 +2342,15 @@ function resolveEffectiveIssueStatus(
 }
 
 function parsePriorityOrderSummary(output: string, queueStatusNames: QueueStatusNames): PriorityOrderSummary {
+  const trimmedOutput = output.trim();
+  if (!looksLikeJsonDocument(trimmedOutput)) {
+    return parseLegacyPriorityOrderSummary(trimmedOutput, queueStatusNames);
+  }
+
   let parsed: unknown;
 
   try {
-    parsed = JSON.parse(output) as unknown;
+    parsed = JSON.parse(trimmedOutput) as unknown;
   } catch (error) {
     throw new Error(`Invalid priority order JSON: ${formatError(error)}`);
   }
@@ -2352,6 +2384,85 @@ function parsePriorityOrderSummary(output: string, queueStatusNames: QueueStatus
 
   assertPriorityOrderSummaryConsistency(parsedSummary, queueStatusNames);
   return parsedSummary;
+}
+
+function looksLikeJsonDocument(output: string): boolean {
+  return output.startsWith("{") || output.startsWith("[");
+}
+
+function parseLegacyPriorityOrderSummary(
+  output: string,
+  queueStatusNames: QueueStatusNames,
+): PriorityOrderSummary {
+  const issues = output
+    .split(/\r?\n/)
+    .map((line) => parseLegacyPriorityOrderIssue(line, queueStatusNames))
+    .filter((issue): issue is PriorityOrderIssue => issue !== undefined)
+    .map((issue, index) => ({
+      ...issue,
+      score: Math.max(0, 10_000 - index),
+    }));
+
+  const readyIssues = issues
+    .filter((issue) => issue.status === queueStatusNames.ready)
+    .map((issue) => issue.number);
+  const blockedIssues = issues
+    .filter((issue) => issue.status === queueStatusNames.blocked)
+    .map((issue) => issue.number);
+  const inProgress = issues
+    .filter((issue) => issue.status === queueStatusNames.inProgress)
+    .map((issue) => issue.number);
+
+  return {
+    blockedIssues,
+    inProgress,
+    issues,
+    nextIssue: issues.find(
+      (issue) => issue.status !== queueStatusNames.inProgress && issue.status !== queueStatusNames.blocked,
+    )?.number ?? null,
+    readyIssues,
+    version: 1,
+  };
+}
+
+function parseLegacyPriorityOrderIssue(
+  line: string,
+  queueStatusNames: QueueStatusNames,
+): Omit<PriorityOrderIssue, "score"> | undefined {
+  const match = line.match(/^\s*\d+\.\s+#(?<number>\d+):\s+(?<title>.+?)\s+\[(?<labels>[^\]]+)\]\s*$/);
+  if (match?.groups === undefined) {
+    return undefined;
+  }
+
+  const number = Number.parseInt(match.groups.number ?? "", 10);
+  if (!Number.isInteger(number) || number <= 0) {
+    throw new Error(`Invalid priority order issue number in line: ${line}`);
+  }
+
+  const title = (match.groups.title ?? "").trim();
+  if (title.length === 0) {
+    throw new Error(`Invalid priority order issue title in line: ${line}`);
+  }
+
+  const labels = (match.groups.labels ?? "")
+    .split(",")
+    .map((label) => label.trim())
+    .filter((label) => label.length > 0);
+  if (labels.length === 0) {
+    throw new Error(`Invalid priority order issue labels in line: ${line}`);
+  }
+
+  const priority = labels.find((label) => /^P\d/.test(label)) ?? labels[0] ?? "";
+  const component = labels.find((label) => label.startsWith("C-")) ?? "";
+
+  return {
+    component,
+    labels,
+    number,
+    priority,
+    status: resolveEffectiveIssueStatus(labels, queueStatusNames),
+    title,
+  };
 }
 
 function parsePriorityOrderIssues(raw: unknown): PriorityOrderIssue[] {

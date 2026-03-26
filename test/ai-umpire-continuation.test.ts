@@ -206,6 +206,46 @@ process.stdout.write(JSON.stringify([
     expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:43");
   });
 
+  it("falls back to legacy human priority-order output when the script ignores --json", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+    const restorePath = await installFakeGhBinary(`
+process.stdout.write(JSON.stringify([
+  { number: 74, title: "Package smoke coverage", labels: [{ name: "P1-Critical" }, { name: "C-Infrastructure" }, { name: "S-Ready" }] },
+  { number: 75, title: "Bench workflow", labels: [{ name: "P2-High" }, { name: "S-InProgress" }] }
+]));
+`);
+
+    await installLegacyPriorityOrderScript(
+      repoDir,
+      [
+        "🎯 PRIORITY ORDER (Next → Last)",
+        "=================================",
+        "1. #74: Package smoke coverage [P1-Critical, C-Infrastructure, S-Ready]",
+        "2. #75: Bench workflow [P2-High, S-InProgress]",
+        "",
+        "💡 Next recommended work: #74 (ready to start)",
+      ].join("\n"),
+    );
+
+    try {
+      const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+      await plugin.event?.({
+        event: {
+          properties: { sessionID: "ses_ready" },
+          type: "session.idle",
+        },
+      });
+    } finally {
+      restorePath();
+    }
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.sessionID).toBe("ses_ready");
+    expect(readContinuationState(repoDir).lastPromptFingerprint).toBe("issues:74");
+  });
+
   it("falls back to the full priority-order summary when the ready-issue probe fails", async () => {
     const repoDir = await createTempDir(true);
     const prompts: PromptRecord[] = [];
@@ -382,16 +422,35 @@ process.exit(1);
 
     expect(prompts).toHaveLength(0);
     await waitForContinuationLogToContain(repoDir, "Invalid priority order summary readyIssues.");
+    expect(readContinuationState(repoDir).ownerSessionID).toBeUndefined();
   });
 
-  it("fails plugin initialization when queue-policy.json is missing from the repo root", async () => {
+  it("uses the bundled queue-policy.json when the repo root is missing one", async () => {
     const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const appLog = vi.fn();
 
     await rm(path.join(repoDir, "queue-policy.json"), { force: true });
 
-    await expect(AiUmpireContinuationPlugin(createContext(repoDir, [], []))).rejects.toThrow(
-      "Failed to read queue-policy.json",
+    const plugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, [], {}, { appLog }),
     );
+
+    await plugin.event?.({
+      event: {
+        properties: { sessionID: "ses_ready" },
+        type: "session.idle",
+      },
+    });
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.text).toContain(queuePolicy.issueCreation.ensureLabelsCommand);
+    expect(appLog).toHaveBeenCalledWith({
+      body: {
+        level: "info",
+        message: expect.stringContaining("Repo queue-policy.json is missing; using bundled default queue policy."),
+      },
+    });
   });
 
   it("fails plugin initialization when queue-policy.json is invalid", async () => {
@@ -2598,6 +2657,20 @@ async function installRealPriorityOrderScript(repoDir: string): Promise<void> {
   const targetPath = path.join(repoDir, "scripts", "gh-priority-order.sh");
   await copyFile(path.join(repoRoot, "scripts", "gh-priority-order.sh"), targetPath);
   await chmod(targetPath, 0o755);
+}
+
+async function installLegacyPriorityOrderScript(repoDir: string, output: string): Promise<void> {
+  await mkdir(path.join(repoDir, "scripts"), { recursive: true });
+  await writeFile(
+    path.join(repoDir, "scripts", "gh-priority-order.sh"),
+    `#!/usr/bin/env bash
+cat <<'EOF'
+${output}
+EOF
+`,
+    "utf8",
+  );
+  await chmod(path.join(repoDir, "scripts", "gh-priority-order.sh"), 0o755);
 }
 
 async function installCountingPriorityOrderScript(
