@@ -39,6 +39,8 @@ type SessionInfoRecord = {
 
 type StoredContinuationState = {
   activeWhipTaskID?: string;
+  issuePromptHadActiveTodos?: boolean;
+  issuePromptGeneration?: number;
   lastPromptFingerprint?: string;
   ownerSessionID?: string;
   pendingPromptFingerprint?: string;
@@ -171,6 +173,67 @@ describe("AiUmpireContinuationPlugin", () => {
       `Every created issue must have exactly one status label: ${formatCodeList(issueStatusLabels)}.${inProgressStatus === undefined ? "" : ` Do not create fresh issues directly as \`${inProgressStatus}\`.`}`,
     );
     expect(prompts[0]?.text).toContain(queuePolicy.issueCreation.dependencyLine);
+  });
+
+  it("appends repo-root continuation.md instructions to issue prompts", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+
+    await writeFile(
+      path.join(repoDir, "continuation.md"),
+      "# Repo Continuation\nLOOP FOREVER\nFollow program.md when deciding whether work is complete.\n",
+      "utf8",
+    );
+
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+    await emitIdle(plugin, "ses_ready_custom_prompt");
+
+    expect(prompts).toHaveLength(1);
+    const promptText = prompts[0]?.text ?? "";
+
+    expect(promptText).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(promptText).toContain("## Repository Continuation Instructions (`continuation.md`)");
+    expect(promptText).toContain("LOOP FOREVER");
+    expect(promptText).toContain("Follow program.md when deciding whether work is complete.");
+    expect(promptText.indexOf("## Repository Continuation Instructions (`continuation.md`)"))
+      .toBeLessThan(promptText.lastIndexOf("Go."));
+  });
+
+  it("keeps the base issue prompt unchanged when continuation.md is missing", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+    await emitIdle(plugin, "ses_ready_without_custom_prompt");
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(prompts[0]?.text).not.toContain("## Repository Continuation Instructions (`continuation.md`)");
+  });
+
+  it("ignores an empty continuation.md and logs the reason", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const appLog = vi.fn();
+
+    await writeFile(path.join(repoDir, "continuation.md"), "  \n\n", "utf8");
+
+    const plugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, [], {}, { appLog }),
+    );
+
+    await emitIdle(plugin, "ses_ready_empty_custom_prompt");
+
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]?.text).toContain("Continue solving open issues from gh-priority-order.sh.");
+    expect(prompts[0]?.text).not.toContain("## Repository Continuation Instructions (`continuation.md`)");
+    expect(appLog).toHaveBeenCalledWith({
+      body: {
+        level: "info",
+        message: expect.stringContaining("Repo continuation.md is empty; ignoring repository-specific continuation prompt."),
+      },
+    });
   });
 
   it("consumes the real priority-order script JSON contract when selecting issue work", async () => {
@@ -880,6 +943,85 @@ process.exit(1);
     );
   });
 
+  it("re-prompts the same issue after active todos are exhausted", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const appLog = vi.fn();
+    const plugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, [], { ses_primary: { id: "ses_primary" } }, { appLog }),
+    );
+
+    await emitIdle(plugin, "ses_primary");
+    await emitTodoUpdated(plugin, "ses_primary", [
+      { content: "Implement issue work", id: "todo-1", priority: "high", status: "in_progress" },
+    ]);
+    await emitTodoUpdated(plugin, "ses_primary", [
+      { content: "Implement issue work", id: "todo-1", priority: "high", status: "completed" },
+    ]);
+
+    const continuationState = readContinuationState(repoDir);
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[0]?.sessionID).toBe("ses_primary");
+    expect(prompts[1]?.sessionID).toBe("ses_primary");
+    expect(continuationState.issuePromptHadActiveTodos).toBeUndefined();
+    expect(continuationState.issuePromptGeneration).toBe(1);
+    expect(continuationState.lastPromptFingerprint).toBe("issues:26:generation:1");
+    await waitForContinuationLogToContain(
+      repoDir,
+      "Advanced issue continuation fingerprint generation after todo exhaustion.",
+    );
+
+    const infoMessages = appLog.mock.calls
+      .map(([input]) => input.body)
+      .filter((body) => body.level === "info")
+      .map((body) => body.message);
+
+    expect(
+      infoMessages.some(
+        (message) =>
+          message.includes("Advanced issue continuation fingerprint generation after todo exhaustion.") &&
+          message.includes('"issuePromptGeneration":1') &&
+          message.includes('"sessionID":"ses_primary"'),
+      ),
+    ).toBe(true);
+  });
+
+  it("re-prompts the same issue after a controller restart once active todos are exhausted", async () => {
+    const repoDir = await createTempDir(true);
+    const prompts: PromptRecord[] = [];
+    const appLog = vi.fn();
+    const sessionInfoByID = { ses_primary: { id: "ses_primary" } };
+
+    const firstPlugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, [], sessionInfoByID, { appLog }),
+    );
+
+    await emitIdle(firstPlugin, "ses_primary");
+    await emitTodoUpdated(firstPlugin, "ses_primary", [
+      { content: "Implement issue work", id: "todo-1", priority: "high", status: "in_progress" },
+    ]);
+
+    expect(readContinuationState(repoDir).issuePromptHadActiveTodos).toBe(true);
+
+    const secondPlugin = await AiUmpireContinuationPlugin(
+      createContext(repoDir, prompts, [], sessionInfoByID, { appLog }),
+    );
+
+    await emitTodoUpdated(secondPlugin, "ses_primary", [
+      { content: "Implement issue work", id: "todo-1", priority: "high", status: "completed" },
+    ]);
+    await emitIdle(secondPlugin, "ses_primary");
+
+    const continuationState = readContinuationState(repoDir);
+
+    expect(prompts).toHaveLength(2);
+    expect(prompts[1]?.sessionID).toBe("ses_primary");
+    expect(continuationState.issuePromptHadActiveTodos).toBeUndefined();
+    expect(continuationState.issuePromptGeneration).toBe(1);
+    expect(continuationState.lastPromptFingerprint).toBe("issues:26:generation:1");
+  });
+
   it("creates whip state, claims the first task, and keeps .umpire out of shipping prompts", async () => {
     const repoDir = await createTempDir(false);
     const prompts: PromptRecord[] = [];
@@ -922,6 +1064,31 @@ process.exit(1);
     expect(whipRaw).toContain('"status": "in_progress"');
     expect(gitignoreRaw).toContain(".umpire/");
     expect(gitInfoExcludeRaw).toContain(".umpire/");
+  });
+
+  it("appends repo-root continuation.md instructions to whip prompts", async () => {
+    const repoDir = await createTempDir(false);
+    const prompts: PromptRecord[] = [];
+
+    await writeFile(
+      path.join(repoDir, "continuation.md"),
+      "# Repo Continuation\nLOOP FOREVER\nUse program.md to decide whether another backlog pass is required.\n",
+      "utf8",
+    );
+
+    const plugin = await AiUmpireContinuationPlugin(createContext(repoDir, prompts, []));
+
+    await emitIdle(plugin, "ses_whip_custom_prompt");
+
+    expect(prompts).toHaveLength(1);
+    const promptText = prompts[0]?.text ?? "";
+
+    expect(promptText).toContain("Continue the selected WHIP backlog task.");
+    expect(promptText).toContain("## Repository Continuation Instructions (`continuation.md`)");
+    expect(promptText).toContain("LOOP FOREVER");
+    expect(promptText).toContain("Use program.md to decide whether another backlog pass is required.");
+    expect(promptText.indexOf("## Repository Continuation Instructions (`continuation.md`)"))
+      .toBeLessThan(promptText.lastIndexOf("Go."));
   });
 
   it("resumes an in-progress whip task from whip state on a cold start without rerunning priority ordering", async () => {
@@ -3209,6 +3376,19 @@ async function emitIdle(plugin: TestPlugin, sessionID: string): Promise<void> {
     event: {
       properties: { sessionID },
       type: "session.idle",
+    },
+  });
+}
+
+async function emitTodoUpdated(
+  plugin: TestPlugin,
+  sessionID: string,
+  todos: Array<{ content: string; id: string; priority: string; status: string }>,
+): Promise<void> {
+  await plugin.event?.({
+    event: {
+      properties: { sessionID, todos },
+      type: "todo.updated",
     },
   });
 }

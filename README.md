@@ -39,6 +39,13 @@ That writes:
 - `scripts/gh-priority-order.sh`
 - `scripts/gh-update-labels.sh`
 
+Optional repo-level continuation prompt customization:
+
+- add a repo-root `continuation.md` file to inject repository-specific instructions into both issue and WHIP continuation prompts
+- `continuation.md` supplements the built-in prompt, so repo-specific rules like `LOOP FOREVER` or references to local `program.md` can ride alongside the default AI Umpire workflow
+- `continuation.md` is trusted repo-authored prompt text; missing or empty files are ignored
+- `continuation.md` is loaded when the continuation controller starts, so restart the plugin/session after editing it
+
 If you need to overwrite existing assets:
 
 ```bash

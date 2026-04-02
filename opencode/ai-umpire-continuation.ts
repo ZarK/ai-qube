@@ -11,6 +11,8 @@ const BUNDLED_QUEUE_POLICY_PATH = path.resolve(
   "queue-policy.json",
 );
 
+const REPO_CONTINUATION_PROMPT_FILE_NAME = "continuation.md";
+
 export interface PluginContext {
   commandTimeoutMs?: number;
   continuationLogMaxBytes?: number;
@@ -44,6 +46,7 @@ export interface WhipTask {
 }
 
 interface SessionState {
+  hadActiveTodosSinceLastPrompt?: boolean;
   preparedDecision?: Promise<ContinuationDecision | undefined>;
   promptTarget?: PromptTarget;
   promptTargetReady?: Promise<PromptTarget | undefined>;
@@ -59,6 +62,8 @@ interface SessionState {
 
 interface ContinuationState {
   activeWhipTaskID?: string;
+  issuePromptHadActiveTodos?: boolean;
+  issuePromptGeneration?: number;
   lastPromptFingerprint?: string;
   ownerSessionID?: string;
   pendingPromptFingerprint?: string;
@@ -518,6 +523,33 @@ function loadQueuePolicy(repoRoot: string, logger?: ContinuationLogger): QueuePo
   return parseQueuePolicyFile(raw, queuePolicyPath, repoRoot);
 }
 
+function loadRepoContinuationPrompt(repoRoot: string, logger?: ContinuationLogger): string | undefined {
+  const continuationPromptPath = path.resolve(repoRoot, REPO_CONTINUATION_PROMPT_FILE_NAME);
+
+  try {
+    const prompt = readFileSync(continuationPromptPath, "utf8").trim();
+    if (prompt.length === 0) {
+      logger?.info("Repo continuation.md is empty; ignoring repository-specific continuation prompt.", {
+        continuationPromptPath: path.relative(repoRoot, continuationPromptPath) || continuationPromptPath,
+      });
+      return undefined;
+    }
+
+    logger?.info("Loaded repository-specific continuation prompt from continuation.md.", {
+      continuationPromptPath: path.relative(repoRoot, continuationPromptPath) || continuationPromptPath,
+    });
+    return prompt;
+  } catch (error) {
+    if (isMissingFileError(error)) {
+      return undefined;
+    }
+
+    throw new Error(
+      `Failed to read ${path.relative(repoRoot, continuationPromptPath) || continuationPromptPath}: ${formatError(error)}`,
+    );
+  }
+}
+
 function parseQueuePolicy(raw: string, source: string): QueuePolicy {
   let parsed: unknown;
 
@@ -902,15 +934,20 @@ function findQueueStatusName(policy: QueuePolicy, key: string): string | undefin
   return policy.statuses.find((candidate) => candidate.key === key)?.name;
 }
 
-function buildIssuePrompt(issueCreationTemplate: string, queueStatusNames: QueueStatusNames): string {
+function buildIssuePrompt(
+  issueCreationTemplate: string,
+  queueStatusNames: QueueStatusNames,
+  repoContinuationPrompt?: string,
+): string {
   return [
     "Continue solving open issues from gh-priority-order.sh. You are a trusted autonomous professional developer with full authority. Search for information. Analyze the issue. Work to completion. Execute without pause.",
     "Rules:",
     buildIssueWorkflowRules(queueStatusNames),
     issueCreationTemplate,
     ISSUE_TODO_TEMPLATE,
+    buildRepoContinuationPromptSection(repoContinuationPrompt),
     "Go.",
-  ].join("\n");
+  ].filter((entry): entry is string => entry !== undefined).join("\n");
 }
 
 function buildIssueWorkflowRules(queueStatusNames: QueueStatusNames): string {
@@ -979,6 +1016,18 @@ function formatCodeList(values: readonly string[]): string {
   return `${formatted.slice(0, -1).join(", ")}, or ${formatted[formatted.length - 1]}`;
 }
 
+function buildRepoContinuationPromptSection(repoContinuationPrompt?: string): string | undefined {
+  if (repoContinuationPrompt === undefined) {
+    return undefined;
+  }
+
+  return [
+    "## Repository Continuation Instructions (`continuation.md`)",
+    "Apply these repository-specific continuation instructions in addition to the generic workflow. When they are more specific to this repository, follow them.",
+    repoContinuationPrompt,
+  ].join("\n");
+}
+
 const managedStateRootReady = new Map<string, Promise<void>>();
 
 const continuationLogWriteChains = new Map<string, Promise<void>>();
@@ -1010,6 +1059,8 @@ export class ContinuationController {
 
   private readonly queueStatusNames: QueueStatusNames;
 
+  private readonly repoContinuationPrompt?: string;
+
   private readonly sessionStates = new Map<string, SessionState>();
 
   private readonly whipPath: string;
@@ -1020,17 +1071,23 @@ export class ContinuationController {
     this.commandTimeoutMs = normalizeCommandTimeoutMs(context.commandTimeoutMs);
     this.logger = logger;
     const queuePolicy = loadQueuePolicy(this.cwd, this.logger);
+    this.repoContinuationPrompt = loadRepoContinuationPrompt(this.cwd, this.logger);
     this.continuationLockPath = path.resolve(this.cwd, DEFAULT_CONTINUATION_LOCK_PATH);
     this.continuationStatePath = path.resolve(this.cwd, DEFAULT_CONTINUATION_STATE_PATH);
     this.issueCreationTemplate = buildIssueCreationTemplate(queuePolicy);
     this.queueStatusNames = resolveQueueStatusNames(queuePolicy);
-    this.issuePrompt = buildIssuePrompt(this.issueCreationTemplate, this.queueStatusNames);
+    this.issuePrompt = buildIssuePrompt(
+      this.issueCreationTemplate,
+      this.queueStatusNames,
+      this.repoContinuationPrompt,
+    );
     this.idleDelayMs = Math.max(0, context.idleDelayMs ?? DEFAULT_INTERACTIVE_IDLE_DELAY_MS);
     this.priorityOrderScript = path.resolve(this.cwd, "scripts", "gh-priority-order.sh");
     this.whipPath = path.resolve(this.cwd, DEFAULT_WHIP_PATH);
     this.logger.info("Initialized continuation controller.", {
       commandTimeoutMs: this.commandTimeoutMs,
       cwd: this.cwd,
+      hasRepoContinuationPrompt: this.repoContinuationPrompt !== undefined,
       idleDelayMs: this.idleDelayMs,
       logLevel: context.logLevel ?? "silent",
     });
@@ -1124,12 +1181,16 @@ export class ContinuationController {
           totalTodos: state.todos.length,
         });
         if (hasActiveTodos(state.todos)) {
+          state.hadActiveTodosSinceLastPrompt = true;
           this.clearPreparedDecision(state);
         }
         break;
     }
 
     await this.prepareManagedStateRoot(event, state);
+    if (event.type === "todo.updated" && hasActiveTodos(state.todos ?? [])) {
+      await this.markIssuePromptActiveTodosSeenIfNeeded(sessionID, state.todos ?? []);
+    }
     await this.prepareDecisionIfNeeded(event, state, sessionID);
 
     if (event.type === "message.updated") {
@@ -1179,6 +1240,8 @@ export class ContinuationController {
     const todos = state.todos ?? (await fetchSessionTodos(this.client, sessionID, this.cwd));
     state.todos = todos;
     if (hasActiveTodos(todos)) {
+      state.hadActiveTodosSinceLastPrompt = true;
+      await this.markIssuePromptActiveTodosSeenIfNeeded(sessionID, todos);
       this.clearPreparedDecision(state);
       return;
     }
@@ -1341,6 +1404,9 @@ export class ContinuationController {
 
     const todos = state.todos ?? (await fetchSessionTodos(this.client, sessionID, this.cwd));
     state.todos = todos;
+    if (hasActiveTodos(todos)) {
+      state.hadActiveTodosSinceLastPrompt = true;
+    }
 
     this.logger.debug("Loaded session todos for continuation check.", {
       activeTodoCount: countActiveTodos(todos),
@@ -1358,6 +1424,7 @@ export class ContinuationController {
         activeTodoCount: countActiveTodos(todos),
         sessionID,
       });
+      await this.markIssuePromptActiveTodosSeenIfNeeded(sessionID, todos);
       return;
     }
 
@@ -1413,9 +1480,17 @@ export class ContinuationController {
           return;
         }
 
-        if (decision.fingerprint === continuationState.lastPromptFingerprint) {
+        continuationState = await this.advanceIssuePromptGenerationIfNeeded(
+          continuationState,
+          sessionID,
+          state,
+          todos,
+        );
+        const decisionFingerprint = buildContinuationFingerprint(decision, continuationState);
+
+        if (decisionFingerprint === continuationState.lastPromptFingerprint) {
           this.logger.info("Skipping continuation because the next fingerprint matches the last delivered prompt.", {
-            fingerprint: decision.fingerprint,
+            fingerprint: decisionFingerprint,
             sessionID,
           });
           return;
@@ -1438,7 +1513,7 @@ export class ContinuationController {
           {
             ...continuationState,
             ownerSessionID: sessionID,
-            pendingPromptFingerprint: decision.fingerprint,
+            pendingPromptFingerprint: decisionFingerprint,
             pendingPromptUpdatedAt: new Date().toISOString(),
             pendingWhipTaskID: decision.whipTaskID,
           },
@@ -1446,7 +1521,7 @@ export class ContinuationController {
         );
 
         this.logger.info("Reserved continuation prompt.", {
-          fingerprint: decision.fingerprint,
+          fingerprint: decisionFingerprint,
           kind: decision.kind,
           sessionID,
           whipTaskID: decision.whipTaskID,
@@ -1456,7 +1531,7 @@ export class ContinuationController {
           const promptTarget = await this.getPromptTarget(sessionID, state);
           this.logger.info("Enqueuing continuation prompt.", {
             agent: promptTarget?.agent,
-            fingerprint: decision.fingerprint,
+            fingerprint: decisionFingerprint,
             kind: decision.kind,
             model: promptTarget?.model,
             sessionID,
@@ -1475,11 +1550,11 @@ export class ContinuationController {
             this.commandTimeoutMs,
           );
           this.logger.debug("Cleared failed continuation prompt reservation.", {
-            fingerprint: decision.fingerprint,
+            fingerprint: decisionFingerprint,
             sessionID,
           });
           throw withContinuationLogDetails(error, {
-            fingerprint: decision.fingerprint,
+            fingerprint: decisionFingerprint,
             kind: decision.kind,
             sessionID,
             whipTaskID: decision.whipTaskID,
@@ -1487,11 +1562,12 @@ export class ContinuationController {
         }
 
         this.logger.info("Enqueued continuation prompt.", {
-          fingerprint: decision.fingerprint,
+          fingerprint: decisionFingerprint,
           kind: decision.kind,
           sessionID,
           whipTaskID: decision.whipTaskID,
         });
+        state.hadActiveTodosSinceLastPrompt = false;
         state.skipNextSessionIdle = true;
 
         if (decision.kind === "whip" && decision.whipTaskID !== undefined) {
@@ -1512,7 +1588,8 @@ export class ContinuationController {
           {
             ...continuationState,
             activeWhipTaskID: decision.kind === "whip" ? decision.whipTaskID : undefined,
-            lastPromptFingerprint: decision.fingerprint,
+            issuePromptHadActiveTodos: undefined,
+            lastPromptFingerprint: decisionFingerprint,
             ownerSessionID: sessionID,
             pendingPromptFingerprint: undefined,
             pendingPromptUpdatedAt: undefined,
@@ -1554,6 +1631,108 @@ export class ContinuationController {
       {
         ...continuationState,
         activeWhipTaskID: undefined,
+      },
+      this.commandTimeoutMs,
+    );
+  }
+
+  private async markIssuePromptActiveTodosSeenIfNeeded(
+    sessionID: string,
+    todos: readonly TodoItem[],
+  ): Promise<void> {
+    if (!hasActiveTodos(todos)) {
+      return;
+    }
+
+    const lockResult = await withContinuationLock<void>(
+      this.continuationLockPath,
+      this.logger,
+      async () => {
+        let continuationState = await ensureContinuationState(
+          this.continuationStatePath,
+          this.commandTimeoutMs,
+        );
+        continuationState = await this.releaseStalePendingPromptIfNeeded(continuationState);
+
+        if (continuationState.ownerSessionID !== sessionID) {
+          return;
+        }
+
+        if (continuationState.activeWhipTaskID !== undefined) {
+          return;
+        }
+
+        if (!continuationState.lastPromptFingerprint?.startsWith("issues:")) {
+          return;
+        }
+
+        if (continuationState.issuePromptHadActiveTodos === true) {
+          return;
+        }
+
+        await writeContinuationState(
+          this.continuationStatePath,
+          {
+            ...continuationState,
+            issuePromptHadActiveTodos: true,
+          },
+          this.commandTimeoutMs,
+        );
+        this.logger.debug("Marked issue continuation state after observing active todos.", {
+          lastPromptFingerprint: continuationState.lastPromptFingerprint,
+          sessionID,
+        });
+      },
+    );
+
+    if (!lockResult.acquired) {
+      this.logger.debug("Skipped marking active issue todos because the continuation lock is already held.", {
+        sessionID,
+      });
+    }
+  }
+
+  private async advanceIssuePromptGenerationIfNeeded(
+    continuationState: ContinuationState,
+    sessionID: string,
+    state: SessionState,
+    todos: readonly TodoItem[],
+  ): Promise<ContinuationState> {
+    if (hasActiveTodos(todos)) {
+      return continuationState;
+    }
+
+    const sawActiveTodos =
+      state.hadActiveTodosSinceLastPrompt === true || continuationState.issuePromptHadActiveTodos === true;
+    if (!sawActiveTodos) {
+      return continuationState;
+    }
+
+    if (continuationState.ownerSessionID !== sessionID) {
+      return continuationState;
+    }
+
+    if (continuationState.activeWhipTaskID !== undefined) {
+      return continuationState;
+    }
+
+    if (!continuationState.lastPromptFingerprint?.startsWith("issues:")) {
+      return continuationState;
+    }
+
+    const issuePromptGeneration = (continuationState.issuePromptGeneration ?? 0) + 1;
+    state.hadActiveTodosSinceLastPrompt = false;
+    this.logger.info("Advanced issue continuation fingerprint generation after todo exhaustion.", {
+      issuePromptGeneration,
+      lastPromptFingerprint: continuationState.lastPromptFingerprint,
+      sessionID,
+    });
+    return writeContinuationState(
+      this.continuationStatePath,
+      {
+        ...continuationState,
+        issuePromptHadActiveTodos: undefined,
+        issuePromptGeneration,
       },
       this.commandTimeoutMs,
     );
@@ -1696,6 +1875,8 @@ export class ContinuationController {
       {
         ...continuationState,
         activeWhipTaskID: undefined,
+        issuePromptHadActiveTodos: undefined,
+        issuePromptGeneration: undefined,
         lastPromptFingerprint: undefined,
         ownerSessionID: undefined,
         pendingPromptFingerprint: undefined,
@@ -1732,6 +1913,8 @@ export class ContinuationController {
           {
             ...continuationState,
             activeWhipTaskID: undefined,
+            issuePromptHadActiveTodos: undefined,
+            issuePromptGeneration: undefined,
             lastPromptFingerprint: undefined,
             ownerSessionID: undefined,
             pendingPromptFingerprint: undefined,
@@ -1886,7 +2069,7 @@ export class ContinuationController {
       whipTaskID: nextTask.id,
     });
 
-    return buildWhipDecision(nextTask, this.issueCreationTemplate);
+    return buildWhipDecision(nextTask, this.issueCreationTemplate, this.repoContinuationPrompt);
   }
 
   private async probeIssueAvailability(): Promise<{
@@ -2284,11 +2467,12 @@ function buildIssueDecision(
 function buildWhipDecision(
   nextTask: WhipTask,
   issueCreationTemplate: string,
+  repoContinuationPrompt?: string,
 ): ContinuationDecision {
   return {
     fingerprint: `whip:${nextTask.id}`,
     kind: "whip",
-    prompt: buildWhipTaskPrompt(nextTask, issueCreationTemplate),
+    prompt: buildWhipTaskPrompt(nextTask, issueCreationTemplate, repoContinuationPrompt),
     whipTaskID: nextTask.id,
   };
 }
@@ -2622,6 +2806,22 @@ function countActiveTodos(todos: readonly TodoItem[]): number {
   return todos.filter((todo) => !["cancelled", "completed"].includes(todo.status)).length;
 }
 
+function buildContinuationFingerprint(
+  decision: ContinuationDecision,
+  continuationState: ContinuationState,
+): string {
+  if (decision.kind !== "issue") {
+    return decision.fingerprint;
+  }
+
+  const issuePromptGeneration = continuationState.issuePromptGeneration;
+  if (issuePromptGeneration === undefined) {
+    return decision.fingerprint;
+  }
+
+  return `${decision.fingerprint}:generation:${issuePromptGeneration}`;
+}
+
 function hasFreshTakeoverSignal(state: SessionState, observedAt: number): boolean {
   return (
     state.lastTakeoverSignalAt !== undefined &&
@@ -2629,7 +2829,11 @@ function hasFreshTakeoverSignal(state: SessionState, observedAt: number): boolea
   );
 }
 
-function buildWhipTaskPrompt(task: WhipTask, issueCreationTemplate: string): string {
+function buildWhipTaskPrompt(
+  task: WhipTask,
+  issueCreationTemplate: string,
+  repoContinuationPrompt?: string,
+): string {
   return [
     "Continue the selected WHIP backlog task.",
     "The plugin tracks WHIP state and selects the next task. Focus only on the task in this prompt.",
@@ -2640,8 +2844,9 @@ function buildWhipTaskPrompt(task: WhipTask, issueCreationTemplate: string): str
     WHIP_WORKFLOW_RULES,
     "* Create GitHub issues for actionable findings instead of writing extra documentation",
     "* Do not choose, reorder, or track other WHIP tasks yourself; the plugin will inject the next selected task later",
+    buildRepoContinuationPromptSection(repoContinuationPrompt),
     "Go.",
-  ].join("\n");
+  ].filter((entry): entry is string => entry !== undefined).join("\n");
 }
 
 async function ensureContinuationState(
@@ -2678,6 +2883,8 @@ async function writeContinuationState(
 
   const nextState: ContinuationState = {
     activeWhipTaskID: state.activeWhipTaskID,
+    issuePromptHadActiveTodos: state.issuePromptHadActiveTodos,
+    issuePromptGeneration: state.issuePromptGeneration,
     lastPromptFingerprint: state.lastPromptFingerprint,
     ownerSessionID: state.ownerSessionID,
     pendingPromptFingerprint: state.pendingPromptFingerprint,
@@ -3005,6 +3212,17 @@ function parseContinuationState(raw: string): ContinuationState {
   }
 
   if (
+    parsed.issuePromptHadActiveTodos !== undefined &&
+    typeof parsed.issuePromptHadActiveTodos !== "boolean"
+  ) {
+    throw new Error("Invalid .umpire/continuation-state.json issue prompt todo marker.");
+  }
+
+  if (parsed.issuePromptGeneration !== undefined && !isPositiveInteger(parsed.issuePromptGeneration)) {
+    throw new Error("Invalid .umpire/continuation-state.json issue prompt generation.");
+  }
+
+  if (
     parsed.lastPromptFingerprint !== undefined &&
     typeof parsed.lastPromptFingerprint !== "string"
   ) {
@@ -3035,6 +3253,8 @@ function parseContinuationState(raw: string): ContinuationState {
 
   return {
     activeWhipTaskID: parsed.activeWhipTaskID,
+    issuePromptHadActiveTodos: parsed.issuePromptHadActiveTodos,
+    issuePromptGeneration: parsed.issuePromptGeneration,
     lastPromptFingerprint: parsed.lastPromptFingerprint,
     ownerSessionID: parsed.ownerSessionID,
     pendingPromptFingerprint: parsed.pendingPromptFingerprint,
