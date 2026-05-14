@@ -1,0 +1,542 @@
+# M1 - Package And CLI Foundation
+
+## Strategic Goal
+
+M1 creates the safe, serious foundation for AI Executor as the `@tjalve/aie` npm package and `aie` CLI.
+
+This milestone does not implement the full GitHub issue workflow yet. It establishes the package shape, runtime policy, CLI conventions, repository config model, diagnostics framework, and supply-chain-safe install posture that every later milestone depends on.
+
+After M1, a developer or agent should be able to install or run the package deliberately, invoke `aie --help`, inspect command help, validate the local environment with `aie doctor`, read and validate Executor config, and trust that installing the package does not mutate the repository or run hidden setup code.
+
+M1 delivers five things:
+
+1. **Package foundation** - TypeScript package scaffold for `@tjalve/aie`, compiled output, npm executable, tests, lint/typecheck, and release-safe package metadata.
+2. **CLI UX foundation** - consistent command structure, help text, human output, JSON output, exit codes, dry-run conventions, non-interactive behavior, and no-color handling.
+3. **Config foundation** - versioned repository config discovery, parsing, validation, defaults, and stable schema for later workflow commands.
+4. **Diagnostics foundation** - `aie doctor` infrastructure for local runtime, git, GitHub CLI, config, and future repo checks.
+5. **Supply-chain-safe posture** - no install lifecycle scripts, minimal justified dependencies, pinned-version documentation, and safe execution expectations.
+
+The important success condition is not feature breadth. The important success condition is that later milestones can add GitHub queue, lifecycle, init, PR gate, and migration behavior without reworking the package, CLI, config, or safety model.
+
+---
+
+## Functional Requirements Addressed
+
+M1 is the primary implementation foundation for:
+
+- **FR-02 - Package, Runtime, And CLI Surface**
+- **FR-13 - Observability And Diagnostics**
+- **FR-15 - CLI UX Standards**
+
+M1 provides foundational support for:
+
+- **FR-04-001 through FR-04-009 and FR-04-016 through FR-04-018** - config storage, validation, git/PR pre-start policy defaults, `doctor`, and dry-run conventions. Label setup and repository priming are implemented in M2.
+- **FR-12-004 through FR-12-006** - log redaction and external-service reporting foundations. Agent instruction prompt hygiene is implemented in M4.
+- **FR-02-012 through FR-02-015** - supply-chain-safe package behavior, safe install documentation, no preferred floating `latest` installs, and minimal justified runtime dependencies.
+
+M1 intentionally does not complete:
+
+- `aie init` and installed agent instructions. Those are M4.
+- `aie labels setup`, `aie repo prime`, `aie queue`, and `aie next`. Those are M2.
+- `aie start`, `aie switch`, `aie view`, `aie complete`, and dependency commands. Those are M3.
+- PR review gates, Oracle, manual UI audit, and optional `aiq` quality gate. Those are M5.
+- Legacy migration and cleanup. Those are M6.
+
+---
+
+## Source References
+
+Use these local references only when drafting, reviewing, or decomposing this milestone:
+
+| Reference | Local Path | Use |
+|-----------|------------|-----|
+| Umpire package CLI and installer pattern | `references/workflows/ai-umpire/src/bin/aiu.ts`, `references/workflows/ai-umpire/src/installer.ts`, `references/workflows/ai-umpire/package.json` | Package layout, npm executable pattern, installer safety lessons |
+| Executor spec source table | `docs/spec.md` | Exact FR text and boundaries |
+| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Future command naming and config expectations, without implementing queue behavior in M1 |
+| Mature shell scripts | `references/workflows/memex.photos/scripts/*.sh` | Command behavior reference for later milestones; M1 should only create the reusable command framework |
+
+The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
+
+Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
+
+Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old labels", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+
+---
+
+## CLI UX Research Direction
+
+M1 must create a CLI that is genuinely explorable by humans and deterministic for agents. A feature-complete CLI that requires users to memorize exact long commands is not good enough.
+
+Research sources for this direction:
+
+| Source | Relevant Guidance For Executor |
+|--------|--------------------------------|
+| [Command Line Interface Guidelines](https://clig.dev/) | Human-first design, ease of discovery, concise help on incomplete commands, examples-first help, typo suggestions, stdout/stderr separation, TTY-aware interactivity, standard flags, no arbitrary command abbreviations |
+| [The CLI Spec](https://clispec.dev/) | Agent-facing structured output, schema introspection, stderr/stdout separation, non-interactive behavior, idempotent commands, bounded output |
+| [Heroku CLI Style Guide](https://devcenter.heroku.com/articles/cli-style-guide) | Humans before machines, consistent topics/commands, flags when clarity matters, prompts only when bypassable, human output plus JSON/terse output |
+| [PatternFly CLI Handbook](https://www.patternfly.org/developer-resources/cli-handbook/) | Accessibility, specific error wording, text labels instead of color-only meaning, keyboard/non-interactive-safe flows |
+| [oclif docs](https://oclif.io/docs/features/) | Multi-command framework, help customization, JSON flag behavior, test helpers, autocomplete, space-separated topic support |
+| [Commander docs](https://www.npmjs.com/package/commander) | Minimal parser, generated help, usage errors, typo suggestions, low dependency surface |
+| [Yargs docs](https://yargs.js.org/) | Generated help, command/options structure, shell completion support |
+| [Clipanion docs](https://mael.dev/clipanion/docs/) | Type-safe command declarations and predictable option behavior |
+| [Clack prompts](https://www.npmjs.com/package/@clack/prompts) | Lightweight, attractive prompts for later interactive init flows |
+| [Ink](https://term.ink/) | Rich terminal UIs; likely too heavy for normal Executor commands unless a future dashboard-style command justifies it |
+
+M1 uses `@oclif/core` as the command-tree framework and `@clack/prompts` for interactive prompt UX where prompts are needed. Both must be used conservatively: no auto-updating installers, no just-in-time plugin installation, no hidden remote execution, and no install lifecycle scripts. `@oclif/core` maps well to Executor's multi-command shape, supports space-separated command topics, custom help, JSON command output, test helpers, and autocomplete. `@clack/prompts` gives `aie init` and future interactive paths a polished prompt surface without turning normal commands into a TUI.
+
+M1 must include a short CLI framework decision record before implementation that records this selection, the supply-chain review, and the rejected alternatives. Commander, Yargs, Clipanion, and Ink should be noted as considered alternatives rather than live implementation candidates unless supply-chain or implementation findings force a change before code is committed.
+
+Any chosen CLI dependency must pass the package safety expectations in this milestone: exact version selection, no install lifecycle scripts required for normal use, small justified runtime dependency surface, no hidden auto-update behavior, and no remote execution.
+
+Executor's CLI UX model is:
+
+1. **Progressive disclosure for humans** - `aie`, `aie help`, `aie help <command-or-topic...>`, `aie <command-or-topic...> help`, incomplete commands, and typo mistakes must guide the user toward the next valid command instead of failing with parser jargon.
+2. **Machine contract for agents** - agents must use `--json`, `--output json`, and `aie schema` rather than parsing human help text.
+3. **One command registry** - command metadata must be declared once and reused for parsing, help, schema output, completion, docs, mutation labels, dry-run support, and tests.
+4. **No fuzzy execution** - suggestions are good, but Executor must not silently run a different mutating command than the user typed. Arbitrary command-prefix abbreviations are not allowed because they create future compatibility traps.
+5. **TTY-aware interaction** - prompts and rich formatting are allowed only for interactive terminals and must always have flag/config equivalents.
+
+---
+
+## Dependencies
+
+M1 has no project milestone dependencies.
+
+External runtime expectations:
+
+- Node.js 24 LTS or newer.
+- npm-compatible package execution.
+- `git` available for repository diagnostics.
+- GitHub CLI `gh` available for GitHub diagnostics, but M1 must not require GitHub mutation.
+
+M1 must not require:
+
+- `jq`
+- copied shell scripts
+- install lifecycle scripts
+- PowerShell-specific duplicate command implementations
+- network access during normal tests
+
+---
+
+## Part 1: Package Foundation
+
+The package must be a normal npm package with an explicit executable entrypoint.
+
+### 1.1 - Package Identity
+
+Implement package metadata for:
+
+- package name: `@tjalve/aie`
+- executable command: `aie`
+- TypeScript source
+- compiled JavaScript output
+- type declarations
+- explicit files published to npm
+- Node.js engine requirement of Node 24 or newer
+
+Installing the package must not execute Executor, write files, configure hooks, mutate GitHub, or modify the current repository.
+
+### 1.2 - Build And Test Baseline
+
+Add the minimal project commands needed to keep the package healthy:
+
+- typecheck
+- lint or equivalent static validation
+- unit tests
+- build
+- package dry-run or equivalent publish-surface check
+
+The test suite in M1 should focus on CLI parsing, config validation, output formatting, exit codes, and diagnostics behavior. Full GitHub issue behavior is not part of M1.
+
+### 1.3 - Dependency Policy
+
+Runtime dependencies must be minimal and justified.
+
+Any dependency added for CLI parsing, prompts, colors, config parsing, schema validation, logging, or formatting must have a clear reason in code review or implementation notes. The package must not use install lifecycle scripts for normal operation.
+
+---
+
+## Part 2: CLI UX Foundation
+
+The `aie` CLI must feel stable before it has all subcommands.
+
+### 2.1 - Root Command
+
+`aie --help` must show:
+
+- what Executor does
+- global options
+- available command groups
+- examples
+- mutation expectations
+- where to run `aie doctor`
+
+The CLI must support:
+
+- `--help`
+- `aie help <command-or-topic...>` as the canonical explicit help form
+- `aie <command-or-topic...> help` as the exploratory suffix help form
+- `--version`
+- `--json` where meaningful
+- `--dry-run` for mutating command families as they are added
+- `--no-color` or automatic no-color behavior
+- predictable non-zero exit codes
+
+All help forms must be non-mutating. The final token `help` is reserved for help lookup and must not be interpreted as a positional argument to a mutating command, so a later command such as `aie init help` shows init help rather than initializing a target named `help`.
+
+### 2.2 - Command Skeletons
+
+M1 should define the command structure for later milestones without pretending unimplemented behavior works.
+
+Commands may exist as clear "not implemented yet" placeholders only when that improves help discoverability. Placeholders must exit with a distinct non-zero code and must not mutate anything.
+
+The command tree should reserve the intended stable names:
+
+- `aie doctor`
+- `aie schema`
+- `aie completion`
+- `aie init`
+- `aie labels setup`
+- `aie repo prime`
+- `aie queue`
+- `aie next`
+- `aie start`
+- `aie view`
+- `aie switch`
+- `aie complete`
+- `aie deps ...`
+- `aie pr gate`
+- `aie migrate legacy`
+
+Incomplete command behavior is part of the UX contract:
+
+- `aie` with no arguments shows a concise landing page with the most common next commands, not a raw parser dump.
+- `aie help labels`, `aie labels help`, and `aie labels --help` reach the same label-topic help.
+- `aie labels` shows the available label subcommands and examples.
+- `aie deps` shows the available dependency subcommands and examples.
+- `aie start` explains that it expects `next` or an issue number, with examples such as `aie start next` and `aie start 93`.
+- `aie pr` shows PR subcommands and explains that `aie pr gate <pr>` is the review-gate command.
+
+Unknown command behavior must be helpful but safe:
+
+- typos should produce "did you mean" suggestions where confidence is high
+- suggestions must not execute automatically
+- mutating alternatives must be clearly marked as mutating
+- arbitrary command-prefix abbreviations must not be accepted
+- explicit aliases are allowed only when documented and stable
+
+### 2.3 - Output Rules
+
+Human output must be concise and action-oriented.
+
+JSON output must be valid JSON with no decorative text. `--json` is the short path for agents, while `--output json` can be added as the more general output selector when the chosen CLI framework supports it cleanly.
+
+Any command that supports structured output must emit a stable top-level shape with at least:
+
+- `ok`
+- `command`
+- `cwd`
+- `configPath` when known
+- `diagnostics` or `result` as appropriate
+- `errors` when failed
+
+Errors must include:
+
+- failed operation
+- likely cause
+- suggested next action
+- exit code category
+
+Data goes to stdout. Warnings, progress, hints, and diagnostics go to stderr unless the command's primary result is itself a diagnostic report. JSON mode must never mix decorative text, progress spinners, or human hints into stdout.
+
+### 2.4 - Agent Schema And Introspection
+
+M1 must add an agent-facing command schema surface.
+
+`aie schema --json` must describe the CLI in machine-readable form so agents and future Umpire integration do not need to scrape `--help` output.
+
+The schema must include:
+
+- command names and aliases
+- command descriptions
+- arguments, flags, defaults, and required fields
+- examples
+- whether the command mutates local files, git state, or GitHub state
+- whether the command supports `--dry-run`
+- whether the command supports structured output
+- stable output object names where known
+- stable error kinds and exit codes
+
+The schema can follow a small internal shape in M1, but it should be designed so it can later emit or map to OpenCLI or CLI Spec style descriptions without a rewrite.
+
+### 2.5 - Completion And Terminal Discovery
+
+M1 should include either `aie completion` or a documented framework-backed equivalent that prints shell completion installation instructions and/or completion scripts.
+
+Completion support must be explicit. Installing the package must not modify shell profiles by side effect.
+
+Completion should cover:
+
+- command names
+- subcommands
+- flags
+- configured issue labels when that becomes available in later milestones
+- issue numbers/titles when safe and cheap in later milestones
+
+### 2.6 - Clean Implementation Architecture
+
+CLI UX must not be implemented as scattered one-off `if`/`else` blocks.
+
+M1 must establish a small internal command metadata model that can drive:
+
+- parser registration
+- root help
+- topic help
+- incomplete-command help
+- typo suggestions
+- `aie schema`
+- completion generation
+- JSON output capability
+- mutation and dry-run labels
+- docs generation or docs checks
+- snapshot tests for help output
+
+Command handlers should return typed result objects. Rendering should be separate from behavior so human output, JSON output, errors, and tests can stay consistent.
+
+---
+
+## Part 3: Config Foundation
+
+Executor needs one repository policy file that later milestones can rely on.
+
+### 3.1 - Config Discovery
+
+Implement config discovery for the documented default path:
+
+- `aie.config.json`
+
+If a future equivalent path is supported, it must be documented and deterministic. M1 should keep the first version simple unless implementation strongly justifies another path.
+
+### 3.2 - Config Schema
+
+The M1 config schema must include the fields later milestones require, even if not all fields are fully acted on yet:
+
+- config version
+- priority label names
+- status label names
+- component label names
+- branch naming policy
+- base branch name and remote name
+- no-worktree enforcement
+- pre-start open-PR blocking policy
+- ignored automation PR authors
+- review agents
+- review wait duration
+- manual UI audit policy
+- quality gate commands
+- autonomous shipping policy
+- prompt-injection instruction toggle
+- no-credit instruction toggle
+
+Validation must catch:
+
+- missing config version
+- unsupported config version
+- invalid label names
+- duplicate labels within a label family
+- invalid review wait duration
+- unsafe or empty branch naming pattern
+- unsafe or empty base branch/remote values
+- invalid ignored automation PR author values
+- invalid command values for quality gates
+- unsupported enum values
+
+### 3.3 - Defaults
+
+Default config values must match the spec:
+
+- priorities: `P1-Critical`, `P2-High`, `P3-Medium`, `P4-Low`
+- statuses: `S-Ready`, `S-InProgress`, `S-Blocked`, `S-Blocking`
+- components: `C-Architecture`, `C-Backend`, `C-Frontend`, `C-Testing`, `C-Tooling`, `C-Docs`, `C-DevEx`, `C-CI`, `C-Security`, `C-Data`
+- base branch/remote: detected repository default when available, otherwise `main` and `origin`
+- linked git worktrees are disabled for Executor issue execution
+- pre-start open-PR blocking is enabled
+- ignored automation PR authors include common dependency-update automation accounts and can be extended per repository
+- default PR review wait: 10 minutes
+- OpenCode as the highest-polish target
+- manual UI audit enabled by default for UI/UX projects once init asks for project type in M4
+
+M1 does not need to implement the interactive init prompts that choose these defaults. It needs the default model and validation that init will use later.
+
+---
+
+## Part 4: Diagnostics Foundation
+
+`aie doctor` is the main M1 user-facing command after `aie --help`.
+
+### 4.1 - Doctor Checks
+
+M1 `aie doctor` must check:
+
+- current working directory
+- whether the command is running inside a git repository
+- detected repository root
+- current branch
+- default branch when cheaply available
+- whether the checkout appears to be a linked git worktree
+- configured base branch and remote when config exists
+- whether `git` is available
+- whether `gh` is available
+- whether `gh auth status` appears usable
+- whether `aie.config.json` exists
+- whether config parses and validates
+- whether Node.js runtime satisfies the package requirement
+
+M1 `doctor` may report label, issue, open-PR preflight, base-branch freshness, instruction, and PR-gate checks as "not checked yet" or "implemented in later milestone" only if the output is explicit. M2-M6 will fill those in.
+
+### 4.2 - Doctor Modes
+
+`aie doctor` must support:
+
+- human-readable output
+- `--json`
+- no mutation by default
+- enough structured diagnostic IDs for agents to react deterministically
+
+M1 should not implement `doctor --fix` unless the implementation is trivial and limited to safe local config creation. Mutation-oriented repair can wait until the relevant feature milestones.
+
+---
+
+## Part 5: Safety And Package Trust
+
+M1 must make the package safe to install and safe to inspect.
+
+### 5.1 - Install Safety
+
+The package must not define `preinstall`, `install`, or `postinstall` lifecycle scripts.
+
+Documentation must show safe install and execution patterns using pinned versions or lockfile-controlled workflows. Examples must not recommend floating `latest` installs as the preferred path.
+
+### 5.2 - Runtime Safety
+
+M1 commands must not mutate:
+
+- GitHub labels
+- GitHub issues
+- GitHub PRs
+- local instruction files
+- git branches
+- git history
+- copied legacy scripts
+
+The only local writes allowed in M1 should be implementation artifacts and tests. CLI user-facing mutation starts in later milestones with explicit command flags and dry-run support.
+
+### 5.3 - Logging And Redaction
+
+The logging foundation must avoid printing secrets. M1 should include a basic redaction helper for token-like values and should use it in errors and debug output.
+
+---
+
+## Proposed GitHub Issues
+
+M1 should become **5 GitHub issues**, not one issue per requirement.
+
+### M1.1 - Scaffold `@tjalve/aie` Package And Build Baseline
+
+Create the TypeScript npm package, `aie` executable entrypoint, build/test/typecheck commands, package metadata, Node 24 engine requirement, and publish-surface guard.
+
+Primary FRs: FR-02-001, FR-02-002, FR-02-003, FR-02-006, FR-02-007, FR-02-010, FR-02-012.
+
+Acceptance:
+
+- `aie --version` works from the built package.
+- package install has no lifecycle side effects.
+- package metadata exposes only intended files.
+- test/typecheck/build commands pass.
+
+### M1.2 - Implement CLI Framework, Explorability, Help, Output, And Exit Codes
+
+Create the root CLI behavior, command structure, help text, command schema, global options, JSON output conventions, color/no-color handling, completion surface, and error model.
+
+Primary FRs: FR-13-001, FR-13-003, FR-15-001 through FR-15-020.
+
+Acceptance:
+
+- a short CLI framework decision record exists, including supply-chain and UX tradeoffs.
+- `aie --help` is useful without reading docs.
+- `aie` with no arguments shows a concise landing page with common next commands.
+- `aie doctor --help` documents whether it mutates state.
+- incomplete commands such as `aie labels`, `aie deps`, `aie start`, and `aie pr` show valid next steps and examples.
+- unknown commands produce safe suggestions without auto-running alternatives.
+- arbitrary command-prefix abbreviations are not accepted.
+- explicit aliases, if any, are documented and stable.
+- `aie schema --json` exposes command metadata for agents.
+- `aie completion` or an equivalent documented completion command exists.
+- unimplemented reserved commands fail clearly and do not mutate.
+- `--json` emits valid undecorated JSON.
+- stdout/stderr separation is tested.
+- errors include likely cause and next action.
+
+### M1.3 - Implement Config Discovery, Defaults, And Validation
+
+Create the repository config model around `aie.config.json`, including defaults and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, quality gates, and instruction toggles.
+
+Primary FRs: FR-04-001, FR-04-002, FR-04-003 through FR-04-009, FR-04-016 through FR-04-018.
+
+Acceptance:
+
+- config can be loaded from the repo root.
+- missing config is reported clearly.
+- invalid config produces actionable validation errors.
+- defaults match the spec, including no-worktree policy and pre-start git/PR policy.
+- config validation is unit tested with valid and invalid examples.
+
+### M1.4 - Implement `aie doctor` Diagnostics Foundation
+
+Implement diagnostics for runtime, git, GitHub CLI, repository root, current branch, linked-worktree detection, base branch/remote config presence, and config validity.
+
+Primary FRs: FR-04-008, FR-04-016 through FR-04-018, FR-13-001 through FR-13-004.
+
+Acceptance:
+
+- `aie doctor` prints a concise health report.
+- `aie doctor --json` emits stable diagnostic IDs and statuses.
+- missing `git`, missing `gh`, missing auth, linked worktree, missing config, and invalid config are distinguishable.
+- doctor does not mutate local or remote state.
+
+### M1.5 - Add Supply-Chain-Safe Documentation And Safety Tests
+
+Document safe install/execution patterns and add tests or package checks that prevent lifecycle scripts and unsafe publish metadata from slipping in.
+
+Primary FRs: FR-02-012, FR-02-013, FR-02-014, FR-02-015, FR-12-004, FR-12-005, FR-12-006.
+
+Acceptance:
+
+- docs prefer pinned versions or lockfile-controlled installs.
+- docs do not recommend floating `latest` as the preferred path.
+- package metadata check fails if install lifecycle scripts are added.
+- runtime dependency list is intentionally small and reviewed.
+- basic token redaction helper is tested.
+
+---
+
+## Exit Criteria
+
+M1 is complete when:
+
+- `@tjalve/aie` has a working TypeScript package structure.
+- `aie` is exposed as the package CLI.
+- `aie --help`, `aie --version`, and `aie doctor` work.
+- `aie` and incomplete command groups guide exploration with concise next steps.
+- unknown commands provide safe suggestions without fuzzy execution.
+- `aie schema --json` provides a machine-readable command contract for agents.
+- shell completion support exists or is explicitly available through the chosen framework.
+- config discovery, defaults, and validation are implemented.
+- JSON output conventions and exit-code behavior are established.
+- M1 commands do not mutate GitHub, git state, instruction files, or legacy files.
+- package install has no lifecycle side effects.
+- safe install documentation exists.
+- automated tests cover CLI parsing, config validation, diagnostics, JSON output, and package safety checks.
+
+M1 should leave the repo ready for M2 to add the first real GitHub issue queue behavior without revisiting the foundation.
