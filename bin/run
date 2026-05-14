@@ -1,0 +1,59 @@
+#!/usr/bin/env node
+
+const fs = require('fs')
+const path = require('path')
+
+// M1.1 minimal entrypoint: support --version immediately from built package.
+// Full oclif command tree and metadata-driven help are added in M1.2.
+
+function getPackageVersion() {
+  try {
+    // When running from bin/, package.json is one level up
+    const pkgPath = path.join(__dirname, '..', 'package.json')
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'))
+    return pkg.version || '0.0.0'
+  } catch {
+    return '0.0.0'
+  }
+}
+
+const args = process.argv.slice(2)
+
+if (args.includes('--version') || args.includes('-v')) {
+  // eslint-disable-next-line no-console
+  console.log(getPackageVersion())
+  process.exit(0)
+}
+
+if (args.includes('--help') || args.includes('-h') || args.length === 0) {
+  // eslint-disable-next-line no-console
+  console.log(`aie - AI Executor
+
+Usage:
+  aie --version          Print version
+  aie --help             Show this help
+  aie help <command>     Show help for a command
+
+This is the M1.1 package scaffold. Full command set is implemented in later milestones.
+
+See: https://github.com/ZarK/ai-executor
+`)
+  process.exit(0)
+}
+
+// For any other invocation in M1.1, indicate the command is not yet implemented
+// but do not crash the package. M1.2 will wire real oclif commands.
+const { execute } = require('@oclif/core')
+
+execute({ dir: __dirname, development: false })
+  .catch((error) => {
+    // If oclif has no commands registered yet, provide a clear message
+    if (error && (error.code === 'MODULE_NOT_FOUND' || /no commands/i.test(String(error)))) {
+      // eslint-disable-next-line no-console
+      console.error('aie: command not implemented in M1.1 scaffold. Use --version or --help.')
+      process.exit(2)
+    }
+    // eslint-disable-next-line no-console
+    console.error(error)
+    process.exitCode = 1
+  })
