@@ -1,0 +1,161 @@
+# Agent Instructions
+
+This repository is built through GitHub issues in strict order until `aie` can enforce the workflow itself.
+
+The local `references/` directory is source material used to write specs and milestones only. Do not cite it in issues, code, comments, docs, commits, PR titles, or PR bodies. Implementation work must describe Executor product behavior, requirement IDs, and user-facing command semantics only.
+
+## Bootstrap Executor Workflow
+
+Until Executor commands exist, agents must use this manual mini-Executor workflow.
+
+### Source Of Truth
+
+Before starting work, read:
+
+1. The assigned GitHub issue and its comments.
+2. [docs/spec.md](docs/spec.md).
+3. The milestone file linked from the issue body.
+4. This file.
+
+Issue comments are for task-specific progress and durable implementation notes. Repository docs are for stable product, architecture, test, and workflow guidance.
+
+### Issue Order
+
+Work issues strictly in GitHub issue-number order unless the user explicitly changes the queue.
+
+- Start only open issues labeled `S-Ready`.
+- Do not start issues labeled `S-Blocked`.
+- If any issue is labeled `S-InProgress`, continue that issue first.
+- Keep exactly one open issue labeled `S-InProgress`.
+- The current bootstrap chain is #1 through #17.
+- Issue bodies use `Blocked by: #N` metadata. Treat that as authoritative blocker metadata.
+
+### Starting Work
+
+Before starting a new issue:
+
+1. Confirm there is no existing `S-InProgress` issue.
+2. Confirm the target issue is the lowest-numbered open `S-Ready` issue.
+3. Confirm there are no open non-automation pull requests.
+4. Confirm this is the primary checkout, not a linked git worktree.
+5. Check out `main` and pull the latest `origin/main`.
+6. Create an issue branch using `issue/<number>-short-slug`.
+7. Move the issue from `S-Ready` to `S-InProgress`.
+
+Useful commands:
+
+```bash
+gh issue list --state open --label S-InProgress
+gh issue list --state open --label S-Ready --json number,title,url
+gh pr list --state open --json number,title,author,isDraft
+git worktree list
+git checkout main
+git pull origin main
+git checkout -b issue/<number>-short-slug
+gh issue edit <number> --remove-label S-Ready --add-label S-InProgress
+```
+
+If any pre-start check fails, stop and report the exact blocker.
+
+### Completing Work
+
+Before shipping an issue:
+
+1. Verify the implementation satisfies the issue acceptance criteria and relevant spec requirements.
+2. Run the configured checks for the current codebase.
+3. Review the diff yourself.
+4. Commit only intentional files.
+5. Push the branch and open a PR that closes the issue.
+6. Address review and CI feedback.
+7. Merge only when repository policy, tests, checks, and review feedback are satisfied.
+
+After merge:
+
+1. Ensure the issue is closed.
+2. Remove `S-InProgress` from the completed issue if it remains.
+3. Check out `main` and pull `origin/main`.
+4. Move the next issue in the chain from `S-Blocked` to `S-Ready` when its blocker is closed.
+5. Start the next `S-Ready` issue only after the pre-start checks pass.
+
+Useful commands:
+
+```bash
+gh issue close <number> --reason completed
+gh issue edit <number> --remove-label S-InProgress
+git checkout main
+git pull origin main
+gh issue edit <next-number> --remove-label S-Blocked --add-label S-Ready
+```
+
+Do not manually unblock an issue whose `Blocked by:` issue is still open.
+
+## Bootstrap Quality Rules
+
+Until `aiq` is available in this repository, agents must apply this mini quality gate before committing.
+
+### TypeScript Standards
+
+- Use modern TypeScript with strict types.
+- Avoid `any`; use `unknown` only when immediately narrowed.
+- Prefer explicit data contracts and small typed objects over loosely shaped records.
+- Keep source files under 500 source lines. Split earlier when a file mixes responsibilities.
+- Keep functions focused on one operation.
+- Avoid hidden global state.
+- Avoid broad utility bags and generic helper modules.
+- Prefer structured parsers and APIs over ad hoc string manipulation.
+- Keep CLI behavior driven by shared command metadata.
+- Use `@oclif/core` for the command tree.
+- Use `@clack/prompts` only for interactive prompts that have non-interactive flag/config equivalents.
+- Keep install behavior supply-chain safe: no `preinstall`, `install`, or `postinstall` scripts.
+
+### Maintainability Gate
+
+Before commit, check:
+
+- The code is easy to read without knowing the implementation history.
+- Every module has a clear reason to exist.
+- Every public function has a narrow, obvious purpose.
+- Error messages include the failed operation, likely cause, and next action.
+- Human output and JSON output are separate and tested where applicable.
+- Tests cover the behavior, not implementation trivia.
+- No generated code, comments, docs, commits, PRs, or UI text credit an agent, model, company, or tool unless the user explicitly asked for that exact credit.
+
+### Naming Rules
+
+Names must be obvious, concrete, and kind to the reader.
+
+1. Choose names that immediately communicate exactly what they do.
+2. Keep names short, usually no more than two or three short words.
+3. Do not use obscure abbreviations or acronyms.
+4. Avoid vague names such as `data`, `info`, `temp`, `item`, `object`, `helper`, `utility`, `manager`, `processor`, or `tool`.
+5. Use direct, concrete language that reflects the exact role or action.
+6. Use active verbs for functions and methods, such as `sendEmail`, `tagFaces`, `planEvent`, and `fetchWeather`.
+7. Use simple nouns or clear noun phrases for variables, such as `emailDraft`, `faceTags`, `plannedEvent`, and `weatherForecast`.
+8. Use plural nouns for collections, such as `emailDrafts`, `userPhotos`, and `upcomingEvents`.
+9. Use clear role names for classes, such as `EmailSender`, `FaceTagger`, and `EventPlanner`.
+10. Use short, clearly scoped file names, such as `email_sender.ts`, `face_tagger.ts`, and `event_planner.ts`.
+
+Avoid indirect or redundant names such as `facesToBeTagged`, `emailIsSent`, `eventHandlerHelper`, and `EventAgentHandlerAgent`.
+
+Good naming should feel effortless to read.
+
+## Git Discipline
+
+- Do not use git worktrees for Executor issue execution.
+- Never run destructive git commands such as `git reset --hard` unless the user explicitly asks.
+- Do not revert user changes unless explicitly asked.
+- Commit messages should reference the issue number.
+- Keep commits focused on the active issue.
+
+## Stop Conditions
+
+Stop and report clearly when:
+
+- no issue is `S-Ready`
+- the next issue is still blocked
+- more than one issue is `S-InProgress`
+- a linked worktree is detected
+- a non-automation PR is still open before starting new work
+- `main` cannot be updated from `origin/main`
+- required local tools are missing
+- tests or quality checks fail and cannot be resolved in the current turn
