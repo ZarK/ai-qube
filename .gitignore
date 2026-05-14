@@ -1,1 +1,43 @@
+# References (source material for spec authoring only)
 /references/
+
+# Dependencies
+node_modules/
+
+# Build output
+# Note: lib/ is intentionally committed so the published npm tarball is reproducible
+# and the package can be installed from git without a build step.
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage
+coverage/
+*.lcov
+
+# nyc
+.nyc_output
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temporary
+tmp/
+temp/
