@@ -17,6 +17,8 @@ Before starting work, read:
 3. The milestone file linked from the issue body.
 4. This file.
 
+Also read and follow `/Users/tjalve/.agents/skills/supply-chain-guard/SKILL.md` before any work that installs, updates, audits, executes, or approves dependencies, package-manager commands, project generators, CI workflows, release jobs, IDE/MCP tooling, or AI-agent tooling.
+
 Issue comments are for task-specific progress and durable implementation notes. Repository docs are for stable product, architecture, test, and workflow guidance.
 
 ### Issue Order
@@ -66,8 +68,9 @@ Before shipping an issue:
 3. Review the diff yourself.
 4. Commit only intentional files.
 5. Push the branch and open a PR that closes the issue.
-6. Address review and CI feedback.
-7. Merge only when repository policy, tests, checks, and review feedback are satisfied.
+6. Run the PR gate: wait 10 minutes for configured review agents, automation, comments, reviews, and CI to respond, then inspect the PR state.
+7. Address review and CI feedback, rerun affected checks, push fixes, and repeat the 10-minute PR gate when material changes were made.
+8. Merge only when repository policy, tests, checks, and review feedback are satisfied.
 
 After merge:
 
@@ -92,6 +95,24 @@ Do not manually unblock an issue whose `Blocked by:` issue is still open.
 ## Bootstrap Quality Rules
 
 Until `aiq` is available in this repository, agents must apply this mini quality gate before committing.
+
+### Supply Chain Guard
+
+Use `/Users/tjalve/.agents/skills/supply-chain-guard/SKILL.md` before touching dependencies or dependency-provided tooling.
+
+This applies to package manifests, lockfiles, package-manager commands, project generators, CI actions, reusable workflows, release automation, IDE extensions, MCP servers, and AI-agent tools.
+
+Apply these defaults:
+
+- Prefer existing code, standard library APIs, or existing dependencies before adding a package.
+- Use exact dependency versions and preserve lockfiles intentionally.
+- Enforce the 7-day package age gate, or 14 days for high-risk runtime, build, CI, auth, crypto, network, installer, native, or transitive-heavy packages.
+- Disable dependency lifecycle scripts by default with `--ignore-scripts` or the package-manager equivalent.
+- Treat package-manager commands, generators, CI actions, MCP tools, and AI-agent tools as code execution.
+- Verify source repository, package metadata, maintainers, integrity, signatures, provenance, and lockfile impact where available.
+- Stop for explicit human approval when a dependency or tool is high-risk, ambiguous, too new, unpinned, unverifiable, or requires lifecycle scripts before review.
+
+For this npm project, prefer `npm ci --ignore-scripts` for normal installs. Use `npm install` only when intentionally changing dependencies or the lockfile.
 
 ### TypeScript Standards
 
@@ -158,4 +179,5 @@ Stop and report clearly when:
 - a non-automation PR is still open before starting new work
 - `main` cannot be updated from `origin/main`
 - required local tools are missing
+- supply-chain guard blocks a dependency, package-manager, generator, CI, MCP, or agent-tool action
 - tests or quality checks fail and cannot be resolved in the current turn
