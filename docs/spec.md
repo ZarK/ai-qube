@@ -43,14 +43,16 @@ When generating milestones, use these references where available:
 
 These requirements define what Executor owns inside the QUBE package family.
 
+Executor coordinates deterministic workflow state and renders guidance for agents. Agents execute context-sensitive engineering work: implementation, tests, builds, audits, `aiq`, code review interpretation, package-manager actions, PR creation content decisions, merge judgment, and follow-up fixes. Executor commands may mutate deterministic GitHub or local workflow state, inspect repository and PR state, render prompts/checklists/commands, and report what the agent should do next.
+
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-01-001 | Executor provides the issue execution system for agentic coding: find or resume the correct GitHub issue, start it, guide implementation, enforce quality and review gates, ship the pull request, complete the issue, unblock dependents, update the local base branch, and continue to the next issue. | Required |
+| FR-01-001 | Executor provides the issue execution coordination system for agentic coding: find or resume the correct GitHub issue, start it, guide implementation, define and track quality/review gate obligations, support pull-request shipping, complete the issue, unblock dependents, update queue state, and continue to the next issue. | Required |
 | FR-01-002 | Executor is usable as a standalone package in any GitHub repository that follows the required label and issue metadata conventions. | Required |
-| FR-01-003 | Executor works especially well with the other QUBE packages: Bootstrap (`@tjalve/aib`) creates specs, milestones, and issues; Executor (`@tjalve/aie`) executes those issues; Quality Control (`@tjalve/aiq`) provides deeper quality gates; Umpire (`@tjalve/aiu`) keeps the agent loop alive. | Required |
+| FR-01-003 | Executor works especially well with the other QUBE packages: Bootstrap (`@tjalve/aib`) creates specs, milestones, and issues; Executor (`@tjalve/aie`) guides agents executing those issues; Quality Control (`@tjalve/aiq`) provides deeper quality gates for agents to run; Umpire (`@tjalve/aiu`) keeps the agent loop alive. | Required |
 | FR-01-004 | Executor does not own spec generation, milestone generation, or initial GitHub issue generation from specs. Those belong to Bootstrap. | Required |
 | FR-01-005 | Executor does not own long-running stop hooks or continuation scheduling. Those belong to Umpire, but Umpire may call Executor commands to choose and resume work. | Required |
-| FR-01-006 | Executor does not own static code analysis or AI code-quality engines. Those belong to Quality Control, but Executor may call `aiq` as an optional quality gate when installed and enabled. | Required |
+| FR-01-006 | Executor does not own static code analysis or AI code-quality engines. Those belong to Quality Control, but Executor may configure, render, and report an optional `aiq` gate for agents to run when installed and enabled. | Required |
 | FR-01-007 | Executor is opinionated about the development cycle and shipping permissions. The installed agent instructions explicitly authorize commit, push, PR creation, review-gate waits, merge, issue completion, and continuation when repository policy enables autonomous mode. | Required |
 | FR-01-008 | Executor does not replace the human developer's repository-specific requirements. It installs a default execution policy that can be configured per repository during initialization. | Required |
 | FR-01-009 | A future QUBE wrapper package may expose shorthand commands for all QUBE packages, but QUBE wrapper behavior is outside this specification. | Future |
@@ -94,7 +96,7 @@ These requirements define what Executor owns inside the QUBE package family.
 | FR-03-009 | The `/make-it-so` command tells the agent to continue the autonomous GitHub issue workflow until the queue is empty or blocked, using concise imperative wording that grants trust, autonomy, and authority within configured repository policy. | Required |
 | FR-03-010 | The `/make-it-so` command continues the issue workflow, uses the configured `aie` queue and lifecycle commands, follows installed repository instructions, executes without unnecessary pauses, explicitly authorizes normal git and GitHub shipping actions when autonomous mode is enabled, and ships when gates pass. | Required |
 | FR-03-011 | For tools that support project commands, initialization installs equivalent "make it so" commands. For tools without project command support, initialization relies on always-loaded instruction files. | Required |
-| FR-03-012 | Initialization gathers or accepts repository policy settings for branch naming, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, component labels, enabled review agents, manual UI audit behavior, review wait duration, quality gate commands, and supply-chain guard compatibility. | Required |
+| FR-03-012 | Initialization gathers or accepts repository policy settings for branch naming, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, component labels, enabled review agents, manual UI audit behavior, review wait duration, agent-run quality gate commands, and supply-chain guard compatibility. | Required |
 | FR-03-013 | Initialization can run non-interactively using defaults and config flags so agents can bootstrap repositories without a manual prompt when the user requests that mode. | Desired |
 | FR-03-014 | Initialization never silently overwrites existing repository instructions or config. It appends managed sections or requires `--force` for replacement. | Required |
 | FR-03-015 | Initialization detects legacy copied workflow scripts and old agent instructions, explains what it found, and offers a migration path to the package-backed `aie` commands. | Required |
@@ -106,7 +108,7 @@ These requirements define what Executor owns inside the QUBE package family.
 | ID | Requirement | Status |
 |----|-------------|--------|
 | FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `aie.config.json` or an equivalent documented path. | Required |
-| FR-04-002 | Configuration includes priority labels, status labels, component labels, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, and quality gate commands. | Required |
+| FR-04-002 | Configuration includes priority labels, status labels, component labels, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, and agent-run quality gate commands. | Required |
 | FR-04-003 | Priority labels are fixed by default to `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`. | Required |
 | FR-04-004 | Status labels are fixed by default to `S-Ready`, `S-InProgress`, `S-Blocked`, and `S-Blocking`. | Required |
 | FR-04-005 | Component labels include broad defaults: `C-Architecture`, `C-Backend`, `C-Frontend`, `C-Testing`, `C-Tooling`, `C-Docs`, `C-DevEx`, `C-CI`, `C-Security`, and `C-Data`. | Required |
@@ -208,8 +210,8 @@ These requirements define what Executor owns inside the QUBE package family.
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-09-001 | Executor supports repository-configured build, unit test, integration test, E2E test, lint, typecheck, and custom verification commands. | Required |
-| FR-09-002 | Executor instructions require all configured gates to pass before PR creation or merge. | Required |
+| FR-09-001 | Executor supports storing, validating, and rendering repository-configured agent-run build, unit test, integration test, E2E test, lint, typecheck, and custom verification commands. | Required |
+| FR-09-002 | Executor instructions require agents to run all configured gates and confirm they pass before PR creation or merge. | Required |
 | FR-09-003 | Manual UI audit is enabled by default for repositories with UI or UX work and can be disabled during initialization or config edits. | Required |
 | FR-09-004 | Manual UI audit instructions prefer Vercel `agent-browser` for token-efficient UI inspection when available. | Required |
 | FR-09-005 | Playwright or other browser automation may be used as a fallback when `agent-browser` is unavailable or insufficient. | Required |
@@ -217,8 +219,8 @@ These requirements define what Executor owns inside the QUBE package family.
 | FR-09-007 | Executor supports a configurable review-agent gate before tests or before shipping. | Required |
 | FR-09-008 | The default review-agent gate supports the OpenCode/Oh-My-OpenAgents `@oracle` pattern when available. | Required |
 | FR-09-009 | Executor may provide a fallback Oracle-style reviewer prompt or skill for repositories that do not have Oh-My-OpenAgents installed. | Desired |
-| FR-09-010 | Executor can call `aiq` as an additional quality gate when `@tjalve/aiq` is installed and enabled. | Desired |
-| FR-09-011 | Executor records which gates are configured, which gates were run, and which gates are still pending in command output or PR body templates. | Desired |
+| FR-09-010 | Executor can configure and render `aiq` as an additional agent-run quality gate when `@tjalve/aiq` is installed and enabled. | Desired |
+| FR-09-011 | Executor reports which gates are configured, which gates the agent has recorded or reported as run, and which gates are still pending in command output or PR body templates. | Desired |
 
 ---
 
@@ -235,8 +237,8 @@ These requirements define what Executor owns inside the QUBE package family.
 | FR-10-007 | `aie pr gate <pr>` requests or triggers the configured PR reviewers, waits for the configured duration, then inspects PR comments, review comments, and review states. | Required |
 | FR-10-008 | `aie pr gate <pr>` is optional as a command but the installed work cycle requires equivalent behavior before merge. | Required |
 | FR-10-009 | If new review feedback appears, the agent must address it, rerun affected gates, update the PR, and rerun the PR review gate when material changes were made. | Required |
-| FR-10-010 | PR bodies generated or suggested by Executor include issue closure references, gates run, review agents requested, and remaining risks when applicable. | Desired |
-| FR-10-011 | Executor supports squash merge as the default merge strategy when repository policy permits. | Required |
+| FR-10-010 | PR bodies generated or suggested by Executor include issue closure references, supplied or recorded gate status, review agents requested, and remaining risks when applicable. | Desired |
+| FR-10-011 | Executor suggests squash merge as the default merge strategy in instructions and readiness output when repository policy permits; the agent performs the merge. | Required |
 
 ---
 

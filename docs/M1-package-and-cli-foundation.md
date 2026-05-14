@@ -39,7 +39,7 @@ M1 intentionally does not complete:
 - `aie init` and installed agent instructions. Those are M4.
 - `aie labels setup`, `aie repo prime`, `aie queue`, and `aie next`. Those are M2.
 - `aie start`, `aie switch`, `aie view`, `aie complete`, and dependency commands. Those are M3.
-- PR review gates, Oracle, manual UI audit, and optional `aiq` quality gate. Those are M5.
+- PR review gates, Oracle prompts, manual UI audit guidance, and optional `aiq` quality gate guidance. Those are M5.
 - Legacy migration and cleanup. Those are M6.
 
 ---
@@ -334,7 +334,7 @@ The M1 config schema must include the fields later milestones require, even if n
 - review agents
 - review wait duration
 - manual UI audit policy
-- quality gate commands
+- agent-run quality gate commands
 - autonomous shipping policy
 - prompt-injection instruction toggle
 - no-credit instruction toggle
@@ -480,7 +480,7 @@ Acceptance:
 
 ### M1.3 - Implement Config Discovery, Defaults, And Validation
 
-Create the repository config model around `aie.config.json`, including defaults and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, quality gates, and instruction toggles.
+Create the repository config model around `aie.config.json`, including defaults and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, agent-run quality gates, and instruction toggles.
 
 Primary FRs: FR-04-001, FR-04-002, FR-04-003 through FR-04-009, FR-04-016 through FR-04-018.
 

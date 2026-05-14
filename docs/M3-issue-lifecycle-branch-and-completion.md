@@ -54,7 +54,7 @@ M3 intentionally does not complete:
 
 - blocker metadata edit helpers from **FR-06-014** unless explicitly pulled into M3 as a small follow-on. M2 already provides dependency inspection and sync.
 - installed `AGENTS.md`, `CLAUDE.md`, and `/make-it-so` instructions. Those are M4.
-- manual UI audit, Oracle, test gates, PR review gates, PR creation, and merge policy. Those are M5 and the installed work cycle.
+- manual UI audit guidance, Oracle/review prompts, test gate guidance, PR review gates, PR creation, and merge policy. Those are M5 and the installed work cycle.
 - legacy cleanup. That is M6.
 
 ---

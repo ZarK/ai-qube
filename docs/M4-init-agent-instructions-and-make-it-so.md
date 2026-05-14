@@ -6,9 +6,9 @@ M4 installs Executor into a repository as an agent-usable issue execution system
 
 M1 created the package and CLI foundation. M2 added labels, queue, and dependency semantics. M3 added lifecycle and branch commands. M4 turns those commands into always-loaded agent instructions and host-specific project commands so an agent can start the autonomous issue work cycle without needing the user to restate the process.
 
-This milestone implements `aie init`, managed instruction sections, host-specific install targets, `/make-it-so`, config prompts, non-interactive init, and the generic autonomous work-cycle wording.
+This milestone implements `aie init`, managed instruction sections, host-specific install targets, `/make-it-so`, config prompts, non-interactive init, optional naming-rules instruction injection, and the generic autonomous work-cycle wording.
 
-M4 does not implement the PR review polling command, Oracle fallback reviewer, manual UI audit runner, or optional `aiq` execution. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
+M4 does not implement the PR review polling command, Oracle fallback prompt/skill, manual UI audit guidance/evidence helper, or optional Quality Control gate guidance. Those are M5. M4 may collect configuration and install instruction slots for those gates so the repository policy is ready when M5 lands.
 
 After M4, a developer or agent should be able to run:
 
@@ -21,16 +21,17 @@ After M4, a developer or agent should be able to run:
 
 Then, in a supported agent host, the agent should have always-loaded instructions and a project command that tells it to keep executing GitHub issues until the queue is empty or blocked.
 
-M4 delivers six things:
+M4 delivers seven things:
 
 1. **Init planner** - a dry-runnable plan for config changes, instruction-file updates, command-file writes, and detected legacy state.
 2. **Managed instruction writer** - safe append/update behavior for `AGENTS.md`, `CLAUDE.md`, and host-specific command files.
-3. **Repository policy capture** - interactive and non-interactive config for branch policy, tools, component labels, autonomous mode, review agents, manual UI audit, quality gates, and safety toggles.
+3. **Repository policy capture** - interactive and non-interactive config for branch policy, tools, component labels, autonomous mode, review agents, manual UI audit, agent-run quality gates, and safety toggles.
 4. **Shared agent instruction renderer** - generic always-loaded Executor instructions for the issue work cycle, todos, shipping authority, safety, and continuation.
-5. **Host projections** - first-class OpenCode support plus Codex and Claude Code instruction projections.
-6. **Make-it-so command** - a host command that starts or resumes the autonomous Executor issue work cycle and keeps going until no work can be started.
+5. **Optional naming rules section** - an init-controlled instruction section that teaches agents to produce clear, concrete, human-friendly code names.
+6. **Host projections** - first-class OpenCode support plus Codex and Claude Code instruction projections.
+7. **Make-it-so command** - a host command that starts or resumes the autonomous Executor issue work cycle and keeps going until no work can be started.
 
-The important success condition is that M5 can add richer quality/review gate commands without rewriting the installed instruction system.
+The important success condition is that M5 can add richer quality/review guidance, evidence, and PR-state commands without rewriting the installed instruction system.
 
 ---
 
@@ -47,17 +48,19 @@ M4 also extends:
 
 - **FR-04-001 through FR-04-009 and FR-04-016 through FR-04-018** - config updates, config validation, pre-start git/PR policy, `doctor`, and dry-run behavior for file-mutating init.
 - **FR-07-004 through FR-07-005 and FR-07-008 through FR-07-010** - installed instructions for context-sensitive git work, no-worktree policy, open-PR preflight, base branch freshness, and autonomous shipping authority.
-- **FR-09-001 through FR-09-008** - installed instructions and config capture for quality gates, manual UI audit policy, and review-agent gate policy. Actual gate execution is M5.
+- **FR-09-001 through FR-09-008** - installed instructions and config capture for agent-run quality gates, manual UI audit policy, and review-agent gate policy. M5 adds guidance, prompt, evidence, and status helpers; agents still run the gates and audits.
 - **FR-10-003 through FR-10-006** - init-time PR review-agent choices, custom reviewer text, and review wait duration. Actual `aie pr gate` behavior is M5.
 - **FR-13-001 through FR-13-004** - clear init output, structured output, actionable errors, and non-mutating diagnostics.
 - **FR-15-001 through FR-15-020** - CLI explorability, schema, completion, stdout/stderr separation, mutation labeling, and shared command metadata for `aie init`.
 
+M4 also adds milestone-level detail to installed instruction behavior: `aie init` can render an optional naming-rules section into managed agent instruction files so repositories can ask agents for clear, concrete, human-friendly names without installing Quality Control.
+
 M4 intentionally does not complete:
 
 - PR review polling and comment/review-state inspection. That is M5.
-- Oracle fallback prompt/skill and review-agent execution. That is M5.
-- Manual UI audit execution helpers and evidence handling. That is M5 or later.
-- Optional `aiq` execution. That is M5.
+- Oracle fallback prompt/skill and review-agent prompt/evidence helpers. That is M5.
+- Manual UI audit guidance and evidence handling. That is M5 or later.
+- Optional Quality Control gate guidance and status reporting. That is M5.
 - Legacy cleanup, compatibility wrappers, and migration. Those are M6, though M4 detects and reports legacy state during init.
 - QUBE wrapper command aliases.
 
@@ -255,12 +258,13 @@ Interactive init must gather or confirm:
 - autonomous shipping mode
 - assignment/comment behavior for started issues
 - manual UI audit policy
-- quality gate commands
+- agent-run quality gate commands
 - review-agent gate policy
 - PR review agents
 - custom reviewer names/comment text
 - PR review wait duration
-- optional `aiq` gate intent
+- optional Quality Control gate intent
+- optional naming-rules instruction section
 - prompt-injection instruction block
 - no-credit instruction block
 - supply-chain guard compatibility preference
@@ -292,6 +296,7 @@ Config updates must:
 - show diffs or summaries in dry-run
 - use defaults from M1
 - include M4 policy choices
+- include whether the optional naming-rules instruction section is enabled
 - avoid enabling third-party services without opt-in
 
 ---
@@ -315,7 +320,7 @@ Installed instructions must include:
 - implementation expectations
 - configured manual audit obligation
 - configured review-agent obligation
-- configured quality gates
+- configured agent-run quality gates
 - optional Quality Control gate placeholder
 - PR creation and shipping authority when autonomous mode is enabled
 - PR review wait obligation when configured
@@ -323,6 +328,7 @@ Installed instructions must include:
 - required `aie complete <issue>` after merge
 - next-issue bootstrap expectation
 - clean stop conditions when queue is empty or blocked
+- optional naming rules when enabled during init
 
 The instructions must be generic across repositories and must contain only Executor product wording and configured repository policy.
 
@@ -427,7 +433,7 @@ The prompt-injection and no-credit blocks can be omitted or softened only when t
 
 When autonomous mode is enabled, installed instructions must explicitly authorize:
 
-- running tests and configured quality gates
+- running tests and configured agent-run quality gates
 - staging selected files
 - committing
 - pushing
@@ -446,11 +452,74 @@ The instructions must also make clear that context-sensitive git actions are per
 
 ---
 
-## Part 4: Host Projections
+## Part 4: Optional Naming Rules Instruction Section
+
+M4 adds an optional naming-rules instruction section that `aie init` can inject into managed agent instruction files.
+
+This is instruction rendering, not static analysis. Executor does not score names, rewrite code, or replace Quality Control. The section exists so repositories can ask agents to produce code that is easier for humans to read when the repository owner wants that policy installed.
+
+### 4.1 - Init Option
+
+Interactive init must ask whether to include the naming-rules instruction section.
+
+The prompt should recommend enabling it for repositories where agents will write or refactor code, but it must be optional and reversible through config.
+
+Non-interactive init must expose equivalent controls:
+
+- `--naming-rules`
+- `--no-naming-rules`
+- a config value equivalent to `instructions.namingRules`
+
+The init plan, dry-run output, JSON output, schema, completion, and `doctor` output must show whether the naming-rules section is enabled, disabled, or missing from installed instructions.
+
+### 4.2 - Instruction Content
+
+When enabled, the managed instruction section must tell agents to choose names that are obvious, concise, concrete, and comfortable for humans to read.
+
+The rendered rules must include:
+
+- names should communicate their purpose immediately
+- names should usually be no more than two or three short words
+- names should use concrete everyday language
+- names should avoid abbreviations, acronyms, and obscure terms unless the repository already uses them as domain terms
+- functions and methods should use active imperative verbs such as `sendEmail`, `tagFaces`, or `fetchWeather`
+- variables should use direct nouns or noun phrases such as `emailDraft`, `faceTags`, or `weatherForecast`
+- collections should use plural nouns that describe exactly what they contain
+- classes and agent-like objects should combine a clear role with an active noun or verb, such as `EmailSender`, `FaceTagger`, or `EventPlanner`
+- files and modules should have short names with clear scope
+- generic names such as `data`, `info`, `temp`, `item`, `object`, `helper`, `utility`, `manager`, `processor`, and `tool` should be avoided unless a local convention or public API contract makes them unavoidable
+- indirect, passive, or redundant names should be avoided
+
+The section must also state that repository-specific naming conventions and public API compatibility still matter. When existing project conventions conflict with the default naming rules, agents should preserve the established local convention and avoid unrelated rename churn.
+
+### 4.3 - Host Rendering
+
+The naming rules should be rendered into always-loaded instruction files selected during init:
+
+- `AGENTS.md` when the Executor managed section is enabled
+- `CLAUDE.md` when Claude Code support is selected
+- equivalent always-loaded host instruction files when supported later
+
+Host project commands such as `/make-it-so` should not duplicate the full naming block. They may rely on the always-loaded managed instructions.
+
+### 4.4 - Tests
+
+M4 tests must cover:
+
+- init prompt, flags, config, schema, and completion for naming-rules enablement
+- dry-run output for adding, updating, disabling, and preserving the naming-rules section
+- generated `AGENTS.md` and `CLAUDE.md` content when naming rules are enabled
+- absence of the naming-rules block when disabled
+- preservation of user-authored instruction content outside managed sections
+- generated naming content uses only Executor product wording and configured repository policy
+
+---
+
+## Part 5: Host Projections
 
 M4 supports OpenCode, Codex, and Claude Code.
 
-### 4.1 - OpenCode
+### 5.1 - OpenCode
 
 OpenCode support must include:
 
@@ -474,7 +543,7 @@ Use `todowrite` and `todoread` directly for local issue todos. Never ask a Task/
 At issue start, create todos that include the protected workflow ids `branch-check`, `ship`, `pr-review-wait` when configured, and `next`. Keep `next` pending until the next issue has been started and its todos exist, or until `aie queue` confirms no ready work remains.
 ```
 
-### 4.2 - Codex
+### 5.2 - Codex
 
 Codex support must include:
 
@@ -494,7 +563,7 @@ When Codex exposes a plan or todo tool, use it directly to maintain the issue wo
 If the current Codex environment does not expose a local plan/todo tool, maintain equivalent visible state in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.
 ```
 
-### 4.3 - Claude Code
+### 5.3 - Claude Code
 
 Claude Code support must include:
 
@@ -512,13 +581,13 @@ Use Claude Code's `TodoWrite` and `TodoRead` tools directly for local issue todo
 At issue start, create todos that include `branch-check`, `ship`, `pr-review-wait` when configured, and `next`. Do not complete `next` until the next issue has been started and its todos exist, or until the queue is confirmed empty/blocked.
 ```
 
-### 4.4 - Best-Effort Future Hosts
+### 5.4 - Best-Effort Future Hosts
 
 M4 should not spend implementation effort on non-primary hosts unless the command metadata and renderer make it trivial. Unsupported hosts should receive clear output explaining the supported targets.
 
 ---
 
-## Part 5: Make-It-So Command
+## Part 6: Make-It-So Command
 
 M4 implements the host project command that kicks off continuous issue execution.
 
@@ -535,7 +604,7 @@ The source command pattern for this milestone is intentionally stronger than typ
 
 M4 must preserve that level of autonomy and authorization in generic Executor wording.
 
-### 5.1 - Command Intent
+### 6.1 - Command Intent
 
 The command must tell the agent to:
 
@@ -552,7 +621,7 @@ The command must tell the agent to:
 11. set up or verify the issue branch
 12. implement the issue completely
 13. add or update required tests and coverage
-14. run configured audits, review-agent checks, quality gates, and test/build commands
+14. run configured audits, review-agent checks, quality gates, and test/build commands as the acting agent
 15. commit, push, create a PR with issue closure, and request configured reviewers when autonomous mode is enabled
 16. run the configured PR review gate or equivalent configured review-wait process before merge
 17. address review feedback, rerun affected gates, and update the PR when needed
@@ -565,7 +634,7 @@ The command must tell the agent to:
 
 The command must be short enough to be reliable as a project command, but complete enough to authorize the full work cycle. It should delegate detailed rules to the always-loaded instructions while still containing enough authority that the agent will commit, push, open PRs, request reviews, wait, merge, complete issues, update base, and continue without asking for normal confirmation.
 
-### 5.2 - Command Wording
+### 6.2 - Command Wording
 
 The command must be generic and product-owned.
 
@@ -585,7 +654,7 @@ Rules:
 - Think holistically. Consider system-wide impact, not just the immediate issue.
 - Follow installed repository instructions and Executor policy. You have explicit full authorization to perform git and GitHub commands including commit, push, PR creation, configured review requests, review-gate waits, merge, issue lifecycle updates, base-branch pulls, and continuation when autonomous mode is enabled.
 - Use `aie` commands instead of manually changing queue labels or lifecycle state whenever possible.
-- Commit, push, open the PR, run configured review gates or equivalent configured review wait, address feedback, merge, run `aie complete <issue>`, update the configured base branch, and continue once repository policy, CI, required tests, and configured gates are satisfied.
+- Commit, push, open the PR, run configured review gates or equivalent configured review wait as the acting agent, address feedback, merge, run `aie complete <issue>`, update the configured base branch, and continue once repository policy, CI, required tests, and configured gates are satisfied.
 
 Workflow:
 `aie start next` or resume active issue -> `aie view <issue>` -> branch check/create -> implement -> tests/audits/gates -> commit -> push -> PR with issue closure -> configured PR review gate or review-wait process -> address feedback -> merge -> `aie complete <issue>` -> update base -> repeat.
@@ -605,7 +674,7 @@ It must not:
 - ask the agent to pause for normal shipping confirmations when autonomous mode is enabled
 - water down the autonomy grant into passive advice or a documentation pointer
 
-### 5.3 - Queue Stop Conditions
+### 6.3 - Queue Stop Conditions
 
 The command must define clean stop states:
 
@@ -623,11 +692,11 @@ Stop output should tell the agent what it found and what command or configuratio
 
 ---
 
-## Part 6: Legacy Detection During Init
+## Part 7: Legacy Detection During Init
 
 M4 detects legacy state but does not perform cleanup.
 
-### 6.1 - Detection
+### 7.1 - Detection
 
 `aie init` must detect:
 
@@ -640,7 +709,7 @@ M4 detects legacy state but does not perform cleanup.
 
 Detection output must be product-generic. It should describe the category found and the path, not the source project that originally inspired it.
 
-### 6.2 - Init Choices
+### 7.2 - Init Choices
 
 When legacy state is detected, init must offer safe choices:
 
@@ -650,7 +719,7 @@ When legacy state is detected, init must offer safe choices:
 
 M4 must not delete, rewrite, or migrate legacy files. M6 owns cleanup and compatibility wrappers.
 
-### 6.3 - Doctor Integration
+### 7.3 - Doctor Integration
 
 `aie doctor` must report installed instruction state:
 
@@ -660,6 +729,7 @@ M4 must not delete, rewrite, or migrate legacy files. M6 owns cleanup and compat
 - OpenCode command present or missing when selected
 - command alias present or missing when enabled
 - stale managed section version
+- configured naming-rules instruction state
 - configured no-worktree policy
 - configured open-PR blocking policy and ignored automation authors
 - configured base branch and remote
@@ -670,11 +740,11 @@ M4 must not delete, rewrite, or migrate legacy files. M6 owns cleanup and compat
 
 ---
 
-## Part 7: Schema, Completion, And Tests
+## Part 8: Schema, Completion, And Tests
 
 M4 must keep the M1 CLI metadata surfaces current.
 
-### 7.1 - Schema
+### 8.1 - Schema
 
 `aie schema --json` must include:
 
@@ -683,23 +753,25 @@ M4 must keep the M1 CLI metadata surfaces current.
 - init flags
 - file mutation markers
 - config fields created or updated by init
+- naming-rules instruction flags and config fields
 - non-interactive flags
 - dry-run support
 - stable result object names
 - stable error kinds
 
-### 7.2 - Completion
+### 8.2 - Completion
 
 Completion must include:
 
 - init command flags
 - supported tool values
 - safety toggle values
+- naming-rules toggle values
 - policy enum values
 
 Completion must not query external services.
 
-### 7.3 - Tests
+### 8.3 - Tests
 
 M4 tests must cover:
 
@@ -718,6 +790,7 @@ M4 tests must cover:
 - non-interactive defaults
 - prompt suppression under `--json`
 - prompt-injection/no-credit block toggles
+- naming-rules instruction block toggles
 - generated content uses only Executor product wording and configured repository policy
 - legacy detection without cleanup
 - doctor installed-state checks
@@ -749,7 +822,7 @@ CLI UX acceptance:
 
 ### M4.2 - Implement Init Policy Prompts And Non-Interactive Flags
 
-Add interactive and non-interactive policy capture for tools, branch policy, base branch/remote, no-worktree enforcement, open-PR blocking, ignored automation PR authors, labels, autonomous mode, quality gates, review policy, manual audit policy, safety toggles, and supply-chain preferences.
+Add interactive and non-interactive policy capture for tools, branch policy, base branch/remote, no-worktree enforcement, open-PR blocking, ignored automation PR authors, labels, autonomous mode, agent-run quality gates, review policy, manual audit policy, optional naming rules, safety toggles, and supply-chain preferences.
 
 Primary FRs: FR-03-002, FR-03-012, FR-03-013, FR-04-002, FR-04-006, FR-04-016 through FR-04-018, FR-07-001, FR-07-008 through FR-07-010, FR-10-003 through FR-10-006, FR-12-007 through FR-12-009, FR-15-006 through FR-15-007, FR-15-020.
 
@@ -759,6 +832,7 @@ CLI UX acceptance:
 - `--defaults --yes` runs without prompts
 - `--json` never prompts
 - unsupported tool or policy values produce actionable errors
+- naming-rules instruction enablement has prompt, flag, and config equivalents
 - default policy disables linked worktrees for issue execution
 - default policy blocks new issue work when non-automation open PRs exist
 - default policy requires local base branch freshness against the configured remote
@@ -782,6 +856,7 @@ CLI UX acceptance:
 - generated instructions define the two-record model: local todos for working memory and GitHub issue checkboxes/comments for durable shared state
 - generated instructions define the two-phase continuation pattern that keeps `next` pending until new issue todos exist or the queue is confirmed empty/blocked
 - generated instructions include configured safety blocks unless disabled
+- generated instructions include the naming-rules block when enabled and omit it when disabled
 - generated instructions authorize autonomous shipping only when policy enables it
 - generated instructions require `aie complete <issue>` after merge
 - tests assert generated content uses only Executor product wording and configured repository policy
@@ -802,7 +877,7 @@ CLI UX acceptance:
 - `--tool all` plans and applies every supported projection
 - unsupported host command mechanisms degrade to always-loaded instructions with clear output
 - installed command text starts or resumes the Executor issue work cycle without source-specific wording
-- installed OpenCode command preserves the Part 5 trust, autonomy, shipping authority, and direct execution cue
+- installed OpenCode command preserves the Part 6 trust, autonomy, shipping authority, and direct execution cue
 
 ### M4.5 - Implement Autonomous Work Cycle And Continuation Wording
 
@@ -841,11 +916,12 @@ CLI UX acceptance:
 - init detects legacy helper/instruction categories but does not clean them up
 - legacy output offers leave-untouched, install-alongside, or defer-to-migration choices
 - `aie doctor` reports managed instruction and command installation health
+- `aie doctor` reports whether naming-rules instructions are configured and installed
 - `aie doctor` reports configured no-worktree, open-PR blocking, and base branch/remote policy
 - `aie doctor` recommends the next safe command without mutating
 - `aie schema --json` includes all M4 commands/options
 - completion includes M4 flags and enum values
-- normal tests cover dry-run, writes, updates, conflicts, host projections, non-interactive mode, safety toggles, doctor checks, and product-generic generated output
+- normal tests cover dry-run, writes, updates, conflicts, host projections, non-interactive mode, naming-rules toggles, safety toggles, doctor checks, and product-generic generated output
 
 ---
 
@@ -864,15 +940,16 @@ M4 is complete when:
 - Optional OpenCode command alias works when enabled.
 - project command wording grants explicit trust, autonomy, normal git/GitHub shipping authority, and continuation authority under configured repository policy.
 - generated instructions include the full issue work cycle, todo expectations, continuation rules, safety blocks, and autonomous shipping authority when enabled.
+- generated instructions include optional naming rules when enabled by init policy and omit them when disabled.
 - generated instructions include host-specific todo-tool wording for OpenCode, Claude Code, and Codex where supported.
 - generated instructions preserve protected workflow todo ids and the two-phase `next` continuation pattern.
 - generated instructions prohibit linked git worktrees for Executor issue execution.
 - generated instructions require blocking-open-PR and base-branch freshness checks before new issue work.
 - generated instructions require Executor lifecycle commands for issue state, including `aie complete <issue>` after merge.
 - generated instructions are generic and contain only Executor product wording and configured repository policy.
-- `aie doctor` reports installed instruction and command state.
-- `aie schema --json` and completion include M4 init and host-install surfaces.
+- `aie doctor` reports installed instruction, naming-rules, and command state.
+- `aie schema --json` and completion include M4 init, host-install, and naming-rules surfaces.
 - legacy state is detected and reported without cleanup.
-- normal tests cover file writes, managed section updates, dry-run, JSON output, host projections, prompt suppression, safety toggles, product-generic generated output, and diagnostics.
+- normal tests cover file writes, managed section updates, dry-run, JSON output, host projections, prompt suppression, naming-rules toggles, safety toggles, product-generic generated output, and diagnostics.
 
-M4 should leave the repo ready for M5 to add actual review/audit/quality gate commands and richer shipping support on top of the installed work-cycle instructions.
+M4 should leave the repo ready for M5 to add review/audit/quality guidance, evidence, PR-state commands, and richer shipping support on top of the installed work-cycle instructions.

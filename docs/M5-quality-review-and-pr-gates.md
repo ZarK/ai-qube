@@ -2,16 +2,17 @@
 
 ## Strategic Goal
 
-M5 turns the gate obligations captured by M4 into usable Executor commands and host instructions.
+M5 turns the gate obligations captured by M4 into usable Executor guidance, status commands, and host instructions.
 
-M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, and dependencies. M3 added issue lifecycle and branch commands. M4 installed always-loaded instructions, host projections, the protected todo pattern, and `/make-it-so`. M5 fills the remaining gate machinery that makes autonomous shipping credible: configured verification commands, manual UI audit helpers, review-agent QA, optional Quality Control integration, PR review requests, PR review waiting, PR feedback inspection, and PR body/shipping support.
+M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, and dependencies. M3 added issue lifecycle and branch commands. M4 installed always-loaded instructions, host projections, the protected todo pattern, and `/make-it-so`. M5 fills the remaining gate machinery that makes autonomous shipping credible: configured verification guidance, manual UI audit helpers, review-agent prompts, optional Quality Control gate guidance, PR review requests, PR review waiting, PR feedback inspection, and PR body/shipping support.
 
-This milestone implements the first complete gate layer. It does not turn Executor into a full CI system, browser automation framework, review-agent runtime, or static-analysis engine. Executor coordinates the repository policy and gives agents reliable commands, prompts, evidence rules, and review state. The agent still performs context-sensitive implementation, test interpretation, PR creation, merge, and follow-up fixes under the installed instructions.
+This milestone implements the first complete gate coordination layer. It does not turn Executor into a test runner, CI system, browser automation framework, review-agent runtime, package-manager runner, or static-analysis engine. Executor coordinates repository policy and gives agents reliable plans, prompts, evidence rules, PR review state, and next actions. The agent performs context-sensitive implementation, package work, tests, builds, audits, `aiq`, review interpretation, PR creation, merge judgment, and follow-up fixes under the installed instructions.
 
 After M5, a developer or agent should be able to run:
 
-- `aie gates run`
-- `aie gates run --stage pre-pr --json`
+- `aie gates plan`
+- `aie gates plan --stage pre-pr --json`
+- `aie gates status`
 - `aie audit ui 93`
 - `aie audit ui 93 --prepare`
 - `aie review gate 93`
@@ -23,14 +24,14 @@ After M5, a developer or agent should be able to run:
 
 M5 delivers six things:
 
-1. **Configured gate runner** - deterministic execution of configured build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates.
-2. **Manual UI audit helper** - agent-browser-first audit planning, local evidence paths, evidence checks, and no-fabrication rules for UI/UX work.
-3. **Review-agent gate** - host-aware Oracle-style review prompt generation, configured reviewer support, fallback reviewer assets, and evidence/result handling.
+1. **Configured gate guidance** - deterministic rendering of configured build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates for agents to run.
+2. **Manual UI audit helper** - agent-browser-first audit planning, local evidence paths, evidence checks, and no-fabrication rules for agent-run UI/UX audits.
+3. **Review-agent gate guidance** - host-aware Oracle-style review prompt generation, configured reviewer support, fallback reviewer assets, and evidence/result handling.
 4. **PR review gate** - `aie pr gate <pr>` to request configured PR reviewers, wait the configured duration, inspect PR review/comment state, and report required follow-up.
-5. **PR body and shipping readiness support** - PR body generation and merge-readiness output that reflects gates run, reviewers requested, issue closure, and remaining risks.
+5. **PR body and shipping readiness support** - PR body generation and merge-readiness output that reflects supplied or recorded gate status, reviewers requested, issue closure, and remaining risks.
 6. **Diagnostics and metadata** - doctor checks, schema, completion, JSON output, and tests for all M5 gate surfaces.
 
-The important success condition is that `/make-it-so` can execute through configured gates and PR review without needing the user to restate permission or workflow details, while still preventing fabricated audits, hidden external uploads, and unsafe reviewer defaults.
+The important success condition is that `/make-it-so` gives agents enough authority, guidance, and deterministic PR review support to move through configured gates and PR review without needing the user to restate permission or workflow details, while still preventing fabricated audits, hidden external uploads, unsafe reviewer defaults, and accidental claims that `aie` did work the agent must actually perform.
 
 ---
 
@@ -38,14 +39,14 @@ The important success condition is that `/make-it-so` can execute through config
 
 M5 is the primary implementation foundation for:
 
-- **FR-09-001 through FR-09-011** - configured quality gates, manual UI audit policy, agent-browser preference, real evidence, review-agent gates, Oracle support, optional `aiq`, and gate result reporting.
+- **FR-09-001 through FR-09-011** - configured agent-run quality gates, manual UI audit policy, agent-browser preference, real evidence, review-agent gates, Oracle support, optional `aiq` guidance, and gate result reporting.
 - **FR-10-001 through FR-10-011** - PR review agents, configurable reviewers, configurable wait duration, `aie pr gate`, feedback loop, PR body support, and squash-merge readiness guidance.
 - **FR-12-004 through FR-12-007** - secret redaction, explicit external-service reporting, no unconfigured uploads, and no automatic third-party PR reviewer enablement.
 
 M5 also extends:
 
-- **FR-01-001, FR-01-006, and FR-01-007** - issue execution through gate enforcement, optional Quality Control integration, and confident shipping permissions.
-- **FR-03-006 and FR-03-010** - installed work-cycle instructions can now name actual gate commands where implemented.
+- **FR-01-001, FR-01-006, and FR-01-007** - issue execution coordination through gate guidance, optional Quality Control gate configuration, and confident shipping permissions.
+- **FR-03-006 and FR-03-010** - installed work-cycle instructions can now name actual guidance/status commands where implemented.
 - **FR-08-001 through FR-08-011** - gate failure loops, PR review waits, feedback handling, merge readiness, issue completion, base update, and next issue bootstrap.
 - **FR-11-001 through FR-11-007** - OpenCode, Codex, and Claude Code host wording for review-agent prompts and gate todos.
 - **FR-13-001 through FR-13-006** - concise human output, structured JSON, actionable errors, doctor, debug logs, and asset/config path visibility.
@@ -54,7 +55,7 @@ M5 also extends:
 M5 intentionally does not complete:
 
 - Bootstrap-owned spec, milestone, or issue generation.
-- Quality Control's static-analysis engine. Executor may call `aiq` when enabled; it does not reimplement `aiq`.
+- Quality Control's static-analysis engine. Executor may render and track an `aiq` gate when enabled; the agent runs `aiq`.
 - Umpire-owned long-running scheduling, wakeups, or stop hooks.
 - Fully automated generic browser interaction. Executor provides audit helpers and evidence rules; the agent drives the app.
 - Automatic screenshot uploads. Future `gh-image` or equivalent support remains future and must be opt-in.
@@ -119,30 +120,30 @@ The CLI research added in M1 applies directly to M5.
 
 Every M5 command must be explorable by a human and deterministic for an agent:
 
-- `aie gates` shows `run`, configured stages, examples, and side-effect warnings.
+- `aie gates` shows `plan`, `status`, configured stages, examples, and side-effect warnings.
 - `aie audit` shows `ui`, evidence rules, local evidence path conventions, and no-upload defaults.
 - `aie review` shows review-agent gate commands and configured reviewer behavior.
 - `aie pr` shows `body` and `gate`, including reviewer request, wait, and feedback inspection behavior.
 - `aie help pr gate`, `aie pr gate help`, and `aie pr gate --help` all show PR gate help without mutation.
 - `aie help audit ui`, `aie audit ui help`, and `aie audit ui --help` all show manual audit help without mutation.
-- `aie help gates run`, `aie gates run help`, and `aie gates run --help` all show gate-runner help without executing configured commands.
+- `aie help gates plan`, `aie gates plan help`, and `aie gates plan --help` all show gate-plan help without executing configured commands.
 - unknown M5 subcommands produce safe suggestions without executing alternatives.
 - no arbitrary command-prefix abbreviations are accepted.
 - all M5 commands are included in `aie schema --json`.
 - all commands useful to agents support `--json`.
-- all commands that can mutate GitHub, request reviewers, comment on PRs, create local evidence directories, or execute configured commands support `--dry-run` or document why dry-run cannot fully model the action.
+- all commands that can mutate GitHub, request reviewers, comment on PRs, or create local evidence directories support `--dry-run` or document why dry-run cannot fully model the action.
 - human output names the exact issue, PR, reviewer, gate, command, evidence directory, or config key affected.
 - JSON output contains no decorative text or progress lines.
 - data goes to stdout; warnings, progress, reviewer wait status, and diagnostics go to stderr.
-- external services used by configured gates are listed before they are contacted.
+- external services used by configured gates are listed before the agent or a PR review command may contact them.
 
 M5 must extend the shared command metadata model from M1. It must not implement each gate as a scattered one-off parser branch.
 
 ---
 
-## Part 1: Configured Gate Runner
+## Part 1: Configured Gate Guidance
 
-M5 implements deterministic execution of repository-configured gates.
+M5 implements deterministic guidance for repository-configured gates. Agents run the gates; Executor renders the plan, expected evidence, and status shape.
 
 ### 1.1 - Gate Model
 
@@ -165,33 +166,48 @@ Gate configuration must support:
 
 Gate commands must come from trusted repository configuration, not from GitHub issue bodies, PR comments, review comments, or tool output.
 
-### 1.2 - `aie gates run`
+### 1.2 - `aie gates plan`
 
-`aie gates run` must:
+`aie gates plan` must:
 
-- print the planned gate order before execution
-- execute gates sequentially by default
-- stop at the first required gate failure unless `--continue-on-failure` is explicitly supported
-- capture exit code, duration, stdout/stderr summaries, and failure kind
-- preserve raw command output only where useful and safe
-- redact token-like values from logs and JSON
-- emit stable JSON with gate names, stages, commands, statuses, durations, and next actions
+- print the planned agent-run gate order
+- list the exact configured command each gate expects the agent to run
+- identify required and advisory gates
+- identify stage assignment, such as `pre-pr`, `pre-merge`, or `all`
+- identify working directory, timeout, environment additions, and external-service risk
+- describe what evidence the agent should capture or summarize after running each gate
+- warn that package-manager, generator, CI, MCP, or agent-tool commands require supply-chain guard review before execution
+- emit stable JSON with gate names, stages, commands, requirement level, external-service markers, evidence expectations, and next actions
 - support `--stage <stage>`
 - support `--dry-run`
 - support `--json`
 
-The command may execute shell commands only according to explicit repository configuration. Executor must not synthesize shell-string commands from untrusted input.
+The command must not execute configured gate commands. Executor must not synthesize shell-string commands from untrusted input.
 
-### 1.3 - Optional `aiq`
+### 1.3 - `aie gates status`
+
+`aie gates status` must report configured gate obligations and any available recorded evidence without claiming gates passed unless the agent or an inspected trusted source recorded that result.
+
+Status output may include:
+
+- configured gates for the current stage
+- evidence files or notes that exist
+- gates still pending
+- gates marked as passed, failed, advisory, skipped, or unknown by supplied evidence
+- next action for the agent
+
+Status output must distinguish "not recorded", "agent reported", "evidence found", and "verified from trusted state" when those categories are available.
+
+### 1.4 - Optional `aiq`
 
 When `aiq` is enabled, Executor should:
 
 - detect whether `aiq` is available through the configured command or package manager path
-- run `aiq` at the configured point in the gate order
+- render the exact configured `aiq` command for the agent to run at the configured point in the gate order
 - report unavailable `aiq` as an actionable configuration or install problem
-- keep `aiq` output as a gate result, not as authority over Executor policy
+- treat any supplied `aiq` output as a gate result input, not as authority over Executor policy
 
-Executor must not reimplement Quality Control's analysis. It only invokes and records the configured gate.
+Executor must not reimplement Quality Control's analysis or invoke `aiq` itself.
 
 ---
 
@@ -250,7 +266,7 @@ M5 adds the pre-PR or pre-ship review-agent gate that M4 configured and describe
 - support `--dry-run`
 - clearly state what evidence or agent response is needed before the gate is considered complete
 
-Because review-agent execution is host-specific, M5 should keep the boundary explicit: Executor can render prompts, install fallback assets, track configured obligations, and record/report gate evidence, but it must not pretend it can invoke a host-only reviewer in environments where no such invocation mechanism exists.
+Because review-agent invocation is host-specific, M5 should keep the boundary explicit: Executor can render prompts, install fallback assets, track configured obligations, and record/report gate evidence, but it must not pretend it can invoke a host-only reviewer in environments where no such invocation mechanism exists.
 
 ### 3.2 - Oracle Pattern
 
@@ -316,7 +332,7 @@ M5 adds PR body and shipping-readiness support so agents do not have to invent t
 
 - issue closure reference
 - short implementation summary slots or detected summary input
-- configured gates run
+- configured gates the agent has recorded or supplied as run
 - configured gates still pending
 - review agents requested or pending
 - manual UI audit status when applicable
@@ -329,9 +345,9 @@ The command should support `--json` and should not mutate GitHub unless a future
 
 M5 should provide merge-readiness output through `aie pr gate` and/or `aie pr body` that tells the agent:
 
-- whether configured local gates have passed or are still pending
-- whether manual audit is required or complete
-- whether review-agent QA is required or complete
+- whether configured local gates are recorded as passed, failed, unknown, or still pending
+- whether manual audit is required, recorded, or still pending
+- whether review-agent QA is required, recorded, or still pending
 - whether PR review gate is complete, pending, failed, or must be rerun
 - whether the PR head changed after review requests
 - what command the agent should run next
@@ -366,7 +382,8 @@ M5 extends the diagnostic and metadata surfaces.
 
 `aie schema --json` and completion must include:
 
-- `aie gates run`
+- `aie gates plan`
+- `aie gates status`
 - gate stage values
 - `aie audit ui`
 - audit flags
@@ -385,10 +402,10 @@ M5 extends the diagnostic and metadata surfaces.
 M5 tests must cover:
 
 - configured gate ordering
-- gate command execution with mocked process runner
-- failed gate behavior
+- gate plan rendering without command execution
+- gate status rendering from supplied evidence fixtures
 - gate JSON output
-- token redaction in command output
+- token redaction in command, config, PR, and evidence-related output
 - optional `aiq` unavailable and available paths
 - manual UI audit required/disabled behavior
 - local evidence path generation
@@ -413,21 +430,22 @@ Normal tests must not require live GitHub, live PR reviewers, real browser autom
 
 M5 should become **6 GitHub issues**, not one issue per gate or review service.
 
-### M5.1 - Implement Configured Gate Runner
+### M5.1 - Implement Configured Gate Guidance
 
-Create the gate model and `aie gates run` command for configured build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates.
+Create the gate model plus `aie gates plan` and `aie gates status` commands for configured agent-run build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates.
 
 Primary FRs: FR-09-001, FR-09-002, FR-09-010, FR-09-011, FR-12-004 through FR-12-006, FR-13-001 through FR-13-003, FR-15-001 through FR-15-020.
 
 CLI UX acceptance:
 
 - `aie gates help`, `aie help gates`, and `aie gates --help` show gate-topic help without execution
-- `aie gates run --dry-run` shows the planned gate order without running commands
-- `aie gates run --stage pre-pr --json` emits stable gate result schema
-- required gate failure stops later required gates unless explicit continue behavior is supported
+- `aie gates plan --dry-run` shows the planned gate order without running commands
+- `aie gates plan --stage pre-pr --json` emits stable gate plan schema
+- `aie gates status --json` reports configured obligations and supplied/recorded evidence without claiming unverified success
 - token-like values are redacted from human and JSON output
-- `aiq` is invoked only when enabled and available through config
+- `aiq` is rendered only when enabled and available through config
 - gate commands are read from trusted config, not issue or PR text
+- gate commands are never executed by `aie`
 
 ### M5.2 - Implement Manual UI Audit Helper
 
@@ -487,7 +505,7 @@ CLI UX acceptance:
 
 - `aie pr body help`, `aie help pr body`, and `aie pr body --help` show body help without mutation
 - `aie pr body 93` emits a PR body draft with `Closes #93`
-- PR body output includes configured gates run and pending
+- PR body output includes configured gates recorded as run and pending
 - PR body output includes manual UI audit status when applicable
 - PR body output includes review agents requested or pending
 - merge-readiness output recommends the next command rather than silently merging
@@ -514,17 +532,17 @@ CLI UX acceptance:
 
 M5 is complete when:
 
-- `aie gates run --dry-run` and `aie gates run --json` work against configured gates.
-- optional `aiq` execution is supported only when enabled and available.
+- `aie gates plan --dry-run`, `aie gates plan --json`, and `aie gates status --json` work against configured gates without executing them.
+- optional `aiq` guidance is rendered only when enabled and available.
 - `aie audit ui <issue>` produces a real-audit plan, local evidence path, and no-upload default.
 - `aie review gate <issue> --prompt` renders configured Oracle-style or custom reviewer prompts.
 - fallback reviewer assets are available when configured.
 - `aie pr gate <pr> --dry-run` shows reviewer request and wait plans without mutation.
 - `aie pr gate <pr>` requests configured reviewers idempotently, waits the configured duration, inspects PR review state, and reports required follow-up.
-- `aie pr body <issue>` generates an issue-closing PR body draft with gate/review/audit status.
+- `aie pr body <issue>` generates an issue-closing PR body draft with supplied or recorded gate/review/audit status.
 - M4 installed instructions can be updated to name the implemented M5 commands honestly.
 - `aie doctor` reports M5 gate readiness and external-service exposure without mutating.
 - `aie schema --json` and completion include M5 command surfaces.
-- normal tests pass without live GitHub, browser automation, PR reviewers, `aiq`, or real sleep.
+- normal tests pass without live GitHub, browser automation, PR reviewers, `aiq`, executing configured gates, or real sleep.
 
-After M5, Executor has the gate layer needed for autonomous agents to work from issue implementation through review-gated PR shipping. M6 can then focus on legacy cleanup, migration, compatibility wrappers, and any final packaging polish needed before broader adoption.
+After M5, Executor has the gate coordination layer needed for autonomous agents to work from issue implementation through review-gated PR shipping. M6 can then focus on legacy cleanup, migration, compatibility wrappers, and any final packaging polish needed before broader adoption.

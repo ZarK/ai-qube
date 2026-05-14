@@ -68,9 +68,8 @@ Before shipping an issue:
 3. Review the diff yourself.
 4. Commit only intentional files.
 5. Push the branch and open a PR that closes the issue.
-6. Run the PR gate: wait 10 minutes for configured review agents, automation, comments, reviews, and CI to respond, then inspect the PR state.
-7. Address review and CI feedback, rerun affected checks, push fixes, and repeat the 10-minute PR gate when material changes were made.
-8. Merge only when repository policy, tests, checks, and review feedback are satisfied.
+6. Address review and CI feedback.
+7. Merge only when repository policy, tests, checks, and review feedback are satisfied.
 
 After merge:
 
