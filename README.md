@@ -4,9 +4,19 @@ AI Executor — autonomous GitHub issue execution for agentic development.
 
 ## Installation
 
+Executor follows strict supply-chain policy (see docs/cli-framework-decision.md and AGENTS.md).
+
+**Recommended (pinned, no lifecycle scripts):**
+
 ```bash
-npm install @tjalve/aie
+npm ci --ignore-scripts
+# or for one-off:
+npm install @tjalve/aie@0.1.0 --ignore-scripts --save-exact
 ```
+
+Do not use `npm install @tjalve/aie@latest` as the preferred path.
+
+The package has no `preinstall`, `install`, or `postinstall` scripts.
 
 ## Usage
 
@@ -23,6 +33,6 @@ aie --help
 
 ## Status
 
-This is the M1.1 package scaffold. Full CLI commands, GitHub queue behavior, issue lifecycle, and agent instructions are implemented across milestones M1–M6.
+M1 (Package + CLI + Config + Doctor) complete. See GitHub issues for the current bootstrap queue (#1–#17 chain).
 
-See the [GitHub repository](https://github.com/ZarK/ai-executor) for the current milestone and issue queue.
+Safe install, redaction helper, and full CLI metadata are in place. Later milestones add GitHub integration, init, and autonomous cycle.
