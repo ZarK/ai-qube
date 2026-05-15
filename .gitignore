@@ -5,8 +5,9 @@
 node_modules/
 
 # Build output
-# Note: lib/ is intentionally committed so the published npm tarball is reproducible
-# and the package can be installed from git without a build step.
+lib/
+dist/
+*.tsbuildinfo
 
 # Logs
 logs

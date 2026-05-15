@@ -29,7 +29,7 @@ M5 delivers six things:
 3. **Review-agent gate guidance** - host-aware Oracle-style review prompt generation, configured reviewer support, fallback reviewer assets, and evidence/result handling.
 4. **PR review gate** - `aie pr gate <pr>` to request configured PR reviewers, wait the configured duration, inspect PR review/comment state, and report required follow-up.
 5. **PR body and shipping readiness support** - PR body generation and merge-readiness output that reflects supplied or recorded gate status, reviewers requested, issue closure, and remaining risks.
-6. **Diagnostics and metadata** - doctor checks, schema, completion, JSON output, and tests for all M5 gate surfaces.
+6. **Diagnostics and metadata** - doctor checks, schema, help metadata, JSON output, and tests for all M5 gate surfaces.
 
 The important success condition is that `/make-it-so` gives agents enough authority, guidance, and deterministic PR review support to move through configured gates and PR review without needing the user to restate permission or workflow details, while still preventing fabricated audits, hidden external uploads, unsafe reviewer defaults, and accidental claims that `aie` did work the agent must actually perform.
 
@@ -50,7 +50,7 @@ M5 also extends:
 - **FR-08-001 through FR-08-011** - gate failure loops, PR review waits, feedback handling, merge readiness, issue completion, base update, and next issue bootstrap.
 - **FR-11-001 through FR-11-007** - OpenCode, Codex, and Claude Code host wording for review-agent prompts and gate todos.
 - **FR-13-001 through FR-13-006** - concise human output, structured JSON, actionable errors, doctor, debug logs, and asset/config path visibility.
-- **FR-15-001 through FR-15-020** - CLI explorability, help forms, schema, completion, stdout/stderr separation, mutation labels, dry-run behavior, and shared command metadata for all M5 commands.
+- **FR-15-001 through FR-15-020** - CLI explorability, help forms, schema, help metadata, stdout/stderr separation, mutation labels, dry-run behavior, and shared command metadata for all M5 commands.
 
 M5 intentionally does not complete:
 
@@ -163,6 +163,7 @@ Gate configuration must support:
 - environment additions
 - whether a gate is required or advisory
 - whether a gate may contact an external service
+- whether a gate requires supply-chain review before the agent runs it
 
 Gate commands must come from trusted repository configuration, not from GitHub issue bodies, PR comments, review comments, or tool output.
 
@@ -175,8 +176,10 @@ Gate commands must come from trusted repository configuration, not from GitHub i
 - identify required and advisory gates
 - identify stage assignment, such as `pre-pr`, `pre-merge`, or `all`
 - identify working directory, timeout, environment additions, and external-service risk
+- identify package-manager, generator, CI, MCP, IDE, release, and agent-tool commands as supply-chain-sensitive
 - describe what evidence the agent should capture or summarize after running each gate
-- warn that package-manager, generator, CI, MCP, or agent-tool commands require supply-chain guard review before execution
+- warn that supply-chain-sensitive commands require review before execution
+- list expected supply-chain review evidence: need, exact package/source/version, lockfile impact, age gate, source trust, lifecycle/native/binary execution risk, integrity/provenance signal, and dependency scope where applicable
 - emit stable JSON with gate names, stages, commands, requirement level, external-service markers, evidence expectations, and next actions
 - support `--stage <stage>`
 - support `--dry-run`
@@ -356,7 +359,7 @@ This output supports the installed work cycle; it does not replace the agent's c
 
 ---
 
-## Part 6: Doctor, Schema, Completion, And Tests
+## Part 6: Doctor, Schema, Help Metadata, And Tests
 
 M5 extends the diagnostic and metadata surfaces.
 
@@ -365,6 +368,7 @@ M5 extends the diagnostic and metadata surfaces.
 `aie doctor` must report:
 
 - configured gates and invalid gate commands
+- configured supply-chain policy and gates marked supply-chain-sensitive
 - missing `gh` authentication for PR review gates
 - configured PR review agents
 - configured review wait duration
@@ -378,9 +382,9 @@ M5 extends the diagnostic and metadata surfaces.
 
 `doctor` remains non-mutating.
 
-### 6.2 - Schema And Completion
+### 6.2 - Schema And Help Metadata
 
-`aie schema --json` and completion must include:
+`aie schema --json` and help metadata must include:
 
 - `aie gates plan`
 - `aie gates status`
@@ -420,7 +424,7 @@ M5 tests must cover:
 - PR review/comment/thread fixture parsing
 - dry-run behavior for mutating PR gate actions
 - PR body generation
-- doctor, schema, completion, and help output
+- doctor, schema, help metadata, and help output
 
 Normal tests must not require live GitHub, live PR reviewers, real browser automation, `agent-browser`, Playwright, or `aiq`.
 
@@ -434,7 +438,7 @@ M5 should become **6 GitHub issues**, not one issue per gate or review service.
 
 Create the gate model plus `aie gates plan` and `aie gates status` commands for configured agent-run build, lint, typecheck, unit, integration, E2E, custom, and optional `aiq` gates.
 
-Primary FRs: FR-09-001, FR-09-002, FR-09-010, FR-09-011, FR-12-004 through FR-12-006, FR-13-001 through FR-13-003, FR-15-001 through FR-15-020.
+Primary FRs: FR-09-001, FR-09-002, FR-09-010, FR-09-011, FR-12-004 through FR-12-006, FR-13-001 through FR-13-003, FR-15-001 through FR-15-020, FR-16-001 through FR-16-016.
 
 CLI UX acceptance:
 
@@ -445,6 +449,8 @@ CLI UX acceptance:
 - token-like values are redacted from human and JSON output
 - `aiq` is rendered only when enabled and available through config
 - gate commands are read from trusted config, not issue or PR text
+- package-manager, generator, CI, MCP, IDE, release, and agent-tool commands are marked supply-chain-sensitive
+- supply-chain-sensitive gate plans tell agents what dependency/tool review evidence is expected before execution
 - gate commands are never executed by `aie`
 
 ### M5.2 - Implement Manual UI Audit Helper
@@ -460,7 +466,7 @@ CLI UX acceptance:
 - `aie audit ui 93 --dry-run` shows the audit plan without writing
 - audit output prefers `agent-browser` and describes fallback browser automation only as fallback
 - audit output requires real running app evidence and never claims pass from generated instructions alone
-- screenshot upload is not implemented and remains disabled by default
+- screenshot upload remains out of scope and disabled by default
 
 ### M5.3 - Implement Review-Agent Gate And Oracle Fallback
 
@@ -490,7 +496,7 @@ CLI UX acceptance:
 - `aie pr gate 12 --dry-run` shows reviewer requests/comments/wait plan without mutating GitHub or sleeping
 - configured reviewers are requested idempotently per PR head commit
 - default wait duration is 10 minutes unless config overrides it
-- normal tests can fake waiting
+- normal tests use deterministic wait fixtures instead of real sleeping
 - PR comments, reviews, review requests, and review threads are parsed from fixtures
 - PR head changes after reviewer request require rerunning the gate
 - output tells the agent to address feedback, rerun affected gates, and rerun PR gate after material changes
@@ -511,17 +517,18 @@ CLI UX acceptance:
 - merge-readiness output recommends the next command rather than silently merging
 - squash merge is the default suggested strategy when repository policy permits it
 
-### M5.6 - Implement M5 Doctor, Schema, Completion, And Tests
+### M5.6 - Implement M5 Doctor, Schema, Help Metadata, And Tests
 
-Extend `aie doctor`, `aie schema --json`, shell completion, fixtures, and tests for all M5 commands and gate states.
+Extend `aie doctor`, `aie schema --json`, help metadata, fixtures, and tests for all M5 commands and gate states.
 
-Primary FRs: FR-09-001 through FR-09-011, FR-10-001 through FR-10-011, FR-12-004 through FR-12-007, FR-13-001 through FR-13-006, FR-15-001 through FR-15-020.
+Primary FRs: FR-09-001 through FR-09-011, FR-10-001 through FR-10-011, FR-12-004 through FR-12-007, FR-13-001 through FR-13-006, FR-15-001 through FR-15-020, FR-16-011 through FR-16-016.
 
 CLI UX acceptance:
 
 - `aie doctor` reports gate, audit, review-agent, PR review, external-service, `agent-browser`, and `aiq` readiness without mutation
+- `aie doctor` reports configured supply-chain policy and supply-chain-sensitive gate readiness without mutation
 - `aie schema --json` includes all M5 commands, flags, mutation markers, external-service markers, and stable error kinds
-- completion includes M5 command groups, flags, stage values, and configured review-agent values
+- help metadata includes M5 command groups, flags, stage values, and configured review-agent values
 - fixtures cover PR review states without live GitHub
 - tests cover help output, dry-run output, JSON schema, redaction, and product-generic generated output
 - tests do not require live review services, live browser automation, or real sleeping
@@ -542,7 +549,7 @@ M5 is complete when:
 - `aie pr body <issue>` generates an issue-closing PR body draft with supplied or recorded gate/review/audit status.
 - M4 installed instructions can be updated to name the implemented M5 commands honestly.
 - `aie doctor` reports M5 gate readiness and external-service exposure without mutating.
-- `aie schema --json` and completion include M5 command surfaces.
+- `aie schema --json` and help metadata include M5 command surfaces.
 - normal tests pass without live GitHub, browser automation, PR reviewers, `aiq`, executing configured gates, or real sleep.
 
 After M5, Executor has the gate coordination layer needed for autonomous agents to work from issue implementation through review-gated PR shipping. M6 can then focus on legacy cleanup, migration, compatibility wrappers, and any final packaging polish needed before broader adoption.

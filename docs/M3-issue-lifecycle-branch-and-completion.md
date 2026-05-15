@@ -48,7 +48,7 @@ M3 also extends:
 - **FR-05-005 through FR-05-006** - resume active issue first and enforce one active in-progress issue.
 - **FR-05-012 through FR-05-013** - lifecycle commands keep dependency-derived status correct.
 - **FR-13-001 through FR-13-004** - concise human output, structured agent output, actionable errors, and non-mutating diagnostics.
-- **FR-15-001 through FR-15-020** - CLI explorability, schema, completion, stdout/stderr separation, mutation labeling, and shared command metadata for all M3 commands.
+- **FR-15-001 through FR-15-020** - CLI explorability, schema, help metadata, stdout/stderr separation, mutation labeling, and shared command metadata for all M3 commands.
 
 M3 intentionally does not complete:
 
@@ -69,7 +69,7 @@ Use these local references only when drafting, reviewing, or decomposing this mi
 | Dependency helper source | `references/workflows/memex.photos/scripts/lib/gh-issue-helpers.sh` | Shared blocker/dependent logic already generalized in M2 |
 | Branch naming guidance | `references/workflows/ai-bootstrap/resources/agent/rules/branch-naming.md`, `references/workflows/ai-bootstrap/resources/agents.md` | Branch naming and branch-check expectations |
 | GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Lifecycle command expectations and one-in-progress rule |
-| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, completion, JSON, and mutation warnings |
+| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, help metadata, JSON, and mutation warnings |
 | Queue/dependency milestone | `docs/M2-github-labels-priority-and-dependencies.md` | M2 queue model and dependency graph surfaces M3 builds on |
 | Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
 
@@ -220,7 +220,7 @@ M3 implements `aie view <issue>`.
 - URL
 - state
 - labels
-- milestone
+- GitHub milestone title, state, and due date when available
 - assignees
 - priority
 - label status
@@ -538,6 +538,7 @@ Human output must include:
 - dependents refreshed
 - dependents unblocked
 - dependents still blocked
+- remaining open issues in the completed issue's GitHub milestone when milestone data is available
 - next recommended command, usually `aie next` or `aie queue`
 
 JSON output must include:
@@ -552,7 +553,7 @@ JSON output must include:
 
 ---
 
-## Part 8: Doctor, Schema, And Completion Updates
+## Part 8: Doctor, Schema, And Help Metadata Updates
 
 M3 must keep the M1 CLI metadata surfaces current.
 
@@ -571,17 +572,9 @@ M3 must keep the M1 CLI metadata surfaces current.
 
 Agents should be able to discover that `aie view`, `aie branch suggest`, and `aie branch check` are read-only, while `aie start`, `aie switch`, `aie complete`, and `aie branch create` can mutate GitHub or git state.
 
-### 8.2 - Completion
+### 8.2 - Help Metadata
 
-Completion should include M3 commands and flags.
-
-If dynamic completion is practical in M3, it may include:
-
-- active issue number
-- open issue numbers
-- configured branch prefixes
-
-Dynamic completion must be best-effort and must not make normal command startup slow or fragile.
+Help metadata should include M3 command names, flags, examples, mutation markers, JSON support, dry-run support, and check-only support.
 
 ### 8.3 - Doctor
 
@@ -619,19 +612,20 @@ CLI UX acceptance:
 - partial failures report completed, failed, and skipped actions
 - pre-start policy failures block mutation and report linked worktree, open PR, or base branch freshness details
 - JSON output is stable and contains no human decoration
-- command metadata drives help, schema, completion, and tests
+- command metadata drives help, schema, help metadata, and tests
 
 ### M3.2 - Implement `aie view` Issue Context
 
 Create the read-only issue view that combines issue metadata, dependency state, checklist summary, branch suggestion, and recommended next action.
 
-Primary FRs: FR-06-005, FR-06-010, FR-13-001, FR-15-001 through FR-15-020.
+Primary FRs: FR-05-014 through FR-05-017, FR-06-005, FR-06-010, FR-13-001, FR-15-001 through FR-15-020.
 
 CLI UX acceptance:
 
 - `aie view` without an issue explains the expected argument and examples
 - `aie view 93` is concise but complete enough to start work safely
 - `aie view 93 --json` exposes issue, dependency, checklist, branch, and recommendation data
+- `aie view 93` shows GitHub milestone context when available without requiring milestones for execution
 - output names blockers and dependents with titles and states
 - recommended next action is explicit
 
@@ -639,12 +633,14 @@ CLI UX acceptance:
 
 Implement start/resume behavior using the M2 queue and lifecycle planner.
 
-Primary FRs: FR-05-005, FR-05-006, FR-06-001 through FR-06-004, FR-06-009, FR-06-010, FR-06-016 through FR-06-018, FR-07-008 through FR-07-010.
+Primary FRs: FR-05-005, FR-05-006, FR-05-015 through FR-05-016, FR-06-001 through FR-06-004, FR-06-009, FR-06-010, FR-06-016 through FR-06-018, FR-07-008 through FR-07-010.
 
 CLI UX acceptance:
 
 - `aie start` explains `next` and issue-number usage
 - `aie start next` resumes the single active issue before starting new work
+- `aie start next` respects configured GitHub milestone ordering only through the M2 queue engine
+- missing milestones do not block start unless repository policy explicitly requires milestone assignment
 - multiple active issues fail with an actionable error
 - open blockers prevent start unless a future explicit force path exists
 - starting new issue work is blocked by linked worktrees, blocking open PRs, or stale local base branch state
@@ -667,7 +663,7 @@ CLI UX acceptance:
 - `aie branch create 93 --dry-run` shows the planned git action
 - branch creation refuses linked worktrees, unsafe dirty checkout state, and stale base branch state unless policy explicitly permits the action
 - no branch command performs destructive git operations
-- schema and completion mark branch mutation behavior correctly
+- schema and help metadata mark branch mutation behavior correctly
 
 ### M3.5 - Implement `aie switch`
 
@@ -687,9 +683,9 @@ CLI UX acceptance:
 
 ### M3.6 - Implement `aie complete` And Lifecycle Diagnostics
 
-Implement post-merge issue completion, checklist checks, label cleanup, close behavior, dependent unblocking, and M3 doctor/schema/completion updates.
+Implement post-merge issue completion, checklist checks, label cleanup, close behavior, dependent unblocking, and M3 doctor/schema/help metadata updates.
 
-Primary FRs: FR-06-007 through FR-06-010, FR-05-012, FR-05-013, FR-07-007 through FR-07-010, FR-13-001 through FR-13-004, FR-15-001 through FR-15-020.
+Primary FRs: FR-06-007 through FR-06-010, FR-06-019, FR-05-012 through FR-05-017, FR-07-007 through FR-07-010, FR-13-001 through FR-13-004, FR-15-001 through FR-15-020.
 
 CLI UX acceptance:
 
@@ -698,8 +694,9 @@ CLI UX acceptance:
 - unchecked checklist items block completion unless `--force` is supplied
 - already-closed issues still trigger dependent refresh
 - dependents are unblocked only when all open blockers are resolved
+- completion output reports remaining work in the completed issue's GitHub milestone when milestone data is available
 - output recommends `aie next` or `aie queue` after completion
-- `aie doctor`, `aie schema --json`, and completion include M3 lifecycle, branch, linked-worktree, open-PR, and base branch freshness checks
+- `aie doctor`, `aie schema --json`, and help metadata include M3 lifecycle, branch, linked-worktree, open-PR, and base branch freshness checks
 
 ---
 
@@ -719,7 +716,7 @@ M3 is complete when:
 - all M3 agent-facing commands support stable `--json`.
 - incomplete M3 command groups guide users forward with examples and mutation warnings.
 - `aie doctor` includes lifecycle, branch, linked-worktree, open-PR, and base branch readiness checks without mutation.
-- `aie schema --json` and completion include all M3 commands.
+- `aie schema --json` and help metadata include all M3 commands.
 - normal tests cover start/resume, blocker rejection, multiple active issue rejection, pre-start linked-worktree/open-PR/base-freshness failures, switch planning, completion checks, dependent unblocking, branch naming/check/create planning, dry-run output, and structured JSON output without live GitHub access.
 
 M3 should leave the repo ready for M4 to install agent instructions that tell agents how to use these commands as part of the autonomous issue work cycle.

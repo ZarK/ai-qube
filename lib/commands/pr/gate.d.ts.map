@@ -1,1 +1,0 @@
-{"version":3,"file":"gate.d.ts","sourceRoot":"","sources":["../../../src/commands/pr/gate.ts"],"names":[],"mappings":"AAAA,OAAO,EAAE,qBAAqB,EAAE,MAAM,oBAAoB,CAAC;AAK3D,MAAM,CAAC,OAAO,OAAO,MAAO,SAAQ,qBAAqB;IACvD,MAAM,CAAC,EAAE,SAAW;IACpB,MAAM,CAAC,OAAO,SAAgB;IAC9B,MAAM,CAAC,WAAW,SAAoB;IACtC,MAAM,CAAC,QAAQ,WAAiB;IAChC,MAAM,CAAC,cAAc,UAAqB;CAC3C"}

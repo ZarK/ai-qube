@@ -4,7 +4,7 @@
 
 M6 helps existing repositories move from copied helper scripts and hand-maintained agent instructions to package-backed Executor commands.
 
-M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, dependencies, and repository priming. M3 added lifecycle, branch, and completion commands. M4 installed agent instructions and host command projections. M5 added gate guidance, evidence helpers, PR review coordination, and shipping readiness support. M6 finishes the v1 adoption path: legacy detection, migration planning, optional compatibility wrappers, safe cleanup, migration diagnostics, user-facing docs, and release-readiness checks.
+M1 created the package and CLI foundation. M2 added GitHub queue, labels, priority, dependencies, and repository priming. M3 added lifecycle and branch commands. M4 installed agent instructions and host command projections. M5 added gate guidance, evidence helpers, PR review coordination, and shipping readiness support. M6 finishes the v1 adoption path: legacy detection, migration planning, optional compatibility wrappers, safe cleanup, migration diagnostics, user-facing docs, and release-readiness checks.
 
 Executor still does not execute context-sensitive engineering work. M6 mutates deterministic local migration state only when explicitly requested: config files, managed instruction sections, host command files, compatibility wrapper files, and fingerprinted legacy helper files. Agents remain responsible for reviewing diffs, committing, opening PRs, and applying repository-specific judgment.
 
@@ -25,9 +25,9 @@ M6 delivers six things:
 3. **Instruction and reference migration** - safe replacement of legacy helper references with `aie` command references in managed or explicitly selected instruction files.
 4. **Optional compatibility wrappers** - explicitly installed wrappers for repositories that need a transition period while old instructions still call legacy helper paths.
 5. **Safe cleanup** - removal or replacement of only fingerprinted legacy helper files or user-confirmed paths, preserving project-specific scripts and docs.
-6. **Release readiness** - migration docs, doctor/schema/completion updates, fixture-heavy tests, package safety checks, and final adoption guidance.
+6. **Release readiness** - migration docs, doctor/schema/help metadata updates, fixture-heavy tests, package safety checks, and final adoption guidance.
 
-The important success condition is that a legacy repository can move to Executor without losing queue state, blocker metadata, sequence metadata, active issue state, branch state, or project-specific scripts.
+The important success condition is that a legacy repository can move to Executor without losing queue state, blocker metadata, sequence metadata, GitHub milestone assignments, active issue state, branch state, or project-specific scripts.
 
 ---
 
@@ -44,7 +44,7 @@ M6 also extends:
 - **FR-04-008 through FR-04-009** - doctor and dry-run coverage for migration.
 - **FR-12-004 through FR-12-006** - safe logs, redaction, and external-service clarity.
 - **FR-13-001 through FR-13-006** - concise human output, stable JSON, actionable errors, doctor, debug logs, and asset/config path visibility.
-- **FR-15-001 through FR-15-020** - CLI explorability, help forms, schema, completion, stdout/stderr separation, mutation labels, dry-run behavior, and shared command metadata for migration commands.
+- **FR-15-001 through FR-15-020** - CLI explorability, help forms, schema, help metadata, stdout/stderr separation, mutation labels, dry-run behavior, and shared command metadata for migration commands.
 
 M6 intentionally does not complete:
 
@@ -91,9 +91,9 @@ M6 depends on:
 
 Required from earlier milestones:
 
-- package, config, command metadata, schema, completion, dry-run, JSON, and redaction foundations
+- package, config, command metadata, schema, help metadata, dry-run, JSON, and redaction foundations
 - `gh` wrapper and GitHub issue/label state helpers
-- queue, dependency, lifecycle, branch, and completion commands
+- queue, dependency, lifecycle, and branch commands
 - init planner and managed instruction writer
 - host projections and `/make-it-so`
 - gate guidance, PR body, and PR review coordination surfaces
@@ -127,7 +127,7 @@ Migration commands are high-risk local-file mutation commands and must be especi
 - `aie migrate legacy --json` emits a stable plan/result object with no decorative output.
 - `aie migrate map` shows old helper categories and their corresponding `aie` commands without requiring a legacy repository.
 - `aie schema --json` includes migration commands, mutation markers, dry-run support, wrapper behavior, cleanup behavior, and stable error kinds.
-- shell completion includes migration flags and known migration modes.
+- shell help metadata includes migration flags and known migration modes.
 - unknown migration flags produce safe suggestions without executing alternatives.
 
 M6 must extend the shared command metadata model. It must not implement migration UX as scattered one-off parser branches.
@@ -181,6 +181,7 @@ Migration must preserve:
 - component labels
 - `Blocked by:` metadata
 - `Sequence:` metadata
+- GitHub milestone assignments
 - issue open/closed state
 - `S-InProgress` state
 - current branch state
@@ -292,7 +293,7 @@ Instruction updates must:
 - preserve user-authored content outside managed sections or selected legacy blocks
 - keep autonomous shipping language from M4
 - keep gate boundaries from M5: agents run tests, builds, audits, `aiq`, and review interpretation
-- keep supply-chain guard references when configured
+- keep supply-chain safety rules when configured
 - keep optional naming rules when enabled
 
 Unmanaged instruction conflicts require clear output and `--force` only when force behavior is safe and documented.
@@ -394,7 +395,7 @@ The agent reviews the diff and performs git/GitHub shipping actions under instal
 
 ---
 
-## Part 6: Doctor, Schema, Completion, Docs, And Tests
+## Part 6: Doctor, Schema, Help Metadata, Docs, And Tests
 
 M6 extends diagnostics, metadata, docs, and release checks.
 
@@ -408,14 +409,15 @@ M6 extends diagnostics, metadata, docs, and release checks.
 - stale compatibility wrappers
 - remaining legacy command references
 - migration plan availability
+- milestone-ordering and milestone-assignment preservation warnings
 - whether cleanup is safe, blocked, or review-required
 - recommended next command
 
 `doctor` remains non-mutating.
 
-### 6.2 - Schema And Completion
+### 6.2 - Schema And Help Metadata
 
-`aie schema --json` and completion must include:
+`aie schema --json` and help metadata must include:
 
 - `aie migrate`
 - `aie migrate legacy`
@@ -460,7 +462,7 @@ M6 tests must cover:
 - cleanup apply against temporary fixtures
 - command mapping output
 - doctor legacy state output
-- schema and completion updates
+- schema and help metadata updates
 - product-generic generated output
 
 Normal tests must not require live GitHub, real legacy repositories, browser automation, third-party reviewers, `aiq`, or package-manager execution.
@@ -517,9 +519,9 @@ CLI UX acceptance:
 - `aie migrate legacy --apply --cleanup` reports every mutation
 - migration never stages, commits, pushes, opens PRs, merges, or runs destructive git commands
 
-### M6.4 - Implement Migration Doctor, Schema, Completion, And Docs
+### M6.4 - Implement Migration Doctor, Schema, Help Metadata, And Docs
 
-Extend `aie doctor`, `aie schema --json`, completion, and user documentation for migration and release adoption.
+Extend `aie doctor`, `aie schema --json`, help metadata, and user documentation for migration and release adoption.
 
 Primary FRs: FR-13-001 through FR-13-006, FR-14-001 through FR-14-010, FR-15-001 through FR-15-020.
 
@@ -527,7 +529,7 @@ CLI UX acceptance:
 
 - `aie doctor` reports legacy state, wrapper state, stale wrappers, remaining legacy references, and recommended next commands
 - schema includes migration commands, flags, mutation markers, dry-run support, and stable error kinds
-- completion includes migration commands, flags, and enum values
+- help metadata includes migration commands, flags, and enum values
 - docs explain new install, init, migration, wrapper, cleanup, and diff-review flows
 - docs are product-generic and do not cite local reference corpus paths or source project names
 
@@ -559,10 +561,10 @@ M6 is complete when:
 - `aie migrate legacy --apply` updates config/instructions/host command files only according to the migration plan.
 - compatibility wrappers are installed only when explicitly requested.
 - cleanup removes or replaces only high-confidence fingerprinted legacy files or explicit user-selected paths.
-- migration preserves labels, blocker metadata, sequence metadata, active issue state, branch state, and user-authored instruction content.
+- migration preserves labels, blocker metadata, sequence metadata, GitHub milestone assignments, active issue state, branch state, and user-authored instruction content.
 - migration never stages, commits, pushes, opens PRs, merges, or runs destructive git commands.
 - `aie doctor` reports migration readiness, legacy remnants, wrapper state, and recommended next commands.
-- `aie schema --json` and completion include migration surfaces.
+- `aie schema --json` and help metadata include migration surfaces.
 - user docs cover install, init, migration, cleanup, wrappers, and release-safe adoption.
 - normal tests cover migration fixtures, instruction rewrites, wrappers, cleanup, schema, doctor, docs/product-generic output, and package-surface checks without live external services.
 

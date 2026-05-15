@@ -4,7 +4,7 @@ AI Executor — autonomous GitHub issue execution for agentic development.
 
 ## Installation
 
-Executor follows strict supply-chain policy (see docs/cli-framework-decision.md and AGENTS.md).
+Executor follows strict supply-chain policy.
 
 **Recommended (pinned, no lifecycle scripts):**
 
@@ -28,11 +28,9 @@ aie --help
 ## Requirements
 
 - Node.js 24 LTS or newer
-- `git` (for repository operations in later milestones)
-- GitHub CLI `gh` (for GitHub operations in later milestones)
+- `git`
+- GitHub CLI `gh`
 
-## Status
+## Design
 
-M1 (Package + CLI + Config + Doctor) complete. See GitHub issues for the current bootstrap queue (#1–#17 chain).
-
-Safe install, redaction helper, and full CLI metadata are in place. Later milestones add GitHub integration, init, and autonomous cycle.
+See [docs/spec.md](docs/spec.md) for the functional requirements.

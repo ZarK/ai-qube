@@ -4,16 +4,16 @@
 
 M2 turns Executor from a safe CLI shell into a GitHub-aware issue queue reader and repository primer.
 
-This milestone does not start, switch, complete, branch, PR, or merge work yet. It establishes the GitHub label system, live issue loading, dependency graph, priority ordering, status drift detection, label synchronization, and repository priming needed before lifecycle commands can safely operate.
+This milestone does not start, switch, complete, branch, PR, or merge work yet. It establishes the GitHub label system, live issue loading, dependency graph, optional GitHub milestone ordering, priority ordering, status drift detection, label synchronization, and repository priming needed before lifecycle commands can safely operate.
 
 After M2, a developer or agent should be able to run `aie labels setup`, `aie repo prime`, `aie queue`, `aie next --json`, and `aie deps ...` to understand what work is ready, what is blocked, why it is blocked, and whether the repository labels match Executor's live dependency graph.
 
 M2 delivers six things:
 
-1. **GitHub issue model** - a tested Node implementation for loading open issues, labels, milestones, body metadata, and repository state through `gh`.
+1. **GitHub issue model** - a tested Node implementation for loading open issues, labels, GitHub milestones, body metadata, and repository state through `gh`.
 2. **Executor label setup** - idempotent creation/update of priority, status, and component labels from config.
 3. **Dependency graph** - parsing `Blocked by: #123` body metadata, computing open blockers, reverse blocking relationships, dependency chains, and graph output.
-4. **Priority queue** - deterministic queue ordering that resumes in-progress issues first, then orders ready work by priority, sequence metadata, milestone task numbering, and issue number.
+4. **Priority queue** - deterministic queue ordering that resumes in-progress issues first, then orders ready work by priority, sequence metadata, configured GitHub milestone order when enabled, title-derived task numbering, and issue number.
 5. **Status sync** - detection and optional repair of stale `S-Ready`, `S-Blocked`, and `S-Blocking` labels from the live blocker graph.
 6. **Repository priming** - a safe `aie repo prime` command for repos that have issues but have not yet been prepared by Bootstrap.
 
@@ -26,14 +26,14 @@ The important success condition is that M3 can add `aie start`, `aie view`, `aie
 M2 is the primary implementation foundation for:
 
 - **FR-04-010 through FR-04-014 and FR-04-016 through FR-04-018** - label setup, repository priming, and pre-start git/PR policy visibility.
-- **FR-05-001 through FR-05-013** - GitHub issue queue semantics.
+- **FR-05-001 through FR-05-019** - GitHub issue queue semantics, including optional GitHub milestone ordering and progress context.
 - **FR-06-011 through FR-06-013 and FR-06-015** - dependency inspection helpers, dependency graph output, ready/blocked sync, and actionable dependency output.
 
 M2 also extends:
 
 - **FR-04-007 through FR-04-009** - config validation, `doctor`, and dry-run coverage for label and issue-related commands.
 - **FR-13-001 through FR-13-004** - concise human output, structured agent output, actionable errors, and non-mutating diagnostics.
-- **FR-15-001 through FR-15-020** - CLI explorability, schema, completion, stdout/stderr separation, mutation labeling, and shared command metadata for all M2 commands.
+- **FR-15-001 through FR-15-020** - CLI explorability, schema, help metadata, stdout/stderr separation, mutation labeling, and shared command metadata for all M2 commands.
 
 M2 intentionally does not complete:
 
@@ -56,8 +56,8 @@ Use these local references only when drafting, reviewing, or decomposing this mi
 | Label bootstrap script | `references/workflows/memex.photos/scripts/gh-bootstrap-labels.sh` | Idempotent create-or-update label behavior and default label color/description style |
 | Queue ordering scripts | `references/workflows/memex.photos/scripts/gh-priority-order.sh`, `references/workflows/memex/scripts/gh-priority-order.sh`, `references/workflows/ai-code-quality/scripts/gh-priority-order.sh` | Queue ordering behavior and human/JSON output expectations |
 | Dependency helpers | `references/workflows/memex.photos/scripts/gh-issue-deps.sh`, `references/workflows/memex.photos/scripts/lib/gh-issue-helpers.sh`, `references/workflows/memex/scripts/gh-issue-deps.sh` | Blocker parsing, dependency graph, ready/blocked lists, status sync |
-| Label update helper | `references/workflows/memex.photos/scripts/gh-update-labels.sh` | Status label replacement, sequence metadata handling, blocker metadata handling for future desired commands |
-| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, completion, JSON, and mutation warnings |
+| Label update helper | `references/workflows/memex.photos/scripts/gh-update-labels.sh` | Status label replacement, sequence metadata handling, blocker metadata handling |
+| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, help metadata, JSON, and mutation warnings |
 | Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
 
 The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
@@ -123,7 +123,7 @@ Every M2 command must be explorable by a human and deterministic for an agent:
 - JSON output contains no decorative text or progress lines.
 - data goes to stdout; warnings, progress, and hints go to stderr.
 
-M2 must not add one-off parser branches for each of these behaviors. It should extend the M1 command metadata model so help, schema, completion, mutation labels, dry-run labels, and tests stay in sync.
+M2 must not add one-off parser branches for each of these behaviors. It should extend the M1 command metadata model so help, schema, help metadata, mutation labels, dry-run labels, and tests stay in sync.
 
 ---
 
@@ -139,7 +139,7 @@ Implement a small wrapper for `gh` calls that:
 - captures stdout, stderr, exit code, and command metadata
 - redacts token-like values from errors and debug logs
 - distinguishes auth failure, missing `gh`, non-GitHub repo, network/API failure, and malformed output
-- supports test injection/mocking without calling GitHub in normal unit tests
+- supports fixture-based tests without calling GitHub in normal unit tests
 
 M2 should prefer GitHub's JSON output from `gh` and parse it in Node. It must not depend on `jq`.
 
@@ -180,7 +180,9 @@ Add fixture-based tests for:
 - multiple priorities
 - missing priority/status labels
 - explicit `Sequence:` metadata
-- milestone title numbering such as `M2.3.4: ...`, `AM7.3.2: ...`, and project-specific prefixes
+- GitHub milestone assignment and missing milestone assignment
+- configured GitHub milestone ordering
+- title task numbering such as `M2.3.4: ...`, `AM7.3.2: ...`, and project-specific prefixes
 - more than one open `S-InProgress` issue
 
 Normal tests must not require live GitHub access.
@@ -224,7 +226,7 @@ Default component labels:
 
 Project-specific component labels can be configured, but labels outside the Executor defaults must not become universal Executor defaults.
 
-M2 should not create milestone labels by default. Milestone naming belongs to project planning and Bootstrap.
+M2 should not create milestone labels or GitHub milestones. GitHub milestones are optional issue organization metadata owned by project planning and Bootstrap.
 
 ### 2.2 - Idempotent Setup
 
@@ -341,8 +343,9 @@ Queue ordering sorts by:
 1. effective status, with `S-InProgress` first
 2. priority label
 3. explicit `Sequence:` metadata in the issue body
-4. milestone task numbering in issue titles
-5. GitHub issue number
+4. configured GitHub milestone order when enabled
+5. title-derived task numbering
+6. GitHub issue number
 
 Priority score defaults:
 
@@ -353,7 +356,7 @@ Priority score defaults:
 
 Issues without a configured priority use the configured default priority for ordering and are reported as missing-priority warnings.
 
-### 4.3 - Sequence Metadata
+### 4.3 - Sequence And Milestone Metadata
 
 `Sequence:` metadata accepts numeric dotted keys:
 
@@ -366,13 +369,25 @@ Sequence: 1.2.3.4000
 
 Keys are normalized to four numeric parts for sorting.
 
+Explicit body `Sequence:` metadata wins over GitHub milestone ordering and title-derived numbering.
+
+GitHub milestone ordering is optional. When enabled, Executor may use a configured milestone title list or configured title-number parsing policy as a batch-level ordering hint. It must not replace status labels, priority labels, explicit blocker metadata, or explicit `Sequence:` metadata.
+
+Milestone support must:
+
+- include each issue's GitHub milestone title and state in the issue model when available
+- support issues without milestones unless repository policy explicitly requires milestone assignment
+- report missing or unknown milestone assignments as warnings, not hidden ordering failures
+- avoid creating milestones or milestone plans
+- keep Bootstrap responsible for milestone creation and issue planning
+
 Title-based task numbering must support project prefixes such as:
 
 - `M2.3.4: ...`
 - `AM7.3.2: ...`
 - another configured alphabetic prefix followed by milestone/section/task numbers
 
-Explicit body `Sequence:` metadata wins over title-derived numbering.
+Title-derived numbering is used after configured GitHub milestone order.
 
 ### 4.4 - `aie queue`
 
@@ -384,6 +399,7 @@ Explicit body `Sequence:` metadata wins over title-derived numbering.
 - drift warnings
 - blocked count
 - ready count
+- milestone progress summary when milestone data is available
 - concise next diagnostic command when drift exists, such as `aie deps fix --dry-run`
 
 `aie queue --json` must emit:
@@ -397,6 +413,7 @@ Explicit body `Sequence:` metadata wins over title-derived numbering.
 - `nextIssue`
 - warnings
 - label drift count
+- milestone groups and milestone progress when available
 
 The issue entries must include:
 
@@ -409,6 +426,8 @@ The issue entries must include:
 - effective status
 - components
 - milestone
+- milestone state
+- milestone due date when available
 - blockers
 - open blockers
 - blocked-by count
@@ -454,6 +473,7 @@ It may:
 - create or update Executor-owned labels
 - write minimal `aie.config.json` when missing and explicitly allowed
 - check whether open issues exist
+- report existing GitHub milestones and missing milestone assignments
 - check whether Executor instructions are installed
 - report missing planning artifacts
 
@@ -461,6 +481,7 @@ It must not:
 
 - create specs
 - create milestone docs
+- create GitHub milestones
 - generate issue batches from a spec
 - silently overwrite existing config
 - install agent instructions
@@ -502,12 +523,13 @@ JSON output must include:
 - linked worktree status
 - base branch/remote detection status
 - instruction-file status
+- milestone inventory and assignment warnings
 - missing planning artifacts
 - warnings/errors
 
 ---
 
-## Part 6: Completion, Schema, And Doctor Updates
+## Part 6: Schema, Help Metadata, And Doctor Updates
 
 M2 must keep the M1 CLI metadata surfaces current.
 
@@ -527,16 +549,9 @@ M2 must keep the M1 CLI metadata surfaces current.
 
 Agents should be able to discover that `aie labels setup` and `aie deps fix` mutate GitHub, while `aie queue`, `aie next`, and most `aie deps` commands are read-only.
 
-### 6.2 - Completion
+### 6.2 - Help Metadata
 
-Completion should include M2 commands and flags.
-
-If dynamic completion is practical in M2, it may include:
-
-- configured labels
-- issue numbers for dependency commands
-
-Dynamic completion must be best-effort and must not make normal command startup slow or fragile.
+Help metadata should include M2 command names, flags, examples, mutation markers, and JSON support.
 
 ### 6.3 - Doctor
 
@@ -549,6 +564,8 @@ M2 extends `aie doctor` with checks for:
 - status-label drift summary
 - multiple `S-InProgress` issues
 - stale blocked/ready labels
+- milestone-ordering config problems when milestone ordering is enabled
+- issues missing milestones when repository policy requires milestone assignment
 - linked worktree state
 - open pull requests that would block starting new issue work
 - whether configured base branch and remote can be resolved
@@ -563,15 +580,16 @@ M2 should become **6 GitHub issues**, not one issue per command or FR.
 
 ### M2.1 - Implement GitHub Issue Model And `gh` Execution Layer
 
-Create the tested Node layer for running `gh`, loading open issues, normalizing labels/body/milestone data, parsing issue metadata, and handling GitHub/auth failures.
+Create the tested Node layer for running `gh`, loading open issues, normalizing labels/body/GitHub milestone data, parsing issue metadata, and handling GitHub/auth failures.
 
-Primary FRs: FR-02-004, FR-02-005, FR-05-001, FR-12-004, FR-13-003.
+Primary FRs: FR-02-004, FR-02-005, FR-05-001, FR-05-014 through FR-05-015, FR-12-004, FR-13-003.
 
 CLI UX acceptance:
 
 - failures distinguish missing `gh`, missing auth, non-GitHub repo, API failure, and malformed JSON
 - no command output leaks token-like values
 - fixture tests do not require live GitHub
+- issue milestone fields are normalized when GitHub returns them
 - result types are suitable for human rendering and JSON output
 
 ### M2.2 - Implement Idempotent `aie labels setup`
@@ -604,15 +622,18 @@ CLI UX acceptance:
 
 ### M2.4 - Implement Queue Ordering With `aie queue` And `aie next`
 
-Implement dependency-aware queue sorting, effective status, sequence/title ordering, drift warnings, `aie queue`, and `aie next`.
+Implement dependency-aware queue sorting, effective status, sequence/GitHub milestone/title ordering, drift warnings, `aie queue`, and `aie next`.
 
-Primary FRs: FR-05-002 through FR-05-011, FR-05-013.
+Primary FRs: FR-05-002 through FR-05-019.
 
 CLI UX acceptance:
 
 - `aie queue` is readable for humans and includes a concise summary
 - `aie queue --json` emits stable queue data for agents
 - `aie next --json` returns the issue to resume/start and the reason
+- GitHub milestone ordering is optional and works only as a configured batch-level ordering hint
+- missing milestones do not block selection unless repository policy requires milestone assignment
+- human and JSON output include milestone progress/grouping when GitHub milestone data is available
 - empty, blocked, and invalid queues produce actionable messages
 - multiple `S-InProgress` issues are detected and reported
 - output suggests `aie deps fix --dry-run` when status drift exists
@@ -631,21 +652,23 @@ CLI UX acceptance:
 - `--json` emits planned/completed label changes
 - human output reports each issue changed or skipped
 
-### M2.6 - Implement `aie repo prime` And M2 Doctor/Schema/Completion Updates
+### M2.6 - Implement `aie repo prime` And M2 Doctor/Schema/Help Updates
 
-Implement repository priming for repos that have issues but no Bootstrap setup, and update `doctor`, `schema`, and completion with all M2 commands.
+Implement repository priming for repos that have issues but no Bootstrap setup, and update `doctor`, `schema`, and help metadata with all M2 commands.
 
-Primary FRs: FR-04-008, FR-04-012 through FR-04-018, FR-13-001 through FR-13-004, FR-15-001 through FR-15-020. FR-04-015 seed issue creation remains desired and deferred unless explicitly pulled into this issue.
+Primary FRs: FR-04-008, FR-04-012 through FR-04-019, FR-05-018 through FR-05-019, FR-13-001 through FR-13-004, FR-15-001 through FR-15-020. FR-04-015 seed issue creation remains desired and deferred unless explicitly pulled into this issue.
 
 CLI UX acceptance:
 
 - `aie repo` guides users to `aie repo prime`
 - `aie repo prime --dry-run` shows checks and planned changes
 - `aie repo prime` does not generate specs, milestones, or issue batches
+- `aie repo prime` does not create GitHub milestones
+- `aie repo prime` reports existing GitHub milestones and missing milestone assignments when issue scanning is available
 - `aie repo prime` does not install agent instructions
 - `aie repo prime` reports linked worktree state, base branch/remote detection, and open PR preflight status without blocking read-only queue commands
 - `aie schema --json` includes all M2 commands and mutation markers
-- completion includes M2 command names and flags
+- help metadata includes M2 command names and flags
 - `aie doctor` reports label/queue/dependency health and pre-start git/PR preflight visibility without mutating
 
 ---
@@ -656,13 +679,13 @@ M2 is complete when:
 
 - `aie labels setup` creates/updates configured labels idempotently.
 - `aie repo prime` prepares labels/config and pre-start git/PR visibility checks for issue execution without taking over Bootstrap or init responsibilities.
-- `aie queue` shows a dependency-aware ordered queue for humans.
+- `aie queue` shows a dependency-aware ordered queue for humans, with GitHub milestone grouping/progress when available.
 - `aie queue --json` emits stable structured queue data.
-- `aie next --json` returns the correct issue to resume/start or a clear blocked/empty/invalid state.
+- `aie next --json` returns the correct issue to resume/start or a clear blocked/empty/invalid state, using configured milestone order only as an optional ordering hint.
 - `aie deps ready`, `blocked`, `blockers`, `blocking`, `chain`, `graph`, and `fix` work as specified.
 - `aie deps fix --dry-run` and `aie deps fix` synchronize ready/blocked labels without touching `S-InProgress`.
-- `aie doctor` includes M2 label, queue, dependency, linked-worktree, open-PR visibility, and base branch/remote checks without mutation.
-- `aie schema --json` and completion include all M2 commands.
+- `aie doctor` includes M2 label, queue, dependency, optional milestone-ordering, linked-worktree, open-PR visibility, and base branch/remote checks without mutation.
+- `aie schema --json` and help metadata include all M2 commands.
 - incomplete M2 command groups guide users forward with examples and mutation warnings.
 - all M2 mutating commands support `--dry-run`.
 - all M2 agent-facing commands support stable JSON output.

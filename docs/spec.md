@@ -74,10 +74,12 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-02-009 | Compatibility shell wrappers may be installed only when explicitly requested, and those wrappers delegate to `aie` commands. | Desired |
 | FR-02-010 | Windows support is limited to normal npm/Node command compatibility in v1; no PowerShell-specific duplicate implementation is required. | Required |
 | FR-02-011 | The CLI accepts issue numbers with or without a leading `#` when the shell passes the token through. Documentation examples prefer bare numbers because unquoted `#93` can be interpreted as a shell comment. | Required |
-| FR-02-012 | Executor is compatible with strict supply-chain guard policies: no `preinstall`, `install`, or `postinstall` lifecycle scripts are required for normal package use. | Required |
+| FR-02-012 | Executor is compatible with strict supply-chain safety policies: no `preinstall`, `install`, or `postinstall` lifecycle scripts are required for normal package use. | Required |
 | FR-02-013 | Executor documentation shows supply-chain-safe installation patterns that use exact versions, checked-in lockfiles, and lifecycle scripts disabled where the package manager supports it. | Required |
 | FR-02-014 | Executor does not document floating `latest` installs as the preferred path. Examples use pinned package versions or repository lockfile workflows. | Required |
 | FR-02-015 | Executor minimizes runtime dependencies and justifies any dependency added for CLI UX, GitHub integration, formatting, prompts, or config parsing. | Required |
+| FR-02-016 | Generated build output such as compiled JavaScript, declaration files, declaration maps, and source maps is not committed to the source repository. Source files are the source of truth; build output is produced by the build or pack step. | Required |
+| FR-02-017 | Package scripts must perform real checks or fail. No script may pass by printing a placeholder, baseline, no-op, or "not configured yet" success message. | Required |
 
 ---
 
@@ -96,10 +98,13 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-03-009 | The `/make-it-so` command tells the agent to continue the autonomous GitHub issue workflow until the queue is empty or blocked, using concise imperative wording that grants trust, autonomy, and authority within configured repository policy. | Required |
 | FR-03-010 | The `/make-it-so` command continues the issue workflow, uses the configured `aie` queue and lifecycle commands, follows installed repository instructions, executes without unnecessary pauses, explicitly authorizes normal git and GitHub shipping actions when autonomous mode is enabled, and ships when gates pass. | Required |
 | FR-03-011 | For tools that support project commands, initialization installs equivalent "make it so" commands. For tools without project command support, initialization relies on always-loaded instruction files. | Required |
-| FR-03-012 | Initialization gathers or accepts repository policy settings for branch naming, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, component labels, enabled review agents, manual UI audit behavior, review wait duration, agent-run quality gate commands, and supply-chain guard compatibility. | Required |
+| FR-03-012 | Initialization gathers or accepts repository policy settings for branch naming, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, component labels, optional GitHub milestone ordering, enabled review agents, manual UI audit behavior, review wait duration, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-03-013 | Initialization can run non-interactively using defaults and config flags so agents can bootstrap repositories without a manual prompt when the user requests that mode. | Desired |
 | FR-03-014 | Initialization never silently overwrites existing repository instructions or config. It appends managed sections or requires `--force` for replacement. | Required |
 | FR-03-015 | Initialization detects legacy copied workflow scripts and old agent instructions, explains what it found, and offers a migration path to the package-backed `aie` commands. | Required |
+| FR-03-016 | Installed always-loaded instructions include implementation guardrails: agents must implement only real requested behavior, avoid fake commands/stubs/no-op tests, keep implementation artifacts in product language, avoid milestone/phase/reference leakage, avoid agent-created meta docs, keep generated build output out of commits unless policy allows it, and use issue comments or PRs for durable implementation notes. | Required |
+| FR-03-017 | Initialization can make the implementation guardrail instruction block mandatory by default and configurable only through an explicit repository policy choice. | Desired |
+| FR-03-018 | Installed always-loaded instructions include supply-chain safety rules for dependency work, package-manager commands, project generators, CI actions/workflows, release automation, IDE tooling, MCP servers, and AI-agent tools. | Required |
 
 ---
 
@@ -108,7 +113,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | ID | Requirement | Status |
 |----|-------------|--------|
 | FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `aie.config.json` or an equivalent documented path. | Required |
-| FR-04-002 | Configuration includes priority labels, status labels, component labels, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, and agent-run quality gate commands. | Required |
+| FR-04-002 | Configuration includes priority labels, status labels, component labels, optional GitHub milestone ordering policy, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-04-003 | Priority labels are fixed by default to `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`. | Required |
 | FR-04-004 | Status labels are fixed by default to `S-Ready`, `S-InProgress`, `S-Blocked`, and `S-Blocking`. | Required |
 | FR-04-005 | Component labels include broad defaults: `C-Architecture`, `C-Backend`, `C-Frontend`, `C-Testing`, `C-Tooling`, `C-Docs`, `C-DevEx`, `C-CI`, `C-Security`, and `C-Data`. | Required |
@@ -125,6 +130,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-04-016 | Default git policy disables linked git worktrees for Executor issue execution. Executor commands must not create, enter, or rely on git worktrees in v1. | Required |
 | FR-04-017 | Default pre-start policy blocks starting a new issue when open pull requests exist, except PRs authored by configured automation accounts such as dependency-update bots. | Required |
 | FR-04-018 | Default base-branch policy requires the local base branch to match the configured remote base branch before starting a new issue. The default remote/base pair is `origin` and `main` unless repository detection or config says otherwise. | Required |
+| FR-04-019 | When GitHub milestone ordering is enabled, configuration can define the milestone title order or title-number parsing policy used as an ordering hint. Milestones are optional organization metadata and never replace status labels or blocker metadata. | Desired |
 
 ## FR-05 - GitHub Queue Semantics
 
@@ -139,10 +145,16 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-05-007 | Executor treats issue body lines matching `Blocked by: #123` as blocker metadata. | Required |
 | FR-05-008 | Executor computes effective blocked state from live GitHub issue status, not only from stale labels. | Required |
 | FR-05-009 | Queue ordering supports explicit `Sequence:` metadata in issue bodies. | Required |
-| FR-05-010 | Queue ordering supports milestone task numbering in issue titles, such as `M34.2.15: ...`, `AM7.3.2: ...`, or equivalent project prefixes. | Required |
-| FR-05-011 | Queue ordering sorts by effective status, priority, explicit sequence metadata, milestone title numbering, and issue number as the final tie-breaker. | Required |
+| FR-05-010 | Queue ordering supports task numbering in issue titles, such as `M34.2.15: ...`, `AM7.3.2: ...`, or equivalent project prefixes. | Required |
+| FR-05-011 | Queue ordering sorts by effective status, priority, explicit sequence metadata, configured GitHub milestone order when enabled, title-derived task numbering, and issue number as the final tie-breaker. | Required |
 | FR-05-012 | Executor provides a label sync command that reconciles `S-Ready`, `S-Blocked`, and `S-Blocking` labels from the live blocker graph. | Required |
 | FR-05-013 | Executor can explain why an issue is blocked and list the open blockers that must close before it can start. | Required |
+| FR-05-014 | Executor reads the GitHub milestone field for issues and includes milestone title, milestone state, due date when available, and milestone progress counts in queue data when returned by GitHub. | Desired |
+| FR-05-015 | GitHub milestones are an optional organization and progress dimension. Executor must not require milestones for issue execution, and missing milestones must not block `aie next`, `aie start`, or `aie complete` unless repository policy explicitly requires milestone assignment. | Required |
+| FR-05-016 | When configured milestone ordering is enabled, `aie queue` and `aie next` use milestone order as a batch-level ordering hint after priority and explicit `Sequence:` metadata, while still respecting effective status and open blockers first. | Desired |
+| FR-05-017 | `aie queue` can group or summarize issues by GitHub milestone in human output, and `aie queue --json` exposes milestone grouping/progress without requiring agents to scrape human text. | Desired |
+| FR-05-018 | `aie doctor` can report milestone-ordering configuration problems such as unknown configured milestone names, issues missing milestones when policy requires them, duplicate milestone order keys, and milestone assignment drift. | Desired |
+| FR-05-019 | Repository priming may report existing GitHub milestones and missing milestone assignments, but must not create milestones or generate milestone plans. Bootstrap owns milestone creation and planning. | Required |
 
 ---
 
@@ -168,6 +180,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-06-016 | Before transitioning any not-yet-in-progress issue to `S-InProgress`, Executor verifies the pre-start git/PR policy: no linked worktree, no blocking open PRs, and local base branch matches the configured remote base branch. | Required |
 | FR-06-017 | Pre-start git/PR policy is not required when `aie start next` resumes the single existing `S-InProgress` issue, because resuming active work may occur on that issue branch. | Required |
 | FR-06-018 | If pre-start git/PR policy fails, lifecycle commands do not mutate issue labels, assignment, comments, or branches; they report blocking PRs, branch freshness details, or worktree state with actionable next commands. | Required |
+| FR-06-019 | `aie complete <issue>` reports remaining open issues in the completed issue's GitHub milestone and recommends the next queue command or next milestone context when milestone ordering is enabled. | Desired |
 
 ---
 
@@ -271,6 +284,9 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-12-009 | Initialization can omit or soften the installed no-credit warning block when the repository owner explicitly disables that instruction section. | Desired |
 | FR-12-010 | Future audit evidence support may integrate `drogers0/gh-image` or an equivalent GitHub image upload helper to attach manual UI audit screenshots to issues or PRs as proof or bug evidence. | Future |
 | FR-12-011 | Future screenshot upload support must be opt-in, must warn about sensitive images, must support local-only evidence as the default, and must avoid uploading secrets, private user data, or proprietary screenshots without repository owner consent. | Future |
+| FR-12-012 | Implementation artifacts must describe product behavior only. Source code, tests, shipped documentation, package scripts, comments, commits, PRs, and generated files must not reference planning machinery such as milestone numbers, bootstrap phases, issue implementation history, baselines, reference repositories, or local source-reference paths. | Required |
+| FR-12-013 | Executor must not ship fake behavior: no placeholder commands, no stub command classes, no no-op implementations, no mock product paths, and no tests that pass without validating real behavior. | Required |
+| FR-12-014 | Agents implementing Executor issues must not create repository meta documentation such as decision records, status updates, progress reports, implementation plans, migration notes, quick guides, retrospectives, or phase summaries. Durable implementation communication belongs in GitHub issue comments and PRs. Repository docs may be changed only when the active issue explicitly asks for stable product, user, architecture, test, or workflow documentation. | Required |
 
 ---
 
@@ -294,7 +310,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-14-001 | Executor can initialize repositories that previously used copied legacy shell helpers for issue execution. | Required |
 | FR-14-002 | Executor provides migration mappings from legacy queue, start, switch, view, dependency, completion, and PR-gate helper commands to the corresponding `aie` commands. | Required |
 | FR-14-003 | Executor can optionally install compatibility wrappers for existing agent instructions that still call legacy helper paths. | Desired |
-| FR-14-004 | Executor migration preserves existing queue labels, blocker metadata, sequence metadata, issue state, and branch state. | Required |
+| FR-14-004 | Executor migration preserves existing queue labels, blocker metadata, sequence metadata, GitHub milestone assignments, issue state, and branch state. | Required |
 | FR-14-005 | Executor does not require repositories to keep copied script implementations after migration. | Required |
 | FR-14-006 | Executor provides `aie migrate legacy` or an equivalent command that audits copied scripts, old workflow docs, old project commands, and old agent instruction blocks before changing anything. | Required |
 | FR-14-007 | Legacy migration has a dry-run mode that shows files to remove, files to preserve, instruction blocks to replace, and compatibility wrappers to install. | Required |
@@ -324,9 +340,35 @@ These requirements define the user-facing behavior of the Executor CLI. They do 
 | FR-15-012 | Running an incomplete command group, such as `aie labels`, `aie deps`, `aie start`, or `aie pr`, shows valid next subcommands, examples, mutation warnings where relevant, and the standardized help forms for exploring deeper command help. | Required |
 | FR-15-013 | Unknown commands and misspelled flags provide safe "did you mean" suggestions where confidence is high, but Executor never automatically runs a suggested alternative. | Required |
 | FR-15-014 | Executor does not accept arbitrary command-prefix abbreviations because they create long-term compatibility traps. Short aliases are allowed only when explicit, documented, tested, and stable. | Required |
-| FR-15-015 | Executor provides `aie schema --json` or an equivalent command that emits a machine-readable description of commands, arguments, flags, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
+| FR-15-015 | Executor provides `aie schema --json` or an equivalent command that emits a machine-readable description of implemented commands, arguments, flags, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
 | FR-15-016 | Agents and automation are expected to use structured output and schema introspection rather than scraping human help text. | Required |
 | FR-15-017 | Executor keeps data on stdout and warnings, progress, hints, and diagnostics on stderr, especially in structured output mode. | Required |
-| FR-15-018 | Executor provides shell completion support through `aie completion` or an equivalent documented command; completion setup is explicit and package installation never modifies shell profiles by side effect. | Required |
-| FR-15-019 | Human help, agent schema output, completion data, docs generation, mutation labels, dry-run labels, and CLI tests are derived from shared command metadata so they do not drift. | Required |
+| FR-15-018 | Executor does not require shell completion for v1. Package installation and initialization must never modify shell profiles, shell startup files, editor configuration, or terminal completion paths. | Required |
+| FR-15-019 | Human help, agent schema output, docs generation, mutation labels, dry-run labels, and CLI tests are derived from shared command metadata so they do not drift. | Required |
 | FR-15-020 | Interactive prompts and rich terminal formatting are used only when a TTY is available and always have flag, config, or non-interactive equivalents. | Required |
+| FR-15-021 | A command is present in the executable CLI only when the active issue delivers real behavior for that command. Issue bodies must not ask agents to add commands outside their scope, and Executor must not contain executable placeholders, reserved command classes, or "not implemented yet" runtime paths. | Required |
+
+---
+
+## FR-16 - Supply Chain Safety
+
+Executor does not replace package-manager controls, vulnerability scanners, registry intelligence, repository rules, or human security review. It must, however, make supply-chain-safe behavior part of the installed agent workflow so repositories do not depend on a separate local skill being present.
+
+| ID | Requirement | Status |
+|----|-------------|--------|
+| FR-16-001 | Executor-installed instructions treat dependency additions, dependency updates, package-manager commands, project generators, CI actions/workflows, release automation, IDE/editor extensions, MCP servers, AI-agent tools, one-line installers, Git URL dependencies, tarballs, and binary downloads as code execution requiring supply-chain review. | Required |
+| FR-16-002 | Instructions tell agents to prefer standard library APIs, existing dependencies, or in-repository code before adding a dependency. | Required |
+| FR-16-003 | Instructions prohibit `latest`, floating semver ranges for new dependencies, unpinned Git branches, unverified tarballs, and curl-pipe-shell style installers unless the user explicitly approves the exact risk. | Required |
+| FR-16-004 | Instructions require exact dependency versions and intentional lockfile preservation or updates when adding or upgrading dependencies. | Required |
+| FR-16-005 | Instructions require lifecycle/build scripts from newly introduced packages to be disabled by default with package-manager-supported flags such as `--ignore-scripts`, unless the package is already trusted and the executing scripts have been reviewed. | Required |
+| FR-16-006 | Instructions require a conservative package-age gate before adding or upgrading dependencies: at least 7 full days since publication/release by default, and 14 days for high-risk runtime, build, CI/CD, auth, crypto, networking, installer, postinstall, native, binary, or transitive-heavy packages. | Required |
+| FR-16-007 | If package age, source identity, provenance, integrity, or execution risk cannot be verified, instructions require the agent to stop and ask for explicit user approval or choose an older verified version. | Required |
+| FR-16-008 | Instructions require dependency intake notes in issue comments or PRs when dependencies or dependency-provided tooling change: need, exact package/source/version, lockfile impact, age, source trust, execution risk, integrity signal, and dependency scope. | Required |
+| FR-16-009 | Instructions require CI actions and reusable workflows to be treated as dependencies, with third-party actions pinned to immutable full-length commit SHAs where the platform supports it. | Required |
+| FR-16-010 | Instructions require existing-project installs to prefer frozen or locked commands with lifecycle scripts disabled where supported, and to avoid broad upgrade commands unless dependency updates are the explicit task. | Required |
+| FR-16-011 | Initialization captures supply-chain policy settings, including package-age thresholds, lifecycle-script default, exact-version preference, lockfile behavior, CI action pinning preference, and whether project-level package-manager secure defaults may be written. | Required |
+| FR-16-012 | Executor may offer project-level secure default files such as `.npmrc` only during explicit init/migration actions or with explicit flags. It must never write user-level package-manager, shell, editor, or machine configuration. | Required |
+| FR-16-013 | `aie gates plan` marks configured package-manager, generator, CI, MCP, IDE, or agent-tool commands as supply-chain-sensitive and tells agents what review evidence is expected before execution. | Required |
+| FR-16-014 | `aie doctor` reports supply-chain policy status, detected package managers and lockfiles, package lifecycle-script default visibility where practical, third-party CI action pinning visibility where practical, and recommended next commands without mutating. | Required |
+| FR-16-015 | When the user names a suspected supply-chain attack, compromised package, malware campaign, or suspicious dependency, installed instructions tell agents to fetch current advisories, compare manifests and lockfiles against exact package names/versions/tarballs/Git URLs/integrity hashes, stop installs/builds if exposure is possible, preserve evidence, and recommend token/credential rotation before resuming. | Required |
+| FR-16-016 | Executor must not maintain a stale embedded advisory list or claim a dependency is safe from package age or provenance alone. Advisory checks must use current external sources when needed. | Required |
