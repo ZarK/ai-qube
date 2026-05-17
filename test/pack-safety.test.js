@@ -21,7 +21,7 @@ describe('package publish surface safety', () => {
     assert.equal(pkg.bin.aie, './bin/run');
     assert.equal(pkg.main, './dist/index.js');
     assert.equal(pkg.types, './dist/index.d.ts');
-    assert.match(pkg.scripts['pack:check'], /^corepack pnpm run build && corepack pnpm pack --dry-run(?:\s|$)/);
+    assert.match(pkg.scripts['pack:check'], /^pnpm run build && pnpm pack --dry-run(?:\s|$)/);
     assert.match(pkg.scripts['pack:check'], /--json/);
 
     const forbiddenPublishRoots = ['src/', 'test/', 'references/', 'scripts/', '.github/', '.umpire/', '.aie/'];

@@ -52,12 +52,12 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "corepack pnpm run clean && tsc",
+    "build": "pnpm run clean && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'Static validation is not configured. Typecheck provides static safety for the package. This command fails intentionally until a linter is added.' && exit 1",
-    "test": "corepack pnpm run build && node test/run-node-tests.mjs",
-    "prepack": "corepack pnpm run build",
-    "pack:check": "corepack pnpm run build && corepack pnpm pack --dry-run --json"
+    "test": "pnpm run build && node test/run-node-tests.mjs",
+    "prepack": "pnpm run build",
+    "pack:check": "pnpm run build && pnpm pack --dry-run --json"
   },
   "devDependencies": {
     "@types/node": "24.12.2",
