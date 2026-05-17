@@ -125,7 +125,7 @@ Apply these defaults:
 - Verify source repository, package metadata, maintainers, integrity, signatures, provenance, and lockfile impact where available.
 - Stop for explicit human approval when a dependency or tool is high-risk, ambiguous, too new, unpinned, unverifiable, or requires lifecycle scripts before review.
 
-For this npm project, prefer `npm ci --ignore-scripts` for normal installs. Use `npm install` only when intentionally changing dependencies or the lockfile.
+For this pnpm project, prefer `pnpm install --frozen-lockfile --ignore-scripts` for normal installs. Use `pnpm add` only when intentionally changing dependencies or the lockfile, and keep `packageManager` pinned to an exact reviewed pnpm version.
 
 ### TypeScript Standards
 

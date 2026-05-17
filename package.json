@@ -1,0 +1,66 @@
+{
+  "name": "@tjalve/aie",
+  "version": "0.1.0",
+  "description": "AI Executor - autonomous GitHub issue execution for agentic development.",
+  "keywords": [
+    "cli",
+    "github",
+    "issues",
+    "automation",
+    "agent",
+    "executor"
+  ],
+  "author": "tjalve",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-executor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-executor/issues"
+  },
+  "homepage": "https://github.com/ZarK/ai-executor#readme",
+  "packageManager": "pnpm@11.0.4",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "bin": {
+    "aie": "./bin/run"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin/",
+    "dist/",
+    "docs/migration.md",
+    "README.md"
+  ],
+  "dependencies": {
+    "@clack/prompts": "1.3.0",
+    "@oclif/core": "4.10.6"
+  },
+  "oclif": {
+    "bin": "aie",
+    "dirname": "aie",
+    "commands": "dist/commands",
+    "plugins": [],
+    "topicSeparator": " "
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "corepack pnpm run clean && tsc",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'Static validation is not configured. Typecheck provides static safety for the package. This command fails intentionally until a linter is added.' && exit 1",
+    "test": "corepack pnpm run build && node --test 'dist/**/*.test.js' 'test/**/*.test.js' 2>&1; TEST_EXIT=$?; if [ $TEST_EXIT -eq 0 ] && [ $(find dist test -name '*.test.js' 2>/dev/null | wc -l) -eq 0 ]; then echo 'No test files configured. The test command invokes the real Node.js test runner and must not pass until real tests are added.'; exit 1; fi; exit $TEST_EXIT",
+    "prepack": "corepack pnpm run build",
+    "pack:check": "corepack pnpm run build && corepack pnpm pack --dry-run --json"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  }
+}

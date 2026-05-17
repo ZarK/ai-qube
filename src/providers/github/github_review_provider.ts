@@ -1,0 +1,491 @@
+import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan';
+import { normalizeGateEvidence, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../../core/gate_evidence';
+import type { JsonObject, JsonValue } from '../../core/json_value';
+import type { ExecutorPolicy } from '../../core/policy';
+import { normalizeProviderSource } from '../../core/provider_source';
+import type { ReviewFeedback, ReviewItem, ReviewItemKey } from '../../core/review_item';
+import { normalizeReviewItem } from '../../core/review_item';
+import { GhExecutionError, GhRunResult, parseGhJson, redact, runGh } from '../../gh';
+import { getRepositoryIdentity } from '../../repo';
+import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provider';
+
+import type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types';
+export type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types';
+
+const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,comments,statusCheckRollup';
+const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
+const MARKER_PREFIX = 'aie:pr-gate';
+
+function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
+
+function isRawPrView(value: unknown): value is RawPrView {
+  if (!isRecord(value)) return false;
+  return typeof value.number === 'number' && typeof value.title === 'string' && typeof value.state === 'string' && typeof value.url === 'string';
+}
+
+function isRawReviewCommentArray(value: unknown): value is RawReviewComment[] | RawReviewComment[][] { return Array.isArray(value) && value.every(item => isRecord(item) || (Array.isArray(item) && item.every(isRecord))); }
+
+function isRawThreadResponse(value: unknown): value is RawThreadResponse { return isRecord(value); }
+
+function isLoginResponse(value: unknown): value is LoginResponse { return isRecord(value) && typeof value.login === 'string' && value.login !== ''; }
+
+function ensureGhSuccess(operation: string, result: GhRunResult): void {
+  if (result.exitCode !== 0) throw new GhExecutionError(operation, result.exitCode, result.stderr || result.stdout);
+}
+
+function actorName(author: RawAuthor | null | undefined): string { return redact(author?.login ?? 'unknown'); }
+
+function summarize(text: string | undefined): string {
+  const normalized = redact((text ?? '').replace(/\s+/g, ' ').trim());
+  if (normalized === '') return 'No body text supplied.';
+  return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
+}
+
+function normalizeHandle(name: string): string { const trimmed = name.trim(); return trimmed.startsWith('@') ? trimmed : `@${trimmed}`; }
+
+function reviewerId(name: string): string {
+  return name.trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'reviewer';
+}
+
+function markerFor(reviewer: string, headSha: string): string {
+  return `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:${headSha} -->`;
+}
+
+function trustedMarkerComment(comment: RawComment, trustedAuthor: string | null): boolean {
+  return trustedAuthor !== null && authorMatches(comment.author?.login ?? '', trustedAuthor) && (comment.body ?? '').includes(`<!-- ${MARKER_PREFIX}:`);
+}
+
+function hasMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null): boolean {
+  return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(markerFor(reviewer, headSha)));
+}
+
+function hasStaleMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null): boolean {
+  if (hasMarker(comments, reviewer, headSha, trustedAuthor)) return false;
+  const prefix = `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:`;
+  return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(prefix));
+}
+
+function authorMatches(author: string, reviewer: string): boolean {
+  return author.toLowerCase().replace(/^@/, '') === reviewer.toLowerCase().replace(/^@/, '');
+}
+
+function isCurrentReview(reviews: RawReview[], reviewer: string, headSha: string): boolean {
+  return reviews.some(review => authorMatches(review.author?.login ?? '', reviewer) && review.commit?.oid === headSha);
+}
+
+function hasStaleReview(reviews: RawReview[], reviewer: string, headSha: string): boolean {
+  return reviews.some(review => authorMatches(review.author?.login ?? '', reviewer) && !!review.commit?.oid && review.commit.oid !== headSha);
+}
+
+function isPendingRequest(reviewRequests: string[], reviewer: string): boolean { return reviewRequests.some(request => authorMatches(request, reviewer)); }
+
+function triggerFor(name: string): GitHubReviewRequestTrigger { return reviewerId(name) === 'copilot' ? 'github-reviewer' : 'comment'; }
+
+function configuredReviewerNames(policy: ExecutorPolicy): string[] {
+  const names: string[] = [];
+  const seen = new Set<string>();
+  for (const rawName of policy.reviews.reviewers) {
+    const name = rawName.trim();
+    if (name === '') continue;
+    const id = reviewerId(name);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    names.push(name);
+  }
+  return names;
+}
+
+function reviewRequestNames(raw: RawReviewRequest[] | undefined): string[] { return (raw ?? []).map(request => request.login ?? request.slug ?? request.name ?? '').filter(name => name !== '').map(redact); }
+
+function commentBodyFor(name: string, policy: ExecutorPolicy, headSha: string): { body: string; marker: string } {
+  const handle = normalizeHandle(name);
+  const marker = markerFor(name, headSha);
+  const requestText = policy.reviews.requestText.replace(/\s+/g, ' ').trim();
+  const id = reviewerId(name);
+  let command = `${handle} review this PR`;
+  if (id === 'coderabbit' || id === 'coderabbitai') command = `${handle} review`;
+  if (id === 'cubic' || id === 'cubic-dev-ai') command = `${handle} review this PR`;
+  const body = requestText === '' ? `${marker}\n${command}` : `${marker}\n${command}\n${redact(requestText)}`;
+  return { body, marker };
+}
+
+function reviewerMarkerBodyFor(name: string, headSha: string): { body: string; marker: string } {
+  const marker = markerFor(name, headSha);
+  return { body: `${marker}\nExecutor recorded a configured PR reviewer request for this PR head.`, marker };
+}
+
+function rawReviewDecision(value: string | null | undefined): string { return value && value.trim() !== '' ? value : 'UNKNOWN'; }
+
+function mapReviewDecision(value: string | null | undefined): ReviewItem['reviewDecision'] { if (value === null || value === undefined || value === '') return 'none'; if (value === 'APPROVED') return 'approved'; if (value === 'CHANGES_REQUESTED') return 'changes-requested'; if (value === 'REVIEW_REQUIRED') return 'review-required'; return 'unknown'; }
+
+function mapReviewState(raw: RawPrView): ReviewItem['state'] { if (raw.isDraft) return 'draft'; if (raw.state === 'OPEN') return 'open'; if (raw.state === 'MERGED') return 'merged'; if (raw.state === 'CLOSED') return 'closed'; return 'unknown'; }
+
+function mapMergeability(raw: RawPrView): ReviewItem['mergeability'] {
+  if (raw.mergeable === 'CONFLICTING' || raw.mergeStateStatus === 'DIRTY') return 'conflicting';
+  if (raw.mergeStateStatus && ['BLOCKED', 'BEHIND', 'DRAFT', 'HAS_HOOKS', 'UNSTABLE'].includes(raw.mergeStateStatus)) return 'blocked';
+  if (raw.mergeable === 'MERGEABLE' && raw.mergeStateStatus === 'CLEAN') return 'mergeable';
+  return 'unknown';
+}
+
+function normalizePr(raw: RawPrView): GitHubReviewPullRequest {
+  return {
+    number: raw.number,
+    title: redact(raw.title),
+    state: raw.state,
+    url: redact(raw.url),
+    headRefOid: redact(raw.headRefOid ?? 'UNKNOWN'),
+    reviewDecision: rawReviewDecision(raw.reviewDecision),
+    mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
+    mergeable: raw.mergeable ?? 'UNKNOWN',
+    isDraft: raw.isDraft ?? false,
+  };
+}
+
+function checkResult(check: RawStatusCheck): GateResult {
+  const conclusion = (check.conclusion ?? '').toUpperCase();
+  const status = (check.status ?? '').toUpperCase();
+  const state = (check.state ?? '').toUpperCase();
+  if (conclusion === 'SUCCESS') return 'passed';
+  if (conclusion === 'NEUTRAL') return 'passed';
+  if (conclusion === 'SKIPPED') return 'skipped';
+  if (conclusion === 'STALE') return 'stale';
+  if (['FAILURE', 'ERROR', 'TIMED_OUT', 'ACTION_REQUIRED', 'STARTUP_FAILURE', 'CANCELLED'].includes(conclusion)) return 'failed';
+  if (state === 'SUCCESS') return 'passed';
+  if (state === 'FAILURE' || state === 'ERROR') return 'failed';
+  if (state === 'PENDING') return 'unknown';
+  if (status === 'COMPLETED' && conclusion === '') return 'unknown';
+  return 'unknown';
+}
+
+function checkReasonCode(result: GateResult): GateEvidenceReasonCode {
+  if (result === 'stale') return 'provider-check-stale';
+  if (result === 'skipped') return 'provider-check-skipped';
+  if (result === 'unknown') return 'provider-check-pending';
+  return 'trusted-provider-result';
+}
+
+function checkName(check: RawStatusCheck, index: number): string {
+  return check.name ?? check.context ?? `GitHub check ${index + 1}`;
+}
+
+function checkTime(check: RawStatusCheck): string {
+  return check.completedAt ?? check.startedAt ?? check.createdAt ?? '';
+}
+
+function latestChecks(raw: RawStatusCheck[] | undefined): RawStatusCheck[] {
+  const byName = new Map<string, RawStatusCheck>();
+  for (const [index, check] of (raw ?? []).entries()) {
+    const name = checkName(check, index);
+    const current = byName.get(name);
+    if (!current || checkTime(check) >= checkTime(current)) byName.set(name, check);
+  }
+  return [...byName.values()];
+}
+
+function checks(raw: RawStatusCheck[] | undefined): GateEvidence[] {
+  return latestChecks(raw).map((check, index) => {
+    const result = checkResult(check);
+    const name = checkName(check, index);
+    return normalizeGateEvidence({
+      key: `github-check:${name}`,
+      name: redact(name),
+      stage: 'pre-merge',
+      result,
+      source: 'provider-check',
+      trust: 'trusted-provider',
+      command: null,
+      providerRunId: null,
+      path: check.detailsUrl ? redact(check.detailsUrl) : check.targetUrl ? redact(check.targetUrl) : null,
+      summary: `GitHub check status=${check.status ?? check.state ?? 'UNKNOWN'} conclusion=${check.conclusion ?? 'UNKNOWN'}.`,
+      recordedAt: check.completedAt ?? check.startedAt ?? check.createdAt ?? null,
+      reasonCode: checkReasonCode(result),
+      stale: result === 'stale',
+      metadata: { status: check.status ?? null, state: check.state ?? null, conclusion: check.conclusion ?? null },
+    });
+  });
+}
+
+function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null }): ReviewFeedback[] {
+  const items: ReviewFeedback[] = [];
+  for (const review of raw.latestReviews) {
+    const state = review.state ?? 'UNKNOWN';
+    if (state === 'CHANGES_REQUESTED' || state === 'COMMENTED') items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
+  }
+  for (const comment of raw.comments) {
+    const body = comment.body ?? '';
+    if (!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
+  }
+  for (const comment of raw.reviewComments) items.push({ source: 'review-comment', author: redact(comment.user?.login ?? 'unknown'), summary: summarize(comment.body), url: comment.html_url ? redact(comment.html_url) : null, state: null, trust: 'untrusted' });
+  for (const thread of raw.unresolvedThreads) {
+    const first = thread.comments?.nodes?.[0];
+    items.push({ source: 'thread', author: actorName(first?.author), summary: summarize(first?.body), url: first?.url ? redact(first.url) : null, state: null, trust: 'untrusted' });
+  }
+  return items;
+}
+
+function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
+  return {
+    number: raw.pr.number,
+    headRefOid: raw.pr.headRefOid,
+    mergeStateStatus: raw.pr.mergeStateStatus,
+    rawReviewDecision: raw.pr.reviewDecision,
+    rawMergeable: raw.pr.mergeable,
+    reviewRequests: raw.reviewRequests,
+    comments: raw.comments.map(comment => ({ author: comment.author?.login ?? null, body: comment.body ?? null })),
+    latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null })),
+    unavailable: raw.unavailable,
+    trustedMarkerAuthor: raw.trustedMarkerAuthor,
+  };
+}
+
+function getJsonString(value: JsonValue | undefined): string | null {
+  return typeof value === 'string' ? value : null;
+}
+
+function getJsonStrings(value: JsonValue | undefined): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function commentsFromMetadata(item: ReviewItem): RawComment[] {
+  const value = item.trustedMetadata.comments;
+  if (!Array.isArray(value)) return [];
+  return value.map(comment => isRecord(comment) && typeof comment.body === 'string' ? { author: typeof comment.author === 'string' ? { login: comment.author } : null, body: comment.body } : { body: '' });
+}
+
+function latestReviewsFromMetadata(item: ReviewItem): RawReview[] {
+  const value = item.trustedMetadata.latestReviews;
+  if (!Array.isArray(value)) return [];
+  return value.map(review => {
+    if (!isRecord(review)) return {};
+    const author = typeof review.author === 'string' ? { login: review.author } : null;
+    const oid = typeof review.commitOid === 'string' ? review.commitOid : undefined;
+    return { author, commit: oid ? { oid } : null };
+  });
+}
+
+function actionResult(action: Action, status: ActionResult['status'], failure: ActionResult['failure'] = null): ActionResult {
+  return { actionId: action.id, status, failure, details: action.details };
+}
+
+function getString(details: Record<string, unknown>, key: string): string | null {
+  const value = details[key];
+  return typeof value === 'string' ? value : null;
+}
+
+function redactReviewKeyId(id: string): string {
+  return redact(id).replace(/\b([A-Za-z0-9_-]{20,})\b/g, '[REDACTED]');
+}
+
+function makeRequestAction(input: { item: ReviewItem; name: string; requestedForHead: boolean; staleRequest: boolean; pending: boolean; policy: ExecutorPolicy }): Action {
+  const trigger = triggerFor(input.name);
+  const handle = normalizeHandle(input.name);
+  const id = reviewerId(input.name);
+  const headRefOid = getJsonString(input.item.trustedMetadata.headRefOid) ?? 'UNKNOWN';
+  const skipped = input.requestedForHead || input.pending;
+  const body = trigger === 'github-reviewer' ? reviewerMarkerBodyFor(input.name, headRefOid) : commentBodyFor(input.name, input.policy, headRefOid);
+  return createAction({
+    id: `${skipped ? 'skip-reviewer' : 'request-review'}:${id}`,
+    kind: 'request-review',
+    target: { kind: 'review-item', id: input.item.key.id },
+    mutation: 'review-provider',
+    description: skipped ? `${handle} is already requested or has reviewed the current PR head.` : trigger === 'github-reviewer' ? `Request ${handle} as a GitHub pull request reviewer and record an idempotency marker for head ${headRefOid}.` : `Post an idempotent PR comment to trigger ${handle} for head ${headRefOid}.`,
+    expectedResult: skipped ? `${handle} review request remains idempotent for the current PR head.` : `${handle} is requested for PR review without trusting review feedback as workflow authority.`,
+    status: skipped ? 'skipped' : 'planned',
+    details: {
+      requestKind: trigger,
+      reviewerId: id,
+      reviewerName: redact(input.name),
+      handle: redact(handle),
+      externalService: true,
+      requestedForHead: input.requestedForHead,
+      staleRequest: input.staleRequest,
+      pending: input.pending,
+      marker: body.marker,
+      body: body.body,
+    },
+  });
+}
+
+export class GitHubReviewProvider implements ReviewProvider {
+  readonly id = 'github' as const;
+
+  constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
+
+  capabilities(): ReviewProviderCapabilities { return { loadReview: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true }; }
+
+  async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
+    if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
+    if (!/^[1-9]\d*$/.test(key.id)) throw new Error(`load GitHub review item failed: key id ${redactReviewKeyId(key.id)} is not a positive pull request number. Use a numeric GitHub pull request id.`);
+    return (await this.loadPullRequestReview(Number(key.id))).item;
+  }
+
+  async findReviewForCurrentBranch(): Promise<ReviewItem | null> { return (await this.findCurrentReview()).item; }
+
+  async findCurrentReview(): Promise<CurrentGitHubReview> {
+    let result: GhRunResult;
+    try {
+      result = await runGh(['pr', 'view', '--json', CURRENT_PR_FIELDS], this.options);
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${redact(detail)}` };
+    }
+    if (result.exitCode !== 0) {
+      const detail = redact(result.stderr || result.stdout || 'current branch has no pull request');
+      return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${detail}` };
+    }
+    try {
+      const raw = parseGhJson<RawPrView>(result.stdout, 'gh pr view current branch', isRawPrView);
+      const pr = normalizePr(raw);
+      return { item: this.reviewItem(raw, [], [], [], [], [], [], null), pr, warning: null };
+    } catch (error: unknown) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${redact(detail)}` };
+    }
+  }
+
+  async loadPullRequestReview(prNumber: number): Promise<GitHubReviewSnapshot> {
+    const rawPr = await this.getPullRequest(prNumber);
+    const unavailable: string[] = [];
+    let reviewComments: RawReviewComment[] = [];
+    let unresolvedThreads: RawThreadNode[] = [];
+    try {
+      const repository = await getRepositoryIdentity(this.options);
+      try {
+        reviewComments = await this.getReviewComments(repository.nameWithOwner, prNumber);
+      } catch (error: unknown) {
+        unavailable.push(`Review comments unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      try {
+        unresolvedThreads = await this.getUnresolvedThreads(repository.nameWithOwner, prNumber);
+      } catch (error: unknown) {
+        unavailable.push(`Review threads unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    } catch (error: unknown) {
+      unavailable.push(`Repository identity unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let trustedMarkerAuthor: string | null = null;
+    try { trustedMarkerAuthor = await this.currentLogin(); } catch { trustedMarkerAuthor = null; }
+    const comments = rawPr.comments ?? [];
+    const reviews = rawPr.reviews ?? [];
+    const latestReviews = rawPr.latestReviews ?? [];
+    const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
+    return {
+      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor),
+      pr: normalizePr(rawPr),
+      reviewRequests,
+      commentsCount: comments.length,
+      reviewsCount: reviews.length,
+      reviewCommentsCount: reviewComments.length,
+      unresolvedThreadsCount: unresolvedThreads.length,
+      unavailable,
+    };
+  }
+
+  planReviewRequest(item: ReviewItem, policy: ExecutorPolicy): ActionPlan {
+    const headSha = getJsonString(item.trustedMetadata.headRefOid) ?? 'UNKNOWN';
+    const reviewRequests = getJsonStrings(item.trustedMetadata.reviewRequests);
+    const trustedMarkerAuthor = getJsonString(item.trustedMetadata.trustedMarkerAuthor);
+    const comments = commentsFromMetadata(item);
+    const latestReviews = latestReviewsFromMetadata(item);
+    const actions = configuredReviewerNames(policy).map(name => {
+      const trigger = triggerFor(name);
+      const handle = normalizeHandle(name);
+      const requestedForHead = trigger === 'github-reviewer' ? hasMarker(comments, name, headSha, trustedMarkerAuthor) || isCurrentReview(latestReviews, handle, headSha) : hasMarker(comments, name, headSha, trustedMarkerAuthor);
+      const pending = isPendingRequest(reviewRequests, handle);
+      const staleRequest = trigger === 'github-reviewer' ? !requestedForHead && !pending && (hasStaleMarker(comments, name, headSha, trustedMarkerAuthor) || hasStaleReview(latestReviews, handle, headSha)) : !requestedForHead && hasStaleMarker(comments, name, headSha, trustedMarkerAuthor);
+      return makeRequestAction({ item, name, requestedForHead, staleRequest, pending, policy });
+    });
+    return createActionPlan({ id: `github:review-request:${item.key.id}`, purpose: `Request configured PR reviewers for ${item.displayId}.`, dryRun: true, actions });
+  }
+
+  async apply(plan: ActionPlan): Promise<ActionResult[]> {
+    const results: ActionResult[] = [];
+    for (const action of plan.actions) {
+      if (action.status === 'skipped') {
+        results.push(actionResult(action, 'skipped'));
+        continue;
+      }
+      try {
+        await this.applyAction(action);
+        results.push(actionResult(action, 'completed'));
+      } catch (error: unknown) {
+        results.push(actionResult(action, 'failed', {
+          operation: action.description,
+          cause: error instanceof Error ? error.message : String(error),
+          nextAction: 'Verify GitHub permissions, PR number, repository access, and configured reviewers, then rerun `aie pr gate <pr> --dry-run` before retrying.',
+        }));
+      }
+    }
+    return results;
+  }
+
+  private async getPullRequest(prNumber: number): Promise<RawPrView> {
+    const result = await runGh(['pr', 'view', String(prNumber), '--json', PR_VIEW_FIELDS], this.options);
+    ensureGhSuccess(`gh pr view ${prNumber}`, result);
+    return parseGhJson<RawPrView>(result.stdout, `gh pr view ${prNumber}`, isRawPrView);
+  }
+
+  private async getReviewComments(repoName: string, prNumber: number): Promise<RawReviewComment[]> {
+    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/comments`, '--method', 'GET', '-F', 'per_page=100', '--paginate', '--slurp'], this.options);
+    ensureGhSuccess(`gh api pull review comments for PR ${prNumber}`, result);
+    const parsed = parseGhJson<RawReviewComment[] | RawReviewComment[][]>(result.stdout, `gh api pull review comments for PR ${prNumber}`, isRawReviewCommentArray);
+    return parsed.flat();
+  }
+
+  private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
+    const [owner, repo] = repoName.split('/');
+    if (!owner || !repo) return [];
+    const query = `query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved comments(first: 1) { nodes { body url author { login } } } } pageInfo { hasNextPage endCursor } } } } }`;
+    const nodes: RawThreadNode[] = [];
+    let cursor: string | null = null;
+    for (;;) {
+      const args = ['api', 'graphql', '-F', `owner=${owner}`, '-F', `repo=${repo}`, '-F', `pr=${prNumber}`, '-f', `query=${query}`];
+      if (cursor !== null) args.push('-F', `after=${cursor}`);
+      const result = await runGh(args, this.options);
+      ensureGhSuccess(`gh api graphql review threads for PR ${prNumber}`, result);
+      const page = parseGhJson<RawThreadResponse>(result.stdout, `gh api graphql review threads for PR ${prNumber}`, isRawThreadResponse).data?.repository?.pullRequest?.reviewThreads;
+      nodes.push(...(page?.nodes ?? []));
+      if (!page?.pageInfo?.hasNextPage || !page.pageInfo.endCursor) break;
+      cursor = page.pageInfo.endCursor;
+    }
+    return nodes.filter(thread => thread.isResolved === false);
+  }
+
+  private async currentLogin(): Promise<string> {
+    const result = await runGh(['api', 'user'], this.options);
+    ensureGhSuccess('gh api user', result);
+    return parseGhJson<LoginResponse>(result.stdout, 'gh api user', isLoginResponse).login;
+  }
+
+  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null): ReviewItem {
+    const pr = normalizePr(rawPr);
+    const source = normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(rawPr.number), url: pr.url });
+    return normalizeReviewItem({
+      key: { providerId: this.id, id: String(rawPr.number) },
+      displayId: `#${rawPr.number}`,
+      title: pr.title,
+      url: pr.url,
+      sourceRef: pr.headRefOid,
+      targetRef: 'base',
+      state: mapReviewState(rawPr),
+      reviewDecision: mapReviewDecision(rawPr.reviewDecision),
+      mergeability: mapMergeability(rawPr),
+      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor }),
+      checks: checks(rawPr.statusCheckRollup),
+      trustedMetadata: metadata({ pr, reviewRequests, comments, latestReviews, unavailable, trustedMarkerAuthor }),
+      source,
+    });
+  }
+
+  private async applyAction(action: Action): Promise<void> {
+    const prNumber = action.target.id;
+    const requestKind = getString(action.details, 'requestKind');
+    const handle = getString(action.details, 'handle');
+    const body = getString(action.details, 'body') ?? '';
+    if (!handle) throw new Error('apply GitHub review action failed: missing reviewer handle. Likely cause: the review request action was not planned with a handle. Next action: rerun `aie pr gate <pr> --dry-run` and inspect the generated review action details.');
+    if (requestKind === 'github-reviewer') { ensureGhSuccess(`gh pr edit ${prNumber} --add-reviewer ${handle}`, await runGh(['pr', 'edit', prNumber, '--add-reviewer', handle], this.options)); if (body !== '') ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', prNumber, '--body', body], this.options)); return; }
+    if (requestKind === 'comment') { ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', prNumber, '--body', body], this.options)); return; }
+    throw new Error(`apply GitHub review action failed: request kind ${requestKind ?? 'unknown'} is not supported. Likely cause: action.details.requestKind is invalid. Next action: regenerate the action plan with requestKind "github-reviewer" or "comment".`);
+  }
+}
+export function createGitHubReviewProvider(options: GitHubReviewProviderOptions = {}): GitHubReviewProvider { return new GitHubReviewProvider(options); }

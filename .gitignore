@@ -17,6 +17,7 @@ yarn-debug.log*
 yarn-error.log*
 
 # Runtime data
+.umpire/
 pids
 *.pid
 *.seed

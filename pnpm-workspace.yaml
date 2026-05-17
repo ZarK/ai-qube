@@ -1,0 +1,10 @@
+minimumReleaseAge: 20160
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+strictDepBuilds: true
+verifyDepsBeforeRun: error
+savePrefix: ""
+registries:
+  default: https://registry.npmjs.org/

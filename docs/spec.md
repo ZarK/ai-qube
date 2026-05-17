@@ -113,12 +113,12 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | ID | Requirement | Status |
 |----|-------------|--------|
 | FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `aie.config.json` or an equivalent documented path. | Required |
-| FR-04-002 | Configuration includes priority labels, status labels, component labels, optional GitHub milestone ordering policy, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, agent-run quality gate commands, and supply-chain safety policy. | Required |
+| FR-04-002 | Configuration includes provider selection, provider capability policy, priority labels, status labels, component labels, optional GitHub milestone ordering policy, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-04-003 | Priority labels are fixed by default to `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`. | Required |
 | FR-04-004 | Status labels are fixed by default to `S-Ready`, `S-InProgress`, `S-Blocked`, and `S-Blocking`. | Required |
 | FR-04-005 | Component labels include broad defaults: `C-Architecture`, `C-Backend`, `C-Frontend`, `C-Testing`, `C-Tooling`, `C-Docs`, `C-DevEx`, `C-CI`, `C-Security`, and `C-Data`. | Required |
 | FR-04-006 | Component labels can be extended per repository during initialization and later config edits. | Required |
-| FR-04-007 | Executor validates configuration and reports unknown labels, missing status labels, unsupported review agents, invalid wait durations, and unsafe branch patterns. | Required |
+| FR-04-007 | Executor validates configuration and reports unknown provider kinds, unsupported provider combinations, unknown labels, missing status labels, unsupported review agents, invalid wait durations, and unsafe branch patterns. | Required |
 | FR-04-008 | Executor provides `aie doctor` to verify runtime tools, GitHub authentication, repository remote state, labels, config, installed commands, and instruction sections. | Required |
 | FR-04-009 | Executor supports a dry-run mode for commands that mutate GitHub labels, issues, PRs, branches, or local files. | Required |
 | FR-04-010 | Executor provides `aie labels setup` to create or update the required priority, status, and component labels in GitHub. | Required |
@@ -372,3 +372,25 @@ Executor does not replace package-manager controls, vulnerability scanners, regi
 | FR-16-014 | `aie doctor` reports supply-chain policy status, detected package managers and lockfiles, package lifecycle-script default visibility where practical, third-party CI action pinning visibility where practical, and recommended next commands without mutating. | Required |
 | FR-16-015 | When the user names a suspected supply-chain attack, compromised package, malware campaign, or suspicious dependency, installed instructions tell agents to fetch current advisories, compare manifests and lockfiles against exact package names/versions/tarballs/Git URLs/integrity hashes, stop installs/builds if exposure is possible, preserve evidence, and recommend token/credential rotation before resuming. | Required |
 | FR-16-016 | Executor must not maintain a stale embedded advisory list or claim a dependency is safe from package age or provenance alone. Advisory checks must use current external sources when needed. | Required |
+
+---
+
+## FR-17 - Provider Architecture
+
+These requirements define Executor's internal architecture boundary. GitHub remains the only required production provider for v1, but core workflow rules must not depend on GitHub issue and pull request objects as their internal model.
+
+| ID | Requirement | Status |
+|----|-------------|--------|
+| FR-17-001 | Executor core workflow rules use provider-neutral work item, review item, repository state, gate evidence, policy, and action plan models. | Required |
+| FR-17-002 | GitHub is the only production work provider required for v1. It maps GitHub Issues, labels, issue bodies, comments, milestones, and issue state into provider-neutral work items. | Required |
+| FR-17-003 | GitHub is the only production review provider required for v1. It maps GitHub pull requests, review requests, review comments, pull request comments, review threads, mergeability, and review decisions into provider-neutral review items and feedback. | Required |
+| FR-17-004 | Local git is the only production repository provider required for v1. It maps checkout root, remotes, base branch, active branch, dirty state, linked worktree state, and branch operations into provider-neutral repository state and action plans. | Required |
+| FR-17-005 | Config stores current provider selections and policy in one clean current-version shape. v1 does not include migration code for unreleased config shapes. | Required |
+| FR-17-006 | Unsupported provider kinds are rejected with actionable configuration errors. Executor must not register placeholder providers or runtime "not implemented" adapters. | Required |
+| FR-17-007 | Queue ordering, dependency computation, lifecycle transition planning, branch policy checks, gate evidence aggregation, and continuation status are implemented in core modules that do not import GitHub provider code, `gh` execution code, oclif command classes, child-process APIs, or filesystem APIs. | Required |
+| FR-17-008 | Provider modules are responsible for translating provider-specific state and mutations into core models and action results. GitHub label names, GitHub API field names, GraphQL review-thread details, and PR comment marker formats stay inside GitHub provider modules. | Required |
+| FR-17-009 | Command classes are thin parse/render wrappers around application services. Application services compose normalized policy, core rules, and production providers, and return typed result objects for human and JSON renderers. | Required |
+| FR-17-010 | Executor provides a trusted structured status surface, `aie status --json` or an equivalent command, that reports provider ids, capability flags, queue state, active work, next work, repository state, review state when available, gate evidence summary, stop/continue decision, reason codes, and next command. | Required |
+| FR-17-011 | Agent host rendering uses capability profiles for supported hosts instead of scattered host-name branches. OpenCode, Codex, and Claude Code are the only required v1 install targets. | Required |
+| FR-17-012 | Normal tests use deterministic fixtures and test-only doubles under test support boundaries. Fake providers must not be registered in production runtime paths. | Required |
+| FR-17-013 | Future non-GitHub work, review, forge, CI, or layout providers remain future scope until a real provider is implemented end to end with tests and product behavior. | Future |
