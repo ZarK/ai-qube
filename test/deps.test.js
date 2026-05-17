@@ -193,7 +193,7 @@ describe('dependency graph service', () => {
       { number: 2, title: 'Two', body: 'Blocked by: #1', state: 'OPEN', labels: [], assignees: [], milestone: null, url: '' },
     ];
     const exec = async (args) => {
-      if (args.join(' ') === 'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100') {
+      if (args.join(' ') === 'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000') {
         return success(args, JSON.stringify(issueList));
       }
       return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
@@ -214,7 +214,7 @@ describe('dependency graph service', () => {
     ];
     const exec = async (args) => {
       calls.push(args.join(' '));
-      if (args.join(' ') === 'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100') {
+      if (args.join(' ') === 'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000') {
         return success(args, JSON.stringify(issueList));
       }
       return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };

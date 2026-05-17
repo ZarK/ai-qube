@@ -2,7 +2,7 @@ import { suggestBranchName } from '../core/branch_rules';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps';
 import { getRepositoryIdentity, listMilestones } from '../repo';
-import { githubIssueNumber, parseWorkChecklist } from '../providers/github/github_work_codec';
+import { githubIssueNumber, parseWorkChecklist, parseWorkChecklistItems } from '../providers/github/github_work_codec';
 import type { LifecycleServiceContext } from './lifecycle_common';
 
 export interface ViewServiceResult {
@@ -18,20 +18,15 @@ export interface ViewServiceResult {
 }
 
 function checklistItems(body: string): string[] {
-  const items: string[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[-*+]\s+)?\[[ xX]\]\s*(.*)$/);
-    if (match) items.push(match[1].trim());
-  }
-  return items;
+  return parseWorkChecklistItems(body).map(item => item.text);
 }
 
 function recommendedAction(issueNumber: number, status: ViewServiceResult['effectiveStatus'], unresolvedBlockers: BlockerDetail[], hasOtherInProgress: boolean): string {
   if (status === 'Closed') return `Issue is closed. Run \`aie deps blocking ${issueNumber}\` to inspect open dependents before advancing related work.`;
+  if (hasOtherInProgress) return 'Multiple issues are marked S-InProgress. Run `aie queue` to inspect active work and resolve the extra active labels before changing work.';
   if (status === 'InProgress') return `Resume this issue after confirming the current branch matches the suggested branch. Run \`aie view ${issueNumber} --json\` for machine-readable context.`;
   if (unresolvedBlockers.length > 0) return `Do not start — blocker status could not be verified. Run \`aie deps blockers ${issueNumber}\` and resolve inaccessible blockers first.`;
   if (status === 'Blocked') return `Do not start — open blockers must close first. Run \`aie deps blockers ${issueNumber}\` for details.`;
-  if (hasOtherInProgress) return 'Another issue is already in progress. Run `aie queue` to inspect the active issue before changing work.';
   return 'Issue is ready. Confirm selection with `aie next --json`, then create or check out the suggested branch before implementation.';
 }
 
@@ -67,7 +62,7 @@ export async function runViewService(options: { issueNumber: number; context: Li
   const unchecked = checklist.total - checklist.completed;
   if (unchecked > 0 && item.state !== 'closed') warnings.push(`${unchecked} unchecked checklist item(s).`);
   if (unresolvedBlockers.length > 0) warnings.push(`Could not verify blocker status for issue(s): ${unresolvedBlockers.map(blocker => `#${blocker.number}`).join(', ')}.`);
-  if (hasOtherInProgress && status !== 'InProgress') warnings.push('Another issue is S-InProgress.');
+  if (hasOtherInProgress) warnings.push('Another issue is S-InProgress.');
 
   return {
     ok: true,

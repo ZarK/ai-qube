@@ -9,7 +9,11 @@ function parseIssueNumber(input: string | undefined): number | null {
   if (!match) {
     throw new Error(`Invalid issue number: ${input}. Use a bare number or #93.`);
   }
-  return Number(match[1]);
+  const issueNumber = Number(match[1]);
+  if (!Number.isSafeInteger(issueNumber)) {
+    throw new Error(`Invalid issue number: ${input}. Use a safe positive integer.`);
+  }
+  return issueNumber;
 }
 
 function usageLines(): string[] {
@@ -73,7 +77,7 @@ export default class View extends Command {
         process.exitCode = 1;
         return;
       }
-      this.error(message);
+      this.error(message, { exit: 1 });
     }
 
     if (issueNumber === null) {
@@ -101,7 +105,7 @@ export default class View extends Command {
         process.exitCode = 1;
         return;
       }
-      this.error(message);
+      this.error(message, { exit: 1 });
     }
   }
 }

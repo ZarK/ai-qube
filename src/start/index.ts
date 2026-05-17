@@ -103,7 +103,7 @@ export async function startIssue(options: StartOptions): Promise<StartResult> {
     preStartPolicy: serviceResult.preStartPolicy,
     branchRecommendation: {
       suggested: branchName || null,
-      nextCommand: selectedItem ? startNextCommand(workItemNumber(selectedItem), branchName, resumed) : 'Run `aie queue` to inspect available issue work.',
+      nextCommand: selectedItem && serviceResult.ok ? startNextCommand(workItemNumber(selectedItem), branchName, resumed) : 'Run `aie queue` to inspect available issue work.',
     },
     plan: serviceResult.plan,
     warnings: serviceResult.warnings,

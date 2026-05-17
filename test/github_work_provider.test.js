@@ -77,7 +77,7 @@ describe('GitHub work provider', () => {
       }),
     ];
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100': success([], JSON.stringify(issueList)),
+      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000': success([], JSON.stringify(issueList)),
     });
 
     const provider = createGitHubWorkProvider({ exec });
@@ -103,7 +103,7 @@ describe('GitHub work provider', () => {
       makeIssue(21, { title: '2.1 Later sequence', body: 'Sequence: beta', labels: [{ name: 'P2-High' }, { name: 'S-Ready' }] }),
     ];
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100': success([], JSON.stringify(issueList)),
+      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000': success([], JSON.stringify(issueList)),
     });
 
     const items = await createGitHubWorkProvider({ exec }).listOpenWorkItems();
@@ -121,7 +121,7 @@ describe('GitHub work provider', () => {
     ];
     const calls = [];
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100': success([], JSON.stringify(issueList)),
+      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000': success([], JSON.stringify(issueList)),
       'issue edit 40 --add-label S-Blocking': success([]),
       'issue edit 50 --add-label S-Blocked': success([]),
     }, calls);
@@ -139,7 +139,7 @@ describe('GitHub work provider', () => {
   it('returns structured action failures when GitHub mutation fails', async () => {
     const issueList = [makeIssue(60, { labels: [] })];
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100': success([], JSON.stringify(issueList)),
+      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000': success([], JSON.stringify(issueList)),
       'issue edit 60 --add-label S-Ready': failure([], 'permission denied'),
     });
     const provider = createGitHubWorkProvider({ exec });
@@ -159,7 +159,7 @@ describe('GitHub work provider', () => {
       makeIssue(72, { body: 'Blocked by: #70', labels: [{ name: 'S-InProgress' }, { name: 'S-Blocked' }] }),
     ];
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 100': success([], JSON.stringify(issueList)),
+      'issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000': success([], JSON.stringify(issueList)),
     });
     const provider = createGitHubWorkProvider({ exec });
     const items = await provider.listOpenWorkItems();

@@ -55,7 +55,7 @@
     "build": "corepack pnpm run clean && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "echo 'Static validation is not configured. Typecheck provides static safety for the package. This command fails intentionally until a linter is added.' && exit 1",
-    "test": "corepack pnpm run build && node --test 'dist/**/*.test.js' 'test/**/*.test.js' 2>&1; TEST_EXIT=$?; if [ $TEST_EXIT -eq 0 ] && [ $(find dist test -name '*.test.js' 2>/dev/null | wc -l) -eq 0 ]; then echo 'No test files configured. The test command invokes the real Node.js test runner and must not pass until real tests are added.'; exit 1; fi; exit $TEST_EXIT",
+    "test": "corepack pnpm run build && node test/run-node-tests.mjs",
     "prepack": "corepack pnpm run build",
     "pack:check": "corepack pnpm run build && corepack pnpm pack --dry-run --json"
   },

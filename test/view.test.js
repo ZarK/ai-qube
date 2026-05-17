@@ -34,8 +34,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['P2-High', 'S-Ready', 'C-Tooling'], 'Body text.', null),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -64,8 +64,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['Performance', 'S-Experimental', 'C-Custom', 'S-Ready'], '', null),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -99,8 +99,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(23, 'Closed blocker', 'CLOSED', [], ''),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -126,8 +126,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'CLOSED', [], ''),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -148,8 +148,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['S-Ready'], '- [x] Task A\n- [ ] Task B\n- [ ] Task C'),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -171,8 +171,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['S-Ready'], ''),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: JSON.stringify([
           { number: 93, title: 'Add view command', body: '', state: 'OPEN', labels: [{ name: 'S-Ready' }], milestone: null, url: 'https://github.com/example/repo/issues/93' },
@@ -202,8 +202,8 @@ describe('view service', () => {
         stdout: '',
         stderr: 'not found',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -225,8 +225,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['S-Ready'], ''),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: JSON.stringify([
           { number: 95, title: 'Depends on 93', body: 'Blocked by: #93', state: 'OPEN', labels: [{ name: 'S-Blocked' }], milestone: null, url: 'https://github.com/example/repo/issues/95' },
@@ -256,8 +256,8 @@ describe('view service', () => {
         }),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -303,8 +303,8 @@ describe('view service', () => {
         }),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',
@@ -368,8 +368,8 @@ describe('view service', () => {
         stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['S-Ready'], ''),
         stderr: '',
       },
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: '[]',
         stderr: '',

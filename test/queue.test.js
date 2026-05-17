@@ -115,7 +115,7 @@ describe('queue service (computeQueue + getNextIssue via GhExec fixtures)', () =
     const { getDefaults } = require('../dist/config/index.js');
     const exec = async (args) => {
       const key = args.join(' ');
-      if (key === 'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100') {
+      if (key === 'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000') {
         return { args, exitCode: 0, stdout: JSON.stringify([
           { number: 22, title: 'Issue 22', body: '', state: 'OPEN', labels: [{ name: 'S-Ready' }], milestone: null, url: 'https://github.com/example/repo/issues/22' },
           { number: 21, title: 'Issue 21', body: '', state: 'OPEN', labels: [{ name: 'S-InProgress' }], milestone: null, url: 'https://github.com/example/repo/issues/21' },

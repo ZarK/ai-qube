@@ -371,7 +371,7 @@ export default class Doctor extends Command {
     try {
       const gitDir = execSync('git rev-parse --git-dir', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
       const commonDir = execSync('git rev-parse --git-common-dir', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
-      return gitDir !== commonDir && gitDir.includes('/worktrees/');
+      return gitDir !== commonDir && gitDir.split(/[\\/]/).includes('worktrees');
     } catch {
       return false;
     }

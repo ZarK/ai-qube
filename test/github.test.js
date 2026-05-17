@@ -137,8 +137,8 @@ describe('gh execution layer', () => {
 describe('GitHub issue model', () => {
   it('listOpenIssues normalizes issues, labels, milestones, and declared blockers', async () => {
     const exec = makeFixtureExec({
-      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 100': {
-        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'],
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
         exitCode: 0,
         stdout: sampleListJson,
         stderr: '',

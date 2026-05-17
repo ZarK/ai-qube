@@ -34,11 +34,14 @@ export default class LabelsSetup extends Command {
     let listResult;
     try {
       listResult = await runGh(['label', 'list', '--json', 'name,color,description', '--limit', '1000']);
-    } catch (err) {
-      if (err instanceof Error) {
-        this.error(err.message);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (json) {
+        this.logJson({ ok: false, command: 'labels setup', dryRun, error: message });
+        process.exitCode = 1;
+        return;
       }
-      throw err;
+      this.error(message, { exit: 1 });
     }
 
     // Shape guard for gh label list output (consistent with github.ts pattern)

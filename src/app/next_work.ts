@@ -17,7 +17,7 @@ export async function runNextWorkService(context: LifecycleServiceContext): Prom
     return { workItem: selection.workItem, reason: `Resuming the single active S-InProgress issue #${workItemNumber(selection.workItem)}`, multipleInProgress: false, driftCount: selection.driftCount };
   }
   if (active.length > 1) {
-    return { workItem: null, reason: `Multiple S-InProgress issues detected (${active.length}). This is an actionable problem — run \`aie deps fix --dry-run\` then \`aie deps fix\` (or fix labels) before any new or resumed work. Selection fails.`, multipleInProgress: true, driftCount: selection.driftCount };
+    return { workItem: null, reason: `Multiple S-InProgress issues detected (${active.length}). This is an actionable problem. Inspect the active issues with \`aie queue --json\`, choose the single issue to continue, and manually remove S-InProgress from the others before any new or resumed work. Selection fails.`, multipleInProgress: true, driftCount: selection.driftCount };
   }
   if (selection.workItem) {
     return { workItem: selection.workItem, reason: `Next ready issue #${workItemNumber(selection.workItem)} (no open blockers, highest priority)`, multipleInProgress: false, driftCount: selection.driftCount };

@@ -43,7 +43,7 @@ function success(args, stdout) {
 
 const repoViewArgs = ['repo', 'view', '--json', 'nameWithOwner,url'];
 const labelListArgs = ['label', 'list', '--json', 'name,color,description', '--limit', '1000'];
-const issueListArgs = ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '100'];
+const issueListArgs = ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'];
 const prListArgs = ['pr', 'list', '--state', 'open', '--json', 'number,title,author,isDraft,url,headRefName', '--limit', '1000'];
 const milestoneArgs = ['api', 'repos/example/repo/milestones', '--method', 'GET', '-F', 'state=all', '-F', 'per_page=100'];
 

@@ -67,13 +67,16 @@ function defaultReasonCode(input: Pick<GateEvidence, 'result' | 'source' | 'trus
 }
 
 export function normalizeGateEvidence(input: Omit<GateEvidence, 'metadata' | 'reasonCode' | 'stale'> & { metadata?: JsonObject; reasonCode?: GateEvidenceReasonCode; stale?: boolean }): GateEvidence {
+  const stale = input.stale ?? input.result === 'stale';
+  const result = stale ? 'stale' : input.result;
   return {
     ...input,
+    result,
     key: nonEmpty(input.key, 'key'),
     name: nonEmpty(input.name, 'name'),
     summary: nonEmpty(input.summary, 'summary'),
-    reasonCode: input.reasonCode ?? defaultReasonCode(input),
-    stale: input.stale ?? input.result === 'stale',
+    reasonCode: input.reasonCode ?? defaultReasonCode({ ...input, result }),
+    stale,
     metadata: input.metadata ?? {},
   };
 }

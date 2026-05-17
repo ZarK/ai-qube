@@ -14,17 +14,23 @@ export function parseWorkSequence(body: string): string | null {
   return match ? match[1] : null;
 }
 
-export function parseWorkChecklist(body: string): WorkChecklist {
-  let total = 0;
-  let completed = 0;
+export interface WorkChecklistItem {
+  text: string;
+  checked: boolean;
+}
+
+export function parseWorkChecklistItems(body: string): WorkChecklistItem[] {
+  const items: WorkChecklistItem[] = [];
   for (const line of body.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[-*+]\s+)?\[([ xX])\]\s+.*$/);
-    if (match) {
-      total++;
-      if (match[1].toLowerCase() === 'x') completed++;
-    }
+    const match = line.match(/^\s*(?:[-*+]\s+)?\[([ xX])\]\s+(.*)$/);
+    if (match) items.push({ text: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
   }
-  return { total, completed };
+  return items;
+}
+
+export function parseWorkChecklist(body: string): WorkChecklist {
+  const items = parseWorkChecklistItems(body);
+  return { total: items.length, completed: items.filter(item => item.checked).length };
 }
 
 function mapStatus(labels: string[]): WorkStatus {

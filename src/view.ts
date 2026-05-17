@@ -44,7 +44,7 @@ async function currentBranch(options: { cwd?: string }): Promise<string | null> 
 export async function viewIssue(issueNumber: number, options: { exec?: GhExec; cwd?: string } = {}): Promise<ViewIssueResult> {
   if (!Number.isInteger(issueNumber) || issueNumber <= 0) throw new Error('Issue number must be a positive integer.');
   const config = (await loadConfig(options.cwd)) ?? getDefaults();
-  const context = await createLifecycleContext({ config, cwd: options.cwd, exec: options.exec, limit: 100 });
+  const context = await createLifecycleContext({ config, cwd: options.cwd, exec: options.exec });
   const service = await runViewService({ issueNumber, context, currentBranch: await currentBranch(options) });
   const labels = [...service.item.tags];
   return {

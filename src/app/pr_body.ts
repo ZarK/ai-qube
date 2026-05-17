@@ -237,9 +237,13 @@ function formatReviewers(result: ReviewGateResult): string {
   return result.reviewers.map(reviewer => `${reviewer.name} (${reviewer.invocation})`).join(', ') || 'none configured';
 }
 
-function formatPrReviewers(reviewers: PrBodyPrReviewerLine[]): string[] {
-  if (reviewers.length === 0) return ['- PR reviewers: none configured or no current PR detected.'];
-  return reviewers.map(reviewer => `- PR reviewer ${reviewer.handle}: ${reviewer.trigger}; current=${reviewer.requestedForHead ? 'yes' : 'no'}; pending=${reviewer.pending ? 'yes' : 'no'}; stale=${reviewer.staleRequest ? 'yes' : 'no'}; action=${reviewer.actionStatus} - ${reviewer.actionDescription}`);
+function formatPrReviewers(result: PrBodyResult['prReviewGate'], pullRequest: PrBodyPullRequest | null): string[] {
+  if (result.reviewers.length === 0) {
+    if (!pullRequest) return ['- PR reviewers: no current PR detected.'];
+    if (!result.result) return ['- PR reviewers: PR review-gate state unavailable; run `aie pr gate <pr>` before merge.'];
+    return ['- PR reviewers: none configured.'];
+  }
+  return result.reviewers.map(reviewer => `- PR reviewer ${reviewer.handle}: ${reviewer.trigger}; current=${reviewer.requestedForHead ? 'yes' : 'no'}; pending=${reviewer.pending ? 'yes' : 'no'}; stale=${reviewer.staleRequest ? 'yes' : 'no'}; action=${reviewer.actionStatus} - ${reviewer.actionDescription}`);
 }
 
 function buildBody(result: Omit<PrBodyResult, 'body'>): string {
@@ -249,7 +253,7 @@ function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   lines.push(`- Manual UI audit: ${uiAuditState(result.uiAudit)} - ${result.uiAudit.nextAction}`);
   lines.push(`- Review-agent gate: ${reviewState(result.reviewGate)} - reviewers: ${formatReviewers(result.reviewGate)}; ${result.reviewGate.evidence.summary}`);
   lines.push('- PR review agents:');
-  lines.push(...formatPrReviewers(result.prReviewGate.reviewers));
+  lines.push(...formatPrReviewers(result.prReviewGate, result.pullRequest));
   lines.push('', '## Merge readiness');
   lines.push(`- Status: ${result.readiness.status}.`);
   if (result.pullRequest) {

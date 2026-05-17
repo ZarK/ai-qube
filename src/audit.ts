@@ -119,8 +119,9 @@ function hasNonEmptyFile(path: string): boolean {
 function countScreenshots(path: string): number {
   if (!existsSync(path) || !statSync(path).isDirectory()) return 0;
   return readdirSync(path).filter(name => {
+    const screenshotPath = join(path, name);
     const lower = name.toLowerCase();
-    return SCREENSHOT_EXTENSIONS.some(extension => lower.endsWith(extension));
+    return statSync(screenshotPath).isFile() && SCREENSHOT_EXTENSIONS.some(extension => lower.endsWith(extension));
   }).length;
 }
 

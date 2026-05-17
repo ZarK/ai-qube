@@ -1,5 +1,5 @@
 import { buildLifecyclePlan, type LifecyclePlan } from '../lifecycle';
-import { githubIssueNumber } from '../providers/github/github_work_codec';
+import { githubIssueNumber, parseWorkChecklistItems } from '../providers/github/github_work_codec';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item';
 import type { Action } from '../core/action_plan';
 import { getRepositoryIdentity, listMilestones } from '../repo';
@@ -27,11 +27,7 @@ export interface CompleteServiceResult {
 }
 
 function checklist(body: string): CompletionChecklist {
-  const items: CompletionChecklistItem[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[-*+]\s+)?\[([ xX])\]\s*(.*)$/);
-    if (match) items.push({ text: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
-  }
+  const items: CompletionChecklistItem[] = parseWorkChecklistItems(body);
   const checked = items.filter(item => item.checked).length;
   return { total: items.length, checked, unchecked: items.length - checked, items };
 }

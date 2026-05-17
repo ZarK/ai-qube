@@ -175,10 +175,18 @@ function readGateConfigs(value: unknown, path: string, errors: ValidationError[]
     const stage = readGateStage(entry.stage, `${gatePath}.stage`, errors);
     const required = readGateBoolean(entry.required, true, `${gatePath}.required`, errors);
     const timeoutSeconds = readGateTimeout(entry.timeoutSeconds, `${gatePath}.timeoutSeconds`, errors);
-    const workingDirectory = typeof entry.workingDirectory === 'string' && entry.workingDirectory.trim() !== '' ? entry.workingDirectory.trim() : '.';
+    let workingDirectory: string | undefined = '.';
+    if (entry.workingDirectory !== undefined) {
+      if (typeof entry.workingDirectory === 'string' && entry.workingDirectory.trim() !== '') {
+        workingDirectory = entry.workingDirectory.trim();
+      } else {
+        errors.push({ kind: 'invalid', path: `${gatePath}.workingDirectory`, message: `${gatePath}.workingDirectory must be a non-empty string when provided` });
+        workingDirectory = undefined;
+      }
+    }
     const env = readStringRecord(entry.env, `${gatePath}.env`, errors);
     const externalService = readGateBoolean(entry.externalService, false, `${gatePath}.externalService`, errors);
-    if (name && command && kind && stage && required !== undefined && timeoutSeconds !== undefined && externalService !== undefined) {
+    if (name && command && kind && stage && required !== undefined && timeoutSeconds !== undefined && workingDirectory !== undefined && externalService !== undefined) {
       gates.push({ name, kind, command, stage, required, timeoutSeconds, workingDirectory, env, externalService });
     }
   });

@@ -121,7 +121,7 @@ function normalizeIssue(raw: RawGhIssue): GitHubIssue {
 }
 
 export async function listOpenIssues(options: { cwd?: string; exec?: GhExec; limit?: number; includeAssignees?: boolean } = {}): Promise<GitHubIssue[]> {
-  const { cwd, exec, limit = 100 } = options;
+  const { cwd, exec, limit = 1000 } = options;
   const args = [
     'issue',
     'list',

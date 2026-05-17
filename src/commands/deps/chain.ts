@@ -4,9 +4,12 @@ import { getDependencyChain } from '../../deps';
 
 function parseIssueNumber(input: string): number {
   const cleaned = input.replace(/^#/, '').trim();
-  const num = parseInt(cleaned, 10);
-  if (!Number.isInteger(num) || num <= 0) {
+  if (!/^[1-9]\d*$/.test(cleaned)) {
     throw new Error(`Invalid issue number: ${input}. Use a bare number or #93.`);
+  }
+  const num = Number(cleaned);
+  if (!Number.isSafeInteger(num)) {
+    throw new Error(`Invalid issue number: ${input}. Use a safe positive integer.`);
   }
   return num;
 }
