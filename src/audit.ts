@@ -121,7 +121,11 @@ function countScreenshots(path: string): number {
   return readdirSync(path).filter(name => {
     const screenshotPath = join(path, name);
     const lower = name.toLowerCase();
-    return statSync(screenshotPath).isFile() && SCREENSHOT_EXTENSIONS.some(extension => lower.endsWith(extension));
+    try {
+      return statSync(screenshotPath).isFile() && SCREENSHOT_EXTENSIONS.some(extension => lower.endsWith(extension));
+    } catch {
+      return false;
+    }
   }).length;
 }
 
