@@ -146,6 +146,7 @@ export function createSchemaCommand(options: SchemaCommandOptions): RuntimeComma
           bin: options.bin
         };
     return {
+      stdout: renderSchemaJson(resolved, schemaOptions),
       jsonStdout: renderSchemaJson(resolved, schemaOptions)
     };
   });
@@ -287,7 +288,7 @@ function renderCommandResult(command: string, result: RuntimeCommandResult, json
     return {
       exitCode: result.exitCode ?? 0,
       stdout: validateJsonStdout(result.jsonStdout),
-      stderr: joinOutput([result.stderr, result.stdout, result.human]),
+      stderr: joinOutput([result.stderr, result.human]),
       executedCommand: command
     };
   }

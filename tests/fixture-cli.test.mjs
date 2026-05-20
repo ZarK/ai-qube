@@ -67,13 +67,17 @@ describe("fixture CLI runtime", () => {
   });
 
   it("renders deterministic schema JSON that matches the runtime registry", () => {
+    const defaultResult = runFixture("schema");
     const result = runFixture("schema", "--json");
     const repeated = runFixture("schema", "--json");
 
+    assert.equal(defaultResult.status, 0);
+    assert.equal(defaultResult.stderr, "");
     assert.equal(result.status, 0);
     assert.equal(result.stderr, "");
     assert.equal(repeated.status, 0);
     assert.equal(repeated.stderr, "");
+    assert.equal(defaultResult.stdout, result.stdout);
     assert.equal(result.stdout, repeated.stdout);
     const schema = JSON.parse(result.stdout);
     assert.equal(schema.schemaVersion, 1);
