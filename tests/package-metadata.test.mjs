@@ -56,8 +56,17 @@ describe("package metadata", () => {
       "./registry": {
         types: "./dist/registry/index.d.ts",
         import: "./dist/registry/index.js"
+      },
+      "./help": {
+        types: "./dist/help/index.d.ts",
+        import: "./dist/help/index.js"
+      },
+      "./runtime": {
+        types: "./dist/runtime/index.d.ts",
+        import: "./dist/runtime/index.js"
       }
     });
+    assert.equal(Object.hasOwn(packageJson, "bin"), false);
     assert.deepEqual(packageJson.files, ["dist"]);
   });
 

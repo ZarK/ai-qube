@@ -4,10 +4,18 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 
 const expectedFiles = [
+  "dist/fixtures/cli.d.ts",
+  "dist/fixtures/cli.d.ts.map",
+  "dist/fixtures/cli.js",
+  "dist/fixtures/cli.js.map",
   "dist/fixtures/metadata.d.ts",
   "dist/fixtures/metadata.d.ts.map",
   "dist/fixtures/metadata.js",
   "dist/fixtures/metadata.js.map",
+  "dist/help/index.d.ts",
+  "dist/help/index.d.ts.map",
+  "dist/help/index.js",
+  "dist/help/index.js.map",
   "dist/index.d.ts",
   "dist/index.d.ts.map",
   "dist/index.js",
@@ -28,6 +36,10 @@ const expectedFiles = [
   "dist/registry/index.d.ts.map",
   "dist/registry/index.js",
   "dist/registry/index.js.map",
+  "dist/runtime/index.d.ts",
+  "dist/runtime/index.d.ts.map",
+  "dist/runtime/index.js",
+  "dist/runtime/index.js.map",
   "LICENSE",
   "package.json",
   "README.md"
