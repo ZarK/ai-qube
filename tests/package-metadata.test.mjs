@@ -1,6 +1,8 @@
+import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { assertPackContents, assertPackSafety, runPackDryRun } from "../dist/testing/index.js";
+import { expectedPackFiles } from "../scripts/expected-pack-files.mjs";
 
 async function readPackageJson() {
   return JSON.parse(await readProjectFile("package.json"));
@@ -92,6 +94,10 @@ describe("package metadata", () => {
       "./redaction": {
         types: "./dist/redaction/index.d.ts",
         import: "./dist/redaction/index.js"
+      },
+      "./testing": {
+        types: "./dist/testing/index.d.ts",
+        import: "./dist/testing/index.js"
       }
     });
     assert.equal(Object.hasOwn(packageJson, "bin"), false);
@@ -109,5 +115,16 @@ describe("package metadata", () => {
     assert.match(workspace, /strictDepBuilds: true/);
     assert.match(workspace, /verifyDepsBeforeRun: error/);
     assert.match(workspace, /savePrefix: ""/);
+  });
+
+  it("runs real tests and pack-safety assertions", async () => {
+    const packageJson = await readPackageJson();
+
+    assert.match(packageJson.scripts?.test, /node --test/);
+    assert.doesNotMatch(packageJson.scripts?.test ?? "", /--passWithNoTests/);
+
+    const packEntry = runPackDryRun({ cwd: new URL("..", import.meta.url) });
+    assertPackSafety(packEntry);
+    assert.deepEqual(assertPackContents(packEntry, expectedPackFiles).actualFiles, [...expectedPackFiles].sort());
   });
 });

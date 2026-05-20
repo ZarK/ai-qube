@@ -1,15 +1,14 @@
-import { spawnSync } from "node:child_process";
+import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
-import assert from "node:assert/strict";
+import { assertCliDryRun, assertCliHelp, assertCliJsonError, assertCliJsonSuccess, assertCliPromptBlocked, assertCliResult, assertCliSuccess, parseCliJsonRecord, runNodeCliCommand } from "../dist/testing/index.js";
 
 const packageMetadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+const projectRoot = new URL("..", import.meta.url);
+const fixtureCliPath = new URL("../dist/fixtures/cli.js", import.meta.url);
 
 function runFixture(...args) {
-  return spawnSync(process.execPath, ["dist/fixtures/cli.js", ...args], {
-    cwd: new URL("..", import.meta.url),
-    encoding: "utf8"
-  });
+  return runNodeCliCommand(fixtureCliPath, args, { cwd: projectRoot });
 }
 
 describe("fixture CLI runtime", () => {
@@ -17,15 +16,9 @@ describe("fixture CLI runtime", () => {
     const flagHelp = runFixture("--help");
     const commandHelp = runFixture("help");
 
-    assert.equal(flagHelp.status, 0);
-    assert.equal(commandHelp.status, 0);
-    assert.equal(flagHelp.stderr, "");
-    assert.equal(commandHelp.stderr, "");
+    assertCliHelp(flagHelp, { contains: [/fixture\nProduct-neutral fixture CLI/, /cache clear\s+Clear cache entries/, /schema\s+Render deterministic command schema/] });
+    assertCliHelp(commandHelp, { contains: [/fixture\nProduct-neutral fixture CLI/] });
     assert.equal(flagHelp.stdout, commandHelp.stdout);
-    assert.match(flagHelp.stdout, /fixture\nProduct-neutral fixture CLI/);
-    assert.match(flagHelp.stdout, /cache clear\s+Clear cache entries/);
-    assert.match(flagHelp.stdout, /schema\s+Render deterministic command schema/);
-    assert.doesNotMatch(flagHelp.stdout, /EXECUTED/);
   });
 
   it("normalizes command help forms without executing handlers", () => {
@@ -33,38 +26,23 @@ describe("fixture CLI runtime", () => {
     const helpFlag = runFixture("cache", "inspect", "--help");
     const helpToken = runFixture("cache", "inspect", "help");
 
-    assert.equal(helpCommand.status, 0);
-    assert.equal(helpFlag.status, 0);
-    assert.equal(helpToken.status, 0);
+    assertCliHelp(helpCommand, { contains: ["Usage:\n  fixture cache inspect [key] [--json] [--output <value>]", /JSON output: supported/] });
+    assertCliHelp(helpFlag);
+    assertCliHelp(helpToken);
     assert.equal(helpCommand.stdout, helpFlag.stdout);
     assert.equal(helpFlag.stdout, helpToken.stdout);
-    assert.match(helpCommand.stdout, /Usage:\n  fixture cache inspect \[key\] \[--json\] \[--output <value>\]/);
-    assert.match(helpCommand.stdout, /JSON output: supported/);
-    assert.doesNotMatch(helpCommand.stdout, /EXECUTED/);
   });
 
   it("renders mutating command help without treating final help as an argument", () => {
     const result = runFixture("cache", "clear", "help");
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stderr, "");
-    assert.match(result.stdout, /Dry run: supported/);
-    assert.match(result.stdout, /Mutation: local-files/);
-    assert.doesNotMatch(result.stdout, /EXECUTED/);
+    assertCliHelp(result, { contains: [/Dry run: supported/, /Mutation: local-files/] });
   });
 
   it("renders topic help from metadata without executing handlers", () => {
     const result = runFixture("help", "cache");
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stderr, "");
-    assert.match(result.stdout, /cache\nCommands for inspecting and maintaining a local cache/);
-    assert.match(result.stdout, /fixture cache <command> \[flags\]/);
-    assert.match(result.stdout, /cache inspect\s+Inspect cache entries/);
-    assert.match(result.stdout, /cache clear: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=local-files, supply-chain=standard/);
-    assert.match(result.stdout, /cache install: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=dependency, local-files, supply-chain=sensitive \(dependency, package-manager\)/);
-    assert.match(result.stdout, /cache inspect: args=1, flags=2, examples=1, json=supported, dry-run=not declared, mutation=none/);
-    assert.doesNotMatch(result.stdout, /EXECUTED/);
+    assertCliHelp(result, { contains: [/cache\nCommands for inspecting and maintaining a local cache/, /fixture cache <command> \[flags\]/, /cache inspect\s+Inspect cache entries/, /cache clear: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=local-files, supply-chain=standard/, /cache install: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=dependency, local-files, supply-chain=sensitive \(dependency, package-manager\)/, /cache inspect: args=1, flags=2, examples=1, json=supported, dry-run=not declared, mutation=none/] });
   });
 
   it("renders deterministic schema JSON that matches the runtime registry", () => {
@@ -72,15 +50,12 @@ describe("fixture CLI runtime", () => {
     const result = runFixture("schema", "--json");
     const repeated = runFixture("schema", "--json");
 
-    assert.equal(defaultResult.status, 0);
-    assert.equal(defaultResult.stderr, "");
-    assert.equal(result.status, 0);
-    assert.equal(result.stderr, "");
-    assert.equal(repeated.status, 0);
-    assert.equal(repeated.stderr, "");
+    assertCliSuccess(defaultResult);
+    assertCliSuccess(result);
+    assertCliSuccess(repeated);
     assert.equal(defaultResult.stdout, result.stdout);
     assert.equal(result.stdout, repeated.stdout);
-    const schema = JSON.parse(result.stdout);
+    const schema = parseCliJsonRecord(result);
     assert.equal(schema.schemaVersion, 1);
     assert.deepEqual(schema.package, { name: packageMetadata.name, version: packageMetadata.version });
     assert.equal(schema.bin, "fixture");
@@ -134,15 +109,10 @@ describe("fixture CLI runtime", () => {
     const defaults = runFixture("cache", "prompt", "--defaults");
     const blocked = runFixture("cache", "prompt", "--json");
 
-    assert.equal(value.status, 0);
-    assert.equal(value.stderr, "");
-    assert.deepEqual(JSON.parse(value.stdout), { ok: true, command: "cache prompt", promptValue: "alpha" });
-    assert.equal(defaults.status, 0);
-    assert.equal(defaults.stderr, "");
+    assertCliJsonSuccess(value, { ok: true, command: "cache prompt", promptValue: "alpha" });
+    assertCliSuccess(defaults);
     assert.equal(defaults.stdout, "Resolved prompt value: fixture-default\n");
-    assert.equal(blocked.status, 2);
-    assert.equal(blocked.stderr, "");
-    assert.deepEqual(JSON.parse(blocked.stdout), {
+    assertCliPromptBlocked(blocked, { envelope: {
       ok: false,
       command: "cache prompt",
       error: {
@@ -153,7 +123,7 @@ describe("fixture CLI runtime", () => {
         category: "usage",
         exitCode: 2
       }
-    });
+    } });
   });
 
   it("keeps exact multi-token commands ahead of single-token aliases", async () => {
@@ -193,19 +163,10 @@ describe("fixture CLI runtime", () => {
     const clear = runFixture("cc", "--dry-run");
     const install = runFixture("cache", "install", "--dry-run", "--json");
 
-    assert.equal(inspect.status, 0);
-    assert.equal(inspect.stderr, "");
-    assert.deepEqual(JSON.parse(inspect.stdout), { ok: true, command: "cache inspect", key: "alpha" });
-    assert.equal(outputJson.status, 0);
-    assert.equal(outputJson.stderr, "");
-    assert.deepEqual(JSON.parse(outputJson.stdout), { ok: true, command: "cache inspect", key: "alpha" });
-    assert.equal(clear.status, 0);
-    assert.match(clear.stdout, /Dry run plan/);
-    assert.match(clear.stdout, /Rerun without --dry-run to apply: fixture cache clear --yes/);
-    assert.doesNotMatch(clear.stdout, /Removed fixture cache entries/);
-    assert.equal(install.status, 0);
-    assert.equal(install.stderr, "");
-    assert.deepEqual(JSON.parse(install.stdout).dryRunPlan.mutationCategories, ["dependency", "local-files"]);
+    assertCliJsonSuccess(inspect, { ok: true, command: "cache inspect", key: "alpha" });
+    assertCliJsonSuccess(outputJson, { ok: true, command: "cache inspect", key: "alpha" });
+    assertCliDryRun(clear, { contains: /Rerun without --dry-run to apply: fixture cache clear --yes/, excludes: /Removed fixture cache entries/ });
+    assert.deepEqual(assertCliJsonSuccess(install).dryRunPlan.mutationCategories, ["dependency", "local-files"]);
   });
 
   it("renders supply-chain-sensitive help and block output without external execution", () => {
@@ -213,18 +174,9 @@ describe("fixture CLI runtime", () => {
     const blocked = runFixture("cache", "install");
     const blockedJson = runFixture("cache", "install", "--json");
 
-    assert.equal(help.status, 0);
-    assert.equal(help.stderr, "");
-    assert.match(help.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
-    assert.doesNotMatch(help.stdout, /No external commands executed/);
-    assert.equal(blocked.status, 5);
-    assert.equal(blocked.stderr, "");
-    assert.match(blocked.stdout, /Supply-chain block/);
-    assert.match(blocked.stdout, /No external commands executed/);
-    assert.doesNotMatch(blocked.stdout, /pnpm|npm|yarn|bun/);
-    assert.equal(blockedJson.status, 5);
-    assert.equal(blockedJson.stderr, "");
-    assert.deepEqual(JSON.parse(blockedJson.stdout), {
+    assertCliHelp(help, { contains: /Supply chain: sensitive \(dependency, package-manager\)/, excludes: /No external commands executed/ });
+    assertCliResult(blocked, { status: 5, stderr: "", stdout: [/Supply-chain block/, /No external commands executed/], stdoutExcludes: /pnpm|npm|yarn|bun/ });
+    assertCliJsonError(blockedJson, { status: 5, envelope: {
       ok: false,
       command: "cache install",
       error: {
@@ -235,27 +187,19 @@ describe("fixture CLI runtime", () => {
         category: "safety",
         exitCode: 5
       }
-    });
+    } });
   });
 
   it("renders known errors as stable human output", () => {
     const result = runFixture("cache", "validate");
 
-    assert.equal(result.status, 3);
-    assert.equal(result.stdout, "");
-    assert.match(result.stderr, /Error: cache-config-invalid/);
-    assert.match(result.stderr, /Operation: validate cache configuration/);
-    assert.match(result.stderr, /Likely cause: The fixture cache configuration is missing a required directory\./);
-    assert.match(result.stderr, /Suggested next action: Create the cache directory or update the cache configuration path\./);
-    assert.match(result.stderr, /Exit code category: validation/);
+    assertCliResult(result, { status: 3, stdout: "", stderr: [/Error: cache-config-invalid/, /Operation: validate cache configuration/, /Likely cause: The fixture cache configuration is missing a required directory\./, /Suggested next action: Create the cache directory or update the cache configuration path\./, /Exit code category: validation/] });
   });
 
   it("renders known errors as stable JSON output", () => {
     const result = runFixture("cache", "validate", "--json");
 
-    assert.equal(result.status, 3);
-    assert.equal(result.stderr, "");
-    assert.deepEqual(JSON.parse(result.stdout), {
+    assertCliJsonError(result, { status: 3, envelope: {
       ok: false,
       command: "cache validate",
       error: {
@@ -266,15 +210,13 @@ describe("fixture CLI runtime", () => {
         category: "validation",
         exitCode: 3
       }
-    });
+    } });
   });
 
   it("keeps unexpected failures as non-success JSON failures", () => {
     const result = runFixture("cache", "explode", "--json");
 
-    assert.equal(result.status, 70);
-    assert.equal(result.stderr, "");
-    assert.deepEqual(JSON.parse(result.stdout), {
+    assertCliJsonError(result, { status: 70, envelope: {
       ok: false,
       command: "cache explode",
       error: {
@@ -285,15 +227,13 @@ describe("fixture CLI runtime", () => {
         category: "unexpected",
         exitCode: 70
       }
-    });
+    } });
   });
 
   it("renders usage errors as JSON without stderr noise when JSON is requested", () => {
     const result = runFixture("cache", "inspect", "--jso", "--json");
 
-    assert.equal(result.status, 2);
-    assert.equal(result.stderr, "");
-    assert.deepEqual(JSON.parse(result.stdout), {
+    assertCliJsonError(result, { status: 2, envelope: {
       ok: false,
       command: "cache inspect",
       error: {
@@ -304,15 +244,13 @@ describe("fixture CLI runtime", () => {
         category: "usage",
         exitCode: 2
       }
-    });
+    } });
   });
 
   it("renders parser failures as usage JSON instead of unexpected failures", () => {
     const result = runFixture("cache", "inspect", "--output", "xml", "--json");
 
-    assert.equal(result.status, 2);
-    assert.equal(result.stderr, "");
-    const output = JSON.parse(result.stdout);
+    const output = assertCliJsonError(result, { status: 2, command: "cache inspect", kind: "invalid-command-usage", operation: "parse command arguments", category: "usage", exitCode: 2 });
     assert.equal(output.ok, false);
     assert.equal(output.command, "cache inspect");
     assert.equal(output.error.kind, "invalid-command-usage");
@@ -326,39 +264,26 @@ describe("fixture CLI runtime", () => {
   it("does not treat positional tokens after -- as JSON mode flags", () => {
     const result = runFixture("cache", "inspect", "--", "--json");
 
-    assert.equal(result.status, 0);
-    assert.equal(result.stderr, "");
+    assertCliSuccess(result);
     assert.match(result.stdout, /Inspected cache key: --json/);
-    assert.throws(() => JSON.parse(result.stdout), SyntaxError);
+    assert.throws(() => parseCliJsonRecord(result), SyntaxError);
   });
 
   it("suggests likely command misses without executing handlers", () => {
     const result = runFixture("cache", "cleer");
 
-    assert.equal(result.status, 2);
-    assert.equal(result.stdout, "");
-    assert.match(result.stderr, /Unknown command: cache cleer/);
-    assert.match(result.stderr, /Did you mean "cache clear"/);
-    assert.doesNotMatch(result.stderr, /EXECUTED/);
+    assertCliResult(result, { status: 2, stdout: "", stderr: [/Unknown command: cache cleer/, /Did you mean "cache clear"/], stderrExcludes: /EXECUTED/ });
   });
 
   it("suggests likely flag misses without executing handlers", () => {
     const result = runFixture("cache", "inspect", "--jso");
 
-    assert.equal(result.status, 2);
-    assert.equal(result.stdout, "");
-    assert.match(result.stderr, /Unknown flag: --jso/);
-    assert.match(result.stderr, /Did you mean "--json"/);
-    assert.doesNotMatch(result.stderr, /EXECUTED/);
+    assertCliResult(result, { status: 2, stdout: "", stderr: [/Unknown flag: --jso/, /Did you mean "--json"/], stderrExcludes: /EXECUTED/ });
   });
 
   it("does not execute arbitrary command-prefix abbreviations", () => {
     const result = runFixture("cache", "cl", "--dry-run");
 
-    assert.equal(result.status, 2);
-    assert.equal(result.stdout, "");
-    assert.match(result.stderr, /Unknown command: cache cl/);
-    assert.doesNotMatch(result.stderr, /EXECUTED/);
-    assert.doesNotMatch(result.stderr, /Removed fixture cache entries/);
+    assertCliResult(result, { status: 2, stdout: "", stderr: /Unknown command: cache cl/, stderrExcludes: [/EXECUTED/, /Removed fixture cache entries/] });
   });
 });
