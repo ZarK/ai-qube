@@ -20,12 +20,12 @@ describe("output and error helpers", () => {
 
     assert.deepEqual(JSON.parse(renderJsonSuccess("cache inspect", {
       authorization: "Bearer abcdefghijklmnopqrstuvwxyz123456",
-      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", safe: "alpha" }
+      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", password: 123456789, safe: "alpha" }
     })), {
       ok: true,
       command: "cache inspect",
       authorization: "[REDACTED]",
-      nested: { apiKey: "[REDACTED]", safe: "alpha" }
+      nested: { apiKey: "[REDACTED]", password: "[REDACTED]", safe: "alpha" }
     });
   });
 

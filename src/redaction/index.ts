@@ -46,10 +46,10 @@ export function isSensitiveKey(key: string, sensitiveKeys: readonly string[] = d
 }
 
 function redactValue(value: unknown, options: RedactionOptions, key: string | undefined, seen: WeakMap<object, unknown>): unknown {
+  if (key && isSensitiveKey(key, options.sensitiveKeys) && value !== undefined && value !== null) {
+    return options.placeholder ?? redactionPlaceholder;
+  }
   if (typeof value === "string") {
-    if (key && isSensitiveKey(key, options.sensitiveKeys) && value.length > 0) {
-      return options.placeholder ?? redactionPlaceholder;
-    }
     return redactText(value, options);
   }
   if (Array.isArray(value)) {

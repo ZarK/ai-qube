@@ -19,6 +19,7 @@ describe("redaction helpers", () => {
       ok: false,
       details: {
         accessToken: "abcdefghijklmnopqrstuvwxyz123456",
+        password: 123456789,
         nested: ["Authorization: Bearer abcdefghijklmnopqrstuvwxyz123456", { safe: "alpha" }]
       }
     };
@@ -27,6 +28,7 @@ describe("redaction helpers", () => {
       ok: false,
       details: {
         accessToken: "[REDACTED]",
+        password: "[REDACTED]",
         nested: ["Authorization: Bearer [REDACTED]", { safe: "alpha" }]
       }
     });

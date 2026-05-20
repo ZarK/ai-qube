@@ -144,7 +144,7 @@ export function renderDryRunPlan(plan: DryRunPlan): string {
 
 export function renderMutationWarning(warning: MutationWarning): string {
   const categories = sortedText(warning.categories);
-  const dryRun = warning.dryRun ? (warning.dryRun.supported ? "supported" : `unsupported (${warning.dryRun.reason})`) : "not declared";
+  const dryRun = warning.dryRun ? (warning.dryRun.supported ? "supported" : `unsupported (${redactText(warning.dryRun.reason)})`) : "not declared";
   const supplyChainSensitive = warning.supplyChainSensitive === undefined ? "not declared" : warning.supplyChainSensitive ? "yes" : "no";
   return joinLines([
     "Mutation warning",

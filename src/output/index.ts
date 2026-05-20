@@ -101,8 +101,11 @@ function stableFields(fields: JsonFields): JsonFields {
 }
 
 function stableValue(value: unknown, key?: string): unknown {
+  if (key && isSensitiveKey(key) && value !== undefined && value !== null) {
+    return redactionPlaceholder;
+  }
   if (typeof value === "string") {
-    return key && isSensitiveKey(key) && value.length > 0 ? redactionPlaceholder : redactText(value);
+    return redactText(value);
   }
   if (Array.isArray(value)) {
     return value.map((item) => stableValue(item));
