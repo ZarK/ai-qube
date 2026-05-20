@@ -15,6 +15,16 @@ describe("output and error helpers", () => {
     assert.throws(() => createJsonSuccessEnvelope("cache inspect", { ok: true }), /reserved field "ok"/);
   });
 
+  it("preserves non-plain objects for normal JSON serialization", async () => {
+    const { renderJsonSuccess } = await import("../dist/index.js");
+
+    assert.deepEqual(JSON.parse(renderJsonSuccess("cache inspect", { at: new Date("2026-05-20T00:00:00.000Z") })), {
+      ok: true,
+      command: "cache inspect",
+      at: "2026-05-20T00:00:00.000Z"
+    });
+  });
+
   it("rejects values that cannot render as valid JSON", async () => {
     const { renderJsonLine } = await import("../dist/index.js");
 
@@ -54,5 +64,28 @@ describe("output and error helpers", () => {
       }
     });
     assert.match(renderCliErrorText(error), /Suggested next action: Create the cache configuration\./);
+  });
+
+  it("wraps raw runtime output in JSON mode", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const rawCommand = {
+      kind: "command",
+      name: "raw output",
+      description: "Return raw output for fallback JSON rendering.",
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Run raw output.", command: "fixture raw output --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [rawCommand] }),
+      commands: [createCommand(rawCommand, () => ({ stdout: "raw text\n" }))]
+    });
+
+    const result = await runCli(cli, ["raw", "output", "--json"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), { ok: true, command: "raw output", output: "raw text\n" });
   });
 });

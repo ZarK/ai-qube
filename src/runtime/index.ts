@@ -19,6 +19,7 @@ export interface RuntimeCommandContext {
 
 export interface RuntimeCommandResult {
   readonly json?: JsonFields;
+  readonly jsonStdout?: string;
   readonly human?: string;
   readonly stdout?: string;
   readonly stderr?: string;
@@ -145,7 +146,7 @@ export function createSchemaCommand(options: SchemaCommandOptions): RuntimeComma
           bin: options.bin
         };
     return {
-      stdout: renderSchemaJson(resolved, schemaOptions)
+      jsonStdout: renderSchemaJson(resolved, schemaOptions)
     };
   });
 }
@@ -282,9 +283,18 @@ function renderCommandResult(command: string, result: RuntimeCommandResult, json
     };
   }
 
+  if (jsonMode && result.jsonStdout !== undefined) {
+    return {
+      exitCode: result.exitCode ?? 0,
+      stdout: validateJsonStdout(result.jsonStdout),
+      stderr: joinOutput([result.stderr, result.stdout, result.human]),
+      executedCommand: command
+    };
+  }
+
   return {
     exitCode: result.exitCode ?? 0,
-    stdout: jsonMode ? result.stdout ?? "" : result.human ?? result.stdout ?? "",
+    stdout: jsonMode ? renderJsonSuccess(command, { output: result.stdout ?? result.human ?? "" }) : result.human ?? result.stdout ?? "",
     stderr: result.stderr ?? "",
     executedCommand: command
   };
@@ -335,6 +345,11 @@ function argvRequestsJson(argv: readonly string[]): boolean {
 
 function joinOutput(parts: readonly (string | undefined)[]): string {
   return parts.filter((part): part is string => part !== undefined && part.length > 0).join("");
+}
+
+function validateJsonStdout(stdout: string): string {
+  JSON.parse(stdout);
+  return stdout;
 }
 
 function renderHelpResult(cli: CliRuntime, helpRequest: NonNullable<ReturnType<typeof normalizeHelpRequest>>): CliRunResult {
