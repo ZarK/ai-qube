@@ -241,9 +241,19 @@ describe("fixture CLI runtime", () => {
     assert.equal(output.command, "cache inspect");
     assert.equal(output.error.kind, "invalid-command-usage");
     assert.equal(output.error.operation, "parse command arguments");
-    assert.match(output.error.likelyCause, /one of: human, json/);
+    assert.match(output.error.likelyCause, /human/);
+    assert.match(output.error.likelyCause, /json/);
     assert.equal(output.error.category, "usage");
     assert.equal(output.error.exitCode, 2);
+  });
+
+  it("does not treat positional tokens after -- as JSON mode flags", () => {
+    const result = runFixture("cache", "inspect", "--", "--json");
+
+    assert.equal(result.status, 0);
+    assert.equal(result.stderr, "");
+    assert.match(result.stdout, /Inspected cache key: --json/);
+    assert.throws(() => JSON.parse(result.stdout), SyntaxError);
   });
 
   it("suggests likely command misses without executing handlers", () => {

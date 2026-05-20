@@ -275,9 +275,25 @@ async function parseCommandArgs(
 }
 
 function renderCommandResult(command: string, result: RuntimeCommandResult, jsonMode: boolean): CliRunResult {
+  const exitCode = result.exitCode ?? 0;
+  if (jsonMode && exitCode !== 0) {
+    return renderErrorResult(
+      createCliError({
+        command,
+        kind: "command-failed",
+        operation: `run ${command}`,
+        likelyCause: firstNonEmpty([result.stderr, result.human, result.stdout]) ?? `Command exited with code ${exitCode}.`,
+        suggestedNextAction: "Inspect the command failure and retry after the underlying issue is fixed.",
+        category: "unexpected",
+        exitCode
+      }),
+      true
+    );
+  }
+
   if (jsonMode && result.json) {
     return {
-      exitCode: result.exitCode ?? 0,
+      exitCode,
       stdout: renderJsonSuccess(command, result.json),
       stderr: joinOutput([result.stderr, result.stdout]),
       executedCommand: command
@@ -286,7 +302,7 @@ function renderCommandResult(command: string, result: RuntimeCommandResult, json
 
   if (jsonMode && result.jsonStdout !== undefined) {
     return {
-      exitCode: result.exitCode ?? 0,
+      exitCode,
       stdout: validateJsonStdout(result.jsonStdout),
       stderr: joinOutput([result.stderr, result.human]),
       executedCommand: command
@@ -294,7 +310,7 @@ function renderCommandResult(command: string, result: RuntimeCommandResult, json
   }
 
   return {
-    exitCode: result.exitCode ?? 0,
+    exitCode,
     stdout: jsonMode ? renderJsonSuccess(command, { output: result.stdout ?? result.human ?? "" }) : result.human ?? result.stdout ?? "",
     stderr: result.stderr ?? "",
     executedCommand: command
@@ -341,11 +357,19 @@ function commandRequestsJson(command: CommandMetadata, argv: readonly string[]):
 }
 
 function argvRequestsJson(argv: readonly string[]): boolean {
-  return argv.some((token, index) => token === "--json" || token === "--output=json" || (token === "--output" && argv[index + 1] === "json"));
+  const positionalSeparatorIndex = argv.indexOf("--");
+  const flagArgv = positionalSeparatorIndex === -1 ? argv : argv.slice(0, positionalSeparatorIndex);
+  return flagArgv.some(
+    (token, index) => token === "--json" || token === "--output=json" || (token === "--output" && flagArgv[index + 1] === "json")
+  );
 }
 
 function joinOutput(parts: readonly (string | undefined)[]): string {
   return parts.filter((part): part is string => part !== undefined && part.length > 0).join("");
+}
+
+function firstNonEmpty(parts: readonly (string | undefined)[]): string | undefined {
+  return parts.find((part): part is string => part !== undefined && part.length > 0);
 }
 
 function validateJsonStdout(stdout: string): string {

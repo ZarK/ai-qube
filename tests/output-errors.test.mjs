@@ -88,4 +88,38 @@ describe("output and error helpers", () => {
     assert.equal(result.stderr, "");
     assert.deepEqual(JSON.parse(result.stdout), { ok: true, command: "raw output", output: "raw text\n" });
   });
+
+  it("renders non-zero runtime results as JSON failures", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const failingCommand = {
+      kind: "command",
+      name: "raw fail",
+      description: "Return a non-zero runtime result for JSON failure rendering.",
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Run raw failure.", command: "fixture raw fail --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [failingCommand] }),
+      commands: [createCommand(failingCommand, () => ({ exitCode: 5, json: { detail: "blocked" }, stderr: "blocked by policy\n" }))]
+    });
+
+    const result = await runCli(cli, ["raw", "fail", "--json"]);
+
+    assert.equal(result.exitCode, 5);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      command: "raw fail",
+      error: {
+        kind: "command-failed",
+        operation: "run raw fail",
+        likelyCause: "blocked by policy\n",
+        suggestedNextAction: "Inspect the command failure and retry after the underlying issue is fixed.",
+        category: "unexpected",
+        exitCode: 5
+      }
+    });
+  });
 });
