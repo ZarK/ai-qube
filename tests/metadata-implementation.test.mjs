@@ -5,17 +5,16 @@ import { fixtureMetadata } from "../dist/fixtures/metadata.js";
 describe("metadata implementation", () => {
   it("correctly defines the fixture metadata", () => {
     assert.equal(fixtureMetadata.topics.length, 1);
-    assert.equal(fixtureMetadata.commands.length, 2);
+    assert.equal(fixtureMetadata.commands.length, 4);
 
     const [cacheTopic] = fixtureMetadata.topics;
     assert.equal(cacheTopic.name, "cache");
     assert.equal(cacheTopic.kind, "topic");
 
-    const [cacheClear, cacheInspect] = fixtureMetadata.commands;
-    assert.equal(cacheClear.name, "cache clear");
-    assert.equal(cacheClear.kind, "command");
-    assert.equal(cacheInspect.name, "cache inspect");
-    assert.equal(cacheInspect.kind, "command");
+    assert.deepEqual(fixtureMetadata.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate"]);
+    for (const command of fixtureMetadata.commands) {
+      assert.equal(command.kind, "command");
+    }
   });
 
   it("preserves extension metadata", () => {
@@ -31,6 +30,15 @@ describe("metadata implementation", () => {
     assert.ok(cacheInspect.flags.length > 0);
     assert.ok(cacheInspect.examples.length > 0);
     assert.equal(cacheInspect.interactions?.json, true);
+  });
+
+  it("defines structured error fixture commands", () => {
+    const cacheValidate = fixtureMetadata.commands.find((command) => command.name === "cache validate");
+    const cacheExplode = fixtureMetadata.commands.find((command) => command.name === "cache explode");
+    assert.equal(cacheValidate?.errors?.[0]?.kind, "cache-config-invalid");
+    assert.equal(cacheValidate?.exitCodes?.[1]?.category, "validation");
+    assert.equal(cacheExplode?.errors?.[0]?.kind, "unexpected-error");
+    assert.equal(cacheExplode?.exitCodes?.[0]?.category, "unexpected");
   });
 
   it("validates mutation metadata and dry-run support", () => {

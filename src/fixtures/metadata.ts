@@ -144,7 +144,100 @@ export const cacheClearCommand = defineCommand({
   extensions: fixtureExtensions
 });
 
+export const cacheValidateCommand = defineCommand({
+  kind: "command",
+  name: "cache validate",
+  description: "Validate cache configuration and report actionable failures.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Validate cache configuration.",
+      command: "fixture cache validate --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  errors: [
+    {
+      kind: "cache-config-invalid",
+      description: "The cache configuration failed validation.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: [
+    {
+      code: 0,
+      category: "success",
+      description: "The command completed successfully."
+    },
+    {
+      code: 3,
+      category: "validation",
+      description: "The cache configuration was invalid."
+    }
+  ],
+  extensions: fixtureExtensions
+});
+
+export const cacheExplodeCommand = defineCommand({
+  kind: "command",
+  name: "cache explode",
+  description: "Raise an unexpected fixture failure for runtime error tests.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Raise an unexpected fixture failure.",
+      command: "fixture cache explode --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  errors: [
+    {
+      kind: "unexpected-error",
+      description: "The command failed unexpectedly.",
+      exitCode: 70
+    }
+  ],
+  exitCodes: [
+    {
+      code: 70,
+      category: "unexpected",
+      description: "The command failed unexpectedly."
+    }
+  ],
+  extensions: fixtureExtensions
+});
+
 export const fixtureMetadata = createCommandRegistry({
   topics: [cacheTopic],
-  commands: [cacheInspectCommand, cacheClearCommand]
+  commands: [cacheInspectCommand, cacheClearCommand, cacheValidateCommand, cacheExplodeCommand]
 });

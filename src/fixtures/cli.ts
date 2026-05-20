@@ -2,9 +2,10 @@
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+import { createCliError } from "../errors/index.js";
 import { defineExtensions } from "../metadata/index.js";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "../runtime/index.js";
-import { cacheClearCommand, cacheInspectCommand, cacheTopic, fixtureMetadata } from "./metadata.js";
+import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheTopic, cacheValidateCommand, fixtureMetadata } from "./metadata.js";
 
 let currentRegistry = fixtureMetadata;
 const packageMetadata = readPackageMetadata();
@@ -15,20 +16,30 @@ export const fixtureCli = createCli({
   registry: fixtureMetadata,
   topics: [createTopicCommand(cacheTopic)],
   commands: [
-    createCommand(cacheInspectCommand, ({ args, flags }) => {
+    createCommand(cacheInspectCommand, ({ args }) => {
       const key = typeof args.key === "string" ? args.key : "all";
-      if (flags.json === true) {
-        return {
-          stdout: `${JSON.stringify({ ok: true, command: "cache inspect", key })}\n`
-        };
-      }
-      return { stdout: `EXECUTED cache inspect\nInspected cache key: ${key}\n` };
+      return {
+        json: { key },
+        human: `EXECUTED cache inspect\nInspected cache key: ${key}\n`
+      };
     }),
     createCommand(cacheClearCommand, ({ flags }) => {
       if (flags["dry-run"] === true) {
         return { stdout: "EXECUTED cache clear\nWould remove fixture cache entries.\n" };
       }
       return { stdout: "EXECUTED cache clear\nRemoved fixture cache entries.\n" };
+    }),
+    createCommand(cacheValidateCommand, () => {
+      throw createCliError({
+        kind: "cache-config-invalid",
+        operation: "validate cache configuration",
+        likelyCause: "The fixture cache configuration is missing a required directory.",
+        suggestedNextAction: "Create the cache directory or update the cache configuration path.",
+        category: "validation"
+      });
+    }),
+    createCommand(cacheExplodeCommand, () => {
+      throw new Error("Fixture exploded unexpectedly.");
     }),
     createSchemaCommand({
       registry: () => currentRegistry,

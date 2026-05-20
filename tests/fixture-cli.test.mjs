@@ -81,7 +81,7 @@ describe("fixture CLI runtime", () => {
     assert.equal(schema.bin, "fixture");
     assert.deepEqual(schema.extensions, { fixture: true, purpose: "schema-integration" });
     assert.deepEqual(schema.topics.map((topic) => topic.name), ["cache"]);
-    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache inspect", "schema"]);
+    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate", "schema"]);
     const clearCommand = schema.commands.find((command) => command.name === "cache clear");
     const inspectCommand = schema.commands.find((command) => command.name === "cache inspect");
     assert.deepEqual(clearCommand?.mutation, {
@@ -144,14 +144,102 @@ describe("fixture CLI runtime", () => {
 
   it("executes exact commands and explicit aliases", () => {
     const inspect = runFixture("cache", "inspect", "alpha", "--json");
+    const outputJson = runFixture("cache", "inspect", "alpha", "--output", "json");
     const clear = runFixture("cc", "--dry-run");
 
     assert.equal(inspect.status, 0);
     assert.equal(inspect.stderr, "");
     assert.deepEqual(JSON.parse(inspect.stdout), { ok: true, command: "cache inspect", key: "alpha" });
+    assert.equal(outputJson.status, 0);
+    assert.equal(outputJson.stderr, "");
+    assert.deepEqual(JSON.parse(outputJson.stdout), { ok: true, command: "cache inspect", key: "alpha" });
     assert.equal(clear.status, 0);
     assert.match(clear.stdout, /EXECUTED cache clear/);
     assert.match(clear.stdout, /Would remove fixture cache entries/);
+  });
+
+  it("renders known errors as stable human output", () => {
+    const result = runFixture("cache", "validate");
+
+    assert.equal(result.status, 3);
+    assert.equal(result.stdout, "");
+    assert.match(result.stderr, /Error: cache-config-invalid/);
+    assert.match(result.stderr, /Operation: validate cache configuration/);
+    assert.match(result.stderr, /Likely cause: The fixture cache configuration is missing a required directory\./);
+    assert.match(result.stderr, /Suggested next action: Create the cache directory or update the cache configuration path\./);
+    assert.match(result.stderr, /Exit code category: validation/);
+  });
+
+  it("renders known errors as stable JSON output", () => {
+    const result = runFixture("cache", "validate", "--json");
+
+    assert.equal(result.status, 3);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      command: "cache validate",
+      error: {
+        kind: "cache-config-invalid",
+        operation: "validate cache configuration",
+        likelyCause: "The fixture cache configuration is missing a required directory.",
+        suggestedNextAction: "Create the cache directory or update the cache configuration path.",
+        category: "validation",
+        exitCode: 3
+      }
+    });
+  });
+
+  it("keeps unexpected failures as non-success JSON failures", () => {
+    const result = runFixture("cache", "explode", "--json");
+
+    assert.equal(result.status, 70);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      command: "cache explode",
+      error: {
+        kind: "unexpected-error",
+        operation: "run cache explode",
+        likelyCause: "Fixture exploded unexpectedly.",
+        suggestedNextAction: "Inspect the command failure and retry after the underlying issue is fixed.",
+        category: "unexpected",
+        exitCode: 70
+      }
+    });
+  });
+
+  it("renders usage errors as JSON without stderr noise when JSON is requested", () => {
+    const result = runFixture("cache", "inspect", "--jso", "--json");
+
+    assert.equal(result.status, 2);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      command: "cache inspect",
+      error: {
+        kind: "unknown-flag",
+        operation: "parse flags",
+        likelyCause: "Flag \"--jso\" is not defined for cache inspect.",
+        suggestedNextAction: "Use \"--json\" instead.",
+        category: "usage",
+        exitCode: 2
+      }
+    });
+  });
+
+  it("renders parser failures as usage JSON instead of unexpected failures", () => {
+    const result = runFixture("cache", "inspect", "--output", "xml", "--json");
+
+    assert.equal(result.status, 2);
+    assert.equal(result.stderr, "");
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.ok, false);
+    assert.equal(output.command, "cache inspect");
+    assert.equal(output.error.kind, "invalid-command-usage");
+    assert.equal(output.error.operation, "parse command arguments");
+    assert.match(output.error.likelyCause, /one of: human, json/);
+    assert.equal(output.error.category, "usage");
+    assert.equal(output.error.exitCode, 2);
   });
 
   it("suggests likely command misses without executing handlers", () => {
