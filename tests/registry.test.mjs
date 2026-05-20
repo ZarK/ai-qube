@@ -87,7 +87,7 @@ describe("command registry", () => {
   it("validates the product-neutral fixture metadata", () => {
     assert.doesNotThrow(() => validateCommandRegistry(fixtureMetadata));
     assert.equal(findCommand(fixtureMetadata, "cc")?.name, "cache clear");
-    assert.deepEqual(listCommands(fixtureMetadata).map((command) => command.name), ["cache clear", "cache inspect"]);
+    assert.deepEqual(listCommands(fixtureMetadata).map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate"]);
   });
 
   it("reports duplicate command names and aliases with deterministic context", () => {

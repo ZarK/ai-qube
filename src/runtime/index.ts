@@ -7,6 +7,8 @@ import type { CommandRegistry } from "../registry/index.js";
 import { createCommandRegistry, listCommands } from "../registry/index.js";
 import { normalizeHelpRequest, renderHelp, suggestCommand, suggestFlag } from "../help/index.js";
 import { renderSchemaJson } from "../schema/index.js";
+import { createCliError, exitCodeForCategory, isCliError, renderCliErrorText } from "../errors/index.js";
+import { renderJsonError, renderJsonSuccess, type JsonFields } from "../output/index.js";
 
 export interface RuntimeCommandContext {
   readonly command: CommandMetadata;
@@ -16,6 +18,9 @@ export interface RuntimeCommandContext {
 }
 
 export interface RuntimeCommandResult {
+  readonly json?: JsonFields;
+  readonly jsonStdout?: string;
+  readonly human?: string;
   readonly stdout?: string;
   readonly stderr?: string;
   readonly exitCode?: number;
@@ -141,7 +146,8 @@ export function createSchemaCommand(options: SchemaCommandOptions): RuntimeComma
           bin: options.bin
         };
     return {
-      stdout: renderSchemaJson(resolved, schemaOptions)
+      stdout: renderSchemaJson(resolved, schemaOptions),
+      jsonStdout: renderSchemaJson(resolved, schemaOptions)
     };
   });
 }
@@ -174,48 +180,201 @@ export async function runCli(cli: CliRuntime, argv: readonly string[]): Promise<
   if (!match) {
     const attemptedCommand = trimAtFirstFlag(argv).join(" ");
     const suggestion = suggestCommand(cli.registry, attemptedCommand);
+    const error = createCliError({
+      command: attemptedCommand || "<empty>",
+      kind: "unknown-command",
+      operation: "match command",
+      likelyCause: `No command named "${attemptedCommand || "<empty>"}" is registered.`,
+      suggestedNextAction: suggestion ? `Run "${suggestion.value}" instead.` : "Run help to list available commands.",
+      category: "usage"
+    });
+    if (argvRequestsJson(argv)) {
+      return renderErrorResult(error, true);
+    }
     return {
-      exitCode: 2,
+      exitCode: error.exitCode,
       stdout: "",
       stderr: `Unknown command: ${attemptedCommand || "<empty>"}${suggestion ? `\nDid you mean "${suggestion.value}"?` : ""}\n`
     };
   }
 
+  const jsonMode = commandRequestsJson(match.command.metadata, match.argv);
+
   const unknownFlag = findUnknownFlag(match.command.metadata, match.argv);
   if (unknownFlag) {
     const suggestion = suggestFlag(match.command.metadata, unknownFlag);
+    const error = createCliError({
+      command: match.command.metadata.name,
+      kind: "unknown-flag",
+      operation: "parse flags",
+      likelyCause: `Flag "${unknownFlag}" is not defined for ${match.command.metadata.name}.`,
+      suggestedNextAction: suggestion ? `Use "${suggestion.value}" instead.` : "Run command help to list supported flags.",
+      category: "usage"
+    });
+    if (jsonMode) {
+      return renderErrorResult(error, true);
+    }
     return {
-      exitCode: 2,
+      exitCode: error.exitCode,
       stdout: "",
       stderr: `Unknown flag: ${unknownFlag}${suggestion ? `\nDid you mean "${suggestion.value}"?` : ""}\n`
     };
   }
 
+  const parsed = await parseCommandArgs(match.command.metadata, match.argv, jsonMode);
+  if (parsed.result) {
+    return parsed.result;
+  }
+
   try {
-    const parsed = await Parser.parse([...match.argv], {
-      args: createOclifArgs(match.command.metadata.arguments ?? []),
-      flags: createOclifFlags(match.command.metadata.flags ?? []),
-      strict: true
-    });
     const result = await match.command.handler({
       command: match.command.metadata,
       args: parsed.args,
       flags: parsed.flags,
       argv: match.argv
     });
+    return renderCommandResult(match.command.metadata.name, result, jsonMode);
+  } catch (error) {
+    return renderErrorResult(normalizeThrownError(error, match.command.metadata.name), jsonMode);
+  }
+}
+
+async function parseCommandArgs(
+  command: CommandMetadata,
+  argv: readonly string[],
+  jsonMode: boolean
+): Promise<
+  | { readonly args: Readonly<Record<string, unknown>>; readonly flags: Readonly<Record<string, unknown>>; readonly result?: never }
+  | { readonly result: CliRunResult; readonly args?: never; readonly flags?: never }
+> {
+  try {
+    const parsed = await Parser.parse([...argv], {
+      args: createOclifArgs(command.arguments ?? []),
+      flags: createOclifFlags(command.flags ?? []),
+      strict: true
+    });
     return {
-      exitCode: result.exitCode ?? 0,
-      stdout: result.stdout ?? "",
-      stderr: result.stderr ?? "",
-      executedCommand: match.command.metadata.name
+      args: parsed.args,
+      flags: parsed.flags
     };
   } catch (error) {
     return {
-      exitCode: 2,
-      stdout: "",
-      stderr: `${error instanceof Error ? error.message : String(error)}\n`
+      result: renderErrorResult(
+        createCliError({
+          command: command.name,
+          kind: "invalid-command-usage",
+          operation: "parse command arguments",
+          likelyCause: error instanceof Error ? error.message : String(error),
+          suggestedNextAction: "Run command help and retry with valid arguments and flags.",
+          category: "usage"
+        }),
+        jsonMode
+      )
     };
   }
+}
+
+function renderCommandResult(command: string, result: RuntimeCommandResult, jsonMode: boolean): CliRunResult {
+  const exitCode = result.exitCode ?? 0;
+  if (jsonMode && exitCode !== 0) {
+    return renderErrorResult(
+      createCliError({
+        command,
+        kind: "command-failed",
+        operation: `run ${command}`,
+        likelyCause: firstNonEmpty([result.stderr, result.human, result.stdout]) ?? `Command exited with code ${exitCode}.`,
+        suggestedNextAction: "Inspect the command failure and retry after the underlying issue is fixed.",
+        category: "unexpected",
+        exitCode
+      }),
+      true
+    );
+  }
+
+  if (jsonMode && result.json) {
+    return {
+      exitCode,
+      stdout: renderJsonSuccess(command, result.json),
+      stderr: joinOutput([result.stderr, result.stdout]),
+      executedCommand: command
+    };
+  }
+
+  if (jsonMode && result.jsonStdout !== undefined) {
+    return {
+      exitCode,
+      stdout: validateJsonStdout(result.jsonStdout),
+      stderr: joinOutput([result.stderr, result.human]),
+      executedCommand: command
+    };
+  }
+
+  return {
+    exitCode,
+    stdout: jsonMode ? renderJsonSuccess(command, { output: result.stdout ?? result.human ?? "" }) : result.human ?? result.stdout ?? "",
+    stderr: result.stderr ?? "",
+    executedCommand: command
+  };
+}
+
+function renderErrorResult(error: ReturnType<typeof createCliError>, jsonMode: boolean): CliRunResult {
+  if (jsonMode) {
+    const result = {
+      exitCode: error.exitCode,
+      stdout: renderJsonError(error),
+      stderr: ""
+    };
+    return error.command ? { ...result, executedCommand: error.command } : result;
+  }
+  const result = {
+    exitCode: error.exitCode,
+    stdout: "",
+    stderr: renderCliErrorText(error)
+  };
+  return error.command ? { ...result, executedCommand: error.command } : result;
+}
+
+function normalizeThrownError(error: unknown, command: string): ReturnType<typeof createCliError> {
+  if (isCliError(error)) {
+    return error.command ? error : createCliError({ ...error, command });
+  }
+  return createCliError({
+    command,
+    kind: "unexpected-error",
+    operation: `run ${command}`,
+    likelyCause: error instanceof Error ? error.message : String(error),
+    suggestedNextAction: "Inspect the command failure and retry after the underlying issue is fixed.",
+    category: "unexpected",
+    exitCode: exitCodeForCategory("unexpected")
+  });
+}
+
+function commandRequestsJson(command: CommandMetadata, argv: readonly string[]): boolean {
+  if (command.interactions?.json !== true) {
+    return false;
+  }
+  return argvRequestsJson(argv);
+}
+
+function argvRequestsJson(argv: readonly string[]): boolean {
+  const positionalSeparatorIndex = argv.indexOf("--");
+  const flagArgv = positionalSeparatorIndex === -1 ? argv : argv.slice(0, positionalSeparatorIndex);
+  return flagArgv.some(
+    (token, index) => token === "--json" || token === "--output=json" || (token === "--output" && flagArgv[index + 1] === "json")
+  );
+}
+
+function joinOutput(parts: readonly (string | undefined)[]): string {
+  return parts.filter((part): part is string => part !== undefined && part.length > 0).join("");
+}
+
+function firstNonEmpty(parts: readonly (string | undefined)[]): string | undefined {
+  return parts.find((part): part is string => part !== undefined && part.length > 0);
+}
+
+function validateJsonStdout(stdout: string): string {
+  JSON.parse(stdout);
+  return stdout;
 }
 
 function renderHelpResult(cli: CliRuntime, helpRequest: NonNullable<ReturnType<typeof normalizeHelpRequest>>): CliRunResult {

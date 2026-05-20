@@ -68,6 +68,14 @@ describe("package metadata", () => {
       "./schema": {
         types: "./dist/schema/index.d.ts",
         import: "./dist/schema/index.js"
+      },
+      "./errors": {
+        types: "./dist/errors/index.d.ts",
+        import: "./dist/errors/index.js"
+      },
+      "./output": {
+        types: "./dist/output/index.d.ts",
+        import: "./dist/output/index.js"
       }
     });
     assert.equal(Object.hasOwn(packageJson, "bin"), false);
