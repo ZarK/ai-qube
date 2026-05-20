@@ -101,7 +101,7 @@ export function createSupplyChainBlock<const Block extends SupplyChainBlock>(blo
 }
 
 export function createDryRunPlanFields(plan: DryRunPlan): Readonly<Record<string, unknown>> {
-  return Object.freeze({
+  return deepFreeze({
     dryRun: true,
     dryRunPlan: {
       command: plan.command,
@@ -115,7 +115,7 @@ export function createDryRunPlanFields(plan: DryRunPlan): Readonly<Record<string
 }
 
 export function createSupplyChainBlockFields(block: SupplyChainBlock): Readonly<Record<string, unknown>> {
-  return Object.freeze({
+  return deepFreeze({
     supplyChainBlock: {
       blocked: true,
       command: block.command,
@@ -201,12 +201,16 @@ function defaultSupplyChainNextAction(): string {
   return "Review the supply-chain risk and retry only after the consuming package policy allows it.";
 }
 
-function deepFreeze<T>(value: T): Readonly<T> {
+function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): Readonly<T> {
   if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
     return value as Readonly<T>;
   }
+  if (seen.has(value)) {
+    return value as Readonly<T>;
+  }
+  seen.add(value);
   for (const child of Object.values(value)) {
-    deepFreeze(child);
+    deepFreeze(child, seen);
   }
   return Object.freeze(value);
 }

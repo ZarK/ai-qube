@@ -212,7 +212,7 @@ function renderSupplyChain(command: CommandMetadata): string {
   if (supplyChain?.sensitive !== true) {
     return "standard";
   }
-  const kinds = supplyChain.kinds && supplyChain.kinds.length > 0 ? [...supplyChain.kinds].sort(compareText).join(", ") : "unspecified";
+  const kinds = supplyChain.kinds && supplyChain.kinds.length > 0 ? [...new Set(supplyChain.kinds)].sort(compareText).join(", ") : "unspecified";
   return `sensitive (${kinds})${supplyChain.reason ? ` — ${supplyChain.reason}` : ""}`;
 }
 

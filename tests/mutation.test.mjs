@@ -30,6 +30,10 @@ describe("mutation helpers", () => {
     assert.match(renderDryRunPlan(plan), /Dry run plan/);
     assert.match(renderDryRunPlan(plan), /Rerun without --dry-run to apply: fixture cache clear --yes/);
     assert.deepEqual(JSON.parse(renderJsonSuccess("cache clear", createDryRunPlanFields(plan))).dryRunPlan.mutationCategories, ["local-files"]);
+    const fields = createDryRunPlanFields(plan);
+    assert.equal(Object.isFrozen(fields.dryRunPlan), true);
+    assert.equal(Object.isFrozen(fields.dryRunPlan.steps), true);
+    assert.equal(Object.isFrozen(fields.dryRunPlan.steps[0]), true);
   });
 
   it("renders mutation warnings and supply-chain blocks without policy execution", async () => {
@@ -52,6 +56,8 @@ describe("mutation helpers", () => {
     assert.match(renderSupplyChainBlock(block), /Review the supply-chain risk and retry only after the consuming package policy allows it/);
     assert.deepEqual(createSupplyChainBlockFields(block).supplyChainBlock.sensitiveKinds, ["dependency", "package-manager"]);
     assert.equal(createSupplyChainBlockFields(block).supplyChainBlock.suggestedNextAction, "Review the supply-chain risk and retry only after the consuming package policy allows it.");
+    assert.equal(Object.isFrozen(createSupplyChainBlockFields(block).supplyChainBlock), true);
+    assert.equal(Object.isFrozen(createSupplyChainBlockFields(block).supplyChainBlock.checks), true);
   });
 
   it("freezes nested mutation helper structures", async () => {
@@ -73,5 +79,21 @@ describe("mutation helpers", () => {
     assert.equal(Object.isFrozen(plan.steps[0]), true);
     assert.equal(Object.isFrozen(block.checks), true);
     assert.equal(Object.isFrozen(block.checks?.[0]), true);
+  });
+
+  it("handles cyclic extension objects when freezing helper inputs", async () => {
+    const { createDryRunPlan } = await import("../dist/index.js");
+    const extensions = {};
+    extensions.self = extensions;
+
+    const plan = createDryRunPlan({
+      command: "cache install",
+      summary: "Prepare dependency cache.",
+      steps: [{ action: "review", target: "fixture-lockfile", extensions }]
+    });
+
+    assert.equal(Object.isFrozen(plan), true);
+    assert.equal(Object.isFrozen(plan.steps[0].extensions), true);
+    assert.equal(plan.steps[0].extensions.self, plan.steps[0].extensions);
   });
 });
