@@ -1,11 +1,12 @@
 import { Command, Parser } from "@oclif/core";
 import type { Interfaces } from "@oclif/core";
 
-import type { ArgumentMetadata, CommandMetadata, FlagMetadata, TopicMetadata } from "../metadata/index.js";
+import type { ArgumentMetadata, CommandMetadata, FlagMetadata, MetadataExtensions, TopicMetadata } from "../metadata/index.js";
 import { defineCommand } from "../metadata/index.js";
 import type { CommandRegistry } from "../registry/index.js";
 import { createCommandRegistry, listCommands } from "../registry/index.js";
 import { normalizeHelpRequest, renderHelp, suggestCommand, suggestFlag } from "../help/index.js";
+import { renderSchemaJson } from "../schema/index.js";
 
 export interface RuntimeCommandContext {
   readonly command: CommandMetadata;
@@ -55,6 +56,14 @@ export interface CliRunResult {
   readonly executedCommand?: string;
 }
 
+export interface SchemaCommandOptions {
+  readonly registry: CommandRegistry | (() => CommandRegistry);
+  readonly bin: string;
+  readonly packageName: string;
+  readonly packageVersion: string;
+  readonly extensions?: MetadataExtensions;
+}
+
 export function createCommand(metadata: CommandMetadata, handler: RuntimeCommandHandler): RuntimeCommand {
   const args = createOclifArgs(metadata.arguments ?? []);
   const flags = createOclifFlags(metadata.flags ?? []);
@@ -87,11 +96,11 @@ export function createTopicCommand(metadata: TopicMetadata): RuntimeTopic {
   return Object.freeze({ metadata });
 }
 
-export function createSchemaCommand(registry: CommandRegistry | (() => CommandRegistry), bin: string): RuntimeCommand {
+export function createSchemaCommand(options: SchemaCommandOptions): RuntimeCommand {
   const metadata = defineCommand({
     kind: "command",
     name: "schema",
-    description: "Render fixture command metadata as deterministic JSON.",
+    description: "Render deterministic command schema as JSON.",
     flags: [
       {
         name: "json",
@@ -101,8 +110,8 @@ export function createSchemaCommand(registry: CommandRegistry | (() => CommandRe
     ],
     examples: [
       {
-        description: "Render the fixture metadata schema.",
-        command: `${bin} schema --json`
+        description: "Render the command schema.",
+        command: `${options.bin} schema --json`
       }
     ],
     output: {
@@ -118,9 +127,21 @@ export function createSchemaCommand(registry: CommandRegistry | (() => CommandRe
   });
 
   return createCommand(metadata, () => {
-    const resolved = resolveRegistry(registry);
+    const resolved = resolveRegistry(options.registry);
+    const schemaOptions = options.extensions
+      ? {
+          packageName: options.packageName,
+          packageVersion: options.packageVersion,
+          bin: options.bin,
+          extensions: options.extensions
+        }
+      : {
+          packageName: options.packageName,
+          packageVersion: options.packageVersion,
+          bin: options.bin
+        };
     return {
-      stdout: `${JSON.stringify({ bin, topics: resolved.topics, commands: resolved.commands }, null, 2)}\n`
+      stdout: renderSchemaJson(resolved, schemaOptions)
     };
   });
 }

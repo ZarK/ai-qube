@@ -2,6 +2,7 @@ export * from "./metadata/index.js";
 export * from "./registry/index.js";
 export * from "./help/index.js";
 export * from "./runtime/index.js";
+export * from "./schema/index.js";
 
 export interface ToolkitBoundary {
   readonly packageKind: "cli-infrastructure";

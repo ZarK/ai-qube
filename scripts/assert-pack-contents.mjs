@@ -40,6 +40,10 @@ const expectedFiles = [
   "dist/runtime/index.d.ts.map",
   "dist/runtime/index.js",
   "dist/runtime/index.js.map",
+  "dist/schema/index.d.ts",
+  "dist/schema/index.d.ts.map",
+  "dist/schema/index.js",
+  "dist/schema/index.js.map",
   "LICENSE",
   "package.json",
   "README.md"

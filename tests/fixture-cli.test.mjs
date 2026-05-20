@@ -1,6 +1,9 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+
+const packageMetadata = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
 
 function runFixture(...args) {
   return spawnSync(process.execPath, ["dist/fixtures/cli.js", ...args], {
@@ -21,7 +24,7 @@ describe("fixture CLI runtime", () => {
     assert.equal(flagHelp.stdout, commandHelp.stdout);
     assert.match(flagHelp.stdout, /fixture\nProduct-neutral fixture CLI/);
     assert.match(flagHelp.stdout, /cache clear\s+Clear cache entries/);
-    assert.match(flagHelp.stdout, /schema\s+Render fixture command metadata/);
+    assert.match(flagHelp.stdout, /schema\s+Render deterministic command schema/);
     assert.doesNotMatch(flagHelp.stdout, /EXECUTED/);
   });
 
@@ -63,16 +66,49 @@ describe("fixture CLI runtime", () => {
     assert.doesNotMatch(result.stdout, /EXECUTED/);
   });
 
-  it("renders schema JSON that matches the runtime registry", () => {
+  it("renders deterministic schema JSON that matches the runtime registry", () => {
     const result = runFixture("schema", "--json");
+    const repeated = runFixture("schema", "--json");
 
     assert.equal(result.status, 0);
     assert.equal(result.stderr, "");
+    assert.equal(repeated.status, 0);
+    assert.equal(repeated.stderr, "");
+    assert.equal(result.stdout, repeated.stdout);
     const schema = JSON.parse(result.stdout);
+    assert.equal(schema.schemaVersion, 1);
+    assert.deepEqual(schema.package, { name: packageMetadata.name, version: packageMetadata.version });
     assert.equal(schema.bin, "fixture");
+    assert.deepEqual(schema.extensions, { fixture: true, purpose: "schema-integration" });
     assert.deepEqual(schema.topics.map((topic) => topic.name), ["cache"]);
     assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache inspect", "schema"]);
-    assert.equal(schema.commands.find((command) => command.name === "cache clear")?.mutation.categories[0], "local-files");
+    const clearCommand = schema.commands.find((command) => command.name === "cache clear");
+    const inspectCommand = schema.commands.find((command) => command.name === "cache inspect");
+    assert.deepEqual(clearCommand?.mutation, {
+      mutates: true,
+      categories: ["local-files"],
+      extensions: { fixtureMutation: "cache-cleanup" }
+    });
+    assert.deepEqual(clearCommand?.dryRun, { supported: true });
+    assert.equal(inspectCommand?.mutation.mutates, false);
+    assert.deepEqual(inspectCommand?.output, { formats: ["human", "json"], defaultFormat: "human" });
+    assert.deepEqual(inspectCommand?.interactions, {
+      json: true,
+      noColor: true,
+      nonInteractive: true,
+      ttyPrompt: false
+    });
+    assert.deepEqual(inspectCommand?.errors, [
+      { kind: "cache-read-failed", description: "The cache could not be read.", exitCode: 2 }
+    ]);
+    assert.deepEqual(inspectCommand?.exitCodes, [
+      { code: 0, category: "success", description: "The command completed successfully." },
+      { code: 2, category: "validation", description: "The cache key or cache state was invalid." }
+    ]);
+    assert.deepEqual(inspectCommand?.flags.find((flag) => flag.name === "output")?.defaultValue, "human");
+    assert.deepEqual(inspectCommand?.extensions?.nested, { alpha: 1, beta: 2 });
+    assert.doesNotMatch(result.stdout, /Usage:/);
+    assert.doesNotMatch(result.stdout, /Commands:/);
   });
 
   it("keeps exact multi-token commands ahead of single-token aliases", async () => {

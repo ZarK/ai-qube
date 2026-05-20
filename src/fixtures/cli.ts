@@ -1,10 +1,13 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 
+import { defineExtensions } from "../metadata/index.js";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "../runtime/index.js";
 import { cacheClearCommand, cacheInspectCommand, cacheTopic, fixtureMetadata } from "./metadata.js";
 
 let currentRegistry = fixtureMetadata;
+const packageMetadata = readPackageMetadata();
 
 export const fixtureCli = createCli({
   bin: "fixture",
@@ -27,7 +30,16 @@ export const fixtureCli = createCli({
       }
       return { stdout: "EXECUTED cache clear\nRemoved fixture cache entries.\n" };
     }),
-    createSchemaCommand(() => currentRegistry, "fixture")
+    createSchemaCommand({
+      registry: () => currentRegistry,
+      bin: "fixture",
+      packageName: packageMetadata.name,
+      packageVersion: packageMetadata.version,
+      extensions: defineExtensions({
+        fixture: true,
+        purpose: "schema-integration"
+      })
+    })
   ]
 });
 
@@ -46,4 +58,20 @@ export async function runFixtureCli(argv: readonly string[] = process.argv.slice
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   process.exitCode = await runFixtureCli();
+}
+
+function readPackageMetadata(): { readonly name: string; readonly version: string } {
+  const parsed: unknown = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8"));
+  if (!isPackageMetadata(parsed)) {
+    throw new TypeError("package.json must include string name and version fields.");
+  }
+  return { name: parsed.name, version: parsed.version };
+}
+
+function isPackageMetadata(value: unknown): value is { readonly name: string; readonly version: string } {
+  return isRecord(value) && typeof value.name === "string" && typeof value.version === "string";
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

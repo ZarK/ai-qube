@@ -3,7 +3,11 @@ import { createCommandRegistry } from "../registry/index.js";
 
 const fixtureExtensions = defineExtensions({
   fixture: true,
-  owner: "toolkit-tests"
+  owner: "toolkit-tests",
+  nested: {
+    beta: 2,
+    alpha: 1
+  }
 });
 
 export const cacheTopic = defineTopic({
@@ -21,7 +25,10 @@ export const cacheInspectCommand = defineCommand({
     defineArgument({
       name: "key",
       description: "Cache key to inspect.",
-      required: false
+      required: false,
+      extensions: defineExtensions({
+        fixtureRole: "lookup-key"
+      })
     })
   ],
   flags: [
@@ -34,7 +41,11 @@ export const cacheInspectCommand = defineCommand({
       name: "output",
       description: "Select the output format.",
       type: "option",
-      options: ["human", "json"]
+      options: ["human", "json"],
+      defaultValue: "human",
+      extensions: defineExtensions({
+        fixtureRole: "format-selector"
+      })
     })
   ],
   examples: [
@@ -113,7 +124,10 @@ export const cacheClearCommand = defineCommand({
     ttyPrompt: true
   },
   mutation: {
-    categories: ["local-files"]
+    categories: ["local-files"],
+    extensions: defineExtensions({
+      fixtureMutation: "cache-cleanup"
+    })
   },
   exitCodes: [
     {

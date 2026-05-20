@@ -64,6 +64,10 @@ describe("package metadata", () => {
       "./runtime": {
         types: "./dist/runtime/index.d.ts",
         import: "./dist/runtime/index.js"
+      },
+      "./schema": {
+        types: "./dist/schema/index.d.ts",
+        import: "./dist/schema/index.js"
       }
     });
     assert.equal(Object.hasOwn(packageJson, "bin"), false);
