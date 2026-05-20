@@ -202,7 +202,7 @@ function defaultSupplyChainNextAction(): string {
 }
 
 function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): Readonly<T> {
-  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+  if (typeof value !== "object" || value === null) {
     return value as Readonly<T>;
   }
   if (seen.has(value)) {
@@ -212,7 +212,7 @@ function deepFreeze<T>(value: T, seen: WeakSet<object> = new WeakSet()): Readonl
   for (const child of Object.values(value)) {
     deepFreeze(child, seen);
   }
-  return Object.freeze(value);
+  return Object.isFrozen(value) ? value as Readonly<T> : Object.freeze(value);
 }
 
 function joinSections(sections: readonly string[]): string {

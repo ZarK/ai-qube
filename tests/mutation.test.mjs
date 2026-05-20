@@ -96,4 +96,23 @@ describe("mutation helpers", () => {
     assert.equal(Object.isFrozen(plan.steps[0].extensions), true);
     assert.equal(plan.steps[0].extensions.self, plan.steps[0].extensions);
   });
+
+  it("deep-freezes nested values from a frozen root input", async () => {
+    const { createDryRunPlan } = await import("../dist/index.js");
+    const extensions = { flag: true };
+    extensions.self = extensions;
+    const input = Object.freeze({
+      command: "cache install",
+      summary: "Prepare dependency cache.",
+      steps: [{ action: "review", target: "fixture-lockfile", extensions }]
+    });
+
+    const plan = createDryRunPlan(input);
+
+    assert.equal(Object.isFrozen(plan), true);
+    assert.equal(Object.isFrozen(plan.steps), true);
+    assert.equal(Object.isFrozen(plan.steps[0]), true);
+    assert.equal(Object.isFrozen(plan.steps[0].extensions), true);
+    assert.equal(plan.steps[0].extensions.self, plan.steps[0].extensions);
+  });
 });
