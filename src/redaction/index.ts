@@ -5,6 +5,8 @@ export interface RedactionOptions {
   readonly sensitiveKeys?: readonly string[];
 }
 
+export type RedactedStructuredValue = Readonly<Record<string, unknown>>;
+
 const directTokenPatterns = Object.freeze([
   /\b(sk-ant-api03-[A-Za-z0-9_-]{40,})\b/g,
   /\b(sk-(?:proj-|svcacct-|admin-)?[A-Za-z0-9_-]{20,})\b/g,
@@ -36,8 +38,8 @@ export function redactText(value: string, options: RedactionOptions = {}): strin
   return bearerRedacted.replace(assignmentPattern, (_match, prefix: string, _secret: string, suffix: string) => `${prefix}${placeholder}${suffix}`);
 }
 
-export function redactStructuredValue<T>(value: T, options: RedactionOptions = {}): T {
-  return redactValue(value, options, undefined, new WeakMap<object, unknown>()) as T;
+export function redactStructuredValue(value: Readonly<Record<string, unknown>>, options: RedactionOptions = {}): RedactedStructuredValue {
+  return redactRecord(value, options, new WeakMap<object, unknown>());
 }
 
 export function isSensitiveKey(key: string, sensitiveKeys: readonly string[] = defaultSensitiveKeys): boolean {
@@ -65,19 +67,23 @@ function redactValue(value: unknown, options: RedactionOptions, key: string | un
     return Object.freeze(copy);
   }
   if (isRecord(value)) {
-    const existing = seen.get(value);
-    if (existing) {
-      return existing;
-    }
-    const copy: Record<string, unknown> = {};
-    seen.set(value, copy);
-    for (const entryKey of Object.keys(value)) {
-      const entryValue = value[entryKey];
-      copy[entryKey] = redactValue(entryValue, options, entryKey, seen);
-    }
-    return Object.freeze(copy);
+    return redactRecord(value, options, seen);
   }
   return value;
+}
+
+function redactRecord(value: Readonly<Record<string, unknown>>, options: RedactionOptions, seen: WeakMap<object, unknown>): RedactedStructuredValue {
+  const existing = seen.get(value);
+  if (existing && isRecord(existing)) {
+    return existing;
+  }
+  const copy: Record<string, unknown> = {};
+  seen.set(value, copy);
+  for (const entryKey of Object.keys(value)) {
+    const entryValue = value[entryKey];
+    copy[entryKey] = redactValue(entryValue, options, entryKey, seen);
+  }
+  return Object.freeze(copy);
 }
 
 function normalizeKey(key: string): string {

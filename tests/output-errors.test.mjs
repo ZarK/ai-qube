@@ -1,5 +1,5 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 
 describe("output and error helpers", () => {
   it("creates stable JSON success envelopes with consumer fields", async () => {
@@ -20,12 +20,12 @@ describe("output and error helpers", () => {
 
     assert.deepEqual(JSON.parse(renderJsonSuccess("cache inspect", {
       authorization: "Bearer abcdefghijklmnopqrstuvwxyz123456",
-      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", password: 123456789, safe: "alpha" }
+      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", password: 123456789, privateKey: "fixture-key", safe: "alpha" }
     })), {
       ok: true,
       command: "cache inspect",
       authorization: "[REDACTED]",
-      nested: { apiKey: "[REDACTED]", password: "[REDACTED]", safe: "alpha" }
+      nested: { apiKey: "[REDACTED]", password: "[REDACTED]", privateKey: "[REDACTED]", safe: "alpha" }
     });
   });
 

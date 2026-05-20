@@ -1,5 +1,5 @@
 import { type CliErrorShape } from "../errors/index.js";
-import { redactStructuredValue, redactText, redactionPlaceholder } from "../redaction/index.js";
+import { isSensitiveKey, redactStructuredValue, redactText, redactionPlaceholder } from "../redaction/index.js";
 
 export type JsonFields = Readonly<Record<string, unknown>>;
 
@@ -114,10 +114,6 @@ function stableValue(value: unknown, key?: string): unknown {
     return stableFields(redactStructuredValue(value));
   }
   return value;
-}
-
-function isSensitiveKey(key: string): boolean {
-  return /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|credential|authorization|token)$/i.test(key.replace(/[^a-z0-9_-]/gi, ""));
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
