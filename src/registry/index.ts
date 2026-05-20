@@ -191,6 +191,7 @@ function validateCommand(command: CommandMetadata, path: string, issues: Command
   validateDescribedItems(command.exitCodes ?? [], `${path}.exitCodes`, "exit code", issues);
   validateOutput(command, path, issues);
   validateMutation(command, path, issues);
+  validateSupplyChain(command, path, issues);
 }
 
 function validateArguments(
@@ -294,6 +295,16 @@ function validateMutation(command: CommandMetadata, path: string, issues: Comman
   }
   if (!command.interactions.dryRun.supported) {
     requireDescription(command.interactions.dryRun.reason, `${path}.interactions.dryRun.reason`, issues);
+  }
+}
+
+function validateSupplyChain(command: CommandMetadata, path: string, issues: CommandRegistryValidationIssue[]): void {
+  if (command.supplyChain?.sensitive !== true) {
+    return;
+  }
+  requireDescription(command.supplyChain.reason ?? "", `${path}.supplyChain.reason`, issues);
+  if (!command.supplyChain.kinds || command.supplyChain.kinds.length === 0) {
+    addIssue(issues, `${path}.supplyChain.kinds`, `Supply-chain-sensitive commands must list at least one sensitive kind.`);
   }
 }
 

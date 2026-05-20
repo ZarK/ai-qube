@@ -9,6 +9,18 @@ export type BuiltInMutationCategory =
 
 export type MutationCategory = BuiltInMutationCategory | (string & {});
 
+export type BuiltInSupplyChainSensitiveKind =
+  | "dependency"
+  | "package-manager"
+  | "generator"
+  | "ci-workflow"
+  | "release"
+  | "ide-tooling"
+  | "mcp-server"
+  | "ai-agent-tool";
+
+export type SupplyChainSensitiveKind = BuiltInSupplyChainSensitiveKind | (string & {});
+
 export type OutputFormat = "human" | "json" | (string & {});
 
 export type FlagValueType = "boolean" | "string" | "integer" | "number" | "option";
@@ -80,6 +92,13 @@ export interface MutationMetadata<Extensions extends MetadataExtensions = Metada
   readonly extensions?: Extensions;
 }
 
+export interface SupplyChainMetadata<Extensions extends MetadataExtensions = MetadataExtensions> {
+  readonly sensitive: boolean;
+  readonly reason?: string;
+  readonly kinds?: readonly SupplyChainSensitiveKind[];
+  readonly extensions?: Extensions;
+}
+
 export interface ExternalServiceMetadata<Extensions extends MetadataExtensions = MetadataExtensions> {
   readonly name: string;
   readonly description: string;
@@ -120,6 +139,7 @@ export interface CommandMetadata<Extensions extends MetadataExtensions = Metadat
   readonly output?: OutputSupport;
   readonly interactions?: InteractionSupport;
   readonly mutation?: MutationMetadata;
+  readonly supplyChain?: SupplyChainMetadata;
   readonly externalServices?: readonly ExternalServiceMetadata[];
   readonly errors?: readonly ErrorKindMetadata[];
   readonly exitCodes?: readonly ExitCodeMetadata[];

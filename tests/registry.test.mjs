@@ -87,7 +87,7 @@ describe("command registry", () => {
   it("validates the product-neutral fixture metadata", () => {
     assert.doesNotThrow(() => validateCommandRegistry(fixtureMetadata));
     assert.equal(findCommand(fixtureMetadata, "cc")?.name, "cache clear");
-    assert.deepEqual(listCommands(fixtureMetadata).map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate"]);
+    assert.deepEqual(listCommands(fixtureMetadata).map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache validate"]);
   });
 
   it("reports duplicate command names and aliases with deterministic context", () => {
@@ -284,6 +284,30 @@ describe("command registry", () => {
         assert.match(error.message, /commands\[0\]\.externalServices\[0\]\.description: Value must not be empty/);
         assert.match(error.message, /commands\[0\]\.errors\[0\]\.description: Value must not be empty/);
         assert.match(error.message, /commands\[0\]\.exitCodes\[0\]\.description: Value must not be empty/);
+        return true;
+      }
+    );
+  });
+
+  it("reports incomplete supply-chain-sensitive metadata", () => {
+    assert.throws(
+      () =>
+        createCommandRegistry({
+          commands: [
+            {
+              ...validCommand,
+              supplyChain: {
+                sensitive: true,
+                reason: " ",
+                kinds: []
+              }
+            }
+          ]
+        }),
+      (error) => {
+        assert.ok(error instanceof CommandRegistryValidationError);
+        assert.match(error.message, /commands\[0\]\.supplyChain\.reason: Value must not be empty/);
+        assert.match(error.message, /commands\[0\]\.supplyChain\.kinds: Supply-chain-sensitive commands must list at least one sensitive kind/);
         return true;
       }
     );

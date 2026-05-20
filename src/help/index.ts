@@ -175,7 +175,8 @@ function renderBehavior(command: CommandMetadata): string {
     "Behavior:",
     `  JSON output: ${command.interactions?.json ? "supported" : "not declared"}`,
     `  Dry run: ${renderDryRun(command)}`,
-    `  Mutation: ${mutationCategories.length === 0 ? "none" : mutationCategories.join(", ")}`
+    `  Mutation: ${mutationCategories.length === 0 ? "none" : mutationCategories.join(", ")}`,
+    `  Supply chain: ${renderSupplyChain(command)}`
   ]);
 }
 
@@ -193,7 +194,7 @@ function renderTopicCommandDetails(commands: readonly CommandMetadata[]): string
       const mutation = mutationCategories.length === 0 ? "none" : mutationCategories.join(", ");
       const dryRun = renderDryRun(command);
       const json = command.interactions?.json ? "supported" : "not declared";
-      return `  ${command.name}: args=${argumentCount}, flags=${flagCount}, examples=${exampleCount}, json=${json}, dry-run=${dryRun}, mutation=${mutation}`;
+      return `  ${command.name}: args=${argumentCount}, flags=${flagCount}, examples=${exampleCount}, json=${json}, dry-run=${dryRun}, mutation=${mutation}, supply-chain=${renderSupplyChain(command)}`;
     })
   ]);
 }
@@ -204,6 +205,15 @@ function renderDryRun(command: CommandMetadata): string {
     return "not declared";
   }
   return dryRun.supported ? "supported" : `unsupported (${dryRun.reason})`;
+}
+
+function renderSupplyChain(command: CommandMetadata): string {
+  const supplyChain = command.supplyChain;
+  if (supplyChain?.sensitive !== true) {
+    return "standard";
+  }
+  const kinds = supplyChain.kinds && supplyChain.kinds.length > 0 ? [...new Set(supplyChain.kinds)].sort(compareText).join(", ") : "unspecified";
+  return `sensitive (${kinds})${supplyChain.reason ? ` — ${supplyChain.reason}` : ""}`;
 }
 
 function renderNameDescriptionSection(

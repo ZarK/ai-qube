@@ -63,4 +63,25 @@ describe("metadata validation", () => {
       options: []
     }), /flag.options must include at least one value when flag.type is "option"/);
   });
+
+  it("throws on supply-chain-sensitive metadata without reason or kind", () => {
+    assert.throws(() => defineCommand({
+      kind: "command",
+      name: "install deps",
+      description: "Install dependencies",
+      supplyChain: {
+        sensitive: true,
+        kinds: ["dependency"]
+      }
+    }), /command\.supplyChain\.reason must not be empty/);
+    assert.throws(() => defineCommand({
+      kind: "command",
+      name: "install deps",
+      description: "Install dependencies",
+      supplyChain: {
+        sensitive: true,
+        reason: "Dependency operations need review."
+      }
+    }), /command\.supplyChain\.kinds must include at least one kind/);
+  });
 });

@@ -50,6 +50,19 @@ const deployCmd = defineCommand({
 
 assertType<Equal<typeof deployCmd.mutation.categories, readonly ["external-service", "release"]>>();
 
+const dependencyCmd = defineCommand({
+  kind: "command",
+  name: "install deps",
+  description: "Install dependencies",
+  supplyChain: {
+    sensitive: true,
+    reason: "Dependency operations need review.",
+    kinds: ["dependency", "package-manager"]
+  }
+} as const);
+
+assertType<Equal<typeof dependencyCmd.supplyChain.kinds, readonly ["dependency", "package-manager"]>>();
+
 // Test extension round-trip in Argument
 const arg = defineArgument({
   name: "path",
