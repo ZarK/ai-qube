@@ -63,6 +63,10 @@
     "./redaction": {
       "types": "./dist/redaction/index.d.ts",
       "import": "./dist/redaction/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "files": [
