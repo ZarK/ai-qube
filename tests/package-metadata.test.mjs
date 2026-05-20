@@ -1,0 +1,68 @@
+import { readFile } from "node:fs/promises";
+import { describe, it } from "node:test";
+import assert from "node:assert/strict";
+
+async function readPackageJson() {
+  return JSON.parse(await readProjectFile("package.json"));
+}
+
+async function readProjectFile(path) {
+  return readFile(new URL(`../${path}`, import.meta.url), "utf8");
+}
+
+describe("package metadata", () => {
+  it("is ESM-first and targets Node.js 24+ with pnpm", async () => {
+    const packageJson = await readPackageJson();
+
+    assert.equal(packageJson.type, "module");
+    assert.equal(packageJson.engines?.node, ">=24.0.0");
+    assert.equal(packageJson.packageManager, "pnpm@11.0.4");
+  });
+
+  it("uses exact dependency versions", async () => {
+    const packageJson = await readPackageJson();
+    const versions = Object.values({
+      ...packageJson.dependencies,
+      ...packageJson.devDependencies
+    });
+
+    assert.ok(versions.length > 0);
+    assert.deepEqual(
+      versions,
+      versions.filter((version) => /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(version))
+    );
+  });
+
+  it("does not define normal-use install lifecycle scripts", async () => {
+    const packageJson = await readPackageJson();
+
+    assert.equal(Object.hasOwn(packageJson.scripts ?? {}, "preinstall"), false);
+    assert.equal(Object.hasOwn(packageJson.scripts ?? {}, "install"), false);
+    assert.equal(Object.hasOwn(packageJson.scripts ?? {}, "postinstall"), false);
+  });
+
+  it("exports only the implemented root surface", async () => {
+    const packageJson = await readPackageJson();
+
+    assert.deepEqual(packageJson.exports, {
+      ".": {
+        types: "./dist/index.d.ts",
+        import: "./dist/index.js"
+      }
+    });
+    assert.deepEqual(packageJson.files, ["dist"]);
+  });
+
+  it("configures pnpm dependency safety gates for the project", async () => {
+    const workspace = await readProjectFile("pnpm-workspace.yaml");
+
+    assert.match(workspace, /minimumReleaseAge: 10080/);
+    assert.match(workspace, /minimumReleaseAgeIgnoreMissingTime: false/);
+    assert.match(workspace, /minimumReleaseAgeStrict: true/);
+    assert.match(workspace, /trustPolicy: no-downgrade/);
+    assert.match(workspace, /blockExoticSubdeps: true/);
+    assert.match(workspace, /strictDepBuilds: true/);
+    assert.match(workspace, /verifyDepsBeforeRun: error/);
+    assert.match(workspace, /savePrefix: ""/);
+  });
+});
