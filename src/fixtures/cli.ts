@@ -4,8 +4,9 @@ import { pathToFileURL } from "node:url";
 
 import { createCliError } from "../errors/index.js";
 import { defineExtensions } from "../metadata/index.js";
+import { createDryRunPlan, createDryRunPlanFields, createSupplyChainBlock, renderDryRunPlan, renderMutationWarning, renderSupplyChainBlock } from "../mutation/index.js";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "../runtime/index.js";
-import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheTopic, cacheValidateCommand, fixtureMetadata } from "./metadata.js";
+import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheInstallCommand, cacheTopic, cacheValidateCommand, fixtureMetadata } from "./metadata.js";
 
 let currentRegistry = fixtureMetadata;
 const packageMetadata = readPackageMetadata();
@@ -25,9 +26,74 @@ export const fixtureCli = createCli({
     }),
     createCommand(cacheClearCommand, ({ flags }) => {
       if (flags["dry-run"] === true) {
-        return { stdout: "EXECUTED cache clear\nWould remove fixture cache entries.\n" };
+        const plan = createDryRunPlan({
+          command: "cache clear",
+          summary: "Remove fixture cache entries without touching external systems.",
+          mutationCategories: ["local-files"],
+          steps: [
+            {
+              action: "delete",
+              target: "fixture-cache/*",
+              category: "local-files",
+              description: "Remove local fixture cache entries."
+            }
+          ],
+          rerunCommand: "fixture cache clear --yes"
+        });
+        return { json: createDryRunPlanFields(plan), human: renderDryRunPlan(plan) };
       }
-      return { stdout: "EXECUTED cache clear\nRemoved fixture cache entries.\n" };
+      return {
+        human: `${renderMutationWarning({
+          command: "cache clear",
+          categories: ["local-files"],
+          dryRun: cacheClearCommand.interactions?.dryRun,
+          message: "Use --dry-run before removing fixture cache entries."
+        })}EXECUTED cache clear\nRemoved fixture cache entries.\n`
+      };
+    }),
+    createCommand(cacheInstallCommand, ({ flags }) => {
+      const plan = createDryRunPlan({
+        command: "cache install",
+        summary: "Prepare dependency cache metadata without running package-manager commands.",
+        mutationCategories: ["dependency", "local-files"],
+        steps: [
+          {
+            action: "review",
+            target: "fixture-lockfile metadata",
+            category: "dependency",
+            description: "Inspect consumer-provided dependency metadata."
+          },
+          {
+            action: "write",
+            target: "fixture dependency cache",
+            category: "local-files",
+            description: "Record cache entries after policy approval."
+          }
+        ],
+        rerunCommand: "fixture cache install"
+      });
+      if (flags["dry-run"] === true) {
+        return { json: createDryRunPlanFields(plan), human: `${renderDryRunPlan(plan)}No external commands executed.\n` };
+      }
+      const block = createSupplyChainBlock({
+        command: "cache install",
+        reason: "Dependency cache preparation requires consuming-package supply-chain approval.",
+        sensitiveKinds: ["dependency", "package-manager"],
+        checks: [
+          {
+            name: "package-age-gate",
+            status: "needs-review",
+            description: "Consumer policy must verify package age before execution."
+          },
+          {
+            name: "lifecycle-scripts",
+            status: "blocked",
+            description: "Lifecycle scripts remain blocked unless the consuming package approves them."
+          }
+        ],
+        suggestedNextAction: "Run --dry-run and apply the consuming package approval policy before retrying."
+      });
+      return { exitCode: 5, human: `${renderSupplyChainBlock(block)}No external commands executed.\n` };
     }),
     createCommand(cacheValidateCommand, () => {
       throw createCliError({

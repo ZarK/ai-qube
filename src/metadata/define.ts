@@ -58,6 +58,7 @@ export function defineCommand<const Command extends CommandMetadata>(command: Co
     requireAlias(alias, `command.aliases[${alias}]`);
   }
   validateMutatingCommand(command);
+  validateSupplyChainMetadata(command);
   return Object.freeze(command);
 }
 
@@ -82,6 +83,17 @@ function validateMutatingCommand(command: CommandMetadata): void {
   }
   if (!command.interactions.dryRun.supported) {
     requireDescription(command.interactions.dryRun.reason, "command.interactions.dryRun.reason");
+  }
+}
+
+function validateSupplyChainMetadata(command: CommandMetadata): void {
+  const supplyChain = command.supplyChain;
+  if (!supplyChain?.sensitive) {
+    return;
+  }
+  requireDescription(supplyChain.reason ?? "", "command.supplyChain.reason");
+  if (!supplyChain.kinds || supplyChain.kinds.length === 0) {
+    throw new TypeError(`command.supplyChain.kinds must include at least one kind when command.supplyChain.sensitive is true.`);
   }
 }
 

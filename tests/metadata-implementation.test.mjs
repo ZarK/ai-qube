@@ -5,13 +5,13 @@ import { fixtureMetadata } from "../dist/fixtures/metadata.js";
 describe("metadata implementation", () => {
   it("correctly defines the fixture metadata", () => {
     assert.equal(fixtureMetadata.topics.length, 1);
-    assert.equal(fixtureMetadata.commands.length, 4);
+    assert.equal(fixtureMetadata.commands.length, 5);
 
     const [cacheTopic] = fixtureMetadata.topics;
     assert.equal(cacheTopic.name, "cache");
     assert.equal(cacheTopic.kind, "topic");
 
-    assert.deepEqual(fixtureMetadata.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate"]);
+    assert.deepEqual(fixtureMetadata.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache validate"]);
     for (const command of fixtureMetadata.commands) {
       assert.equal(command.kind, "command");
     }
@@ -43,8 +43,12 @@ describe("metadata implementation", () => {
 
   it("validates mutation metadata and dry-run support", () => {
     const cacheClear = fixtureMetadata.commands.find((command) => command.name === "cache clear");
+    const cacheInstall = fixtureMetadata.commands.find((command) => command.name === "cache install");
     assert.ok(cacheClear);
     assert.deepEqual(cacheClear.mutation?.categories, ["local-files"]);
     assert.equal(cacheClear.interactions?.dryRun?.supported, true);
+    assert.deepEqual(cacheInstall?.mutation?.categories, ["dependency", "local-files"]);
+    assert.equal(cacheInstall?.supplyChain?.sensitive, true);
+    assert.deepEqual(cacheInstall?.supplyChain?.kinds, ["dependency", "package-manager"]);
   });
 });

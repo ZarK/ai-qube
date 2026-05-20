@@ -9,6 +9,7 @@ import type {
   MetadataExtensions,
   MutationCategory,
   OutputFormat,
+  SupplyChainSensitiveKind,
   TopicMetadata
 } from "../metadata/index.js";
 import type { CommandRegistry } from "../registry/index.js";
@@ -52,6 +53,7 @@ export interface CommandSchema {
   readonly interactions: InteractionSchema;
   readonly dryRun: DryRunSchema;
   readonly mutation: MutationSchema;
+  readonly supplyChain: SupplyChainSchema;
   readonly externalServices: readonly ExternalServiceSchema[];
   readonly errors: readonly ErrorKindSchema[];
   readonly exitCodes: readonly ExitCodeSchema[];
@@ -107,6 +109,13 @@ export interface DryRunSchema {
 export interface MutationSchema {
   readonly mutates: boolean;
   readonly categories: readonly string[];
+  readonly extensions?: MetadataExtensions;
+}
+
+export interface SupplyChainSchema {
+  readonly sensitive: boolean;
+  readonly kinds: readonly string[];
+  readonly reason?: string;
   readonly extensions?: MetadataExtensions;
 }
 
@@ -175,6 +184,7 @@ function renderCommand(command: CommandMetadata): CommandSchema {
       interactions: renderInteractions(command),
       dryRun: renderDryRun(command),
       mutation: renderMutation(command),
+      supplyChain: renderSupplyChain(command),
       externalServices: [...(command.externalServices ?? [])].sort(compareByName).map(renderExternalService),
       errors: [...(command.errors ?? [])].sort(compareErrors).map(renderError),
       exitCodes: [...(command.exitCodes ?? [])].sort(compareExitCodes).map(renderExitCode)
@@ -262,6 +272,15 @@ function renderMutation(command: CommandMetadata): MutationSchema {
   );
 }
 
+function renderSupplyChain(command: CommandMetadata): SupplyChainSchema {
+  const schema = {
+    sensitive: command.supplyChain?.sensitive === true,
+    kinds: sortText(command.supplyChain?.kinds ?? [])
+  };
+  const withReason = command.supplyChain?.reason ? { ...schema, reason: command.supplyChain.reason } : schema;
+  return withExtensions(withReason, command.supplyChain?.extensions);
+}
+
 function renderExternalService(service: ExternalServiceMetadata): ExternalServiceSchema {
   return withExtensions(
     {
@@ -338,7 +357,7 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function sortText(values: readonly (string | OutputFormat | MutationCategory)[]): readonly string[] {
+function sortText(values: readonly (string | OutputFormat | MutationCategory | SupplyChainSensitiveKind)[]): readonly string[] {
   return values.map(String).sort(compareText);
 }
 

@@ -90,6 +90,12 @@ describe("schema renderer", () => {
           examples: [{ description: "Deploy.", command: "fixture deploy release" }],
           interactions: { dryRun: { supported: false, reason: "Deployment requires external approval." }, json: true },
           mutation: { categories: ["release", "external-service"], extensions: { owner: "consumer" } },
+          supplyChain: {
+            sensitive: true,
+            kinds: ["release", "ci-workflow"],
+            reason: "Release automation changes require supply-chain review.",
+            extensions: { policy: "consumer-owned" }
+          },
           extensions: { consumerSection: { enabled: true } }
         }
       ]
@@ -106,10 +112,34 @@ describe("schema renderer", () => {
     assert.equal(schema.commands[0]?.mutation.mutates, true);
     assert.deepEqual(schema.commands[0]?.mutation.categories, ["external-service", "release"]);
     assert.deepEqual(schema.commands[0]?.mutation.extensions, { owner: "consumer" });
+    assert.deepEqual(schema.commands[0]?.supplyChain, {
+      sensitive: true,
+      kinds: ["ci-workflow", "release"],
+      reason: "Release automation changes require supply-chain review.",
+      extensions: { policy: "consumer-owned" }
+    });
     assert.deepEqual(schema.commands[0]?.dryRun, {
       supported: false,
       reason: "Deployment requires external approval."
     });
     assert.deepEqual(schema.commands[0]?.extensions, { consumerSection: { enabled: true } });
+  });
+
+  it("marks non-sensitive commands with default supply-chain metadata", async () => {
+    const { createCommandRegistry, renderSchema } = await import("../dist/index.js");
+    const registry = createCommandRegistry({
+      commands: [
+        {
+          kind: "command",
+          name: "cache inspect",
+          description: "Inspect cache entries without changing local state.",
+          examples: [{ description: "Inspect.", command: "fixture cache inspect" }]
+        }
+      ]
+    });
+
+    const schema = renderSchema(registry, { packageName: "pkg", packageVersion: "1.2.3", bin: "fixture" });
+
+    assert.deepEqual(schema.commands[0]?.supplyChain, { sensitive: false, kinds: [] });
   });
 });

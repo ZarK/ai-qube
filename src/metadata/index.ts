@@ -10,6 +10,7 @@ export {
 
 export type {
   ArgumentMetadata,
+  BuiltInSupplyChainSensitiveKind,
   BuiltInMutationCategory,
   CommandMetadata,
   DefinitionMetadata,
@@ -29,5 +30,7 @@ export type {
   MutationMetadata,
   OutputFormat,
   OutputSupport,
+  SupplyChainMetadata,
+  SupplyChainSensitiveKind,
   TopicMetadata
 } from "./types.js";

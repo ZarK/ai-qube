@@ -61,7 +61,8 @@ describe("fixture CLI runtime", () => {
     assert.match(result.stdout, /cache\nCommands for inspecting and maintaining a local cache/);
     assert.match(result.stdout, /fixture cache <command> \[flags\]/);
     assert.match(result.stdout, /cache inspect\s+Inspect cache entries/);
-    assert.match(result.stdout, /cache clear: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=local-files/);
+    assert.match(result.stdout, /cache clear: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=local-files, supply-chain=standard/);
+    assert.match(result.stdout, /cache install: args=0, flags=2, examples=1, json=supported, dry-run=supported, mutation=dependency, local-files, supply-chain=sensitive \(dependency, package-manager\)/);
     assert.match(result.stdout, /cache inspect: args=1, flags=2, examples=1, json=supported, dry-run=not declared, mutation=none/);
     assert.doesNotMatch(result.stdout, /EXECUTED/);
   });
@@ -85,15 +86,28 @@ describe("fixture CLI runtime", () => {
     assert.equal(schema.bin, "fixture");
     assert.deepEqual(schema.extensions, { fixture: true, purpose: "schema-integration" });
     assert.deepEqual(schema.topics.map((topic) => topic.name), ["cache"]);
-    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache validate", "schema"]);
+    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache validate", "schema"]);
     const clearCommand = schema.commands.find((command) => command.name === "cache clear");
     const inspectCommand = schema.commands.find((command) => command.name === "cache inspect");
+    const installCommand = schema.commands.find((command) => command.name === "cache install");
     assert.deepEqual(clearCommand?.mutation, {
       mutates: true,
       categories: ["local-files"],
       extensions: { fixtureMutation: "cache-cleanup" }
     });
     assert.deepEqual(clearCommand?.dryRun, { supported: true });
+    assert.deepEqual(clearCommand?.supplyChain, { sensitive: false, kinds: [] });
+    assert.deepEqual(installCommand?.mutation, {
+      mutates: true,
+      categories: ["dependency", "local-files"],
+      extensions: { fixtureMutation: "dependency-cache" }
+    });
+    assert.deepEqual(installCommand?.supplyChain, {
+      sensitive: true,
+      kinds: ["dependency", "package-manager"],
+      reason: "Dependency cache preparation depends on package-manager metadata supplied by the consuming package.",
+      extensions: { fixtureSupplyChain: "dependency-cache" }
+    });
     assert.equal(inspectCommand?.mutation.mutates, false);
     assert.deepEqual(inspectCommand?.output, { formats: ["human", "json"], defaultFormat: "human" });
     assert.deepEqual(inspectCommand?.interactions, {
@@ -150,6 +164,7 @@ describe("fixture CLI runtime", () => {
     const inspect = runFixture("cache", "inspect", "alpha", "--json");
     const outputJson = runFixture("cache", "inspect", "alpha", "--output", "json");
     const clear = runFixture("cc", "--dry-run");
+    const install = runFixture("cache", "install", "--dry-run", "--json");
 
     assert.equal(inspect.status, 0);
     assert.equal(inspect.stderr, "");
@@ -158,8 +173,27 @@ describe("fixture CLI runtime", () => {
     assert.equal(outputJson.stderr, "");
     assert.deepEqual(JSON.parse(outputJson.stdout), { ok: true, command: "cache inspect", key: "alpha" });
     assert.equal(clear.status, 0);
-    assert.match(clear.stdout, /EXECUTED cache clear/);
-    assert.match(clear.stdout, /Would remove fixture cache entries/);
+    assert.match(clear.stdout, /Dry run plan/);
+    assert.match(clear.stdout, /Rerun without --dry-run to apply: fixture cache clear --yes/);
+    assert.doesNotMatch(clear.stdout, /Removed fixture cache entries/);
+    assert.equal(install.status, 0);
+    assert.equal(install.stderr, "");
+    assert.deepEqual(JSON.parse(install.stdout).dryRunPlan.mutationCategories, ["dependency", "local-files"]);
+  });
+
+  it("renders supply-chain-sensitive help and block output without external execution", () => {
+    const help = runFixture("cache", "install", "--help");
+    const blocked = runFixture("cache", "install");
+
+    assert.equal(help.status, 0);
+    assert.equal(help.stderr, "");
+    assert.match(help.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
+    assert.doesNotMatch(help.stdout, /No external commands executed/);
+    assert.equal(blocked.status, 5);
+    assert.equal(blocked.stderr, "");
+    assert.match(blocked.stdout, /Supply-chain block/);
+    assert.match(blocked.stdout, /No external commands executed/);
+    assert.doesNotMatch(blocked.stdout, /pnpm|npm|yarn|bun/);
   });
 
   it("renders known errors as stable human output", () => {
