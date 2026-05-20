@@ -11,7 +11,7 @@ This milestone proves the core model with a small fixture CLI before any real co
 | ID | Requirement | Source |
 | --- | --- | --- |
 | M2-001 | Implement command-definition helpers for commands, topics, flags, arguments, and examples. | FR-01-005 |
-| M2-002 | Model command names, topics, arguments, flags, examples, supported output formats, mutation categories, external services, stable error kinds, exit codes, dry-run support, JSON support, help, no-color, non-interactive mode, and TTY prompts. | FR-02-001, FR-02-003 |
+| M2-002 | Model command names, topics, arguments, flags, examples, supported output formats, mutation categories, external services, stable error kinds, exit codes, dry-run support, JSON trigger support, help, no-color, non-interactive mode, and TTY prompts. | FR-02-001, FR-02-003 |
 | M2-003 | Support command names with space-separated topics such as `cache clear`, while distinguishing executable commands from non-executable topics. | FR-02-002 |
 | M2-004 | Support consumer-defined extension metadata without requiring toolkit knowledge of product-specific schemas. | FR-02-004, FR-04-003 |
 | M2-005 | Implement registry helpers to create, validate, find, and list commands and topics. | FR-01-006 |
@@ -19,7 +19,7 @@ This milestone proves the core model with a small fixture CLI before any real co
 | M2-007 | Derive oclif command statics and parser behavior from metadata where practical. | FR-02-006, FR-03-002, FR-03-004 |
 | M2-008 | Implement runtime helpers for creating command classes, topic commands, schema command registration hooks, and CLI runners. | FR-01-007 |
 | M2-009 | Normalize standard help forms: `<bin> --help`, `<bin> help`, `<bin> help <command>`, `<bin> <command> --help`, and `<bin> <command> help`. | FR-03-006, FR-03-007 |
-| M2-010 | Render root, topic, and command help from metadata with usage, arguments, flags, examples, mutation behavior, dry-run support, and JSON support. | FR-03-008, FR-03-009 |
+| M2-010 | Render root, topic, and command help from metadata with usage, arguments, flags, examples, mutation behavior, dry-run support, and JSON trigger support. | FR-03-008, FR-03-009 |
 | M2-011 | Implement safe command and flag suggestions for high-confidence misses without executing suggestions automatically. | FR-03-010, FR-03-011 |
 | M2-012 | Add a product-neutral fixture CLI that exercises topics, read-only commands, mutating dry-run commands, aliases, unknown command handling, and help forms. | FR-01-009, FR-07-002 |
 

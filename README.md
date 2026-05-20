@@ -23,6 +23,11 @@ pnpm add ai-qube-cli@0.1.0 --save-exact --ignore-scripts
 
 Consuming packages own their command behavior, validation rules, product logic, state management, service integrations, policy decisions, and side effects. This package provides reusable infrastructure only; it does not mutate user projects, configure shells, install hooks, contact external services, or run background processes during normal installation.
 
+## Adoption
+
+- [Adoption guide](docs/adoption-guide.md): add command metadata, registry-backed runtime wiring, schema output, JSON trigger metadata, human/JSON output, and CLI contract tests.
+- [Compatibility checklist](docs/compatibility-checklist.md): migrate existing commands command-by-command while preserving help, JSON, schema, exit-code, dry-run, and ownership boundaries.
+
 ## Verification
 
 ```sh
