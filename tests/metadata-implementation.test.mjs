@@ -11,11 +11,11 @@ describe("metadata implementation", () => {
     assert.equal(cacheTopic.name, "cache");
     assert.equal(cacheTopic.kind, "topic");
 
-    const [cacheInspect, cacheClear] = fixtureMetadata.commands;
-    assert.equal(cacheInspect.name, "cache inspect");
-    assert.equal(cacheInspect.kind, "command");
+    const [cacheClear, cacheInspect] = fixtureMetadata.commands;
     assert.equal(cacheClear.name, "cache clear");
     assert.equal(cacheClear.kind, "command");
+    assert.equal(cacheInspect.name, "cache inspect");
+    assert.equal(cacheInspect.kind, "command");
   });
 
   it("preserves extension metadata", () => {
@@ -25,7 +25,8 @@ describe("metadata implementation", () => {
   });
 
   it("validates command structure", () => {
-    const [cacheInspect] = fixtureMetadata.commands;
+    const cacheInspect = fixtureMetadata.commands.find((command) => command.name === "cache inspect");
+    assert.ok(cacheInspect);
     assert.ok(cacheInspect.arguments.length > 0);
     assert.ok(cacheInspect.flags.length > 0);
     assert.ok(cacheInspect.examples.length > 0);
@@ -33,7 +34,8 @@ describe("metadata implementation", () => {
   });
 
   it("validates mutation metadata and dry-run support", () => {
-    const [, cacheClear] = fixtureMetadata.commands;
+    const cacheClear = fixtureMetadata.commands.find((command) => command.name === "cache clear");
+    assert.ok(cacheClear);
     assert.deepEqual(cacheClear.mutation?.categories, ["local-files"]);
     assert.equal(cacheClear.interactions?.dryRun?.supported, true);
   });

@@ -61,8 +61,11 @@ export function defineCommand<const Command extends CommandMetadata>(command: Co
   return Object.freeze(command);
 }
 
-export function defineMetadata<const Metadata extends DefinitionMetadata>(metadata: Metadata): Readonly<Metadata> {
-  return (metadata.kind === "command" ? defineCommand(metadata) : defineTopic(metadata)) as Readonly<Metadata>;
+export function defineMetadata(metadata: CommandMetadata): Readonly<CommandMetadata>;
+export function defineMetadata(metadata: TopicMetadata): Readonly<TopicMetadata>;
+export function defineMetadata(metadata: DefinitionMetadata): Readonly<DefinitionMetadata>;
+export function defineMetadata(metadata: DefinitionMetadata): Readonly<DefinitionMetadata> {
+  return metadata.kind === "command" ? defineCommand(metadata) : defineTopic(metadata);
 }
 
 export function defineExtensions<const Extensions extends MetadataExtensions>(extensions: Extensions): Readonly<Extensions> {

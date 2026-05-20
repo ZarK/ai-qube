@@ -1,4 +1,5 @@
 import { defineArgument, defineCommand, defineExample, defineExtensions, defineFlag, defineTopic } from "../metadata/index.js";
+import { createCommandRegistry } from "../registry/index.js";
 
 const fixtureExtensions = defineExtensions({
   fixture: true,
@@ -129,7 +130,7 @@ export const cacheClearCommand = defineCommand({
   extensions: fixtureExtensions
 });
 
-export const fixtureMetadata = Object.freeze({
+export const fixtureMetadata = createCommandRegistry({
   topics: [cacheTopic],
   commands: [cacheInspectCommand, cacheClearCommand]
 });

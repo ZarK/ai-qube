@@ -41,13 +41,21 @@ describe("package metadata", () => {
     assert.equal(Object.hasOwn(packageJson.scripts ?? {}, "postinstall"), false);
   });
 
-  it("exports only the implemented root surface", async () => {
+  it("exports only implemented public surfaces", async () => {
     const packageJson = await readPackageJson();
 
     assert.deepEqual(packageJson.exports, {
       ".": {
         types: "./dist/index.d.ts",
         import: "./dist/index.js"
+      },
+      "./metadata": {
+        types: "./dist/metadata/index.d.ts",
+        import: "./dist/metadata/index.js"
+      },
+      "./registry": {
+        types: "./dist/registry/index.d.ts",
+        import: "./dist/registry/index.js"
       }
     });
     assert.deepEqual(packageJson.files, ["dist"]);
