@@ -1,4 +1,5 @@
 import type { ExitCodeCategory } from "../metadata/index.js";
+import { redactText } from "../redaction/index.js";
 
 export interface CliErrorDetails {
   readonly command?: string;
@@ -24,15 +25,15 @@ export class CliError extends Error implements CliErrorShape {
   readonly exitCode: number;
 
   constructor(details: CliErrorDetails) {
-    super(`${details.operation}: ${details.likelyCause}`);
+    super(`${redactText(details.operation)}: ${redactText(details.likelyCause)}`);
     this.name = "CliError";
     if (details.command !== undefined) {
       this.command = details.command;
     }
     this.kind = details.kind;
-    this.operation = details.operation;
-    this.likelyCause = details.likelyCause;
-    this.suggestedNextAction = details.suggestedNextAction;
+    this.operation = redactText(details.operation);
+    this.likelyCause = redactText(details.likelyCause);
+    this.suggestedNextAction = redactText(details.suggestedNextAction);
     this.category = details.category;
     this.exitCode = details.exitCode ?? exitCodeForCategory(details.category);
   }
@@ -68,9 +69,9 @@ export function exitCodeForCategory(category: ExitCodeCategory): number {
 export function renderCliErrorText(error: CliErrorShape): string {
   return [
     `Error: ${error.kind}`,
-    `Operation: ${error.operation}`,
-    `Likely cause: ${error.likelyCause}`,
-    `Suggested next action: ${error.suggestedNextAction}`,
+    `Operation: ${redactText(error.operation)}`,
+    `Likely cause: ${redactText(error.likelyCause)}`,
+    `Suggested next action: ${redactText(error.suggestedNextAction)}`,
     `Exit code category: ${error.category}`,
     ""
   ].join("\n");

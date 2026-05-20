@@ -1,4 +1,5 @@
 import { type CliErrorShape } from "../errors/index.js";
+import { redactStructuredValue, redactText, redactionPlaceholder } from "../redaction/index.js";
 
 export type JsonFields = Readonly<Record<string, unknown>>;
 
@@ -42,9 +43,9 @@ export function createJsonErrorEnvelope(error: CliErrorShape): JsonErrorEnvelope
     command: error.command ?? "",
     error: Object.freeze({
       kind: error.kind,
-      operation: error.operation,
-      likelyCause: error.likelyCause,
-      suggestedNextAction: error.suggestedNextAction,
+      operation: redactText(error.operation),
+      likelyCause: redactText(error.likelyCause),
+      suggestedNextAction: redactText(error.suggestedNextAction),
       category: error.category,
       exitCode: error.exitCode
     })
@@ -93,20 +94,27 @@ function stableFields(fields: JsonFields): JsonFields {
   for (const key of Object.keys(fields).sort(compareText)) {
     const value = fields[key];
     if (value !== undefined) {
-      result[key] = stableValue(value);
+      result[key] = stableValue(value, key);
     }
   }
   return result;
 }
 
-function stableValue(value: unknown): unknown {
+function stableValue(value: unknown, key?: string): unknown {
+  if (typeof value === "string") {
+    return key && isSensitiveKey(key) && value.length > 0 ? redactionPlaceholder : redactText(value);
+  }
   if (Array.isArray(value)) {
-    return value.map(stableValue);
+    return value.map((item) => stableValue(item));
   }
   if (isRecord(value)) {
-    return stableFields(value);
+    return stableFields(redactStructuredValue(value));
   }
   return value;
+}
+
+function isSensitiveKey(key: string): boolean {
+  return /(?:api[_-]?key|access[_-]?token|refresh[_-]?token|secret|password|credential|authorization|token)$/i.test(key.replace(/[^a-z0-9_-]/gi, ""));
 }
 
 function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {

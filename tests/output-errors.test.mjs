@@ -15,6 +15,20 @@ describe("output and error helpers", () => {
     assert.throws(() => createJsonSuccessEnvelope("cache inspect", { ok: true }), /reserved field "ok"/);
   });
 
+  it("redacts token-like values in JSON success envelopes", async () => {
+    const { renderJsonSuccess } = await import("../dist/index.js");
+
+    assert.deepEqual(JSON.parse(renderJsonSuccess("cache inspect", {
+      authorization: "Bearer abcdefghijklmnopqrstuvwxyz123456",
+      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", safe: "alpha" }
+    })), {
+      ok: true,
+      command: "cache inspect",
+      authorization: "[REDACTED]",
+      nested: { apiKey: "[REDACTED]", safe: "alpha" }
+    });
+  });
+
   it("preserves non-plain objects for normal JSON serialization", async () => {
     const { renderJsonSuccess } = await import("../dist/index.js");
 
@@ -64,6 +78,25 @@ describe("output and error helpers", () => {
       }
     });
     assert.match(renderCliErrorText(error), /Suggested next action: Create the cache configuration\./);
+  });
+
+  it("redacts token-like values in human and JSON errors", async () => {
+    const { createCliError, renderCliErrorText, renderJsonError } = await import("../dist/index.js");
+    const secret = "ghp_1234567890abcdefghijklmnopqrstuvwxyz";
+    const error = createCliError({
+      command: "cache validate",
+      kind: "cache-config-invalid",
+      operation: `validate token ${secret}`,
+      likelyCause: `Authorization failed for Bearer abcdefghijklmnopqrstuvwxyz123456`,
+      suggestedNextAction: `Remove api_key=abcdefghijklmnopqrstuvwxyz123456 from config.`,
+      category: "validation"
+    });
+
+    assert.doesNotMatch(renderCliErrorText(error), new RegExp(secret));
+    const json = JSON.parse(renderJsonError(error));
+    assert.equal(json.error.operation, "validate token [REDACTED]");
+    assert.equal(json.error.likelyCause, "Authorization failed for Bearer [REDACTED]");
+    assert.equal(json.error.suggestedNextAction, "Remove api_key=[REDACTED] from config.");
   });
 
   it("wraps raw runtime output in JSON mode", async () => {

@@ -6,6 +6,9 @@ export * from "./schema/index.js";
 export * from "./errors/index.js";
 export * from "./output/index.js";
 export * from "./mutation/index.js";
+export * from "./terminal/index.js";
+export * from "./prompts/index.js";
+export * from "./redaction/index.js";
 
 export interface ToolkitBoundary {
   readonly packageKind: "cli-infrastructure";

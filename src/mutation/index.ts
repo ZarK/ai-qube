@@ -1,4 +1,5 @@
 import type { DryRunSupport, MetadataExtensions, MutationCategory, SupplyChainSensitiveKind } from "../metadata/index.js";
+import { redactStructuredValue, redactText } from "../redaction/index.js";
 
 export const builtInMutationCategories = Object.freeze(["local-files", "local-config", "external-service", "dependency", "release"] as const);
 
@@ -101,7 +102,7 @@ export function createSupplyChainBlock<const Block extends SupplyChainBlock>(blo
 }
 
 export function createDryRunPlanFields(plan: DryRunPlan): Readonly<Record<string, unknown>> {
-  return deepFreeze({
+  return deepFreeze(redactStructuredValue({
     dryRun: true,
     dryRunPlan: {
       command: plan.command,
@@ -111,11 +112,11 @@ export function createDryRunPlanFields(plan: DryRunPlan): Readonly<Record<string
       rerunCommand: plan.rerunCommand,
       extensions: plan.extensions
     }
-  });
+  }));
 }
 
 export function createSupplyChainBlockFields(block: SupplyChainBlock): Readonly<Record<string, unknown>> {
-  return deepFreeze({
+  return deepFreeze(redactStructuredValue({
     supplyChainBlock: {
       blocked: true,
       command: block.command,
@@ -129,15 +130,15 @@ export function createSupplyChainBlockFields(block: SupplyChainBlock): Readonly<
       suggestedNextAction: fallbackText(block.suggestedNextAction, defaultSupplyChainNextAction()),
       extensions: block.extensions
     }
-  });
+  }));
 }
 
 export function renderDryRunPlan(plan: DryRunPlan): string {
   const categories = sortedText(plan.mutationCategories ?? plan.steps.flatMap((step) => step.category ? [step.category] : []));
   return joinSections([
-    ["Dry run plan", `Command: ${plan.command}`, `Summary: ${plan.summary}`, `Mutation categories: ${categories.length === 0 ? "none" : categories.join(", ")}`].join("\n"),
-    joinLines(["Planned changes:", ...plan.steps.map((step) => `  - ${step.action}: ${step.target}${step.description ? ` — ${step.description}` : ""}${step.category ? ` (${step.category})` : ""}`)]),
-    `Next steps:\n  ${plan.rerunCommand ? `Rerun without --dry-run to apply: ${plan.rerunCommand}` : "Rerun without --dry-run to apply the planned changes."}`
+    ["Dry run plan", `Command: ${redactText(plan.command)}`, `Summary: ${redactText(plan.summary)}`, `Mutation categories: ${categories.length === 0 ? "none" : categories.join(", ")}`].join("\n"),
+    joinLines(["Planned changes:", ...plan.steps.map((step) => `  - ${redactText(step.action)}: ${redactText(step.target)}${step.description ? ` — ${redactText(step.description)}` : ""}${step.category ? ` (${step.category})` : ""}`)]),
+    `Next steps:\n  ${plan.rerunCommand ? `Rerun without --dry-run to apply: ${redactText(plan.rerunCommand)}` : "Rerun without --dry-run to apply the planned changes."}`
   ]);
 }
 
@@ -147,23 +148,23 @@ export function renderMutationWarning(warning: MutationWarning): string {
   const supplyChainSensitive = warning.supplyChainSensitive === undefined ? "not declared" : warning.supplyChainSensitive ? "yes" : "no";
   return joinLines([
     "Mutation warning",
-    `Command: ${warning.command}`,
+    `Command: ${redactText(warning.command)}`,
     `Categories: ${categories.length === 0 ? "none" : categories.join(", ")}`,
     `Dry run: ${dryRun}`,
     `Supply chain sensitive: ${supplyChainSensitive}`,
-    `Guidance: ${warning.message ?? "Review the planned side effects before continuing."}`
+    `Guidance: ${redactText(warning.message ?? "Review the planned side effects before continuing.")}`
   ]) + "\n";
 }
 
 export function renderSupplyChainBlock(block: SupplyChainBlock): string {
   const sensitiveKinds = sortedText(block.sensitiveKinds ?? []);
   const checks = block.checks && block.checks.length > 0
-    ? block.checks.map((check) => `  - ${check.status}: ${check.name} — ${check.description}`)
+    ? block.checks.map((check) => `  - ${check.status}: ${redactText(check.name)} — ${redactText(check.description)}`)
     : ["  none"];
   return joinSections([
-    ["Supply-chain block", `Command: ${block.command}`, `Reason: ${block.reason}`, `Sensitive operations: ${sensitiveKinds.length === 0 ? "not specified" : sensitiveKinds.join(", ")}`].join("\n"),
+    ["Supply-chain block", `Command: ${redactText(block.command)}`, `Reason: ${redactText(block.reason)}`, `Sensitive operations: ${sensitiveKinds.length === 0 ? "not specified" : sensitiveKinds.join(", ")}`].join("\n"),
     joinLines(["Checks:", ...checks]),
-    `Suggested next action:\n  ${fallbackText(block.suggestedNextAction, defaultSupplyChainNextAction())}`
+    `Suggested next action:\n  ${redactText(fallbackText(block.suggestedNextAction, defaultSupplyChainNextAction()))}`
   ]);
 }
 

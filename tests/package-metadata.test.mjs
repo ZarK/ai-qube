@@ -80,6 +80,18 @@ describe("package metadata", () => {
       "./mutation": {
         types: "./dist/mutation/index.d.ts",
         import: "./dist/mutation/index.js"
+      },
+      "./terminal": {
+        types: "./dist/terminal/index.d.ts",
+        import: "./dist/terminal/index.js"
+      },
+      "./prompts": {
+        types: "./dist/prompts/index.d.ts",
+        import: "./dist/prompts/index.js"
+      },
+      "./redaction": {
+        types: "./dist/redaction/index.d.ts",
+        import: "./dist/redaction/index.js"
       }
     });
     assert.equal(Object.hasOwn(packageJson, "bin"), false);
