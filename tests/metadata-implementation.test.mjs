@@ -5,13 +5,13 @@ import { fixtureMetadata } from "../dist/fixtures/metadata.js";
 describe("metadata implementation", () => {
   it("correctly defines the fixture metadata", () => {
     assert.equal(fixtureMetadata.topics.length, 1);
-    assert.equal(fixtureMetadata.commands.length, 5);
+    assert.equal(fixtureMetadata.commands.length, 6);
 
     const [cacheTopic] = fixtureMetadata.topics;
     assert.equal(cacheTopic.name, "cache");
     assert.equal(cacheTopic.kind, "topic");
 
-    assert.deepEqual(fixtureMetadata.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache validate"]);
+    assert.deepEqual(fixtureMetadata.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache prompt", "cache validate"]);
     for (const command of fixtureMetadata.commands) {
       assert.equal(command.kind, "command");
     }

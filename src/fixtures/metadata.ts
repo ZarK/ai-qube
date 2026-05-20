@@ -261,6 +261,75 @@ export const cacheValidateCommand = defineCommand({
   extensions: fixtureExtensions
 });
 
+export const cachePromptCommand = defineCommand({
+  kind: "command",
+  name: "cache prompt",
+  description: "Resolve a cache prompt through flags, defaults, or an interactive TTY.",
+  flags: [
+    defineFlag({
+      name: "value",
+      description: "Prompt value supplied by flags or config.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "defaults",
+      description: "Use deterministic defaults without prompting.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "yes",
+      description: "Accept the deterministic prompt default.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Resolve a prompt from flags.",
+      command: "fixture cache prompt --value alpha"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: false,
+    ttyPrompt: true
+  },
+  errors: [
+    {
+      kind: "prompt-blocked",
+      description: "The prompt was blocked by non-interactive execution.",
+      exitCode: 2
+    },
+    {
+      kind: "prompt-cancelled",
+      description: "The prompt was cancelled before a value was supplied.",
+      exitCode: 2
+    }
+  ],
+  exitCodes: [
+    {
+      code: 0,
+      category: "success",
+      description: "The command completed successfully."
+    },
+    {
+      code: 2,
+      category: "usage",
+      description: "The prompt could not run in the current execution mode."
+    }
+  ],
+  extensions: fixtureExtensions
+});
+
 export const cacheExplodeCommand = defineCommand({
   kind: "command",
   name: "cache explode",
@@ -307,5 +376,5 @@ export const cacheExplodeCommand = defineCommand({
 
 export const fixtureMetadata = createCommandRegistry({
   topics: [cacheTopic],
-  commands: [cacheInspectCommand, cacheClearCommand, cacheInstallCommand, cacheValidateCommand, cacheExplodeCommand]
+  commands: [cacheInspectCommand, cacheClearCommand, cacheInstallCommand, cacheValidateCommand, cachePromptCommand, cacheExplodeCommand]
 });

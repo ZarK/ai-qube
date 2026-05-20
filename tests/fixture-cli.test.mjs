@@ -86,7 +86,7 @@ describe("fixture CLI runtime", () => {
     assert.equal(schema.bin, "fixture");
     assert.deepEqual(schema.extensions, { fixture: true, purpose: "schema-integration" });
     assert.deepEqual(schema.topics.map((topic) => topic.name), ["cache"]);
-    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache validate", "schema"]);
+    assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache prompt", "cache validate", "schema"]);
     const clearCommand = schema.commands.find((command) => command.name === "cache clear");
     const inspectCommand = schema.commands.find((command) => command.name === "cache inspect");
     const installCommand = schema.commands.find((command) => command.name === "cache install");
@@ -127,6 +127,33 @@ describe("fixture CLI runtime", () => {
     assert.deepEqual(inspectCommand?.extensions?.nested, { alpha: 1, beta: 2 });
     assert.doesNotMatch(result.stdout, /Usage:/);
     assert.doesNotMatch(result.stdout, /Commands:/);
+  });
+
+  it("resolves fixture prompts from equivalents and blocks interactive prompts in automation", () => {
+    const value = runFixture("cache", "prompt", "--value", "alpha", "--json");
+    const defaults = runFixture("cache", "prompt", "--defaults");
+    const blocked = runFixture("cache", "prompt", "--json");
+
+    assert.equal(value.status, 0);
+    assert.equal(value.stderr, "");
+    assert.deepEqual(JSON.parse(value.stdout), { ok: true, command: "cache prompt", promptValue: "alpha" });
+    assert.equal(defaults.status, 0);
+    assert.equal(defaults.stderr, "");
+    assert.equal(defaults.stdout, "Resolved prompt value: fixture-default\n");
+    assert.equal(blocked.status, 2);
+    assert.equal(blocked.stderr, "");
+    assert.deepEqual(JSON.parse(blocked.stdout), {
+      ok: false,
+      command: "cache prompt",
+      error: {
+        kind: "prompt-blocked",
+        operation: "prompt cache value",
+        likelyCause: "Prompts are disabled in JSON output mode.",
+        suggestedNextAction: "Provide the value with flags or config, or rerun in an interactive terminal.",
+        category: "usage",
+        exitCode: 2
+      }
+    });
   });
 
   it("keeps exact multi-token commands ahead of single-token aliases", async () => {

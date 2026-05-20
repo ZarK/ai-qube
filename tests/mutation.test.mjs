@@ -58,6 +58,11 @@ describe("mutation helpers", () => {
     assert.equal(createSupplyChainBlockFields(block).supplyChainBlock.suggestedNextAction, "Review the supply-chain risk and retry only after the consuming package policy allows it.");
     assert.equal(Object.isFrozen(createSupplyChainBlockFields(block).supplyChainBlock), true);
     assert.equal(Object.isFrozen(createSupplyChainBlockFields(block).supplyChainBlock.checks), true);
+    assert.match(renderMutationWarning({
+      command: "cache install",
+      categories: ["dependency"],
+      dryRun: { supported: false, reason: "Token ghp_1234567890abcdefghijklmnopqrstuvwxyz cannot be previewed." }
+    }), /Token \[REDACTED\] cannot be previewed/);
   });
 
   it("freezes nested mutation helper structures", async () => {

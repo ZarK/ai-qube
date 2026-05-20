@@ -1,5 +1,5 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 
 describe("output and error helpers", () => {
   it("creates stable JSON success envelopes with consumer fields", async () => {
@@ -13,6 +13,20 @@ describe("output and error helpers", () => {
     });
     assert.equal(renderJsonSuccess("cache inspect", { key: "alpha" }), '{"ok":true,"command":"cache inspect","key":"alpha"}\n');
     assert.throws(() => createJsonSuccessEnvelope("cache inspect", { ok: true }), /reserved field "ok"/);
+  });
+
+  it("redacts token-like values in JSON success envelopes", async () => {
+    const { renderJsonSuccess } = await import("../dist/index.js");
+
+    assert.deepEqual(JSON.parse(renderJsonSuccess("cache inspect", {
+      authorization: "Bearer abcdefghijklmnopqrstuvwxyz123456",
+      nested: { apiKey: "abcdefghijklmnopqrstuvwxyz123456", password: 123456789, privateKey: "fixture-key", safe: "alpha" }
+    })), {
+      ok: true,
+      command: "cache inspect",
+      authorization: "[REDACTED]",
+      nested: { apiKey: "[REDACTED]", password: "[REDACTED]", privateKey: "[REDACTED]", safe: "alpha" }
+    });
   });
 
   it("preserves non-plain objects for normal JSON serialization", async () => {
@@ -64,6 +78,25 @@ describe("output and error helpers", () => {
       }
     });
     assert.match(renderCliErrorText(error), /Suggested next action: Create the cache configuration\./);
+  });
+
+  it("redacts token-like values in human and JSON errors", async () => {
+    const { createCliError, renderCliErrorText, renderJsonError } = await import("../dist/index.js");
+    const secret = "ghp_1234567890abcdefghijklmnopqrstuvwxyz";
+    const error = createCliError({
+      command: "cache validate",
+      kind: "cache-config-invalid",
+      operation: `validate token ${secret}`,
+      likelyCause: `Authorization failed for Bearer abcdefghijklmnopqrstuvwxyz123456`,
+      suggestedNextAction: `Remove api_key=abcdefghijklmnopqrstuvwxyz123456 from config.`,
+      category: "validation"
+    });
+
+    assert.doesNotMatch(renderCliErrorText(error), new RegExp(secret));
+    const json = JSON.parse(renderJsonError(error));
+    assert.equal(json.error.operation, "validate token [REDACTED]");
+    assert.equal(json.error.likelyCause, "Authorization failed for Bearer [REDACTED]");
+    assert.equal(json.error.suggestedNextAction, "Remove api_key=[REDACTED] from config.");
   });
 
   it("wraps raw runtime output in JSON mode", async () => {

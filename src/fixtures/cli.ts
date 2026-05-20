@@ -5,8 +5,9 @@ import { pathToFileURL } from "node:url";
 import { createCliError } from "../errors/index.js";
 import { defineExtensions } from "../metadata/index.js";
 import { createDryRunPlan, createDryRunPlanFields, createSupplyChainBlock, renderDryRunPlan, renderMutationWarning, renderSupplyChainBlock } from "../mutation/index.js";
+import { resolvePromptValue } from "../prompts/index.js";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "../runtime/index.js";
-import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheInstallCommand, cacheTopic, cacheValidateCommand, fixtureMetadata } from "./metadata.js";
+import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheInstallCommand, cachePromptCommand, cacheTopic, cacheValidateCommand, fixtureMetadata } from "./metadata.js";
 
 let currentRegistry = fixtureMetadata;
 const packageMetadata = readPackageMetadata();
@@ -114,6 +115,24 @@ export const fixtureCli = createCli({
         suggestedNextAction: "Create the cache directory or update the cache configuration path.",
         category: "validation"
       });
+    }),
+    createCommand(cachePromptCommand, async ({ flags }) => {
+      const valueFlag = typeof flags.value === "string" ? flags.value : undefined;
+      const useDefault = flags.defaults === true || flags.yes === true;
+      const promptValue = await resolvePromptValue({
+        command: cachePromptCommand,
+        promptName: "cache value",
+        value: valueFlag,
+        defaultValue: useDefault ? "fixture-default" : undefined,
+        defaults: flags.defaults === true,
+        yes: flags.yes === true,
+        jsonMode: flags.json === true,
+        prompt: () => "interactive-value"
+      });
+      return {
+        json: { promptValue },
+        human: `Resolved prompt value: ${promptValue}\n`
+      };
     }),
     createCommand(cacheExplodeCommand, () => {
       throw new Error("Fixture exploded unexpectedly.");
