@@ -1,6 +1,6 @@
 <!-- BEGIN EXECUTOR MANAGED SECTION -->
 <!-- executor-managed-version: 1 -->
-<!-- executor-managed-checksum: 743b421548ab7ccc9b16cba367faef22602b8b98ca2f54cea5aa5883b1293445 -->
+<!-- executor-managed-checksum: c5d289d408c94e45043621065e5ccaee9f62098b2d29f5bd3d6818e4ed1a07c9 -->
 ## Executor Issue Workflow
 
 This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through `aie` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
@@ -49,7 +49,7 @@ Stage checklist:
 
 Todo requirements:
 
-- For Codex, use `update_plan` or the host plan/todo tool directly when available. If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.
+- For OpenCode, use `todowrite` and `todoread` directly from the main agent for local issue todos. Never ask a Task/subagent to create, read, or complete todos.
 - Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record. Update both when both exist.
 - At issue start, create local todos for issue read, repository context, implementation, configured manual UI audit, configured review-agent QA, tests and quality gates, `branch-check`, `ship`, and `next`.
 - Protected workflow todo ids are `branch-check`, `ship`, `next`. Do not rename or omit those protected items during issue execution.
@@ -61,7 +61,7 @@ Todo requirements:
 
 Host capability profile:
 
-- Codex: instructions target `AGENTS.md`, project command files are not installed by Executor for this host, todo tools `update_plan`, dialogue expectation: Use Codex plan/todo support directly in the active session and keep durable state in configured provider records. Hook support: Codex host hooks may exist in trusted host configuration; Executor init does not install them.
+- OpenCode: instructions target `AGENTS.md`, project commands are installed when configured (.opencode/commands/make-it-so.md, .opencode/commands/makeitso.md), todo tools `todowrite`, `todoread`, dialogue expectation: Operate autonomously in the main OpenCode session and use subagents only for bounded research or review work. Hook support: OpenCode can enforce repository behavior through host permissions or hooks when configured outside Executor init.
 
 Stop conditions:
 
