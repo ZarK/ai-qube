@@ -37,19 +37,41 @@ describe("mutation helpers", () => {
     const warning = renderMutationWarning({
       command: "cache install",
       categories: ["local-files", "dependency"],
-      dryRun: { supported: true },
-      supplyChainSensitive: true
+      dryRun: { supported: true }
     });
     const block = createSupplyChainBlock({
       command: "cache install",
       reason: "Package-manager metadata needs consumer approval.",
       sensitiveKinds: ["package-manager", "dependency"],
       checks: [{ name: "age-gate", status: "blocked", description: "Package version is too new." }],
-      suggestedNextAction: "Wait for the age gate or approve according to consumer policy."
+      suggestedNextAction: " "
     });
 
-    assert.match(warning, /Supply chain sensitive: yes/);
+    assert.match(warning, /Supply chain sensitive: not declared/);
     assert.match(renderSupplyChainBlock(block), /Supply-chain block/);
+    assert.match(renderSupplyChainBlock(block), /Review the supply-chain risk and retry only after the consuming package policy allows it/);
     assert.deepEqual(createSupplyChainBlockFields(block).supplyChainBlock.sensitiveKinds, ["dependency", "package-manager"]);
+    assert.equal(createSupplyChainBlockFields(block).supplyChainBlock.suggestedNextAction, "Review the supply-chain risk and retry only after the consuming package policy allows it.");
+  });
+
+  it("freezes nested mutation helper structures", async () => {
+    const { createDryRunPlan, createSupplyChainBlock, defineMutationMetadata, mutationCategories } = await import("../dist/index.js");
+    const metadata = defineMutationMetadata({ categories: mutationCategories("dependency") });
+    const plan = createDryRunPlan({
+      command: "cache install",
+      summary: "Prepare dependency cache.",
+      steps: [{ action: "review", target: "fixture-lockfile", category: "dependency" }]
+    });
+    const block = createSupplyChainBlock({
+      command: "cache install",
+      reason: "Needs review.",
+      checks: [{ name: "age-gate", status: "blocked", description: "Too new." }]
+    });
+
+    assert.equal(Object.isFrozen(metadata.categories), true);
+    assert.equal(Object.isFrozen(plan.steps), true);
+    assert.equal(Object.isFrozen(plan.steps[0]), true);
+    assert.equal(Object.isFrozen(block.checks), true);
+    assert.equal(Object.isFrozen(block.checks?.[0]), true);
   });
 });

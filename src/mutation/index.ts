@@ -62,12 +62,12 @@ export interface SupplyChainBlock<Extensions extends MetadataExtensions = Metada
 
 export function defineMutationMetadata<const Metadata extends MutationMetadataInput>(metadata: Metadata): Readonly<Metadata> {
   requireNonEmptyList(metadata.categories, "mutation.categories");
-  return Object.freeze(metadata);
+  return deepFreeze(metadata);
 }
 
 export function mutationCategories<const Categories extends readonly MutationCategory[]>(...categories: Categories): Readonly<Categories> {
   requireNonEmptyList(categories, "mutation.categories");
-  return Object.freeze(categories);
+  return deepFreeze(categories);
 }
 
 export function dryRunSupported(): DryRunSupport {
@@ -87,7 +87,7 @@ export function createDryRunPlan<const Plan extends DryRunPlan>(plan: Plan): Rea
     requireText(step.action, `dryRunPlan.steps[${index}].action`);
     requireText(step.target, `dryRunPlan.steps[${index}].target`);
   }
-  return Object.freeze(plan);
+  return deepFreeze(plan);
 }
 
 export function createSupplyChainBlock<const Block extends SupplyChainBlock>(block: Block): Readonly<Block> {
@@ -97,7 +97,7 @@ export function createSupplyChainBlock<const Block extends SupplyChainBlock>(blo
     requireText(check.name, `supplyChainBlock.checks[${index}].name`);
     requireText(check.description, `supplyChainBlock.checks[${index}].description`);
   }
-  return Object.freeze(block);
+  return deepFreeze(block);
 }
 
 export function createDryRunPlanFields(plan: DryRunPlan): Readonly<Record<string, unknown>> {
@@ -126,7 +126,7 @@ export function createSupplyChainBlockFields(block: SupplyChainBlock): Readonly<
         status: check.status,
         description: check.description
       })),
-      suggestedNextAction: block.suggestedNextAction,
+      suggestedNextAction: fallbackText(block.suggestedNextAction, defaultSupplyChainNextAction()),
       extensions: block.extensions
     }
   });
@@ -144,12 +144,13 @@ export function renderDryRunPlan(plan: DryRunPlan): string {
 export function renderMutationWarning(warning: MutationWarning): string {
   const categories = sortedText(warning.categories);
   const dryRun = warning.dryRun ? (warning.dryRun.supported ? "supported" : `unsupported (${warning.dryRun.reason})`) : "not declared";
+  const supplyChainSensitive = warning.supplyChainSensitive === undefined ? "not declared" : warning.supplyChainSensitive ? "yes" : "no";
   return joinLines([
     "Mutation warning",
     `Command: ${warning.command}`,
     `Categories: ${categories.length === 0 ? "none" : categories.join(", ")}`,
     `Dry run: ${dryRun}`,
-    `Supply chain sensitive: ${warning.supplyChainSensitive === true ? "yes" : "no"}`,
+    `Supply chain sensitive: ${supplyChainSensitive}`,
     `Guidance: ${warning.message ?? "Review the planned side effects before continuing."}`
   ]) + "\n";
 }
@@ -162,7 +163,7 @@ export function renderSupplyChainBlock(block: SupplyChainBlock): string {
   return joinSections([
     ["Supply-chain block", `Command: ${block.command}`, `Reason: ${block.reason}`, `Sensitive operations: ${sensitiveKinds.length === 0 ? "not specified" : sensitiveKinds.join(", ")}`].join("\n"),
     joinLines(["Checks:", ...checks]),
-    `Suggested next action:\n  ${block.suggestedNextAction ?? "Review the supply-chain risk and retry only after the consuming package policy allows it."}`
+    `Suggested next action:\n  ${fallbackText(block.suggestedNextAction, defaultSupplyChainNextAction())}`
   ]);
 }
 
@@ -190,6 +191,24 @@ function requireText(value: string | undefined, field: string): void {
   if (typeof value !== "string" || value.trim().length === 0) {
     throw new TypeError(`${field} must not be empty.`);
   }
+}
+
+function fallbackText(value: string | undefined, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function defaultSupplyChainNextAction(): string {
+  return "Review the supply-chain risk and retry only after the consuming package policy allows it.";
+}
+
+function deepFreeze<T>(value: T): Readonly<T> {
+  if (typeof value !== "object" || value === null || Object.isFrozen(value)) {
+    return value as Readonly<T>;
+  }
+  for (const child of Object.values(value)) {
+    deepFreeze(child);
+  }
+  return Object.freeze(value);
 }
 
 function joinSections(sections: readonly string[]): string {

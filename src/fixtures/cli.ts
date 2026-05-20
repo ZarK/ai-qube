@@ -93,6 +93,17 @@ export const fixtureCli = createCli({
         ],
         suggestedNextAction: "Run --dry-run and apply the consuming package approval policy before retrying."
       });
+      if (flags.json === true) {
+        throw createCliError({
+          command: "cache install",
+          kind: "supply-chain-blocked",
+          operation: "prepare dependency cache",
+          likelyCause: "Dependency cache preparation requires consuming-package supply-chain approval.",
+          suggestedNextAction: "Run --dry-run and apply the consuming package approval policy before retrying.",
+          category: "safety",
+          exitCode: 5
+        });
+      }
       return { exitCode: 5, human: `${renderSupplyChainBlock(block)}No external commands executed.\n` };
     }),
     createCommand(cacheValidateCommand, () => {

@@ -184,6 +184,7 @@ describe("fixture CLI runtime", () => {
   it("renders supply-chain-sensitive help and block output without external execution", () => {
     const help = runFixture("cache", "install", "--help");
     const blocked = runFixture("cache", "install");
+    const blockedJson = runFixture("cache", "install", "--json");
 
     assert.equal(help.status, 0);
     assert.equal(help.stderr, "");
@@ -194,6 +195,20 @@ describe("fixture CLI runtime", () => {
     assert.match(blocked.stdout, /Supply-chain block/);
     assert.match(blocked.stdout, /No external commands executed/);
     assert.doesNotMatch(blocked.stdout, /pnpm|npm|yarn|bun/);
+    assert.equal(blockedJson.status, 5);
+    assert.equal(blockedJson.stderr, "");
+    assert.deepEqual(JSON.parse(blockedJson.stdout), {
+      ok: false,
+      command: "cache install",
+      error: {
+        kind: "supply-chain-blocked",
+        operation: "prepare dependency cache",
+        likelyCause: "Dependency cache preparation requires consuming-package supply-chain approval.",
+        suggestedNextAction: "Run --dry-run and apply the consuming package approval policy before retrying.",
+        category: "safety",
+        exitCode: 5
+      }
+    });
   });
 
   it("renders known errors as stable human output", () => {
