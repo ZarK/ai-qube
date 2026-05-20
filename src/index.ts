@@ -1,3 +1,5 @@
+export * from "./metadata/index.js";
+
 export interface ToolkitBoundary {
   readonly packageKind: "cli-infrastructure";
   readonly consumesCommandBehavior: false;
