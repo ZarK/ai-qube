@@ -12,7 +12,7 @@ This milestone turns the registry/runtime foundation into a reusable surface for
 | --- | --- | --- |
 | M3-001 | Implement deterministic schema rendering for package name, version, binary name, topics, commands, arguments, flags, defaults, options, examples, mutation behavior, dry-run support, structured output support, error kinds, exit codes, and extension sections. | FR-04-001, FR-04-002, FR-04-003 |
 | M3-002 | Provide standard JSON success and error envelopes with command name, stable error kind, failed operation, likely cause, suggested next action, and exit-code category. | FR-04-004, FR-04-007, FR-04-008 |
-| M3-003 | Ensure JSON mode writes only valid JSON to stdout and sends warnings, progress, hints, prompts, and diagnostics to stderr. | FR-04-005, NFR-01-006 |
+| M3-003 | Ensure JSON-triggered output writes only valid JSON to stdout and sends warnings, progress, hints, prompts, and diagnostics to stderr. | FR-04-005, NFR-01-006 |
 | M3-004 | Add output helpers for command-specific human renderers and command-specific JSON result shapes. | FR-04-006 |
 | M3-005 | Implement mutation metadata helpers for `local-files`, `local-config`, `external-service`, `dependency`, `release`, and consumer-defined categories. | FR-05-001 |
 | M3-006 | Implement dry-run plan and mutation warning renderers with consistent rerun guidance. | FR-05-002, FR-05-003, FR-05-004 |

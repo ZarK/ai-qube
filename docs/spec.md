@@ -36,7 +36,7 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 |----|-------------|--------|
 | FR-02-001 | Command metadata models command names, topics, arguments, flags, examples, supported output formats, mutation categories, external services, stable error kinds, and exit codes. | Required |
 | FR-02-002 | Command metadata supports space-separated command names such as `cache clear` while distinguishing executable commands from non-executable topics. | Required |
-| FR-02-003 | Command metadata records support for `--dry-run`, `--json`, `--output`, `--help`, `--no-color`, non-interactive mode, and TTY prompts. | Required |
+| FR-02-003 | Command metadata records support for `--dry-run`, JSON triggers such as `--json` and `--output json`, `--help`, `--no-color`, non-interactive mode, and TTY prompts. | Required |
 | FR-02-004 | Command metadata can include consumer-defined extension fields without the package knowing product-specific schemas. | Required |
 | FR-02-005 | Registry validation catches missing descriptions, duplicate command names, duplicate aliases, undocumented flags, missing examples, inconsistent mutation metadata, and unsupported flag types. | Required |
 | FR-02-006 | Framework command statics can be derived from metadata where practical so help, schema, validation, and executable behavior do not drift. | Required |
@@ -53,7 +53,7 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 | FR-03-006 | Standard help forms are supported: `<bin> --help`, `<bin> help`, `<bin> help <command-or-topic...>`, `<bin> <command-or-topic...> --help`, and `<bin> <command-or-topic...> help`. | Required |
 | FR-03-007 | Help invocations are always non-mutating. The final token `help` is reserved for help lookup and must not be treated as a positional argument to a mutating command. | Required |
 | FR-03-008 | Root help shows a concise landing page with purpose, common next commands, exploration paths, and mutation expectations instead of a raw parser dump. | Required |
-| FR-03-009 | Command and topic help includes purpose, usage, arguments, flags, examples, mutation behavior, dry-run support, and JSON support. | Required |
+| FR-03-009 | Command and topic help includes purpose, usage, arguments, flags, examples, mutation behavior, dry-run support, and JSON trigger support. | Required |
 | FR-03-010 | Unknown commands and misspelled flags may suggest alternatives when confidence is high. Suggestions must never execute automatically. | Required |
 | FR-03-011 | Arbitrary command-prefix abbreviations are not accepted. Short aliases are allowed only when explicit, documented, stable, and tested. | Required |
 | FR-03-012 | Prompt helpers never prompt in JSON output, CI, non-TTY execution, or explicit non-interactive flows such as `--yes` or `--defaults`. | Required |
@@ -67,10 +67,10 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 | FR-04-002 | Schema output includes package name, package version, binary name, command metadata, topics, arguments, flags, defaults, options, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
 | FR-04-003 | Schema output can include consumer-defined extension sections without requiring product-specific code in the toolkit. | Required |
 | FR-04-004 | The package provides standard JSON success and error envelopes. Success output includes at least `ok`, `command`, and consumer-defined result fields. Error output includes `ok: false`, `command`, stable error kind, failed operation, likely cause, suggested next action, and exit code category. | Required |
-| FR-04-005 | JSON mode writes only valid JSON to stdout. Warnings, progress, hints, prompts, and diagnostics go to stderr unless the command's primary result is itself a diagnostic report. | Required |
+| FR-04-005 | JSON-triggered output writes only valid JSON to stdout. Warnings, progress, hints, prompts, and diagnostics go to stderr unless the command's primary result is itself a diagnostic report. | Required |
 | FR-04-006 | Output helpers support both command-specific human renderers and command-specific JSON result shapes from the consuming package. | Required |
 | FR-04-007 | Known command errors render stable JSON and human output. Unexpected failures remain real failures and must not be converted into success. | Required |
-| FR-04-008 | Exit codes distinguish success, usage error, validation/config error, external tool or service error, safety block, and unexpected internal error. | Required |
+| FR-04-008 | Exit codes distinguish success (`0`), usage error (`2`), validation/config error (`3`), external tool or service error (`4`), safety block (`5`), and unexpected internal error (`70`). | Required |
 
 ## FR-05 - Mutation, Dry-Run, And Safety
 
@@ -124,7 +124,7 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 | NFR-01-005 | Color, icons, spinners, symbols, and progress affordances are allowed when they improve scanning in an interactive terminal, but they must degrade cleanly for non-TTY, CI, JSON, and no-color environments. | Required |
 | NFR-01-006 | Agent-facing output is deterministic, schema-backed, bounded, and free of terminal decoration, progress text, prompt text, and unrelated diagnostics on stdout. | Required |
 | NFR-01-007 | Command names, flags, examples, and error wording use consistent vocabulary across command groups so repeated use builds familiarity. | Required |
-| NFR-01-008 | Safe behavior feels natural: dry-run, JSON mode, non-interactive mode, and explicit confirmation paths are first-class command patterns rather than special cases. | Required |
+| NFR-01-008 | Safe behavior feels natural: dry-run, JSON-triggered output, non-interactive mode, and explicit confirmation paths are first-class command patterns rather than special cases. | Required |
 
 ## NFR-02 - Scope Boundaries
 
