@@ -1,0 +1,10 @@
+{
+  "name": "mutating-consumer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mutating consumer CLI used to validate ai-qube-cli dry-run adoption.",
+  "dependencies": {
+    "ai-qube-cli": "0.1.0"
+  }
+}
