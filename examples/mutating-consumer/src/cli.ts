@@ -65,7 +65,7 @@ export const consumerCli = createCli({
             description: `Persist catalog state without ${archivedItems.length} archived item${archivedItems.length === 1 ? "" : "s"}.`
           }
         ],
-        rerunCommand: `mutating-consumer catalog prune ${stateFile} --yes`
+        rerunCommand: `mutating-consumer catalog prune ${shellQuote(stateFile)} --yes`
       });
 
       if (dryRun) {
@@ -148,6 +148,10 @@ function readCatalogState(stateFile: string): CatalogState {
 
 function writeCatalogState(stateFile: string, state: CatalogState): void {
   writeFileSync(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+}
+
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", "'\\''")}'`;
 }
 
 function isCatalogState(value: unknown): value is CatalogState {

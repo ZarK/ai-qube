@@ -129,12 +129,19 @@ describe("mutating consumer adoption", () => {
     const before = readState();
     const dryRun = runConsumer("catalog", "prune", stateFilePath, "--dry-run");
     const dryRunJson = runConsumer("catalog", "prune", stateFilePath, "--dry-run", "--json");
+    const spacedStateFilePath = join(consumerRoot, "catalog state with spaces.json");
+    writeFileSync(spacedStateFilePath, `${JSON.stringify(initialCatalogState, null, 2)}\n`);
+    const spacedDryRun = runConsumer("catalog", "prune", spacedStateFilePath, "--dry-run");
 
     assertCliDryRun(dryRun, {
       contains: [/Mutation categories: local-files/, /State file not changed\./, /Rerun without --dry-run to apply: mutating-consumer catalog prune/],
       excludes: /MUTATING HANDLER EXECUTED/
     });
     assert.deepEqual(readState(), before);
+
+    assertCliDryRun(spacedDryRun, {
+      contains: `Rerun without --dry-run to apply: mutating-consumer catalog prune '${spacedStateFilePath}' --yes`
+    });
 
     const envelope = assertCliJsonSuccess(dryRunJson);
     assert.equal(envelope.dryRun, true);
