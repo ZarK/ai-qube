@@ -47,3 +47,9 @@ Prefer gradual adoption. Existing CLIs may already have behavior that users or a
 - `examples/read-only-consumer` validates a standalone read-only CLI package that imports `ai-qube-cli` through public package exports instead of toolkit internals.
 - The adopted command keeps lookup behavior inside the consuming package while toolkit helpers own metadata-driven help, schema, parsing, JSON envelopes, and structured errors.
 - Intentional CLI consistency checks cover normalized help forms, deterministic schema output, JSON success output, validation errors with exit code `3`, usage errors with exit code `2`, and schema metadata showing no mutation categories.
+
+## Mutating And Dry-Run Adoption Findings
+
+- `examples/mutating-consumer` validates a standalone CLI package that imports public metadata, mutation, registry, runtime, and error helpers while keeping local-file state ownership inside the consuming package.
+- The adopted `catalog prune` command declares `local-files` mutation metadata, exposes dry-run support in help and schema output, and returns structured dry-run plans without changing the consumer-owned JSON state file.
+- Contract tests verify the approval boundary: missing `--dry-run` or `--yes` blocks with safety exit code `5`, while `--yes` applies only the consumer-owned local-file mutation.
