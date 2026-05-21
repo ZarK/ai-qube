@@ -78,7 +78,7 @@
   },
   "packageManager": "pnpm@11.0.4",
   "scripts": {
-    "build:examples": "tsc -p examples/read-only-consumer/tsconfig.json",
+    "build:examples": "tsc -p examples/read-only-consumer/tsconfig.json && tsc -p examples/mutating-consumer/tsconfig.json",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "clean": "node scripts/clean.mjs",
     "package-dry-run": "pnpm run build && node scripts/assert-pack-contents.mjs",
