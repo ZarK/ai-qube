@@ -1,0 +1,20 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "paths": {
+      "ai-qube-cli": ["../../dist/index.d.ts"],
+      "ai-qube-cli/errors": ["../../dist/errors/index.d.ts"],
+      "ai-qube-cli/metadata": ["../../dist/metadata/index.d.ts"],
+      "ai-qube-cli/registry": ["../../dist/registry/index.d.ts"],
+      "ai-qube-cli/runtime": ["../../dist/runtime/index.d.ts"]
+    },
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
