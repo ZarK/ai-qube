@@ -57,25 +57,9 @@ M6 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| Legacy helper scripts | `references/workflows/memex.photos/scripts/*.sh`, `references/workflows/memex/scripts/*.sh`, `references/workflows/ai-code-quality/scripts/*.sh` | Legacy helper categories, command behavior, migration mappings, and fingerprint inspiration |
-| Legacy instruction files | `references/workflows/memex.photos/AGENTS.md`, `references/workflows/ai-code-quality/AGENTS.md`, `references/workflows/ai-bootstrap/resources/agents.md` | Old instruction categories and helper-command references that should become product-generic Executor instructions |
-| Host command files | `references/workflows/memex.photos/.opencode/commands/memex.md`, `references/workflows/ai-bootstrap/resources/opencode/commands/memex.md` | Legacy project command shape and migration targets |
-| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Legacy user documentation categories and command mappings |
-| Umpire installer pattern | `references/workflows/ai-umpire/src/installer.ts`, `references/workflows/ai-umpire/src/assets.ts`, `references/workflows/ai-umpire/README.md` | Safe file planning, install targets, and idempotent asset writing |
-| Prior milestones | `docs/M1-package-and-cli-foundation.md`, `docs/M2-github-labels-priority-and-dependencies.md`, `docs/M3-issue-lifecycle-branch-and-completion.md`, `docs/M4-init-agent-instructions-and-make-it-so.md`, `docs/M5-quality-review-and-pr-gates.md` | Existing package, CLI, queue, lifecycle, instruction, and gate surfaces |
-| Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old workflow", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) for exact functional requirement text and earlier milestone docs for implemented package, CLI, queue, lifecycle, instruction, gate, and release-readiness contracts. M6 implementation language must describe Executor migration behavior, compatibility wrappers, safe cleanup, diagnostics, and release-readiness checks only.
 
 ---
 
@@ -153,7 +137,7 @@ M6 implements product-generic legacy detection.
 - existing Executor config
 - host-specific command files that may conflict with generated Executor commands
 
-Detection output must describe categories and paths, not source repository names or reference provenance.
+Detection output must describe categories and paths, not private source provenance.
 
 ### 1.2 - Fingerprints
 
@@ -168,7 +152,7 @@ Fingerprints may include:
 - stable output labels
 - checksum-like fixture snapshots maintained inside Executor tests
 
-Fingerprints must not require shipping the local reference corpus. Executor may ship product-generic fingerprints and test fixtures, but not reference paths or source project names.
+Fingerprints must be product-generic. Executor may ship conservative fingerprints and test fixtures, but not private source paths or private project names.
 
 When a file is not confidently identified as a legacy helper, migration must mark it as `review-required` and preserve it unless the user explicitly passes that path for cleanup.
 
@@ -443,7 +427,7 @@ M6 must add user-facing docs for:
 - running the autonomous issue cycle after migration
 - supply-chain-safe package usage
 
-Docs must not include local reference paths, source repository names, or source-provenance explanations.
+Docs must not include private source paths, private project names, or source-provenance explanations.
 
 ### 6.4 - Tests
 
@@ -531,7 +515,7 @@ CLI UX acceptance:
 - schema includes migration commands, flags, mutation markers, dry-run support, and stable error kinds
 - help metadata includes migration commands, flags, and enum values
 - docs explain new install, init, migration, wrapper, cleanup, and diff-review flows
-- docs are product-generic and do not cite local reference corpus paths or source project names
+- docs are product-generic and do not cite private source paths or private project names
 
 ### M6.5 - Final Release Readiness And Regression Fixtures
 

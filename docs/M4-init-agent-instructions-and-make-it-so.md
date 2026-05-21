@@ -66,24 +66,9 @@ M4 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| Project command source | `references/workflows/memex.photos/.opencode/commands/memex.md`, `references/workflows/ai-bootstrap/resources/opencode/commands/memex.md` | Shape and intent for a host command that starts continuous issue execution |
-| Full instruction source | `references/workflows/ai-bootstrap/resources/agents.md`, `references/workflows/memex.photos/AGENTS.md`, `references/workflows/ai-code-quality/AGENTS.md` | Always-loaded instruction categories, todo/continuation pattern, safety blocks, shipping authorization |
-| Host install pattern | `references/workflows/ai-umpire/src/installer.ts`, `references/workflows/ai-umpire/src/assets.ts`, `references/workflows/ai-umpire/README.md` | Safe file writing, tool selection, host install conventions |
-| Branch guidance | `references/workflows/ai-bootstrap/resources/agent/rules/branch-naming.md` | Branch policy wording that maps to M3 branch commands |
-| Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
-| Prior milestones | `docs/M1-package-and-cli-foundation.md`, `docs/M2-github-labels-priority-and-dependencies.md`, `docs/M3-issue-lifecycle-branch-and-completion.md` | Existing CLI, queue, dependency, lifecycle, and branch command surfaces |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old labels", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) for exact functional requirement text and earlier milestone docs for implemented CLI, queue, dependency, lifecycle, and branch contracts. M4 implementation language must describe Executor initialization, managed instruction, host command, and work-cycle behavior only.
 
 ---
 
@@ -213,15 +198,14 @@ M4 must not:
 - create specs, milestones, or issue batches
 - create pull requests
 
-### 1.4 - Reference Boundary In Generated Files
+### 1.4 - Public Boundary In Generated Files
 
 Generated files must be product-generic.
 
 They must not contain:
 
-- local reference paths
-- source repository names
-- source script filenames
+- private source paths
+- private project names
 - non-product provenance notes about where behavior came from
 - milestone-source research notes
 
@@ -465,7 +449,7 @@ The block must tell agents:
 - do not add executable future commands, placeholder command classes, stubs, no-op implementations, mock product paths, or "not implemented yet" runtime behavior
 - do not add tests that pass without validating real behavior
 - keep source code, tests, package scripts, comments, generated files, shipped docs, commits, PR titles, and PR bodies in product language
-- do not mention milestone numbers, bootstrap phases, issue implementation history, baselines, reference repository names, local reference paths, or source-provenance explanations in implementation artifacts
+- do not mention milestone numbers, bootstrap phases, issue implementation history, baselines, private source paths, private project names, or source-provenance explanations in implementation artifacts
 - do not create decision records, status files, progress reports, implementation plans, migration notes, quick guides, retrospectives, phase summaries, or other repository meta documentation
 - use GitHub issue comments and PRs for durable implementation notes
 - create or edit repository docs only when the active issue explicitly asks for stable product, user, architecture, test, or workflow documentation
@@ -710,7 +694,7 @@ The implementation may adjust exact wording for host limits and configured gates
 
 It must not:
 
-- include source project names
+- include private project names
 - include non-product provenance wording
 - reference copied helper scripts
 - include unconfigured third-party service names as mandatory
@@ -751,7 +735,7 @@ M4 detects legacy state but does not perform cleanup.
 - existing config-like files
 - existing host-specific command files
 
-Detection output must be product-generic. It should describe the category found and the path, not the source project that originally inspired it.
+Detection output must be product-generic. It should describe the category found and the path, not private source provenance.
 
 ### 7.2 - Init Choices
 

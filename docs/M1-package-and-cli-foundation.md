@@ -45,22 +45,9 @@ M1 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| Umpire package CLI and installer pattern | `references/workflows/ai-umpire/src/bin/aiu.ts`, `references/workflows/ai-umpire/src/installer.ts`, `references/workflows/ai-umpire/package.json` | Package layout, npm executable pattern, installer safety lessons |
-| Executor spec source table | `docs/spec.md` | Exact FR text and boundaries |
-| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Future command naming and config expectations, without implementing queue behavior in M1 |
-| Mature shell scripts | `references/workflows/memex.photos/scripts/*.sh` | Command behavior reference for later milestones; M1 should only create the reusable command framework |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old labels", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) as the public source of truth for exact functional requirement text and boundaries. M1 implementation language must describe Executor package behavior, CLI semantics, and requirement IDs only.
 
 ---
 

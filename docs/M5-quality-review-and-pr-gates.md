@@ -64,25 +64,9 @@ M5 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| PR review gate source | `references/workflows/memex.photos/scripts/gh-pr-review-gate.sh` | Reviewer request flow, idempotent comment markers, wait duration, and review-state output |
-| Full instruction source | `references/workflows/ai-bootstrap/resources/agents.md`, `references/workflows/memex.photos/AGENTS.md`, `references/workflows/ai-code-quality/AGENTS.md` | Gate ordering, manual-audit rules, Oracle-style review prompt, PR review wait, and shipping authority |
-| Manual UI audit guide | `references/workflows/memex/docs/manual-ui-audit.md`, `references/workflows/memex/e2e/scripts/agent-browser-*.mjs` | Agent-browser audit style, local evidence path, real running app requirement, and fallback browser automation |
-| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | PR and issue workflow expectations that M5 must preserve |
-| Quality Control package | `references/workflows/ai-code-quality/README.md`, `references/workflows/ai-code-quality/AGENTS.md` | Optional `aiq` gate expectations and boundaries |
-| Prior milestones | `docs/M1-package-and-cli-foundation.md`, `docs/M2-github-labels-priority-and-dependencies.md`, `docs/M3-issue-lifecycle-branch-and-completion.md`, `docs/M4-init-agent-instructions-and-make-it-so.md` | Existing CLI, config, queue, lifecycle, branch, init, instruction, and todo surfaces |
-| Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old workflow", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) for exact functional requirement text and earlier milestone docs for implemented CLI, config, queue, lifecycle, branch, init, instruction, and todo contracts. M5 implementation language must describe Executor gate, audit, review, PR, and shipping-readiness behavior only.
 
 ---
 
@@ -226,7 +210,7 @@ M5 adds a manual UI audit helper for repositories where UI/UX audit is enabled.
 - explain the configured app launch and audit target, or report what config is missing
 - prefer `agent-browser` when available
 - describe Playwright or other browser automation as fallback only
-- create or recommend a local evidence directory under `~/github-verification/<repo>/<issue>/`
+- create or recommend a repository-scoped local evidence directory
 - produce an audit checklist for real visible outcomes
 - support `--prepare` to create local evidence directories and print exact local paths
 - support `--check` to validate that required local evidence files or notes exist when configured

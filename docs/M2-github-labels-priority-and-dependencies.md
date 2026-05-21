@@ -46,25 +46,9 @@ M2 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Queue semantics, label categories, dependency metadata, command expectations |
-| Label bootstrap script | `references/workflows/memex.photos/scripts/gh-bootstrap-labels.sh` | Idempotent create-or-update label behavior and default label color/description style |
-| Queue ordering scripts | `references/workflows/memex.photos/scripts/gh-priority-order.sh`, `references/workflows/memex/scripts/gh-priority-order.sh`, `references/workflows/ai-code-quality/scripts/gh-priority-order.sh` | Queue ordering behavior and human/JSON output expectations |
-| Dependency helpers | `references/workflows/memex.photos/scripts/gh-issue-deps.sh`, `references/workflows/memex.photos/scripts/lib/gh-issue-helpers.sh`, `references/workflows/memex/scripts/gh-issue-deps.sh` | Blocker parsing, dependency graph, ready/blocked lists, status sync |
-| Label update helper | `references/workflows/memex.photos/scripts/gh-update-labels.sh` | Status label replacement, sequence metadata handling, blocker metadata handling |
-| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, help metadata, JSON, and mutation warnings |
-| Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old labels", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) for exact functional requirement text and [docs/M1-package-and-cli-foundation.md](M1-package-and-cli-foundation.md) for the shared CLI metadata, help, JSON, and mutation-warning contracts. M2 implementation language must describe Executor queue, label, priority, and dependency behavior only.
 
 ---
 

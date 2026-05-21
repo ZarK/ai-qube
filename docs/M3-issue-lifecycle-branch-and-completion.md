@@ -59,25 +59,9 @@ M3 intentionally does not complete:
 
 ---
 
-## Source References
+## Specification Inputs
 
-Use these local references only when drafting, reviewing, or decomposing this milestone:
-
-| Reference | Local Path | Use |
-|-----------|------------|-----|
-| Issue lifecycle scripts | `references/workflows/memex.photos/scripts/gh-issue-start.sh`, `references/workflows/memex.photos/scripts/gh-issue-view.sh`, `references/workflows/memex.photos/scripts/gh-issue-switch.sh`, `references/workflows/memex.photos/scripts/gh-issue-complete.sh` | Lifecycle behavior, check-only behavior, assignment/comment policy, dependent unblocking |
-| Dependency helper source | `references/workflows/memex.photos/scripts/lib/gh-issue-helpers.sh` | Shared blocker/dependent logic already generalized in M2 |
-| Branch naming guidance | `references/workflows/ai-bootstrap/resources/agent/rules/branch-naming.md`, `references/workflows/ai-bootstrap/resources/agents.md` | Branch naming and branch-check expectations |
-| GitHub workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | Lifecycle command expectations and one-in-progress rule |
-| CLI UX research from M1 | `docs/M1-package-and-cli-foundation.md` | Shared command metadata, incomplete-command help, schema, help metadata, JSON, and mutation warnings |
-| Queue/dependency milestone | `docs/M2-github-labels-priority-and-dependencies.md` | M2 queue model and dependency graph surfaces M3 builds on |
-| Functional requirements | `docs/spec.md` | Exact FR text and boundaries |
-
-The reference files are source material for milestone authoring. Executor must not ship or depend on this reference corpus.
-
-Reference material stops at this milestone document. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issue generation onward, use only Executor product behavior, requirement IDs, and user-facing command semantics.
-
-Do not generate issue or implementation wording such as "reference-project style", "copied from the old script", "avoid the old labels", or similar source-derived explanations. If behavior was derived from the references, express it as a normal Executor requirement.
+Use [docs/spec.md](spec.md) for exact functional requirement text, [docs/M1-package-and-cli-foundation.md](M1-package-and-cli-foundation.md) for shared CLI contracts, and [docs/M2-github-labels-priority-and-dependencies.md](M2-github-labels-priority-and-dependencies.md) for queue and dependency behavior that M3 builds on. M3 implementation language must describe Executor lifecycle, branch, and completion behavior only.
 
 ---
 

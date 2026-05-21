@@ -2,7 +2,7 @@
 
 This repository is built through GitHub issues in strict order until `aie` can enforce the workflow itself.
 
-The local `references/` directory is source material used to write specs and milestones only. Do not cite it in issues, code, comments, docs, commits, PR titles, or PR bodies. Implementation work must describe Executor product behavior, requirement IDs, and user-facing command semantics only.
+Implementation work must describe Executor product behavior, requirement IDs, and user-facing command semantics only.
 
 ## Bootstrap Executor Workflow
 
@@ -17,7 +17,7 @@ Before starting work, read:
 3. The milestone file linked from the issue body.
 4. This file.
 
-Also read and follow `/Users/tjalve/.agents/skills/supply-chain-guard/SKILL.md` before any work that installs, updates, audits, executes, or approves dependencies, package-manager commands, project generators, CI workflows, release jobs, IDE/MCP tooling, or AI-agent tooling.
+Follow the supply-chain guard policy before any work that installs, updates, audits, executes, or approves dependencies, package-manager commands, project generators, CI workflows, release jobs, IDE/MCP tooling, or AI-agent tooling.
 
 Issue comments are for task-specific progress and durable implementation notes. Repository docs are for stable product, architecture, test, and workflow guidance.
 
@@ -25,7 +25,7 @@ Issue comments are for task-specific progress and durable implementation notes. 
 
 Implementation artifacts must describe Executor product behavior only.
 
-Do not write milestone numbers, bootstrap phases, issue implementation history, baseline language, reference repository names, local reference paths, or source-provenance explanations in source code, tests, package scripts, shipped documentation, generated files, commits, PR titles, or PR bodies.
+Do not write milestone numbers, bootstrap phases, issue implementation history, baseline language, private source paths, private project names, or source-provenance explanations in source code, tests, package scripts, shipped documentation, generated files, commits, PR titles, or PR bodies.
 
 Implement only the real behavior requested by the active issue. Do not add executable future commands, placeholder command classes, stubs, no-op implementations, mock product paths, "not implemented yet" runtime behavior, or tests that pass without validating real behavior.
 
@@ -111,7 +111,7 @@ Until `aiq` is available in this repository, agents must apply this mini quality
 
 ### Supply Chain Guard
 
-Use `/Users/tjalve/.agents/skills/supply-chain-guard/SKILL.md` before touching dependencies or dependency-provided tooling.
+Use the supply-chain guard policy before touching dependencies or dependency-provided tooling.
 
 This applies to package manifests, lockfiles, package-manager commands, project generators, CI actions, reusable workflows, release automation, IDE extensions, MCP servers, and AI-agent tools.
 

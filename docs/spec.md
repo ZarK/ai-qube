@@ -8,28 +8,9 @@ AI Executor is the QUBE package responsible for executing issue-driven developme
 
 Requirements use stable identifiers (`FR-XX-NNN`) so milestone specs and GitHub issues can reference them without redefining scope.
 
-## Source Reference Material
+## Specification Boundary
 
-This specification is intended to be sufficient input for generating milestones and implementation issues in a fresh context. The functional requirements define the Executor product; the files below are local source material for deriving milestone scope and expected behavior. Executor itself must not ship or depend on these source references as runtime concepts.
-
-Reference material stops at milestone authoring. Generated GitHub issues, implementation code, code comments, tests, documentation, commit messages, branch names, PR titles, and PR bodies must not cite local reference paths, source repository names, source script filenames, or explain work as copied from or avoiding a reference project. From issues onward, all wording must describe Executor product behavior, requirement IDs, and user-facing command semantics only.
-
-Do not write phrases such as "Memex-style labels", "copied from the reference script", "unlike the old repo", or similar reference-derived explanations in generated issues or implementation artifacts. If behavior was derived from the references, express it as a normal Executor requirement.
-
-When generating milestones, use these references where available:
-
-| Reference | Local Path | Relevant Requirements |
-|-----------|------------|-----------------------|
-| Proven OpenCode command pattern | `references/workflows/memex.photos/.opencode/commands/memex.md` | FR-03, FR-08, FR-11 |
-| Full autonomous agent instruction source | `references/workflows/ai-bootstrap/resources/agents.md` | FR-03, FR-08, FR-09, FR-12 |
-| GitHub issue workflow documentation | `references/workflows/memex.photos/docs/gh-workflow.md` | FR-04, FR-05, FR-06, FR-10, FR-14 |
-| Label bootstrap script | `references/workflows/memex.photos/scripts/gh-bootstrap-labels.sh` | FR-04 |
-| Queue ordering scripts | `references/workflows/memex.photos/scripts/gh-priority-order.sh`, `references/workflows/memex/scripts/gh-priority-order.sh`, `references/workflows/ai-code-quality/scripts/gh-priority-order.sh` | FR-05 |
-| Issue lifecycle scripts | `references/workflows/memex.photos/scripts/gh-issue-start.sh`, `gh-issue-view.sh`, `gh-issue-switch.sh`, `gh-issue-complete.sh` | FR-06 |
-| Dependency helper scripts | `references/workflows/memex.photos/scripts/gh-issue-deps.sh`, `references/workflows/memex/scripts/gh-issue-deps.sh`, `references/workflows/memex.photos/scripts/lib/gh-issue-helpers.sh` | FR-05, FR-06 |
-| PR review gate script | `references/workflows/memex.photos/scripts/gh-pr-review-gate.sh` | FR-10 |
-| Manual UI audit guide and agent-browser examples | `references/workflows/memex/docs/manual-ui-audit.md`, `references/workflows/memex/e2e/scripts/agent-browser-*.mjs` | FR-09, FR-12 |
-| Umpire package installer pattern | `references/workflows/ai-umpire/src/installer.ts`, `references/workflows/ai-umpire/src/bin/aiu.ts`, `references/workflows/ai-umpire/README.md` | FR-02, FR-03, FR-11, FR-14 |
+This specification is intended to be sufficient input for generating milestones and implementation issues in a fresh context. The functional requirements define Executor product behavior, requirement IDs, and user-facing command semantics. Public requirements must not depend on private source material, local filesystem paths, or implementation history.
 
 **Requirement status values:**
 
