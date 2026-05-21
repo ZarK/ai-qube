@@ -41,3 +41,9 @@ The toolkit must remain infrastructure. Consuming packages continue to own the b
 ## Rollout Notes
 
 Prefer gradual adoption. Existing CLIs may already have behavior that users or automation rely on, so command-by-command migration with contract tests is safer than broad rewrites.
+
+## Read-Only Adoption Findings
+
+- `examples/read-only-consumer` validates a standalone read-only CLI package that imports `ai-qube-cli` through public package exports instead of toolkit internals.
+- The adopted command keeps lookup behavior inside the consuming package while toolkit helpers own metadata-driven help, schema, parsing, JSON envelopes, and structured errors.
+- Intentional CLI consistency checks cover normalized help forms, deterministic schema output, JSON success output, validation errors with exit code `3`, usage errors with exit code `2`, and schema metadata showing no mutation categories.

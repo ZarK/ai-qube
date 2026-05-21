@@ -78,10 +78,11 @@
   },
   "packageManager": "pnpm@11.0.4",
   "scripts": {
+    "build:examples": "tsc -p examples/read-only-consumer/tsconfig.json",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "clean": "node scripts/clean.mjs",
     "package-dry-run": "pnpm run build && node scripts/assert-pack-contents.mjs",
-    "test": "pnpm run build && node --test \"tests/*.test.mjs\"",
+    "test": "pnpm run build && pnpm run build:examples && node --test \"tests/*.test.mjs\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "verify": "pnpm run typecheck && pnpm test && pnpm run package-dry-run"
   },
