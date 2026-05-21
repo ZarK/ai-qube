@@ -61,6 +61,9 @@ describe('init service', () => {
     assert.match(agents, /configured work and review provider is GitHub/);
     assert.match(agents, /Configured providers: work GitHub, review GitHub, repository local git, CI GitHub checks, layout local filesystem/);
     assert.match(agents, /Linked worktree execution is disabled/);
+    assert.match(agents, /ZarK\/ai-supply-chain-guard/);
+    assert.match(agents, /https:\/\/github\.com\/ZarK\/ai-supply-chain-guard/);
+    assert.match(agents, /\.agents\/skills\/supply-chain-guard\/SKILL\.md/);
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(command, /Continue repository development/);
     assert.match(command, /inspect required reviews and checks/);
@@ -290,6 +293,8 @@ describe('init service', () => {
     assert.match(agents, /Create or edit repository docs only when the active issue explicitly asks/);
     assert.match(agents, /Do not commit generated build output unless repository policy explicitly allows it/);
     assert.match(agents, /Use exact dependency versions/);
+    assert.match(agents, /canonical supply-chain guard/);
+    assert.match(agents, /Before dependency, package-manager, CI\/release, IDE\/MCP, or AI-agent-tooling work/);
     assert.match(agents, /Preserve or update lockfiles intentionally/);
     assert.match(agents, /Disable lifecycle or build scripts/);
     assert.match(agents, /package-age gates before adding or upgrading dependencies/);
@@ -331,6 +336,7 @@ describe('init service', () => {
     assert.doesNotMatch(agents, /agent, model, service, or vendor credit/);
     assert.doesNotMatch(agents, /placeholder command classes/);
     assert.doesNotMatch(agents, /package-age gates before adding or upgrading dependencies/);
+    assert.doesNotMatch(agents, /ZarK\/ai-supply-chain-guard/);
   });
 
   it('applies non-interactive policy overrides to config and generated instructions', async () => {

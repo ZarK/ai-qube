@@ -9,6 +9,7 @@ const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
 const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, computeDoctorOk } = require('../dist/commands/doctor.js');
+const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
 
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-doctor-'));
@@ -44,6 +45,7 @@ describe('doctor diagnostics', () => {
     assert.equal(policy.namingRules.installed, true);
     assert.equal(policy.implementationGuardrails.installed, true);
     assert.equal(policy.supplyChainSafety.installed, true);
+    assert.equal(policy.canonicalSupplyChainGuard.installed, true);
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /Naming rules:/);
   });
 
@@ -254,6 +256,32 @@ describe('doctor diagnostics', () => {
     assert.equal(policy.implementationGuardrails.installed, false);
     assert.equal(policy.supplyChainSafety.configured, true);
     assert.equal(policy.supplyChainSafety.installed, false);
+    assert.equal(policy.canonicalSupplyChainGuard.configured, true);
+    assert.equal(policy.canonicalSupplyChainGuard.installed, false);
+  });
+
+  it('requires the canonical guard reference for supply-chain instruction health', () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'AGENTS.md'), [
+      '<!-- BEGIN EXECUTOR MANAGED SECTION -->',
+      'Supply-chain safety requires package-age gates before adding or upgrading dependencies.',
+      '<!-- END EXECUTOR MANAGED SECTION -->',
+      '',
+    ].join('\n'));
+    const config = getDefaults();
+
+    const policy = buildInstructionPolicyDiagnostics(config, repo);
+
+    assert.equal(policy.supplyChainSafety.installed, true);
+    assert.equal(policy.canonicalSupplyChainGuard.installed, false);
+  });
+
+  it('matches canonical guard scope with bounded guarded-work tokens', () => {
+    const baseText = `${SUPPLY_CHAIN_GUARD_NAME} ${SUPPLY_CHAIN_GUARD_URL} ${SUPPLY_CHAIN_GUARD_SKILL_PATH}`;
+
+    assert.equal(hasCanonicalSupplyChainGuardInstruction(`${baseText} before CI work`), true);
+    assert.equal(hasCanonicalSupplyChainGuardInstruction(`${baseText} before package manager work`), true);
+    assert.equal(hasCanonicalSupplyChainGuardInstruction(`${baseText} artificial wording only`), false);
   });
 
   it('accounts for instruction health and configured worktree policy in readiness', () => {

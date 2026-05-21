@@ -61,6 +61,7 @@ export interface InstructionPolicyDiagnostics {
   noCreditWarning: InstallCheck;
   implementationGuardrails: InstallCheck;
   supplyChainSafety: InstallCheck;
+  canonicalSupplyChainGuard: InstallCheck;
 }
 
 export interface ProviderHealthDiagnostics {

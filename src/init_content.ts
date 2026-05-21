@@ -1,5 +1,6 @@
 import { Config } from './config';
 import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts';
+import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from './supply_chain_guard';
 
 export type InitTool = AgentHostId;
 
@@ -43,7 +44,9 @@ function renderSupplyChainText(config: Config): string {
   const scripts = config.supplyChain.disableLifecycleScripts ? 'lifecycle scripts disabled where supported' : 'repository-approved lifecycle script handling';
   const ciActions = config.supplyChain.pinCiActions ? 'third-party CI action pinning' : 'repository-approved CI action handling';
   const approval = config.supplyChain.requireApprovalForUnverifiedRisk ? 'explicit approval required for unverifiable risk' : 'unverifiable risk handled by repository policy';
-  return `Supply-chain policy uses ${exact}, ${lockfiles}, ${scripts}, ${ciActions}, package-age gates of ${age}, and ${approval}. Project package-manager defaults are ${yesNo(config.supplyChain.writePackageManagerDefaults)}.`;
+  const policy = `${exact}, ${lockfiles}, ${scripts}, ${ciActions}, package-age gates of ${age}, and ${approval}`;
+  if (!config.instructions.supplyChainSafety) return `Supply-chain safety instructions are disabled; configured policy uses ${policy}. Project package-manager defaults are ${yesNo(config.supplyChain.writePackageManagerDefaults)}.`;
+  return `Supply-chain policy uses ${SUPPLY_CHAIN_GUARD_NAME} (${SUPPLY_CHAIN_GUARD_URL}) as the canonical guard with ${policy}. Project package-manager defaults are ${yesNo(config.supplyChain.writePackageManagerDefaults)}.`;
 }
 
 function hasReviewWait(config: Config): boolean {
@@ -147,6 +150,8 @@ function collectSafetyLines(config: Config): string[] {
 function collectSupplyChainLines(config: Config): string[] {
   if (!config.instructions.supplyChainSafety) return [];
   return [
+    `Use ${SUPPLY_CHAIN_GUARD_NAME} (${SUPPLY_CHAIN_GUARD_URL}) as the canonical supply-chain guard for this workflow.`,
+    `Before dependency, package-manager, CI/release, IDE/MCP, or AI-agent-tooling work, read and follow \`${SUPPLY_CHAIN_GUARD_SKILL_PATH}\` when it is installed; otherwise carry or install the canonical guard from ${SUPPLY_CHAIN_GUARD_URL} according to user and tool policy before continuing.`,
     'Treat dependency changes, package-manager commands, project generators, CI actions, release automation, IDE or MCP tooling, AI-agent tooling, Git URL dependencies, tarballs, binary downloads, and one-line installers as code execution.',
     'Prefer standard library APIs, existing dependencies, or in-repository code before adding packages.',
     config.supplyChain.exactVersions ? 'Use exact dependency versions. Do not install latest, floating ranges for new dependencies, unpinned Git branches, unverified tarballs, or curl-pipe-shell installers unless the user explicitly approves the exact risk.' : 'Follow configured repository version policy and never install latest, unpinned Git branches, unverified tarballs, or curl-pipe-shell installers without explicit approval.',

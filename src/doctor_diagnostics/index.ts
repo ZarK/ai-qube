@@ -9,6 +9,7 @@ import { MANAGED_START } from '../managed_file';
 import { buildGatePlan, buildGateStatus, configuredGates } from '../gates';
 import { redact } from '../gh';
 import { getInstructionTargetPaths } from '../agent_hosts';
+import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types';
 
@@ -91,6 +92,10 @@ function installCheck(configured: boolean, text: string, pattern: RegExp): Insta
   return { configured, installed: configured ? pattern.test(text) : false };
 }
 
+function predicateInstallCheck(configured: boolean, text: string, predicate: (value: string) => boolean): InstallCheck {
+  return { configured, installed: configured ? predicate(text) : false };
+}
+
 export function buildInstructionPolicyDiagnostics(config: Config, repoRoot: string | null): InstructionPolicyDiagnostics {
   const text = managedInstructionText(repoRoot);
   return {
@@ -99,6 +104,7 @@ export function buildInstructionPolicyDiagnostics(config: Config, repoRoot: stri
     noCreditWarning: installCheck(config.instructions.noCreditWarning, text, /agent, model, service, or vendor credit/),
     implementationGuardrails: installCheck(config.instructions.implementationGuardrails, text, /placeholder command classes|repository meta documentation/),
     supplyChainSafety: installCheck(config.instructions.supplyChainSafety, text, /package-age gates before adding or upgrading dependencies|supply-chain safety/i),
+    canonicalSupplyChainGuard: predicateInstallCheck(config.instructions.supplyChainSafety, text, hasCanonicalSupplyChainGuardInstruction),
   };
 }
 

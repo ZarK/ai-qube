@@ -235,11 +235,12 @@ export default class Doctor extends Command {
     if (input.repoRoot && missingInstructionChecks.length > 0) recommendations.push(`Configured instruction policy is not installed for: ${missingInstructionChecks.join(', ')}. Run \`aie init . --dry-run\` to refresh managed instructions.`);
     if (unhealthyTargets.length > 0) recommendations.push(`Managed instruction targets need refresh: ${unhealthyTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
     if (input.repoRoot && input.effectiveConfig.instructions.supplyChainSafety && !input.instructionPolicy.supplyChainSafety.installed) recommendations.push('Supply-chain safety instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
+    if (input.repoRoot && input.effectiveConfig.instructions.supplyChainSafety && !input.instructionPolicy.canonicalSupplyChainGuard.installed) recommendations.push('Canonical supply-chain guard instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
   }
 
   private addGateReadinessRecommendations(gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>, recommendations: string[]): void {
     if (gateReadiness.gates.invalidCommands.length > 0) recommendations.push(`Configured gates have invalid commands: ${gateReadiness.gates.invalidCommands.join(', ')}. Fix aie.config.json before using gate readiness output.`);
-    if (gateReadiness.gates.supplyChainSensitive > 0) recommendations.push(`Supply-chain-sensitive gates detected: ${gateReadiness.gates.supplyChainSensitiveGates.join(', ')}. Review supply-chain evidence before running those commands.`);
+    if (gateReadiness.gates.supplyChainSensitive > 0) recommendations.push(`Supply-chain-sensitive gates detected: ${gateReadiness.gates.supplyChainSensitiveGates.join(', ')}. Review canonical supply-chain guard evidence before running those commands.`);
     if (gateReadiness.audit.readiness === 'needs-action') recommendations.push('Manual UI audit is enabled but agent-browser was not found on PATH. Install agent-browser or use fallback browser automation manually.');
     if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') recommendations.push('Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.');
     if (gateReadiness.prReview.readiness === 'missing') recommendations.push('PR review gates need authenticated GitHub CLI access. Run `gh auth login` before requesting or inspecting PR reviewers.');

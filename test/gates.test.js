@@ -54,6 +54,7 @@ describe('gate model', () => {
     assert.equal(plan.dryRun, true);
     assert.deepEqual(plan.gates.map(gate => gate.name), ['typecheck', 'unsafe token']);
     assert.equal(plan.gates.find(gate => gate.name === 'typecheck').supplyChainSensitive, true);
+    assert.match(plan.gates.find(gate => gate.name === 'typecheck').nextAction, /ZarK\/ai-supply-chain-guard/);
     assert.equal(plan.gates.find(gate => gate.name === 'unsafe token').requirement, 'advisory');
     assert.match(plan.gates.find(gate => gate.name === 'unsafe token').command, /\[REDACTED\]/);
     assert.match(plan.gates.find(gate => gate.name === 'unsafe token').env.SECRET, /\[REDACTED\]/);
@@ -207,7 +208,10 @@ describe('gates CLI', () => {
     assert.equal(parsed.stage, 'pre-pr');
     assert.deepEqual(parsed.gates.map(gate => gate.name), ['build', 'marker']);
     assert.equal(parsed.gates.find(gate => gate.name === 'build').supplyChainSensitive, true);
+    assert.match(parsed.gates.find(gate => gate.name === 'build').nextAction, /ZarK\/ai-supply-chain-guard/);
+    assert.match(parsed.warnings.join('\n'), /ZarK\/ai-supply-chain-guard/);
     assert.match(parsed.gates.find(gate => gate.name === 'build').evidenceExpected.join('\n'), /Exact package/);
+    assert.match(parsed.gates.find(gate => gate.name === 'build').evidenceExpected.join('\n'), /\.agents\/skills\/supply-chain-guard\/SKILL\.md/);
     assert.equal(existsSync(marker), false);
   });
 

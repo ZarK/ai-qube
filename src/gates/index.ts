@@ -6,6 +6,7 @@ import type { JsonObject } from '../core/json_value';
 import { expandGateConfigs } from '../gate_config';
 import { isSupplyChainSensitive } from '../gate_sensitivity';
 import { redact } from '../gh';
+import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from '../supply_chain_guard';
 
 export type GateRequirement = 'required' | 'advisory';
 export type GateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found' | 'verified-from-trusted-state';
@@ -87,6 +88,7 @@ const STANDARD_EVIDENCE = [
 ];
 
 const SUPPLY_CHAIN_EVIDENCE = [
+  `Canonical guard: use ${SUPPLY_CHAIN_GUARD_NAME} (${SUPPLY_CHAIN_GUARD_URL}) and follow ${SUPPLY_CHAIN_GUARD_SKILL_PATH} before execution when installed.`,
   'Need: why this dependency/tool command is necessary before execution.',
   'Exact package, source, version, registry, action, generator, tool, or binary identity.',
   'Lockfile, manifest, workflow, generated-file, or release-artifact impact.',
@@ -144,7 +146,7 @@ function planEntry(gate: GateConfig): GatePlanEntry {
     supplyChainSensitive,
     evidenceExpected,
     nextAction: supplyChainSensitive
-      ? `Review supply-chain evidence, then run \`${command}\` manually and record the result.`
+      ? `Use ${SUPPLY_CHAIN_GUARD_NAME}'s required evidence model, then run \`${command}\` manually and record the result.`
       : `Run \`${command}\` manually and record the result.`,
   };
 }
@@ -160,7 +162,7 @@ export function buildGatePlan(config: Config, options: { stage?: GateStage; dryR
     gates,
     summary: summarizePlan(gates),
     warnings: gates.some(gate => gate.supplyChainSensitive)
-      ? ['Supply-chain-sensitive gates require dependency/tool review evidence before the agent runs the command.']
+      ? [`Supply-chain-sensitive gates require ${SUPPLY_CHAIN_GUARD_NAME} dependency/tool review evidence before the agent runs the command.`]
       : [],
   };
 }
