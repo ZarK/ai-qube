@@ -59,7 +59,7 @@ describe('package publish surface safety', () => {
   });
 
   it('keeps dependencies minimal and exact', () => {
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@clack/prompts', '@oclif/core']);
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@clack/prompts', '@oclif/core', '@tjalve/qube-cli']);
     assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ['@types/node', 'typescript']);
 
     for (const [name, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
