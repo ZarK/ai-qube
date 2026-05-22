@@ -106,10 +106,10 @@ export function suggestCommand(registry: CommandRegistry, input: string): Sugges
 }
 
 export function suggestFlag(command: CommandMetadata, input: string): Suggestion | undefined {
-  const normalizedInput = input.startsWith("--") ? input.slice(2) : input;
-  const candidates = (command.flags ?? []).flatMap((flag) => [flag.name, ...(flag.aliases ?? [])]);
+  const normalizedInput = input.startsWith("-") ? input : `--${input}`;
+  const candidates = (command.flags ?? []).flatMap(renderFlagTokens);
   const suggestion = suggestValue(normalizedInput, candidates);
-  return suggestion ? { value: `--${suggestion.value}`, distance: suggestion.distance } : undefined;
+  return suggestion ? { value: suggestion.value, distance: suggestion.distance } : undefined;
 }
 
 export function suggestValue(input: string, candidates: readonly string[]): Suggestion | undefined {
@@ -132,7 +132,7 @@ export function suggestValue(input: string, candidates: readonly string[]): Sugg
 
 function renderUsageSuffix(command: CommandMetadata): string {
   const args = (command.arguments ?? []).map((argument) => argument.required ? `<${argument.name}>` : `[${argument.name}]`);
-  const flags = (command.flags ?? []).map((flag) => flag.type === "boolean" ? `[--${flag.name}]` : `[--${flag.name} <value>]`);
+  const flags = (command.flags ?? []).map((flag) => `[${renderFlagToken(flag)}${flag.type === "boolean" ? "" : " <value>"}]`);
   const suffix = [...args, ...flags].join(" ");
   return suffix.length === 0 ? "" : ` ${suffix}`;
 }
@@ -152,9 +152,21 @@ function renderFlags(flags: readonly FlagMetadata[]): string {
     return "Flags:\n  none";
   }
   return renderNameDescriptionSection("Flags:", flags.map((flag) => ({
-    name: flag.type === "boolean" ? `--${flag.name}` : `--${flag.name} <value>`,
+    name: `${renderFlagToken(flag)}${flag.type === "boolean" ? "" : " <value>"}`,
     description: renderFlagDescription(flag)
   })));
+}
+
+function renderFlagToken(flag: FlagMetadata): string {
+  return flag.short ? `-${flag.short}, --${flag.name}` : `--${flag.name}`;
+}
+
+function renderFlagTokens(flag: FlagMetadata): readonly string[] {
+  return [
+    `--${flag.name}`,
+    ...(flag.short ? [`-${flag.short}`] : []),
+    ...(flag.aliases ?? []).map((alias) => `--${alias}`)
+  ];
 }
 
 function renderFlagDescription(flag: FlagMetadata): string {

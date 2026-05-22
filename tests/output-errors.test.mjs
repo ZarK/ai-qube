@@ -175,9 +175,9 @@ describe("output and error helpers", () => {
       name: "flag demo",
       description: "Return parsed flags for runtime verification.",
       flags: [
-        { name: "json", description: "Render JSON output.", type: "boolean" },
-        { name: "format", description: "Select output format.", type: "option", aliases: ["output"], options: ["human", "json"] },
-        { name: "tag", description: "Attach repeated tag values.", type: "string", aliases: ["label"], multiple: true }
+        { name: "json", short: "j", description: "Render JSON output.", type: "boolean" },
+        { name: "format", short: "f", description: "Select output format.", type: "option", aliases: ["output"], options: ["human", "json"] },
+        { name: "tag", short: "t", description: "Attach repeated tag values.", type: "string", aliases: ["label"], multiple: true }
       ],
       examples: [{ description: "Run flag demo.", command: "fixture flag demo --json" }],
       interactions: { json: true }
@@ -188,7 +188,9 @@ describe("output and error helpers", () => {
       commands: [createCommand(command, ({ flags }) => ({ json: { flags } }))]
     });
 
-    const result = await runCli(cli, ["flag", "demo", "--json", "--output", "json", "--label", "alpha", "--tag", "beta"]);
+    const result = await runCli(cli, ["flag", "demo", "-j", "-f", "json", "--label", "alpha", "-t", "beta"]);
+    const help = await runCli(cli, ["help", "flag", "demo"]);
+    const unknownShort = await runCli(cli, ["flag", "demo", "-x"]);
 
     assert.equal(result.exitCode, 0);
     assert.deepEqual(JSON.parse(result.stdout), {
@@ -199,6 +201,39 @@ describe("output and error helpers", () => {
         json: true,
         tag: ["alpha", "beta"]
       }
+    });
+    assert.equal(help.exitCode, 0);
+    assert.match(help.stdout, /-j, --json\s+Render JSON output/);
+    assert.match(help.stdout, /-f, --format <value>\s+Select output format/);
+    assert.equal(unknownShort.exitCode, 2);
+    assert.match(unknownShort.stderr, /Unknown flag: -x/);
+    assert.doesNotMatch(unknownShort.stderr, /raw text/);
+  });
+
+  it("does not treat negative positional values as unknown short flags", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "number inspect",
+      description: "Inspect a numeric positional value.",
+      arguments: [{ name: "value", description: "Numeric value to inspect." }],
+      flags: [{ name: "json", short: "j", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Inspect a negative value.", command: "fixture number inspect -1 --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => ({ json: { value: args.value } }))]
+    });
+
+    const result = await runCli(cli, ["number", "inspect", "-1", "-j"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      command: "number inspect",
+      value: "-1"
     });
   });
 

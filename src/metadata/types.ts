@@ -53,6 +53,7 @@ export interface FlagMetadata<Extensions extends MetadataExtensions = MetadataEx
   readonly name: string;
   readonly description: string;
   readonly type: FlagValueType;
+  readonly short?: string;
   readonly aliases?: readonly string[];
   readonly required?: boolean;
   readonly multiple?: boolean;

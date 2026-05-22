@@ -72,6 +72,7 @@ export interface ArgumentSchema {
 export interface FlagSchema {
   readonly name: string;
   readonly tokens: readonly string[];
+  readonly short?: string;
   readonly description: string;
   readonly type: string;
   readonly aliases: readonly string[];
@@ -212,6 +213,7 @@ function renderFlag(flag: FlagMetadata): FlagSchema {
     {
       name: flag.name,
       tokens: renderFlagTokens(flag),
+      ...(flag.short !== undefined ? { short: flag.short } : {}),
       description: flag.description,
       type: flag.type,
       aliases: sortText(flag.aliases ?? []),
@@ -225,7 +227,11 @@ function renderFlag(flag: FlagMetadata): FlagSchema {
 }
 
 function renderFlagTokens(flag: FlagMetadata): readonly string[] {
-  return [`--${flag.name}`, ...sortText(flag.aliases ?? []).map((alias) => `--${alias}`)];
+  return [
+    `--${flag.name}`,
+    ...(flag.short !== undefined ? [`-${flag.short}`] : []),
+    ...sortText(flag.aliases ?? []).map((alias) => `--${alias}`)
+  ];
 }
 
 function renderExample(example: ExampleMetadata): ExampleSchema {

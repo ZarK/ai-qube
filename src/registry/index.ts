@@ -6,6 +6,7 @@ import type {
 } from "../metadata/index.js";
 
 const canonicalFlagNamePattern = /^[a-z][a-z0-9-]*$/;
+const shortFlagPattern = /^[a-zA-Z]$/;
 
 export interface CommandRegistry {
   readonly topics: readonly TopicMetadata[];
@@ -214,6 +215,7 @@ function validateFlags(
     readonly name: string;
     readonly description: string;
     readonly type: FlagValueType;
+    readonly short?: string;
     readonly aliases?: readonly string[];
     readonly options?: readonly string[];
   }[],
@@ -221,6 +223,7 @@ function validateFlags(
   issues: CommandRegistryValidationIssue[]
 ): void {
   const names = new Map<string, string>();
+  const shorts = new Map<string, string>();
   const aliases = new Map<string, string>();
 
   flags.forEach((flag, index) => {
@@ -232,6 +235,10 @@ function validateFlags(
     const flagPath = `${path}[${index}]`;
     requireDescription(flag.description, `${flagPath}.description`, issues);
     validateCanonicalFlagName(flag.name, `${flagPath}.name`, issues);
+    validateShortFlag(flag.short, `${flagPath}.short`, issues);
+    if (typeof flag.short === "string" && flag.short.trim().length > 0) {
+      trackUnique(flag.short, `${flagPath}.short`, "short flag alias", shorts, issues);
+    }
     if (!isSupportedFlagType(flag.type)) {
       addIssue(issues, `${flagPath}.type`, `Unsupported flag type "${String(flag.type)}".`);
     }
@@ -321,6 +328,19 @@ function validateCanonicalFlagName(value: string, path: string, issues: CommandR
   }
   if (!canonicalFlagNamePattern.test(value)) {
     addIssue(issues, path, `Flag names are canonical keys and must not include leading dashes.`);
+  }
+}
+
+function validateShortFlag(value: string | undefined, path: string, issues: CommandRegistryValidationIssue[]): void {
+  if (value === undefined) {
+    return;
+  }
+  if (typeof value !== "string" || value.trim().length === 0) {
+    addIssue(issues, path, `Short flag aliases must not be empty.`);
+    return;
+  }
+  if (!shortFlagPattern.test(value)) {
+    addIssue(issues, path, `Short flag aliases must be exactly one letter without leading dashes.`);
   }
 }
 

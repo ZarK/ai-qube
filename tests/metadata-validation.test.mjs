@@ -72,6 +72,23 @@ describe("metadata validation", () => {
     }), /flag.name must use a lowercase flag name without leading dashes/);
   });
 
+  it("accepts one-character short flags and rejects rendered or multi-character shorthand", () => {
+    assert.doesNotThrow(() => defineFlag({
+      name: "dry-run",
+      short: "d",
+      description: "Preview changes.",
+      type: "boolean"
+    }));
+    for (const short of ["-d", "--dry-run", "dry"]) {
+      assert.throws(() => defineFlag({
+        name: "dry-run",
+        short,
+        description: "Preview changes.",
+        type: "boolean"
+      }), /flag.short must be exactly one letter without leading dashes/);
+    }
+  });
+
   it("throws on supply-chain-sensitive metadata without reason or kind", () => {
     assert.throws(() => defineCommand({
       kind: "command",

@@ -159,6 +159,54 @@ describe("command registry", () => {
     );
   });
 
+  it("reports invalid or duplicate short flag aliases", () => {
+    assert.throws(
+      () =>
+        createCommandRegistry({
+          commands: [
+            {
+              ...validCommand,
+              flags: [
+                {
+                  name: "json",
+                  short: "-j",
+                  description: "Render machine-readable JSON output.",
+                  type: "boolean"
+                }
+              ]
+            }
+          ]
+        }),
+      /commands\[0\]\.flags\[0\]\.short: Short flag aliases must be exactly one letter without leading dashes/
+    );
+    assert.throws(
+      () =>
+        createCommandRegistry({
+          commands: [
+            {
+              ...validCommand,
+              flags: [
+                {
+                  name: "json",
+                  short: "j",
+                  description: "Render machine-readable JSON output.",
+                  type: "boolean"
+                },
+                {
+                  name: "format",
+                  short: "j",
+                  description: "Select output format.",
+                  type: "option",
+                  options: ["human", "json"]
+                }
+              ]
+            }
+          ]
+        }),
+      /commands\[0\]\.flags\[1\]\.short: Duplicate short flag alias "j"; first defined at commands\[0\]\.flags\[0\]\.short/
+    );
+  });
+
   it("reports missing descriptions, undocumented flags, unsupported flag types, and missing examples", () => {
     assert.throws(
       () =>

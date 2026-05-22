@@ -10,6 +10,8 @@ import { renderSchemaJson } from "../schema/index.js";
 import { createCliError, exitCodeForCategory, isCliError, renderCliErrorText } from "../errors/index.js";
 import { renderJsonError, renderJsonSuccess, type JsonFields } from "../output/index.js";
 
+type OclifShortFlag = Interfaces.AlphabetLowercase | Interfaces.AlphabetUppercase;
+
 export interface RuntimeCommandContext {
   readonly command: CommandMetadata;
   readonly args: Readonly<Record<string, unknown>>;
@@ -404,7 +406,7 @@ function commandRequestsJson(command: CommandMetadata, argv: readonly string[]):
   if (command.interactions?.json !== true) {
     return false;
   }
-  return argvRequestsJson(argv);
+  return argvRequestsJson(argv) || commandFlagRequestsJson(command, argv);
 }
 
 function argvRequestsJson(argv: readonly string[]): boolean {
@@ -413,6 +415,26 @@ function argvRequestsJson(argv: readonly string[]): boolean {
   return flagArgv.some(
     (token, index) => token === "--json" || token === "--output=json" || (token === "--output" && flagArgv[index + 1] === "json")
   );
+}
+
+function commandFlagRequestsJson(command: CommandMetadata, argv: readonly string[]): boolean {
+  const positionalSeparatorIndex = argv.indexOf("--");
+  const flagArgv = positionalSeparatorIndex === -1 ? argv : argv.slice(0, positionalSeparatorIndex);
+  const jsonShorts = new Set((command.flags ?? []).filter((flag) => flag.name === "json").map((flag) => flag.short).filter(isString));
+  const outputShorts = new Set((command.flags ?? []).filter((flag) => flag.name === "output").map((flag) => flag.short).filter(isString));
+  return flagArgv.some((token, index) => {
+    if (!token.startsWith("-") || token.startsWith("--")) {
+      return false;
+    }
+    const [shortName] = token.slice(1).split("=", 1);
+    if (!shortName) {
+      return false;
+    }
+    if (jsonShorts.has(shortName)) {
+      return true;
+    }
+    return outputShorts.has(shortName) && (token === `-${shortName}=json` || flagArgv[index + 1] === "json");
+  });
 }
 
 function normalizeVersionRequest(argv: readonly string[]): { readonly json: boolean } | undefined {
@@ -499,11 +521,13 @@ function createOclifFlag(flag: FlagMetadata): Interfaces.Flag<unknown> {
     required: flag.required === true
   };
   const aliases = flag.aliases && flag.aliases.length > 0 ? { aliases: [...flag.aliases] } : {};
+  const short = flag.short ? { char: flag.short as OclifShortFlag } : {};
 
   if (flag.type === "boolean") {
     return {
       ...common,
       ...aliases,
+      ...short,
       allowNo: false,
       parse: async (value: boolean) => value,
       type: "boolean"
@@ -514,6 +538,7 @@ function createOclifFlag(flag: FlagMetadata): Interfaces.Flag<unknown> {
   return {
     ...common,
     ...aliases,
+    ...short,
     ...options,
     input: [],
     multiple: flag.multiple === true,
@@ -605,16 +630,27 @@ function ensureCommandHandlers(registry: CommandRegistry, commands: readonly Run
 
 function findUnknownFlag(command: CommandMetadata, argv: readonly string[]): string | undefined {
   const knownFlags = new Set((command.flags ?? []).flatMap((flag) => [flag.name, ...(flag.aliases ?? [])]));
+  const knownShortFlags = new Set((command.flags ?? []).map((flag) => flag.short).filter(isString));
   for (const token of argv) {
     if (token === "--") {
       return undefined;
     }
-    if (!token.startsWith("--")) {
+    if (!token.startsWith("-")) {
       continue;
     }
-    const [name] = token.slice(2).split("=", 1);
-    if (name && !knownFlags.has(name)) {
-      return `--${name}`;
+    if (token.startsWith("--")) {
+      const [name] = token.slice(2).split("=", 1);
+      if (name && !knownFlags.has(name)) {
+        return `--${name}`;
+      }
+      continue;
+    }
+    if (/^-\d/.test(token)) {
+      continue;
+    }
+    const [name] = token.slice(1).split("=", 1);
+    if (name && !knownShortFlags.has(name)) {
+      return `-${name}`;
     }
   }
   return undefined;
@@ -636,4 +672,8 @@ function requireNonEmpty(value: string, field: string): void {
   if (value.trim().length === 0) {
     throw new TypeError(`${field} must not be empty.`);
   }
+}
+
+function isString(value: string | undefined): value is string {
+  return typeof value === "string";
 }

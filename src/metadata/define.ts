@@ -11,6 +11,7 @@ import type {
 const validNamePattern = /^[a-z][a-z0-9-]*(?: [a-z][a-z0-9-]*)*$/;
 const validFlagNamePattern = /^[a-z][a-z0-9-]*$/;
 const validAliasPattern = /^[a-zA-Z][a-zA-Z0-9-]*$/;
+const validShortFlagPattern = /^[a-zA-Z]$/;
 
 export function defineExample<const Example extends ExampleMetadata>(example: Example): Readonly<Example> {
   requireDescription(example.description, "example.description");
@@ -27,6 +28,9 @@ export function defineArgument<const Argument extends ArgumentMetadata>(argument
 export function defineFlag<const Flag extends FlagMetadata>(flag: Flag): Readonly<Flag> {
   requireFlagName(flag.name, "flag.name");
   requireDescription(flag.description, "flag.description");
+  if (flag.short !== undefined) {
+    requireShortFlag(flag.short, "flag.short");
+  }
   for (const alias of flag.aliases ?? []) {
     requireAlias(alias, `flag.aliases[${alias}]`);
   }
@@ -122,6 +126,13 @@ function requireAlias(value: string, field: string): void {
   requireNonEmpty(value, field);
   if (!validAliasPattern.test(value)) {
     throw new TypeError(`${field} must use an alias without leading dashes or spaces.`);
+  }
+}
+
+function requireShortFlag(value: string, field: string): void {
+  requireNonEmpty(value, field);
+  if (!validShortFlagPattern.test(value)) {
+    throw new TypeError(`${field} must be exactly one letter without leading dashes.`);
   }
 }
 
