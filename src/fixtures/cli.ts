@@ -152,7 +152,7 @@ export const fixtureCli = createCli({
             output: "human",
             cacheDirectory: ".fixture-cache"
           },
-          token: "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+          token: "fixture-token-value-1234567890"
         },
         providers: {
           local: {

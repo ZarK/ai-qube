@@ -174,7 +174,7 @@ describe("schema renderer", () => {
       bin: "fixture",
       sections: {
         providers: {
-          token: "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+          token: "fixture-token-value-1234567890",
           zeta: true
         },
         config: {

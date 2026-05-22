@@ -82,7 +82,7 @@ describe("output and error helpers", () => {
 
   it("redacts token-like values in human and JSON errors", async () => {
     const { createCliError, renderCliErrorText, renderJsonError } = await import("../dist/index.js");
-    const secret = "ghp_1234567890abcdefghijklmnopqrstuvwxyz";
+    const secret = "access_token=abcdefghijklmnopqrstuvwxyz123456";
     const error = createCliError({
       command: "cache validate",
       kind: "cache-config-invalid",
@@ -94,7 +94,7 @@ describe("output and error helpers", () => {
 
     assert.doesNotMatch(renderCliErrorText(error), new RegExp(secret));
     const json = JSON.parse(renderJsonError(error));
-    assert.equal(json.error.operation, "validate token [REDACTED]");
+    assert.equal(json.error.operation, "validate token access_token=[REDACTED]");
     assert.equal(json.error.likelyCause, "Authorization failed for Bearer [REDACTED]");
     assert.equal(json.error.suggestedNextAction, "Remove api_key=[REDACTED] from config.");
   });

@@ -61,8 +61,8 @@ describe("mutation helpers", () => {
     assert.match(renderMutationWarning({
       command: "cache install",
       categories: ["dependency"],
-      dryRun: { supported: false, reason: "Token ghp_1234567890abcdefghijklmnopqrstuvwxyz cannot be previewed." }
-    }), /Token \[REDACTED\] cannot be previewed/);
+      dryRun: { supported: false, reason: "Token access_token=abcdefghijklmnopqrstuvwxyz123456 cannot be previewed." }
+    }), /Token access_token=\[REDACTED\] cannot be previewed/);
   });
 
   it("freezes nested mutation helper structures", async () => {

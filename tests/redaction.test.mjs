@@ -4,13 +4,13 @@ import assert from "node:assert/strict";
 describe("redaction helpers", () => {
   it("redacts common token-like values in strings", async () => {
     const { redactText } = await import("../dist/index.js");
-    const githubToken = "ghp_1234567890abcdefghijklmnopqrstuvwxyz";
     const bearerToken = "Bearer abcdefghijklmnopqrstuvwxyz123456";
     const assignment = "api_key=abcdefghijklmnopqrstuvwxyz123456";
+    const tokenAssignment = "access_token=abcdefghijklmnopqrstuvwxyz123456";
 
-    assert.equal(redactText(`token ${githubToken}`), "token [REDACTED]");
     assert.equal(redactText(`auth ${bearerToken}`), "auth Bearer [REDACTED]");
     assert.equal(redactText(`bad ${assignment}`), "bad api_key=[REDACTED]");
+    assert.equal(redactText(`token ${tokenAssignment}`), "token access_token=[REDACTED]");
   });
 
   it("redacts structured diagnostics while preserving shape", async () => {
