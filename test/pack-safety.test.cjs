@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { readFileSync } = require('node:fs');
+const { existsSync, readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
 
@@ -68,5 +68,31 @@ describe('package publish surface safety', () => {
     for (const [name, version] of Object.entries({ ...pkg.dependencies, ...pkg.devDependencies })) {
       assert.match(version, /^\d+\.\d+\.\d+$/, `${name} must use an exact version`);
     }
+  });
+
+  it('keeps trusted publishing staged, tokenless, and pinned', () => {
+    const workflowPath = join(__dirname, '..', '.github', 'workflows', 'publish.yml');
+    assert.equal(existsSync(workflowPath), true);
+
+    const workflow = readFileSync(workflowPath, 'utf8');
+    const actionPins = [...workflow.matchAll(/uses: ([^@\s]+)@([0-9a-f]{40})/g)];
+
+    assert.equal(pkg.publishConfig.access, 'public');
+    assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
+    assert.equal(pkg.publishConfig.provenance, true);
+    assert.equal(pkg.scripts.verify, 'pnpm run lint && pnpm run test && pnpm run pack:check');
+    assert.match(workflow, /^permissions:\n  contents: read\n  id-token: write$/m);
+    assert.match(workflow, /environment: npm-publish/);
+    assert.match(workflow, /runs-on: ubuntu-latest/);
+    assert.match(workflow, /node-version: 24/);
+    assert.match(workflow, /package-manager-cache: false/);
+    assert.match(workflow, /corepack prepare pnpm@11\.0\.4 --activate/);
+    assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
+    assert.match(workflow, /pnpm run verify/);
+    assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
+    assert.match(workflow, /npm stage publish \. --access public/);
+    assert.doesNotMatch(workflow, /npm publish(?:\s|$)/);
+    assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
+    assert.deepEqual(actionPins.map(match => match[1]).sort(), ['actions/checkout', 'actions/setup-node']);
   });
 });
