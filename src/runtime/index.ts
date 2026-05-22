@@ -38,8 +38,15 @@ export interface RuntimeTopic {
   readonly metadata: TopicMetadata;
 }
 
+export interface RuntimePackageIdentity {
+  readonly name: string;
+  readonly version: string;
+}
+
 export interface CliRuntimeOptions {
   readonly bin: string;
+  readonly packageName?: string | undefined;
+  readonly packageVersion?: string | undefined;
   readonly description?: string | undefined;
   readonly registry: CommandRegistry;
   readonly commands: readonly RuntimeCommand[];
@@ -48,6 +55,7 @@ export interface CliRuntimeOptions {
 
 export interface CliRuntime {
   readonly bin: string;
+  readonly package?: RuntimePackageIdentity;
   readonly description?: string | undefined;
   readonly registry: CommandRegistry;
   readonly commands: readonly RuntimeCommand[];
@@ -160,20 +168,27 @@ export function createCli(options: CliRuntimeOptions): CliRuntime {
     commands: mergeCommands(options.registry.commands, runtimeMetadata)
   });
   ensureCommandHandlers(registry, runtimeCommands);
+  const packageIdentity = createPackageIdentity(options);
 
-  return Object.freeze({
+  const runtime = {
     bin: options.bin,
     description: options.description,
     registry,
     commands: Object.freeze(runtimeCommands),
     topics: Object.freeze([...(options.topics ?? [])])
-  });
+  };
+  return Object.freeze(packageIdentity ? { ...runtime, package: packageIdentity } : runtime);
 }
 
 export async function runCli(cli: CliRuntime, argv: readonly string[]): Promise<CliRunResult> {
   const helpRequest = normalizeHelpRequest(argv);
   if (helpRequest) {
     return renderHelpResult(cli, helpRequest);
+  }
+
+  const versionRequest = normalizeVersionRequest(argv);
+  if (versionRequest) {
+    return renderVersionResult(cli, versionRequest.json);
   }
 
   const match = matchRuntimeCommand(cli, argv);
@@ -334,6 +349,42 @@ function renderErrorResult(error: ReturnType<typeof createCliError>, jsonMode: b
   return error.command ? { ...result, executedCommand: error.command } : result;
 }
 
+function renderVersionResult(cli: CliRuntime, jsonMode: boolean): CliRunResult {
+  if (!cli.package) {
+    const error = createCliError({
+      command: "version",
+      kind: "version-not-configured",
+      operation: "render version",
+      likelyCause: "No package name and version were configured for this CLI runtime.",
+      suggestedNextAction: "Pass packageName and packageVersion to createCli.",
+      category: "usage"
+    });
+    return renderErrorResult(error, jsonMode);
+  }
+
+  if (jsonMode) {
+    return {
+      exitCode: 0,
+      stdout: renderJsonSuccess("version", {
+        package: {
+          name: cli.package.name,
+          version: cli.package.version
+        },
+        version: cli.package.version
+      }),
+      stderr: "",
+      executedCommand: "version"
+    };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: `${cli.package.version}\n`,
+    stderr: "",
+    executedCommand: "version"
+  };
+}
+
 function normalizeThrownError(error: unknown, command: string): ReturnType<typeof createCliError> {
   if (isCliError(error)) {
     return error.command ? error : createCliError({ ...error, command });
@@ -364,6 +415,26 @@ function argvRequestsJson(argv: readonly string[]): boolean {
   );
 }
 
+function normalizeVersionRequest(argv: readonly string[]): { readonly json: boolean } | undefined {
+  if (argv.length === 0) {
+    return undefined;
+  }
+  let hasVersion = false;
+  let hasJson = false;
+  for (const token of argv) {
+    if (token === "--version" || token === "-v") {
+      hasVersion = true;
+      continue;
+    }
+    if (token === "--json") {
+      hasJson = true;
+      continue;
+    }
+    return undefined;
+  }
+  return hasVersion ? { json: hasJson } : undefined;
+}
+
 function joinOutput(parts: readonly (string | undefined)[]): string {
   return parts.filter((part): part is string => part !== undefined && part.length > 0).join("");
 }
@@ -381,7 +452,13 @@ function renderHelpResult(cli: CliRuntime, helpRequest: NonNullable<ReturnType<t
   try {
     return {
       exitCode: 0,
-      stdout: renderHelp(cli.registry, helpRequest, { bin: cli.bin, description: cli.description }),
+      stdout: renderHelp(
+        cli.registry,
+        helpRequest,
+        cli.package
+          ? { bin: cli.bin, packageVersion: cli.package.version, description: cli.description }
+          : { bin: cli.bin, description: cli.description }
+      ),
       stderr: ""
     };
   } catch (error) {
@@ -504,6 +581,20 @@ function resolveRegistry(registry: CommandRegistry | (() => CommandRegistry)): C
   return typeof registry === "function" ? registry() : registry;
 }
 
+function createPackageIdentity(options: CliRuntimeOptions): RuntimePackageIdentity | undefined {
+  const hasName = options.packageName !== undefined;
+  const hasVersion = options.packageVersion !== undefined;
+  if (hasName !== hasVersion) {
+    throw new TypeError("createCli requires packageName and packageVersion to be configured together.");
+  }
+  if (!hasName || !hasVersion) {
+    return undefined;
+  }
+  requireNonEmpty(options.packageName, "packageName");
+  requireNonEmpty(options.packageVersion, "packageVersion");
+  return Object.freeze({ name: options.packageName, version: options.packageVersion });
+}
+
 function ensureCommandHandlers(registry: CommandRegistry, commands: readonly RuntimeCommand[]): void {
   const commandNames = new Set(commands.map((command) => command.metadata.name));
   const missingHandlers = listCommands(registry).filter((command) => !commandNames.has(command.name));
@@ -539,4 +630,10 @@ function compareText(left: string, right: string): number {
     return 0;
   }
   return left < right ? -1 : 1;
+}
+
+function requireNonEmpty(value: string, field: string): void {
+  if (value.trim().length === 0) {
+    throw new TypeError(`${field} must not be empty.`);
+  }
 }

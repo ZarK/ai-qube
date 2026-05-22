@@ -16,7 +16,7 @@ describe("fixture CLI runtime", () => {
     const flagHelp = runFixture("--help");
     const commandHelp = runFixture("help");
 
-    assertCliHelp(flagHelp, { contains: [/fixture\nProduct-neutral fixture CLI/, /cache clear\s+Clear cache entries/, /schema\s+Render deterministic command schema/] });
+    assertCliHelp(flagHelp, { contains: [/fixture\nProduct-neutral fixture CLI/, /fixture --version/, /cache clear\s+Clear cache entries/, /schema\s+Render deterministic command schema/] });
     assertCliHelp(commandHelp, { contains: [/fixture\nProduct-neutral fixture CLI/] });
     assert.equal(flagHelp.stdout, commandHelp.stdout);
   });
@@ -31,6 +31,32 @@ describe("fixture CLI runtime", () => {
     assertCliHelp(helpToken);
     assert.equal(helpCommand.stdout, helpFlag.stdout);
     assert.equal(helpFlag.stdout, helpToken.stdout);
+  });
+
+  it("renders configured global version without executing handlers", () => {
+    const longFlag = runFixture("--version");
+    const shortFlag = runFixture("-v");
+
+    assertCliSuccess(longFlag, { stdout: `${packageMetadata.version}\n`, stdoutExcludes: /EXECUTED/ });
+    assertCliSuccess(shortFlag, { stdout: `${packageMetadata.version}\n`, stdoutExcludes: /EXECUTED/ });
+    assert.equal(longFlag.stdout, shortFlag.stdout);
+  });
+
+  it("renders configured global version as JSON without dispatching commands", () => {
+    const result = runFixture("--version", "--json");
+    const repeated = runFixture("--json", "-v");
+
+    assertCliJsonSuccess(result, {
+      ok: true,
+      command: "version",
+      package: {
+        name: packageMetadata.name,
+        version: packageMetadata.version
+      },
+      version: packageMetadata.version
+    });
+    assert.equal(result.stdout, repeated.stdout);
+    assert.doesNotMatch(result.stdout, /EXECUTED/);
   });
 
   it("renders mutating command help without treating final help as an argument", () => {

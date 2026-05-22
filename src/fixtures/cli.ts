@@ -11,9 +11,14 @@ import { cacheClearCommand, cacheExplodeCommand, cacheInspectCommand, cacheInsta
 
 let currentRegistry = fixtureMetadata;
 const packageMetadata = readPackageMetadata();
+const packageIdentity = {
+  packageName: packageMetadata.name,
+  packageVersion: packageMetadata.version
+};
 
 export const fixtureCli = createCli({
   bin: "fixture",
+  ...packageIdentity,
   description: "Product-neutral fixture CLI for ai-qube-cli runtime tests.",
   registry: fixtureMetadata,
   topics: [createTopicCommand(cacheTopic)],
@@ -140,8 +145,7 @@ export const fixtureCli = createCli({
     createSchemaCommand({
       registry: () => currentRegistry,
       bin: "fixture",
-      packageName: packageMetadata.name,
-      packageVersion: packageMetadata.version,
+      ...packageIdentity,
       extensions: defineExtensions({
         fixture: true,
         purpose: "schema-integration"

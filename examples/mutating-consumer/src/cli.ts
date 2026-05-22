@@ -20,9 +20,14 @@ interface CatalogState {
 }
 
 let runtimeRegistry = consumerRegistry;
+const packageIdentity = {
+  packageName: "mutating-consumer",
+  packageVersion: "0.1.0"
+};
 
 export const consumerCli = createCli({
   bin: "mutating-consumer",
+  ...packageIdentity,
   description: "Mutating consumer CLI validating ai-qube-cli dry-run adoption.",
   registry: consumerRegistry,
   topics: [createTopicCommand(catalogTopic)],
@@ -99,8 +104,7 @@ export const consumerCli = createCli({
     createSchemaCommand({
       registry: () => runtimeRegistry,
       bin: "mutating-consumer",
-      packageName: "mutating-consumer",
-      packageVersion: "0.1.0"
+      ...packageIdentity
     })
   ]
 });

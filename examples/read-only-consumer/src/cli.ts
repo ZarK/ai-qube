@@ -19,9 +19,14 @@ const catalog = new Map<string, CatalogItem>([
 ]);
 
 let runtimeRegistry = consumerRegistry;
+const packageIdentity = {
+  packageName: "read-only-consumer",
+  packageVersion: "0.1.0"
+};
 
 export const consumerCli = createCli({
   bin: "consumer",
+  ...packageIdentity,
   description: "Read-only consumer CLI validating ai-qube-cli adoption.",
   registry: consumerRegistry,
   topics: [createTopicCommand(catalogTopic)],
@@ -54,8 +59,7 @@ export const consumerCli = createCli({
     createSchemaCommand({
       registry: () => runtimeRegistry,
       bin: "consumer",
-      packageName: "read-only-consumer",
-      packageVersion: "0.1.0"
+      ...packageIdentity
     })
   ]
 });

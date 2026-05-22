@@ -122,6 +122,52 @@ describe("output and error helpers", () => {
     assert.deepEqual(JSON.parse(result.stdout), { ok: true, command: "raw output", output: "raw text\n" });
   });
 
+  it("handles global version before command dispatch", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    let invoked = false;
+    const command = {
+      kind: "command",
+      name: "raw output",
+      description: "Return raw output for fallback JSON rendering.",
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Run raw output.", command: "fixture raw output --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      packageName: "fixture-package",
+      packageVersion: "1.2.3",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, () => {
+        invoked = true;
+        return { stdout: "raw text\n" };
+      })]
+    });
+
+    const human = await runCli(cli, ["--version"]);
+    const json = await runCli(cli, ["-v", "--json"]);
+
+    assert.equal(invoked, false);
+    assert.deepEqual(human, {
+      exitCode: 0,
+      stdout: "1.2.3\n",
+      stderr: "",
+      executedCommand: "version"
+    });
+    assert.deepEqual(JSON.parse(json.stdout), {
+      ok: true,
+      command: "version",
+      package: {
+        name: "fixture-package",
+        version: "1.2.3"
+      },
+      version: "1.2.3"
+    });
+    assert.equal(json.exitCode, 0);
+    assert.equal(json.stderr, "");
+    assert.equal(json.executedCommand, "version");
+  });
+
   it("renders non-zero runtime results as JSON failures", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const failingCommand = {

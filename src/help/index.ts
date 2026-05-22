@@ -4,6 +4,7 @@ import { findCommand, findTopic, listCommands, listTopics } from "../registry/in
 
 export interface HelpRenderOptions {
   readonly bin: string;
+  readonly packageVersion?: string | undefined;
   readonly description?: string | undefined;
 }
 
@@ -59,7 +60,12 @@ export function renderHelp(registry: CommandRegistry, request: HelpRequest, opti
 export function renderRootHelp(registry: CommandRegistry, options: HelpRenderOptions): string {
   return joinSections([
     [options.bin, options.description ?? "Metadata-driven command-line interface."].join("\n"),
-    joinLines(["Usage:", `  ${options.bin} <command> [flags]`, `  ${options.bin} help <command>`]),
+    joinLines([
+      "Usage:",
+      `  ${options.bin} <command> [flags]`,
+      `  ${options.bin} help <command>`,
+      ...(options.packageVersion ? [`  ${options.bin} --version`] : [])
+    ]),
     renderNameDescriptionSection("Topics:", listTopics(registry)),
     renderNameDescriptionSection("Commands:", listCommands(registry)),
     "Help invocations never execute command handlers."
