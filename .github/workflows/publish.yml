@@ -1,4 +1,4 @@
-name: Publish
+name: publish.yml
 
 on:
   workflow_dispatch:
@@ -21,7 +21,6 @@ jobs:
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       - run: corepack enable

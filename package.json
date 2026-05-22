@@ -7,7 +7,7 @@
   "homepage": "https://github.com/ZarK/ai-qube-cli#readme",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ZarK/ai-qube-cli"
+    "url": "git+https://github.com/ZarK/ai-qube-cli.git"
   },
   "bugs": {
     "url": "https://github.com/ZarK/ai-qube-cli/issues"
