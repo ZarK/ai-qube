@@ -5,6 +5,8 @@ import type {
   TopicMetadata
 } from "../metadata/index.js";
 
+const canonicalFlagNamePattern = /^[a-z][a-z0-9-]*$/;
+
 export interface CommandRegistry {
   readonly topics: readonly TopicMetadata[];
   readonly commands: readonly CommandMetadata[];
@@ -229,6 +231,7 @@ function validateFlags(
   flags.forEach((flag, index) => {
     const flagPath = `${path}[${index}]`;
     requireDescription(flag.description, `${flagPath}.description`, issues);
+    validateCanonicalFlagName(flag.name, `${flagPath}.name`, issues);
     if (!isSupportedFlagType(flag.type)) {
       addIssue(issues, `${flagPath}.type`, `Unsupported flag type "${String(flag.type)}".`);
     }
@@ -310,6 +313,15 @@ function validateSupplyChain(command: CommandMetadata, path: string, issues: Com
 
 function isSupportedFlagType(value: unknown): value is FlagValueType {
   return value === "boolean" || value === "string" || value === "integer" || value === "number" || value === "option";
+}
+
+function validateCanonicalFlagName(value: string, path: string, issues: CommandRegistryValidationIssue[]): void {
+  if (typeof value !== "string" || value.trim().length === 0) {
+    return;
+  }
+  if (!canonicalFlagNamePattern.test(value)) {
+    addIssue(issues, path, `Flag names are canonical keys and must not include leading dashes.`);
+  }
 }
 
 function trackUnique(

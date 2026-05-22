@@ -38,8 +38,9 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 | FR-02-002 | Command metadata supports space-separated command names such as `cache clear` while distinguishing executable commands from non-executable topics. | Required |
 | FR-02-003 | Command metadata records support for `--dry-run`, JSON triggers such as `--json` and `--output json`, `--help`, `--no-color`, non-interactive mode, and TTY prompts. | Required |
 | FR-02-004 | Command metadata can include consumer-defined extension fields without the package knowing product-specific schemas. | Required |
-| FR-02-005 | Registry validation catches missing descriptions, duplicate command names, duplicate aliases, undocumented flags, missing examples, inconsistent mutation metadata, and unsupported flag types. | Required |
+| FR-02-005 | Registry validation catches missing descriptions, duplicate command names, duplicate aliases, undocumented flags, malformed flag names, missing examples, inconsistent mutation metadata, and unsupported flag types. | Required |
 | FR-02-006 | Framework command statics can be derived from metadata where practical so help, schema, validation, and executable behavior do not drift. | Required |
+| FR-02-007 | Flag metadata stores canonical flag names without leading dashes, such as `json` or `dry-run`; help and schema rendering are responsible for user-facing tokens such as `--json` or `--dry-run`. | Required |
 
 ## FR-03 - Runtime And CLI Behavior
 
@@ -64,7 +65,7 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 | ID | Requirement | Status |
 |----|-------------|--------|
 | FR-04-001 | The package provides a deterministic schema renderer for command-line packages. | Required |
-| FR-04-002 | Schema output includes package name, package version, binary name, command metadata, topics, arguments, flags, defaults, options, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
+| FR-04-002 | Schema output includes package name, package version, binary name, command metadata, topics, arguments, canonical flag names, rendered flag tokens, defaults, options, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
 | FR-04-003 | Schema output can include consumer-defined extension sections without requiring product-specific code in the toolkit. | Required |
 | FR-04-004 | The package provides standard JSON success and error envelopes. Success output includes at least `ok`, `command`, and consumer-defined result fields. Error output includes `ok: false`, `command`, stable error kind, failed operation, likely cause, suggested next action, and exit code category. | Required |
 | FR-04-005 | JSON-triggered output writes only valid JSON to stdout. Warnings, progress, hints, prompts, and diagnostics go to stderr unless the command's primary result is itself a diagnostic report. | Required |

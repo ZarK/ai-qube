@@ -64,6 +64,14 @@ describe("metadata validation", () => {
     }), /flag.options must include at least one value when flag.type is "option"/);
   });
 
+  it("throws on flag names that include leading dashes", () => {
+    assert.throws(() => defineFlag({
+      name: "--json",
+      description: "Render JSON output.",
+      type: "boolean"
+    }), /flag.name must use a lowercase flag name without leading dashes/);
+  });
+
   it("throws on supply-chain-sensitive metadata without reason or kind", () => {
     assert.throws(() => defineCommand({
       kind: "command",

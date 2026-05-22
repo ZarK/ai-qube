@@ -14,7 +14,9 @@ describe("schema renderer", () => {
         { name: "destination", description: "Destination cache entry." }
       ],
       flags: [
-        { name: "output", description: "Select output format.", type: "option", options: ["json", "human"], defaultValue: "human" },
+        { name: "output", description: "Select output format.", type: "option", aliases: ["format"], options: ["json", "human"], defaultValue: "human" },
+        { name: "tag", description: "Attach labels to the cache query.", type: "string", aliases: ["label"], multiple: true },
+        { name: "verbose", description: "Render verbose diagnostics.", type: "boolean", aliases: ["v"] },
         { name: "json", description: "Render JSON.", type: "boolean" }
       ],
       examples: [
@@ -51,8 +53,13 @@ describe("schema renderer", () => {
     const command = schema.commands[0];
     assert.deepEqual(command.aliases, ["a", "z"]);
     assert.deepEqual(command.arguments.map((argument) => argument.name), ["source", "destination"]);
-    assert.deepEqual(command.flags.map((flag) => flag.name), ["json", "output"]);
+    assert.deepEqual(command.flags.map((flag) => flag.name), ["json", "output", "tag", "verbose"]);
+    assert.deepEqual(command.flags.find((flag) => flag.name === "json")?.tokens, ["--json"]);
+    assert.deepEqual(command.flags.find((flag) => flag.name === "output")?.tokens, ["--output", "--format"]);
     assert.deepEqual(command.flags.find((flag) => flag.name === "output")?.options, ["human", "json"]);
+    assert.deepEqual(command.flags.find((flag) => flag.name === "tag")?.tokens, ["--tag", "--label"]);
+    assert.equal(command.flags.find((flag) => flag.name === "tag")?.multiple, true);
+    assert.deepEqual(command.flags.find((flag) => flag.name === "verbose")?.tokens, ["--verbose", "--v"]);
     assert.deepEqual(command.errors.map((error) => error.kind), ["a-error", "z-error"]);
     assert.deepEqual(command.exitCodes.map((exitCode) => exitCode.code), [0, 2]);
   });

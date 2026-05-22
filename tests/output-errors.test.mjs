@@ -168,6 +168,40 @@ describe("output and error helpers", () => {
     assert.equal(json.executedCommand, "version");
   });
 
+  it("parses rendered flag tokens into canonical flag keys", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "flag demo",
+      description: "Return parsed flags for runtime verification.",
+      flags: [
+        { name: "json", description: "Render JSON output.", type: "boolean" },
+        { name: "format", description: "Select output format.", type: "option", aliases: ["output"], options: ["human", "json"] },
+        { name: "tag", description: "Attach repeated tag values.", type: "string", aliases: ["label"], multiple: true }
+      ],
+      examples: [{ description: "Run flag demo.", command: "fixture flag demo --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ flags }) => ({ json: { flags } }))]
+    });
+
+    const result = await runCli(cli, ["flag", "demo", "--json", "--output", "json", "--label", "alpha", "--tag", "beta"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      command: "flag demo",
+      flags: {
+        format: "json",
+        json: true,
+        tag: ["alpha", "beta"]
+      }
+    });
+  });
+
   it("renders non-zero runtime results as JSON failures", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const failingCommand = {

@@ -138,6 +138,27 @@ describe("command registry", () => {
     );
   });
 
+  it("reports flag names that include rendered token syntax", () => {
+    assert.throws(
+      () =>
+        createCommandRegistry({
+          commands: [
+            {
+              ...validCommand,
+              flags: [
+                {
+                  name: "--json",
+                  description: "Render machine-readable JSON output.",
+                  type: "boolean"
+                }
+              ]
+            }
+          ]
+        }),
+      /commands\[0\]\.flags\[0\]\.name: Flag names are canonical keys and must not include leading dashes/
+    );
+  });
+
   it("reports missing descriptions, undocumented flags, unsupported flag types, and missing examples", () => {
     assert.throws(
       () =>
