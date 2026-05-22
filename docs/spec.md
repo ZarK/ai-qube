@@ -68,7 +68,7 @@ Requirements use stable identifiers (`FR-XX-NNN` and `NFR-XX-NNN`) so implementa
 |----|-------------|--------|
 | FR-04-001 | The package provides a deterministic schema renderer for command-line packages. | Required |
 | FR-04-002 | Schema output includes package name, package version, binary name, command metadata, topics, arguments, canonical flag names, rendered flag tokens, structured short aliases, negatable flag support, defaults, options, examples, mutation behavior, dry-run support, structured output support, stable error kinds, and exit codes. | Required |
-| FR-04-003 | Schema output can include consumer-defined extension sections without requiring product-specific code in the toolkit. | Required |
+| FR-04-003 | Schema output can include named, consumer-defined sections without requiring product-specific code in the toolkit; section output is deterministic and redacts sensitive values. | Required |
 | FR-04-004 | The package provides standard JSON success and error envelopes. Success output includes at least `ok`, `command`, and consumer-defined result fields. Error output includes `ok: false`, `command`, stable error kind, failed operation, likely cause, suggested next action, and exit code category. | Required |
 | FR-04-005 | JSON-triggered output writes only valid JSON to stdout. Warnings, progress, hints, prompts, and diagnostics go to stderr unless the command's primary result is itself a diagnostic report. | Required |
 | FR-04-006 | Output helpers support both command-specific human renderers and command-specific JSON result shapes from the consuming package. | Required |

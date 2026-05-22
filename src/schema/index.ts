@@ -13,11 +13,15 @@ import type {
   TopicMetadata
 } from "../metadata/index.js";
 import type { CommandRegistry } from "../registry/index.js";
+import { redactStructuredValue } from "../redaction/index.js";
+
+export type SchemaSections = Readonly<Record<string, unknown>>;
 
 export interface RenderSchemaOptions {
   readonly packageName: string;
   readonly packageVersion: string;
   readonly bin: string;
+  readonly sections?: SchemaSections;
   readonly extensions?: MetadataExtensions;
 }
 
@@ -30,6 +34,7 @@ export interface CliPackageSchema {
   readonly bin: string;
   readonly topics: readonly TopicSchema[];
   readonly commands: readonly CommandSchema[];
+  readonly sections?: SchemaSections;
   readonly extensions?: MetadataExtensions;
 }
 
@@ -154,7 +159,8 @@ export function renderSchema(registry: CommandRegistry, options: RenderSchemaOpt
     topics: [...registry.topics].sort(compareByName).map(renderTopic),
     commands: [...registry.commands].sort(compareByName).map(renderCommand)
   };
-  return withExtensions(schema, options.extensions);
+  const withSections = options.sections ? { ...schema, sections: renderSections(options.sections) } : schema;
+  return withExtensions(withSections, options.extensions);
 }
 
 export function renderSchemaJson(registry: CommandRegistry, options: RenderSchemaOptions): string {
@@ -235,6 +241,11 @@ function renderFlagTokens(flag: FlagMetadata): readonly string[] {
     ...(flag.short !== undefined ? [`-${flag.short}`] : []),
     ...sortText(flag.aliases ?? []).flatMap((alias) => [`--${alias}`, ...(flag.negatable === true ? [`--no-${alias}`] : [])])
   ];
+}
+
+function renderSections(sections: SchemaSections): SchemaSections {
+  const rendered = stableJsonObject(redactStructuredValue(sections));
+  return Object.freeze(rendered);
 }
 
 function renderExample(example: ExampleMetadata): ExampleSchema {

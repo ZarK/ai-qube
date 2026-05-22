@@ -146,6 +146,21 @@ export const fixtureCli = createCli({
       registry: () => currentRegistry,
       bin: "fixture",
       ...packageIdentity,
+      sections: {
+        config: {
+          defaults: {
+            output: "human",
+            cacheDirectory: ".fixture-cache"
+          },
+          token: "ghp_1234567890abcdefghijklmnopqrstuvwxyz"
+        },
+        providers: {
+          local: {
+            available: true,
+            capabilities: ["read", "dry-run"]
+          }
+        }
+      },
       extensions: defineExtensions({
         fixture: true,
         purpose: "schema-integration"

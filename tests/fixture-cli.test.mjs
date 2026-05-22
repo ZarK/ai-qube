@@ -86,6 +86,20 @@ describe("fixture CLI runtime", () => {
     assert.deepEqual(schema.package, { name: packageMetadata.name, version: packageMetadata.version });
     assert.equal(schema.bin, "fixture");
     assert.deepEqual(schema.extensions, { fixture: true, purpose: "schema-integration" });
+    assert.deepEqual(Object.keys(schema.sections), ["config", "providers"]);
+    assert.deepEqual(schema.sections.config, {
+      defaults: {
+        cacheDirectory: ".fixture-cache",
+        output: "human"
+      },
+      token: "[REDACTED]"
+    });
+    assert.deepEqual(schema.sections.providers, {
+      local: {
+        available: true,
+        capabilities: ["read", "dry-run"]
+      }
+    });
     assert.deepEqual(schema.topics.map((topic) => topic.name), ["cache"]);
     assert.deepEqual(schema.commands.map((command) => command.name), ["cache clear", "cache explode", "cache inspect", "cache install", "cache prompt", "cache validate", "schema"]);
     const clearCommand = schema.commands.find((command) => command.name === "cache clear");

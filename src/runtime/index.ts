@@ -7,6 +7,7 @@ import type { CommandRegistry } from "../registry/index.js";
 import { createCommandRegistry, listCommands } from "../registry/index.js";
 import { normalizeHelpRequest, renderHelp, suggestCommand, suggestFlag } from "../help/index.js";
 import { renderSchemaJson } from "../schema/index.js";
+import type { SchemaSections } from "../schema/index.js";
 import { createCliError, exitCodeForCategory, isCliError, renderCliErrorText } from "../errors/index.js";
 import { renderJsonError, renderJsonSuccess, type JsonFields } from "../output/index.js";
 
@@ -76,6 +77,7 @@ export interface SchemaCommandOptions {
   readonly bin: string;
   readonly packageName: string;
   readonly packageVersion: string;
+  readonly sections?: SchemaSections;
   readonly extensions?: MetadataExtensions;
 }
 
@@ -148,12 +150,14 @@ export function createSchemaCommand(options: SchemaCommandOptions): RuntimeComma
           packageName: options.packageName,
           packageVersion: options.packageVersion,
           bin: options.bin,
+          ...(options.sections ? { sections: options.sections } : {}),
           extensions: options.extensions
         }
       : {
           packageName: options.packageName,
           packageVersion: options.packageVersion,
-          bin: options.bin
+          bin: options.bin,
+          ...(options.sections ? { sections: options.sections } : {})
         };
     return {
       stdout: renderSchemaJson(resolved, schemaOptions),

@@ -154,4 +154,40 @@ describe("schema renderer", () => {
 
     assert.deepEqual(schema.commands[0]?.supplyChain, { sensitive: false, kinds: [] });
   });
+
+  it("renders named consumer sections deterministically with redaction", async () => {
+    const { createCommandRegistry, renderSchemaJson } = await import("../dist/index.js");
+    const registry = createCommandRegistry({
+      commands: [
+        {
+          kind: "command",
+          name: "cache inspect",
+          description: "Inspect cache entries without changing local state.",
+          examples: [{ description: "Inspect.", command: "fixture cache inspect" }]
+        }
+      ]
+    });
+
+    const rendered = renderSchemaJson(registry, {
+      packageName: "pkg",
+      packageVersion: "1.2.3",
+      bin: "fixture",
+      sections: {
+        providers: {
+          token: "ghp_1234567890abcdefghijklmnopqrstuvwxyz",
+          zeta: true
+        },
+        config: {
+          beta: 2,
+          alpha: 1
+        }
+      }
+    });
+    const schema = JSON.parse(rendered);
+
+    assert.deepEqual(Object.keys(schema.sections), ["config", "providers"]);
+    assert.deepEqual(schema.sections.config, { alpha: 1, beta: 2 });
+    assert.equal(schema.sections.providers.token, "[REDACTED]");
+    assert.equal(schema.sections.providers.zeta, true);
+  });
 });
