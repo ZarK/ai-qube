@@ -28,6 +28,10 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function safeRepoSegment(repo) {
+  return basename(repo).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'repository';
+}
+
 function basePr(overrides = {}) {
   return {
     number: 12,
@@ -536,10 +540,10 @@ describe('PR body service', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-pr-body-home-'));
     mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
     mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    mkdirSync(join(home, 'github-verification', basename(repo), '93'), { recursive: true });
+    mkdirSync(join(home, 'github-verification', safeRepoSegment(repo), '93'), { recursive: true });
     writeFileSync(join(repo, '.aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
     writeFileSync(join(repo, '.aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'oracle found no blockers' }));
-    writeFileSync(join(home, 'github-verification', basename(repo), '93', 'notes.md'), 'audited running app\n');
+    writeFileSync(join(home, 'github-verification', safeRepoSegment(repo), '93', 'notes.md'), 'audited running app\n');
     const config = getDefaults();
     config.reviewAgents = ['@copilot', 'review-bot'];
     config.gates = [

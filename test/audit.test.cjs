@@ -30,6 +30,10 @@ function cleanConfig() {
   return configToFileShape(getDefaults());
 }
 
+function safeRepoSegment(repo) {
+  return basename(repo).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'repository';
+}
+
 describe('manual UI audit model', () => {
   it('plans a required audit without creating evidence during dry-run', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
@@ -163,7 +167,7 @@ describe('manual UI audit CLI', () => {
 
     const result = binRun(['audit', 'ui', '93', '--prepare', '--json'], repo, { HOME: home, USERPROFILE: home });
     const parsed = JSON.parse(result.stdout);
-    const evidenceDirectory = join(home, 'github-verification', basename(repo), '93');
+    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
 
     assert.equal(result.status, 0);
     assert.equal(parsed.prepare, true);
@@ -175,7 +179,7 @@ describe('manual UI audit CLI', () => {
   it('checks local evidence without claiming audit pass', () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
-    const evidenceDirectory = join(home, 'github-verification', basename(repo), '93');
+    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
     mkdirSync(evidenceDirectory, { recursive: true });
     writeFileSync(join(evidenceDirectory, 'notes.md'), 'Real running app checked locally.\n');
 
