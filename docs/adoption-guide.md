@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This guide shows how a TypeScript command-line package can adopt `ai-qube-cli` for command metadata, registry-backed help, deterministic schema output, JSON trigger metadata, structured JSON output, human output, structured errors, dry-run disclosure, and contract tests.
+This guide shows how a TypeScript command-line package can adopt `@tjalve/cube-cli` for command metadata, registry-backed help, deterministic schema output, JSON trigger metadata, structured JSON output, human output, structured errors, dry-run disclosure, and contract tests.
 
 The toolkit remains infrastructure. Consuming packages own command behavior, validation rules, product logic, state management, service integrations, policy decisions, and side effects.
 
@@ -17,7 +17,7 @@ The toolkit remains infrastructure. Consuming packages own command behavior, val
 Install with an exact version and disabled lifecycle scripts:
 
 ```sh
-pnpm add ai-qube-cli@0.1.0 --save-exact --ignore-scripts
+pnpm add @tjalve/cube-cli@0.1.0 --save-exact --ignore-scripts
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 
@@ -25,7 +25,7 @@ Commit the resulting manifest and lockfile changes after reviewing dependency id
 
 ## Package Boundary
 
-`ai-qube-cli` provides reusable CLI infrastructure only. It does not:
+`@tjalve/cube-cli` provides reusable CLI infrastructure only. It does not:
 
 - import, execute, bundle, or depend on consuming packages;
 - mutate user projects, external services, user configuration, dependency state, release state, shell profiles, or background processes by itself;
@@ -46,7 +46,7 @@ import {
   defineCommand,
   defineExample,
   defineFlag
-} from "ai-qube-cli";
+} from "@tjalve/cube-cli";
 
 export const inspectCommand = defineCommand({
   kind: "command",
@@ -127,14 +127,14 @@ import {
   createCommand,
   createSchemaCommand,
   runCli
-} from "ai-qube-cli";
+} from "@tjalve/cube-cli";
 import { inspectCommand, registry } from "./metadata.js";
 
 let runtimeRegistry = registry;
 
 export const cli = createCli({
   bin: "example",
-  description: "Example CLI using ai-qube-cli infrastructure.",
+  description: "Example CLI using @tjalve/cube-cli infrastructure.",
   registry,
   commands: [
     createCommand(inspectCommand, ({ args }) => {
@@ -221,7 +221,7 @@ import {
   mutationCategories,
   renderDryRunPlan,
   renderMutationWarning
-} from "ai-qube-cli";
+} from "@tjalve/cube-cli";
 
 export const pruneCommand = defineCommand({
   kind: "command",
@@ -320,7 +320,7 @@ import {
   assertCliSuccess,
   parseCliJsonRecord,
   runNodeCliCommand
-} from "ai-qube-cli/testing";
+} from "@tjalve/cube-cli/testing";
 
 const projectRoot = new URL("..", import.meta.url);
 const cliPath = new URL("../dist/cli.js", import.meta.url);
@@ -386,7 +386,7 @@ pnpm run typecheck
 pnpm test
 ```
 
-When publishing npm packages, add pack-safety assertions around `pnpm pack --dry-run --json` so source files, tests, local configuration, and generated build artifacts outside the intended runtime package are not published accidentally. The `ai-qube-cli/testing` helpers provide `runPackDryRun`, `assertPackSafety`, and `assertPackContents` for this pattern.
+When publishing npm packages, add pack-safety assertions around `pnpm pack --dry-run --json` so source files, tests, local configuration, and generated build artifacts outside the intended runtime package are not published accidentally. The `@tjalve/cube-cli/testing` helpers provide `runPackDryRun`, `assertPackSafety`, and `assertPackContents` for this pattern.
 
 ## Public API And SemVer Expectations
 

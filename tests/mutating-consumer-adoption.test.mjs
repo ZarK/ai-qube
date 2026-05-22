@@ -22,10 +22,11 @@ const initialCatalogState = Object.freeze({
 });
 
 function copyCompiledConsumer() {
-  consumerRoot = mkdtempSync(join(tmpdir(), "ai-qube-cli-mutating-consumer-"));
+  consumerRoot = mkdtempSync(join(tmpdir(), "cube-cli-mutating-consumer-"));
   const nodeModulesDir = join(consumerRoot, "node_modules");
-  mkdirSync(nodeModulesDir, { recursive: true });
-  symlinkSync(repoRoot, join(nodeModulesDir, "ai-qube-cli"), "dir");
+  const packageScopeDir = join(nodeModulesDir, "@tjalve");
+  mkdirSync(packageScopeDir, { recursive: true });
+  symlinkSync(repoRoot, join(packageScopeDir, "cube-cli"), "dir");
   writeFileSync(
     join(consumerRoot, "package.json"),
     `${JSON.stringify({ name: "mutating-consumer-contract", private: true, type: "module" }, null, 2)}\n`
@@ -68,7 +69,7 @@ describe("mutating consumer adoption", () => {
   });
 
   it("runs from an isolated consumer package through public package exports", () => {
-    assert.match(consumerRoot, /ai-qube-cli-mutating-consumer-/);
+    assert.match(consumerRoot, /cube-cli-mutating-consumer-/);
     assert.equal(existsSync(consumerCliPath), true);
     assert.equal(existsSync(stateFilePath), true);
   });
@@ -80,7 +81,7 @@ describe("mutating consumer adoption", () => {
     const tokenHelp = runConsumer("catalog", "prune", "help");
 
     assertCliHelp(rootHelp, {
-      contains: [/mutating-consumer\nMutating consumer CLI validating ai-qube-cli dry-run adoption\./, /catalog prune\s+Remove archived catalog items/]
+      contains: [/mutating-consumer\nMutating consumer CLI validating @tjalve\/cube-cli dry-run adoption\./, /catalog prune\s+Remove archived catalog items/]
     });
     assertCliHelp(commandHelp, {
       contains: ["Usage:\n  mutating-consumer catalog prune [state-file] [--dry-run] [--json] [--yes]", /Dry run: supported/, /Mutation: local-files/]

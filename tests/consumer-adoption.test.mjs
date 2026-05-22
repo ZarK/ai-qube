@@ -13,10 +13,11 @@ let consumerRoot;
 let consumerCliPath;
 
 function copyCompiledConsumer() {
-  consumerRoot = mkdtempSync(join(tmpdir(), "ai-qube-cli-read-only-consumer-"));
+  consumerRoot = mkdtempSync(join(tmpdir(), "cube-cli-read-only-consumer-"));
   const nodeModulesDir = join(consumerRoot, "node_modules");
-  mkdirSync(nodeModulesDir, { recursive: true });
-  symlinkSync(repoRoot, join(nodeModulesDir, "ai-qube-cli"), "dir");
+  const packageScopeDir = join(nodeModulesDir, "@tjalve");
+  mkdirSync(packageScopeDir, { recursive: true });
+  symlinkSync(repoRoot, join(packageScopeDir, "cube-cli"), "dir");
   writeFileSync(
     join(consumerRoot, "package.json"),
     `${JSON.stringify({ name: "read-only-consumer-contract", private: true, type: "module" }, null, 2)}\n`
@@ -46,7 +47,7 @@ describe("read-only consumer adoption", () => {
   });
 
   it("runs from an isolated consumer package through public package exports", () => {
-    assert.match(consumerRoot, /ai-qube-cli-read-only-consumer-/);
+    assert.match(consumerRoot, /cube-cli-read-only-consumer-/);
     assert.equal(existsSync(consumerCliPath), true);
     const result = runConsumer("catalog", "inspect", "alpha");
 
@@ -62,7 +63,7 @@ describe("read-only consumer adoption", () => {
     const tokenHelp = runConsumer("catalog", "inspect", "help");
 
     assertCliHelp(rootHelp, {
-      contains: [/consumer\nRead-only consumer CLI validating ai-qube-cli adoption\./, /catalog inspect\s+Inspect a catalog item/]
+      contains: [/consumer\nRead-only consumer CLI validating @tjalve\/cube-cli adoption\./, /catalog inspect\s+Inspect a catalog item/]
     });
     assertCliHelp(commandHelp, {
       contains: ["Usage:\n  consumer catalog inspect <id> [--json] [--output <value>]", /JSON output: supported/]

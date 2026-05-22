@@ -1,5 +1,5 @@
 {
-  "name": "ai-qube-cli",
+  "name": "@tjalve/cube-cli",
   "version": "0.1.0",
   "description": "Reusable TypeScript CLI infrastructure for command-line packages.",
   "license": "MIT",

@@ -2,8 +2,8 @@
 import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-import { createCliError } from "ai-qube-cli/errors";
-import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "ai-qube-cli/runtime";
+import { createCliError } from "@tjalve/cube-cli/errors";
+import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/cube-cli/runtime";
 
 import { catalogInspectCommand, catalogTopic, consumerRegistry } from "./metadata.js";
 
@@ -27,7 +27,7 @@ const packageIdentity = {
 export const consumerCli = createCli({
   bin: "consumer",
   ...packageIdentity,
-  description: "Read-only consumer CLI validating ai-qube-cli adoption.",
+  description: "Read-only consumer CLI validating @tjalve/cube-cli adoption.",
   registry: consumerRegistry,
   topics: [createTopicCommand(catalogTopic)],
   commands: [

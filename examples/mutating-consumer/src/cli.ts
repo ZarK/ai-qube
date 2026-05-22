@@ -3,9 +3,9 @@ import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { createCliError } from "ai-qube-cli/errors";
-import { createDryRunPlan, createDryRunPlanFields, renderDryRunPlan, renderMutationWarning } from "ai-qube-cli/mutation";
-import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "ai-qube-cli/runtime";
+import { createCliError } from "@tjalve/cube-cli/errors";
+import { createDryRunPlan, createDryRunPlanFields, renderDryRunPlan, renderMutationWarning } from "@tjalve/cube-cli/mutation";
+import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/cube-cli/runtime";
 
 import { catalogPruneCommand, catalogTopic, consumerRegistry } from "./metadata.js";
 
@@ -28,7 +28,7 @@ const packageIdentity = {
 export const consumerCli = createCli({
   bin: "mutating-consumer",
   ...packageIdentity,
-  description: "Mutating consumer CLI validating ai-qube-cli dry-run adoption.",
+  description: "Mutating consumer CLI validating @tjalve/cube-cli dry-run adoption.",
   registry: consumerRegistry,
   topics: [createTopicCommand(catalogTopic)],
   commands: [

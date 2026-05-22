@@ -1,5 +1,5 @@
-import { defineArgument, defineCommand, defineExample, defineFlag, defineTopic } from "ai-qube-cli/metadata";
-import { createCommandRegistry } from "ai-qube-cli/registry";
+import { defineArgument, defineCommand, defineExample, defineFlag, defineTopic } from "@tjalve/cube-cli/metadata";
+import { createCommandRegistry } from "@tjalve/cube-cli/registry";
 
 export const catalogTopic = defineTopic({
   kind: "topic",
