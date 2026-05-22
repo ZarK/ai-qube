@@ -332,6 +332,7 @@ describe('shared command metadata', () => {
     ['review', '../dist/commands/review.js'],
     ['review gate', '../dist/commands/review/gate.js'],
     ['pr', '../dist/commands/pr.js'],
+    ['pr view', '../dist/commands/pr/view.js'],
     ['pr body', '../dist/commands/pr/body.js'],
     ['pr gate', '../dist/commands/pr/gate.js'],
     ['view', '../dist/commands/view.js'],

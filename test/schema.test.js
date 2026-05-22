@@ -20,6 +20,7 @@ describe('schema command', () => {
     const migrateMap = parsed.commands.find(command => command.name === 'migrate map');
     const auditUi = parsed.commands.find(command => command.name === 'audit ui');
     const reviewGate = parsed.commands.find(command => command.name === 'review gate');
+    const prView = parsed.commands.find(command => command.name === 'pr view');
     const prBody = parsed.commands.find(command => command.name === 'pr body');
     const prGate = parsed.commands.find(command => command.name === 'pr gate');
 
@@ -46,6 +47,12 @@ describe('schema command', () => {
     assert.deepEqual(doctor.exitCodes, [0, 1]);
     assert.equal(switchCommand.flagDetails.find(flag => flag.name === '--from').type, 'string');
     assert.deepEqual(switchCommand.argDetails, [{ name: 'issue', description: 'Target issue number, for example 93 or #93', required: true }]);
+    assert.deepEqual(prView.argDetails, [{ name: 'pr', description: 'Pull request number for concise PR state, for example 12 or #12', required: true }]);
+    assert.ok(prView.externalServices.includes('github'));
+    assert.ok(prView.stableErrorKinds.includes('review-state-unavailable'));
+    assert.equal(prView.supportsJson, true);
+    assert.equal(prView.supportsDryRun, false);
+    assert.equal(prView.flagDetails.find(flag => flag.name === '--json').type, 'boolean');
     assert.deepEqual(prGate.argDetails, [{ name: 'pr', description: 'Pull request number for the PR review gate, for example 12 or #12', required: true }]);
     assert.deepEqual(parsed.commands.find(command => command.name === 'deps blockers').argDetails, [{ name: 'issue', description: 'Issue number, for example 93 or #93', required: true }]);
     assert.deepEqual(parsed.commands.find(command => command.name === 'start').argDetails, [{ name: 'issue', description: 'Issue selector: next, a bare number such as 93, or shell-safe #93', required: false }]);

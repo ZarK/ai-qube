@@ -124,6 +124,11 @@ export const PR_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const PR_VIEW_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable concise PR state', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const PR_BODY_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable PR body draft and merge-readiness output', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },

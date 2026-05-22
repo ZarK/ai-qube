@@ -282,7 +282,7 @@ describe('init service', () => {
     assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
     assert.match(agents, /implementation: implement the complete issue scope/);
     assert.match(agents, /audit: run the configured manual UI audit/);
-    assert.match(agents, /review: run `aie review gate <issue> --prompt`, run `aie pr gate <pr>` when a PR exists to request reviewers/);
+    assert.match(agents, /review: run `aie review gate <issue> --prompt`, use `aie pr view <pr> --json` for concise PR state when inspecting, run `aie pr gate <pr>` when a PR exists to request reviewers/);
     assert.match(agents, /test: run configured quality gates/);
     assert.match(agents, /PR: commit intentional source changes, push the issue branch, open a pull request that closes the issue/);
     assert.match(agents, /merge: address review\/check feedback, loop back to implementation when a gate fails/);
@@ -297,6 +297,8 @@ describe('init service', () => {
     assert.match(agents, /placeholder command classes, stubs, no-op implementations/);
     assert.match(agents, /milestone numbers, bootstrap phases, issue implementation history, baseline language/);
     assert.match(agents, /reference repository names, local reference paths, or source-provenance explanations/);
+    assert.match(agents, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state/);
+    assert.match(agents, /Avoid raw `gh pr view` comment or review payloads/);
     assert.match(agents, /repository meta documentation/);
     assert.match(agents, /Create or edit repository docs only when the active issue explicitly asks/);
     assert.match(agents, /Do not commit generated build output unless repository policy explicitly allows it/);
@@ -311,6 +313,7 @@ describe('init service', () => {
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
     assert.match(command, /explicit full authorization under repository policy to commit, push, create PRs, run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `aie complete <issue>`, pull the configured base branch, and continue/);
+    assert.match(command, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);
     assert.match(command, /`aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status/);

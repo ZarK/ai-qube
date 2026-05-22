@@ -1,4 +1,15 @@
 export {
+  formatPrView,
+  parsePrNumber as parsePrViewNumber,
+  runPrViewService,
+  type PrViewCheck,
+  type PrViewFeedback,
+  type PrViewOptions,
+  type PrViewPullRequest,
+  type PrViewResult,
+} from '../app/pr_view';
+
+export {
   formatPrGate,
   parsePrNumber,
   runPrGate,
