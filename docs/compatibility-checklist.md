@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Use this checklist when migrating an existing command to `@tjalve/cube-cli` metadata, registry, runtime, help, schema, output, mutation, prompt, terminal, redaction, and testing helpers.
+Use this checklist when migrating an existing command to `@tjalve/qube-cli` metadata, registry, runtime, help, schema, output, mutation, prompt, terminal, redaction, and testing helpers.
 
 Apply the checklist command by command. Existing command-line behavior may be used by people and automation, so gradual migration with contract tests is safer than broad rewrites.
 
@@ -109,7 +109,7 @@ For commands that prompt:
 
 ## Contract Tests
 
-Use `@tjalve/cube-cli/testing` helpers or equivalent assertions to verify:
+Use `@tjalve/qube-cli/testing` helpers or equivalent assertions to verify:
 
 - [ ] CLI execution status, stdout, and stderr.
 - [ ] Help output and non-execution of handlers during help.

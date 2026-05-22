@@ -4,11 +4,11 @@
     "rootDir": "src",
     "outDir": "dist",
     "paths": {
-      "@tjalve/cube-cli": ["../../dist/index.d.ts"],
-      "@tjalve/cube-cli/errors": ["../../dist/errors/index.d.ts"],
-      "@tjalve/cube-cli/metadata": ["../../dist/metadata/index.d.ts"],
-      "@tjalve/cube-cli/registry": ["../../dist/registry/index.d.ts"],
-      "@tjalve/cube-cli/runtime": ["../../dist/runtime/index.d.ts"]
+      "@tjalve/qube-cli": ["../../dist/index.d.ts"],
+      "@tjalve/qube-cli/errors": ["../../dist/errors/index.d.ts"],
+      "@tjalve/qube-cli/metadata": ["../../dist/metadata/index.d.ts"],
+      "@tjalve/qube-cli/registry": ["../../dist/registry/index.d.ts"],
+      "@tjalve/qube-cli/runtime": ["../../dist/runtime/index.d.ts"]
     },
     "types": [
       "node"

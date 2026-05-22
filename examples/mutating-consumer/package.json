@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Mutating consumer CLI used to validate @tjalve/cube-cli dry-run adoption.",
+  "description": "Mutating consumer CLI used to validate @tjalve/qube-cli dry-run adoption.",
   "dependencies": {
-    "@tjalve/cube-cli": "0.1.1"
+    "@tjalve/qube-cli": "0.1.0"
   }
 }

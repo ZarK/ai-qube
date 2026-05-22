@@ -1,6 +1,6 @@
-import { defineArgument, defineCommand, defineExample, defineFlag, defineTopic } from "@tjalve/cube-cli/metadata";
-import { defineMutationMetadata, dryRunSupported, mutationCategories } from "@tjalve/cube-cli/mutation";
-import { createCommandRegistry } from "@tjalve/cube-cli/registry";
+import { defineArgument, defineCommand, defineExample, defineFlag, defineTopic } from "@tjalve/qube-cli/metadata";
+import { defineMutationMetadata, dryRunSupported, mutationCategories } from "@tjalve/qube-cli/mutation";
+import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 
 export const catalogTopic = defineTopic({
   kind: "topic",

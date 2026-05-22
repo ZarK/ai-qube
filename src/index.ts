@@ -24,5 +24,5 @@ export const toolkitBoundary: ToolkitBoundary = Object.freeze({
 });
 
 export function describeToolkitBoundary(): string {
-  return "@tjalve/cube-cli provides reusable CLI infrastructure; consuming packages own command behavior, policy decisions, and side effects.";
+  return "@tjalve/qube-cli provides reusable CLI infrastructure; consuming packages own command behavior, policy decisions, and side effects.";
 }

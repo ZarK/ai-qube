@@ -19,7 +19,7 @@ const packageIdentity = {
 export const fixtureCli = createCli({
   bin: "fixture",
   ...packageIdentity,
-  description: "Product-neutral fixture CLI for @tjalve/cube-cli runtime tests.",
+  description: "Product-neutral fixture CLI for @tjalve/qube-cli runtime tests.",
   registry: fixtureMetadata,
   topics: [createTopicCommand(cacheTopic)],
   commands: [
