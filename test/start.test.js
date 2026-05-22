@@ -100,9 +100,13 @@ describe('start service', () => {
     });
 
     const labelAction = result.plan.actions.find(action => action.kind === 'replace-status-labels');
+    const assignAction = result.plan.actions.find(action => action.kind === 'assign-issue');
+    const commentAction = result.plan.actions.find(action => action.kind === 'add-comment');
     assert.equal(result.ok, true);
     assert.equal(result.action, 'started');
     assert.equal(labelAction.status, 'planned');
+    assert.equal(assignAction.status, 'planned');
+    assert.equal(commentAction.status, 'planned');
     assert.deepEqual(labelAction.details.addLabels, ['S-InProgress']);
     assert.deepEqual(labelAction.details.removeLabels, ['S-Ready']);
     assert.equal(calls.some(args => args[0] === 'issue' && args[1] === 'edit'), false);
@@ -132,7 +136,7 @@ describe('start service', () => {
       comment: true,
       exec,
       cwd: repo,
-      config: { ...getDefaults(), noWorktree: false, blockOnOpenPRs: false, assignOnStart: true, commentOnStart: true },
+      config: { ...getDefaults(), noWorktree: false, blockOnOpenPRs: false },
     });
 
     assert.equal(result.ok, true);
@@ -143,6 +147,33 @@ describe('start service', () => {
     assert.equal(calls.some(args => args.join(' ') === 'issue edit 93 --add-assignee octo'), true);
     const { formatStartHuman } = require('../dist/renderers/lifecycle_renderer.js');
     assert.match(formatStartHuman(result), /Labels: completed \(\+S-InProgress, -S-Ready\)/);
+  });
+
+  it('honors per-invocation assignment and comment disable flags', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+    const exec = makeExec({
+      [issueListKey()]: success([], JSON.stringify([
+        issue(93, 'Ready work', ['S-Ready']),
+      ])),
+      'pr list --state open --json number,title,author,isDraft,url,headRefName --limit 1000': success([], '[]'),
+    }, calls);
+
+    const result = await startIssue({
+      selection: { kind: 'next' },
+      dryRun: true,
+      assign: false,
+      comment: false,
+      exec,
+      cwd: repo,
+      config: { ...getDefaults(), noWorktree: false, blockOnOpenPRs: false },
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.plan.actions.some(action => action.kind === 'assign-issue'), false);
+    assert.equal(result.plan.actions.some(action => action.kind === 'add-comment'), false);
+    assert.ok(result.warnings.includes('Assignment was disabled by --no-assign.'));
+    assert.ok(result.warnings.includes('Started-work comment was disabled by --no-comment.'));
   });
 
   it('rejects a requested issue with open blockers before mutation', async () => {

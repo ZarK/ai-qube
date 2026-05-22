@@ -51,6 +51,8 @@ describe('config validation', () => {
     assert.equal(defaults.blockOnOpenPRs, true);
     assert.equal(defaults.requireBaseBranchFreshness, true);
     assert.equal(defaults.autonomousMode, true);
+    assert.equal(defaults.assignOnStart, true);
+    assert.equal(defaults.commentOnStart, true);
     assert.equal(defaults.opencodeCommandAlias, false);
     assert.equal(defaults.uiAuditAppLaunch, '');
     assert.equal(defaults.uiAuditTarget, '');

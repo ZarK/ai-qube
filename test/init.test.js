@@ -76,6 +76,8 @@ describe('init service', () => {
     assert.equal(config.providers.repository.kind, 'local-git');
     assert.equal(config.policy.branch.naming, 'issue/<number>-<slug>');
     assert.equal(config.policy.branch.requireBaseBranchFreshness, true);
+    assert.equal(config.policy.lifecycle.assignOnStart, true);
+    assert.equal(config.policy.lifecycle.commentOnStart, true);
     assert.equal(config.policy.instructions.opencodeCommandAlias, false);
     assert.equal(config.policy.instructions.namingRules, false);
     assert.equal(config.policy.supplyChain.packageAgeDays, 7);
@@ -130,6 +132,8 @@ describe('init service', () => {
     assert.deepEqual(written.policy.milestoneOrdering.order, []);
     assert.equal(written.policy.instructions.namingRules, true);
     assert.equal(written.policy.instructions.supplyChainSafety, true);
+    assert.equal(written.policy.lifecycle.assignOnStart, true);
+    assert.equal(written.policy.lifecycle.commentOnStart, true);
     assert.equal(written.policy.supplyChain.packageAgeDays, 8);
     assert.equal(written.policy.supplyChain.highRiskPackageAgeDays, 14);
     assert.equal(written.policy.supplyChain.pinCiActions, true);
@@ -158,6 +162,8 @@ describe('init service', () => {
     const config = cleanConfig();
     config.policy.branch.baseRemote = 'upstream';
     config.policy.branch.baseBranch = 'develop';
+    config.policy.lifecycle.assignOnStart = false;
+    config.policy.lifecycle.commentOnStart = false;
     config.policy.reviews.agents = ['review-bot'];
     writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
@@ -167,6 +173,8 @@ describe('init service', () => {
     const written = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
     assert.equal(written.policy.branch.baseRemote, 'upstream');
     assert.equal(written.policy.branch.baseBranch, 'develop');
+    assert.equal(written.policy.lifecycle.assignOnStart, false);
+    assert.equal(written.policy.lifecycle.commentOnStart, false);
     assert.deepEqual(written.policy.reviews.agents, ['review-bot']);
   });
 

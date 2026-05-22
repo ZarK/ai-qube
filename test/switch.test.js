@@ -65,6 +65,9 @@ describe('switch service', () => {
       'pr list --state open --json number,title,author,isDraft,url,headRefName --limit 1000': success([], '[]'),
       'issue edit 93 --add-label S-Ready --remove-label S-InProgress': success([]),
       'issue edit 94 --add-label S-InProgress --remove-label S-Ready': success([]),
+      'api user': success([], JSON.stringify({ login: 'octo' })),
+      'issue edit 94 --add-assignee octo': success([]),
+      'issue comment 94 --body Switched work from #93 to #94.': success([]),
     }, calls);
 
     const result = await switchIssue({
@@ -83,6 +86,8 @@ describe('switch service', () => {
     assert.equal(result.targetIssue.number, 94);
     assert.equal(result.plan.actions.find(action => action.id === 'pause-source:93').status, 'completed');
     assert.equal(result.plan.actions.find(action => action.id === 'start-target:94').status, 'completed');
+    assert.equal(result.plan.actions.find(action => action.id === 'assign-issue:94').status, 'completed');
+    assert.equal(result.plan.actions.find(action => action.id === 'add-comment:94').status, 'completed');
     assert.equal(calls.some(args => args.join(' ') === 'issue edit 93 --add-label S-Ready --remove-label S-InProgress'), true);
     const { formatSwitchHuman } = require('../dist/renderers/lifecycle_renderer.js');
     assert.match(formatSwitchHuman(result), /Source labels: completed \(\+S-Ready, -S-InProgress\)/);

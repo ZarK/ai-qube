@@ -52,8 +52,8 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       ignoredAutomationAuthors: ['dependabot[bot]', 'renovate[bot]', 'github-actions[bot]'],
     },
     lifecycle: {
-      assignOnStart: false,
-      commentOnStart: false,
+      assignOnStart: true,
+      commentOnStart: true,
     },
     shipping: {
       autonomousMode: true,
