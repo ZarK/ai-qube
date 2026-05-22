@@ -8,6 +8,47 @@ function binRun(args, cwd = process.cwd()) {
 }
 
 describe('schema command', () => {
+  it('backs implemented commands with the qube-cli registry metadata model', async () => {
+    const { EXECUTOR_COMMAND_REGISTRY } = await import('../dist/command_registry.js');
+    const { listCommands } = await import('@tjalve/qube-cli/registry');
+    const commands = listCommands(EXECUTOR_COMMAND_REGISTRY);
+    const commandNames = commands.map(command => command.name);
+    const init = commands.find(command => command.name === 'init');
+    const start = commands.find(command => command.name === 'start');
+    const depsBlockers = commands.find(command => command.name === 'deps blockers');
+    const depsReady = commands.find(command => command.name === 'deps ready');
+
+    assert.ok(init, 'Expected init command in registry');
+    assert.ok(start, 'Expected start command in registry');
+    assert.ok(depsBlockers, 'Expected deps blockers command in registry');
+    assert.ok(depsReady, 'Expected deps ready command in registry');
+
+    const exactVersions = init.flags.find(flag => flag.name === 'exact-dependency-versions');
+    const assignFlag = start.flags.find(flag => flag.name === 'assign');
+    const commentFlag = start.flags.find(flag => flag.name === 'comment');
+    const jsonFlag = depsReady.flags.find(flag => flag.name === 'json');
+    const dryRunFlag = init.flags.find(flag => flag.name === 'dry-run');
+
+    assert.ok(exactVersions, 'Expected exact-dependency-versions flag on init');
+    assert.ok(assignFlag, 'Expected assign flag on start');
+    assert.ok(commentFlag, 'Expected comment flag on start');
+    assert.ok(jsonFlag, 'Expected json flag on deps ready');
+    assert.ok(dryRunFlag, 'Expected dry-run flag on init');
+
+    assert.ok(commandNames.includes('deps blockers'));
+    assert.ok(commandNames.includes('pr gate'));
+    assert.deepEqual(depsBlockers.arguments.map(argument => argument.name), ['issue']);
+    assert.equal(depsBlockers.arguments[0].required, true);
+    assert.equal(jsonFlag.short, 'j');
+    assert.equal(dryRunFlag.short, 'd');
+    assert.equal(exactVersions.negatable, true);
+    assert.equal(assignFlag.negatable, true);
+    assert.deepEqual(assignFlag.extensions.legacyForms, ['no-assign']);
+    assert.equal(commentFlag.negatable, true);
+    assert.equal(start.mutation.categories[0], 'github');
+    assert.equal(start.interactions.dryRun.supported, true);
+  });
+
   it('emits implemented command metadata with detailed init flag options', () => {
     const result = binRun(['schema', '--json']);
     const parsed = JSON.parse(result.stdout);

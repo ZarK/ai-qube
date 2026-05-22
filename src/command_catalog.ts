@@ -13,35 +13,14 @@ import {
   REVIEW_AGENT_VALUES,
   REVIEW_GATE_FLAG_DETAILS,
 } from './command_flag_details.js';
-import type { CommandFlagSchema, CommandMutationTarget } from './command_metadata.js';
-
-export interface CommandMetadataInput {
-  name: string;
-  description: string;
-  args: string[];
-  flags: string[];
-  flagDetails?: CommandFlagSchema[];
-  mutationTargets: CommandMutationTarget[];
-  supportsJson: boolean;
-  supportsDryRun: boolean;
-  supportsCheckOnly?: boolean;
-  externalServices?: string[];
-  stableErrorKinds?: string[];
-  exitCodes?: number[];
-  stageValues?: string[];
-  reviewAgentValues?: string[];
-  migrationModeValues?: string[];
-  migrationActionValues?: string[];
-  migrationConfidenceValues?: string[];
-  examples: string[];
-}
+import { defineExecutorCommands } from './command_definition.js';
 
 export const CONFIG_ERROR_KINDS = ['missing', 'invalid', 'unknown', 'duplicate'];
 export const COMMON_ERROR_KINDS = ['parse-error', 'config-error', 'github-error', 'repository-state-error'];
 
 const INIT_FLAGS = INIT_FLAG_DETAILS.map(flag => flag.name);
 
-export const IMPLEMENTED_COMMANDS: CommandMetadataInput[] = [
+const COMMAND_DEFINITIONS = [
   {
     name: 'doctor',
     description: 'Check runtime environment, git, GitHub CLI, repository state, worktree policy, and config health for Executor.',
@@ -483,4 +462,6 @@ export const IMPLEMENTED_COMMANDS: CommandMetadataInput[] = [
     supportsDryRun: false,
     examples: ['aie view 93', 'aie view #93', 'aie view 93 --json'],
   },
-];
+] satisfies Parameters<typeof defineExecutorCommands>[0];
+
+export const IMPLEMENTED_COMMANDS = defineExecutorCommands(COMMAND_DEFINITIONS, COMMON_ERROR_KINDS);
