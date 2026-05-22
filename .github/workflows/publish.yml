@@ -39,5 +39,27 @@ jobs:
           npm install -g npm@11.15.0 --ignore-scripts
           test "$(npm --version)" = "11.15.0"
 
+      - name: Show trusted publisher claim strings
+        run: |
+          node <<'NODE'
+          const url = new URL(process.env.ACTIONS_ID_TOKEN_REQUEST_URL);
+          url.searchParams.append("audience", "npm:registry.npmjs.org");
+
+          const response = await fetch(url, {
+            headers: {
+              Accept: "application/json",
+              Authorization: `Bearer ${process.env.ACTIONS_ID_TOKEN_REQUEST_TOKEN}`,
+            },
+          });
+          const { value } = await response.json();
+          const payload = JSON.parse(Buffer.from(value.split(".")[1], "base64url").toString("utf8"));
+          const workflowFile = payload.workflow_ref?.match(/\.github\/workflows\/([^@]+)/)?.[1] ?? "";
+
+          console.log(`repository=${payload.repository ?? ""}`);
+          console.log(`workflow_ref.file=${workflowFile}`);
+          console.log(`environment=${payload.environment ?? ""}`);
+          console.log(`ref=${payload.ref ?? ""}`);
+          NODE
+
       - name: Stage npm package
         run: npm stage publish . --access public --loglevel=verbose
