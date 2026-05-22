@@ -217,6 +217,7 @@ function validateFlags(
     readonly type: FlagValueType;
     readonly short?: string;
     readonly aliases?: readonly string[];
+    readonly negatable?: boolean;
     readonly options?: readonly string[];
   }[],
   path: string,
@@ -241,6 +242,9 @@ function validateFlags(
     }
     if (!isSupportedFlagType(flag.type)) {
       addIssue(issues, `${flagPath}.type`, `Unsupported flag type "${String(flag.type)}".`);
+    }
+    if (flag.negatable === true && flag.type !== "boolean") {
+      addIssue(issues, `${flagPath}.negatable`, `Negatable flags must use boolean type.`);
     }
     if (flag.type === "option" && (flag.options ?? []).length === 0) {
       addIssue(issues, `${flagPath}.options`, `Option flags must define at least one option.`);

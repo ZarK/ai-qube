@@ -89,6 +89,16 @@ describe("metadata validation", () => {
     }
   });
 
+  it("throws on negatable non-boolean flags", () => {
+    assert.throws(() => defineFlag({
+      name: "format",
+      description: "Select output format.",
+      type: "option",
+      options: ["human", "json"],
+      negatable: true
+    }), /flag.negatable can only be true when flag.type is "boolean"/);
+  });
+
   it("throws on supply-chain-sensitive metadata without reason or kind", () => {
     assert.throws(() => defineCommand({
       kind: "command",

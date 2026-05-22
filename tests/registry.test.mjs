@@ -207,6 +207,29 @@ describe("command registry", () => {
     );
   });
 
+  it("reports negatable non-boolean flags", () => {
+    assert.throws(
+      () =>
+        createCommandRegistry({
+          commands: [
+            {
+              ...validCommand,
+              flags: [
+                {
+                  name: "format",
+                  description: "Select output format.",
+                  type: "option",
+                  options: ["human", "json"],
+                  negatable: true
+                }
+              ]
+            }
+          ]
+        }),
+      /commands\[0\]\.flags\[0\]\.negatable: Negatable flags must use boolean type/
+    );
+  });
+
   it("reports missing descriptions, undocumented flags, unsupported flag types, and missing examples", () => {
     assert.throws(
       () =>

@@ -76,6 +76,7 @@ export interface FlagSchema {
   readonly description: string;
   readonly type: string;
   readonly aliases: readonly string[];
+  readonly negatable: boolean;
   readonly required: boolean;
   readonly multiple: boolean;
   readonly options: readonly string[];
@@ -217,6 +218,7 @@ function renderFlag(flag: FlagMetadata): FlagSchema {
       description: flag.description,
       type: flag.type,
       aliases: sortText(flag.aliases ?? []),
+      negatable: flag.negatable === true,
       required: flag.required === true,
       multiple: flag.multiple === true,
       options: sortText(flag.options ?? [])
@@ -229,8 +231,9 @@ function renderFlag(flag: FlagMetadata): FlagSchema {
 function renderFlagTokens(flag: FlagMetadata): readonly string[] {
   return [
     `--${flag.name}`,
+    ...(flag.negatable === true ? [`--no-${flag.name}`] : []),
     ...(flag.short !== undefined ? [`-${flag.short}`] : []),
-    ...sortText(flag.aliases ?? []).map((alias) => `--${alias}`)
+    ...sortText(flag.aliases ?? []).flatMap((alias) => [`--${alias}`, ...(flag.negatable === true ? [`--no-${alias}`] : [])])
   ];
 }
 

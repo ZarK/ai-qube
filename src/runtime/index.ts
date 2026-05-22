@@ -238,6 +238,26 @@ export async function runCli(cli: CliRuntime, argv: readonly string[]): Promise<
     };
   }
 
+  const negatableConflict = findNegatableFlagConflict(match.command.metadata, match.argv);
+  if (negatableConflict) {
+    const error = createCliError({
+      command: match.command.metadata.name,
+      kind: "invalid-command-usage",
+      operation: "parse flags",
+      likelyCause: `Flag "${negatableConflict}" was provided more than once or with conflicting negated forms.`,
+      suggestedNextAction: "Provide either the positive or negative form once.",
+      category: "usage"
+    });
+    if (jsonMode) {
+      return renderErrorResult(error, true);
+    }
+    return {
+      exitCode: error.exitCode,
+      stdout: "",
+      stderr: renderCliErrorText(error)
+    };
+  }
+
   const parsed = await parseCommandArgs(match.command.metadata, match.argv, jsonMode);
   if (parsed.result) {
     return parsed.result;
@@ -528,7 +548,7 @@ function createOclifFlag(flag: FlagMetadata): Interfaces.Flag<unknown> {
       ...common,
       ...aliases,
       ...short,
-      allowNo: false,
+      allowNo: flag.negatable === true,
       parse: async (value: boolean) => value,
       type: "boolean"
     };
@@ -629,7 +649,7 @@ function ensureCommandHandlers(registry: CommandRegistry, commands: readonly Run
 }
 
 function findUnknownFlag(command: CommandMetadata, argv: readonly string[]): string | undefined {
-  const knownFlags = new Set((command.flags ?? []).flatMap((flag) => [flag.name, ...(flag.aliases ?? [])]));
+  const knownFlags = new Set((command.flags ?? []).flatMap(renderKnownLongFlagNames));
   const knownShortFlags = new Set((command.flags ?? []).map((flag) => flag.short).filter(isString));
   for (const token of argv) {
     if (token === "--") {
@@ -654,6 +674,31 @@ function findUnknownFlag(command: CommandMetadata, argv: readonly string[]): str
     }
   }
   return undefined;
+}
+
+function findNegatableFlagConflict(command: CommandMetadata, argv: readonly string[]): string | undefined {
+  const positionalSeparatorIndex = argv.indexOf("--");
+  const flagArgv = positionalSeparatorIndex === -1 ? argv : argv.slice(0, positionalSeparatorIndex);
+  for (const flag of command.flags ?? []) {
+    if (flag.negatable !== true) {
+      continue;
+    }
+    const positive = new Set([flag.name, ...(flag.aliases ?? [])].map((name) => `--${name}`));
+    const negative = new Set([flag.name, ...(flag.aliases ?? [])].map((name) => `--no-${name}`));
+    const count = flagArgv.filter((token) => positive.has(token) || negative.has(token)).length;
+    if (count > 1) {
+      return flag.name;
+    }
+  }
+  return undefined;
+}
+
+function renderKnownLongFlagNames(flag: FlagMetadata): readonly string[] {
+  return [
+    flag.name,
+    ...(flag.negatable === true ? [`no-${flag.name}`] : []),
+    ...(flag.aliases ?? []).flatMap((alias) => [alias, ...(flag.negatable === true ? [`no-${alias}`] : [])])
+  ];
 }
 
 function trimAtFirstFlag(tokens: readonly string[]): readonly string[] {

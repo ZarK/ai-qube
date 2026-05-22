@@ -132,7 +132,7 @@ export function suggestValue(input: string, candidates: readonly string[]): Sugg
 
 function renderUsageSuffix(command: CommandMetadata): string {
   const args = (command.arguments ?? []).map((argument) => argument.required ? `<${argument.name}>` : `[${argument.name}]`);
-  const flags = (command.flags ?? []).map((flag) => `[${renderFlagToken(flag)}${flag.type === "boolean" ? "" : " <value>"}]`);
+  const flags = (command.flags ?? []).map(renderFlagUsage);
   const suffix = [...args, ...flags].join(" ");
   return suffix.length === 0 ? "" : ` ${suffix}`;
 }
@@ -157,15 +157,24 @@ function renderFlags(flags: readonly FlagMetadata[]): string {
   })));
 }
 
+function renderFlagUsage(flag: FlagMetadata): string {
+  if (flag.negatable === true) {
+    return `[--${flag.name}|--no-${flag.name}]`;
+  }
+  return `[${renderFlagToken(flag)}${flag.type === "boolean" ? "" : " <value>"}]`;
+}
+
 function renderFlagToken(flag: FlagMetadata): string {
-  return flag.short ? `-${flag.short}, --${flag.name}` : `--${flag.name}`;
+  const positive = flag.short ? `-${flag.short}, --${flag.name}` : `--${flag.name}`;
+  return flag.negatable === true ? `${positive}, --no-${flag.name}` : positive;
 }
 
 function renderFlagTokens(flag: FlagMetadata): readonly string[] {
   return [
     `--${flag.name}`,
+    ...(flag.negatable === true ? [`--no-${flag.name}`] : []),
     ...(flag.short ? [`-${flag.short}`] : []),
-    ...(flag.aliases ?? []).map((alias) => `--${alias}`)
+    ...(flag.aliases ?? []).flatMap((alias) => [`--${alias}`, ...(flag.negatable === true ? [`--no-${alias}`] : [])])
   ];
 }
 

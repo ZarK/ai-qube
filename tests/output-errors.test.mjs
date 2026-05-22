@@ -237,6 +237,54 @@ describe("output and error helpers", () => {
     });
   });
 
+  it("parses negatable boolean flags into the canonical flag key", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "policy check",
+      description: "Inspect policy flags.",
+      flags: [
+        { name: "json", description: "Render JSON output.", type: "boolean" },
+        { name: "worktree", aliases: ["linked-worktree"], description: "Allow linked git worktrees.", type: "boolean", negatable: true }
+      ],
+      examples: [{ description: "Disable worktrees.", command: "fixture policy check --no-worktree --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ flags }) => ({
+        json: {
+          hasWorktree: Object.hasOwn(flags, "worktree"),
+          worktree: flags.worktree ?? null
+        }
+      }))]
+    });
+
+    const enabled = await runCli(cli, ["policy", "check", "--worktree", "--json"]);
+    const disabled = await runCli(cli, ["policy", "check", "--no-worktree", "--json"]);
+    const disabledAlias = await runCli(cli, ["policy", "check", "--no-linked-worktree", "--json"]);
+    const omitted = await runCli(cli, ["policy", "check", "--json"]);
+    const duplicate = await runCli(cli, ["policy", "check", "--worktree", "--worktree", "--json"]);
+    const conflicting = await runCli(cli, ["policy", "check", "--linked-worktree", "--no-worktree", "--json"]);
+    const unknownNo = await runCli(cli, ["policy", "check", "--no-autonomous", "--json"]);
+    const help = await runCli(cli, ["help", "policy", "check"]);
+
+    assert.deepEqual(JSON.parse(enabled.stdout), { ok: true, command: "policy check", hasWorktree: true, worktree: true });
+    assert.deepEqual(JSON.parse(disabled.stdout), { ok: true, command: "policy check", hasWorktree: true, worktree: false });
+    assert.deepEqual(JSON.parse(disabledAlias.stdout), { ok: true, command: "policy check", hasWorktree: true, worktree: false });
+    assert.deepEqual(JSON.parse(omitted.stdout), { ok: true, command: "policy check", hasWorktree: false, worktree: null });
+    assert.equal(duplicate.exitCode, 2);
+    assert.match(JSON.parse(duplicate.stdout).error.likelyCause, /worktree/);
+    assert.equal(conflicting.exitCode, 2);
+    assert.match(JSON.parse(conflicting.stdout).error.likelyCause, /conflicting negated forms/);
+    assert.equal(unknownNo.exitCode, 2);
+    assert.equal(JSON.parse(unknownNo.stdout).error.likelyCause, "Flag \"--no-autonomous\" is not defined for policy check.");
+    assert.equal(help.exitCode, 0);
+    assert.match(help.stdout, /--worktree, --no-worktree\s+Allow linked git worktrees/);
+    assert.match(help.stdout, /Usage:\n  fixture policy check \[--json\] \[--worktree\|--no-worktree\]/);
+  });
+
   it("renders non-zero runtime results as JSON failures", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const failingCommand = {

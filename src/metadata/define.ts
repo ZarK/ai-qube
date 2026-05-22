@@ -31,6 +31,9 @@ export function defineFlag<const Flag extends FlagMetadata>(flag: Flag): Readonl
   if (flag.short !== undefined) {
     requireShortFlag(flag.short, "flag.short");
   }
+  if (flag.negatable === true && flag.type !== "boolean") {
+    throw new TypeError(`flag.negatable can only be true when flag.type is "boolean".`);
+  }
   for (const alias of flag.aliases ?? []) {
     requireAlias(alias, `flag.aliases[${alias}]`);
   }
