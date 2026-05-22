@@ -45,6 +45,8 @@ describe('package publish surface safety', () => {
     assert.deepEqual(normalizeHelpArgs(['init', '.', 'help']), ['init', '.', 'help']);
     assert.deepEqual(normalizeHelpArgs(['unknown', 'help']), ['unknown', 'help']);
     assert.deepEqual(normalizeHelpArgs(['init', '.']), ['init', '.']);
+    assert.deepEqual(normalizeHelpArgs(['init', '--json', '--help']), ['init', '--help', '--json']);
+    assert.deepEqual(normalizeHelpArgs(['init', '-j', '-h', '-j']), ['init', '--help', '-j']);
   });
 
   it('uses the final ESM runtime shape', () => {

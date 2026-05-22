@@ -397,11 +397,14 @@ describe('switch command metadata', () => {
   it('prints safe usage for incomplete switch command forms', () => {
     const plain = spawnSync(process.execPath, ['./bin/run', 'switch'], { cwd: process.cwd(), encoding: 'utf8' });
     const json = spawnSync(process.execPath, ['./bin/run', 'switch', '--json'], { cwd: process.cwd(), encoding: 'utf8' });
+    const jsonWithFrom = spawnSync(process.execPath, ['./bin/run', 'switch', '--from', '93', '--json'], { cwd: process.cwd(), encoding: 'utf8' });
 
     assert.equal(plain.status, 0);
     assert.match(plain.stdout, /Usage: aie switch <issue> \[--from <issue>\]/);
     assert.equal(json.status, 0);
     assert.equal(JSON.parse(json.stdout).usage, 'aie switch <issue> [--from <issue>]');
+    assert.equal(jsonWithFrom.status, 0);
+    assert.equal(JSON.parse(jsonWithFrom.stdout).usage, 'aie switch <issue> [--from <issue>]');
   });
 
   it('returns structured parse errors before GitHub access', () => {

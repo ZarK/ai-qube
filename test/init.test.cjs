@@ -631,17 +631,23 @@ describe('init command metadata', () => {
     const prefixHelp = binRun(['help', 'init'], repo);
     const flagHelp = binRun(['init', '--help'], repo);
     const json = binRun(['init', '--json'], repo);
+    const jsonWithTool = binRun(['init', '--tool', 'all', '--json'], repo);
+    const jsonWithListFlag = binRun(['init', '--component-label', 'C-Core', '--milestone-order', 'M1', '--json'], repo);
 
     assert.equal(missing.status, 0);
     assert.match(missing.stdout, /Usage: aie init <target>/);
     assert.equal(suffixHelp.status, 0);
-    assert.match(suffixHelp.stdout, /USAGE/);
+    assert.match(suffixHelp.stdout, /Usage:/);
     assert.equal(prefixHelp.status, 0);
-    assert.match(prefixHelp.stdout, /USAGE/);
+    assert.match(prefixHelp.stdout, /Usage:/);
     assert.equal(flagHelp.status, 0);
-    assert.match(flagHelp.stdout, /USAGE/);
+    assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
     assert.equal(JSON.parse(json.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(jsonWithTool.status, 0);
+    assert.equal(JSON.parse(jsonWithTool.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(jsonWithListFlag.status, 0);
+    assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
     assert.equal(existsSync(join(repo, 'aie.config.json')), false);
   });
 

@@ -53,7 +53,7 @@ export default class Doctor extends Command {
 
   async run(): Promise<void> {
     const { flags } = await this.parse(Doctor);
-    const diagnostics = await this.buildDiagnostics();
+    const diagnostics = await buildDoctorDiagnostics();
 
     if (flags.json) {
       this.logJson(diagnostics);
@@ -62,7 +62,7 @@ export default class Doctor extends Command {
     this.log(formatDoctorHuman(diagnostics));
   }
 
-  private async buildDiagnostics(): Promise<DoctorDiagnostics> {
+  async buildDiagnostics(): Promise<DoctorDiagnostics> {
     const repoRoot = this.getRepoRoot();
     const isRepo = !!repoRoot;
     const gitAvailable = this.checkGit();
@@ -416,4 +416,13 @@ export default class Doctor extends Command {
     }
     return result;
   }
+}
+
+type DoctorDiagnosticsSource = {
+  buildDiagnostics(): Promise<DoctorDiagnostics>;
+};
+
+export function buildDoctorDiagnostics(): Promise<DoctorDiagnostics> {
+  const source = Object.create(Doctor.prototype) as DoctorDiagnosticsSource;
+  return source.buildDiagnostics();
 }

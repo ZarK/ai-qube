@@ -126,9 +126,9 @@ describe('legacy migration CLI', () => {
     assert.match(topic.stdout, /migrate legacy/);
     assert.match(topic.stdout, /migrate map/);
     assert.equal(suffix.status, 0);
-    assert.match(suffix.stdout, /USAGE/);
+    assert.match(suffix.stdout, /Usage:/);
     assert.equal(prefix.status, 0);
-    assert.match(prefix.stdout, /USAGE/);
+    assert.match(prefix.stdout, /Usage:/);
     assert.equal(flag.status, 0);
     assert.match(flag.stdout, /--dry-run/);
     assert.match(flag.stdout, /--instruction/);

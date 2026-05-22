@@ -365,7 +365,7 @@ describe('start command metadata', () => {
     assert.equal(plain.status, 0);
     assert.match(plain.stdout, /Usage: aie start \[next\|<issue>\]/);
     assert.equal(help.status, 0);
-    assert.match(help.stdout, /USAGE/);
+    assert.match(help.stdout, /Usage:/);
     assert.equal(json.status, 0);
     assert.equal(JSON.parse(json.stdout).usage, 'aie start [next|<issue>]');
   });

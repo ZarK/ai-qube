@@ -187,7 +187,7 @@ describe('gates CLI', () => {
     assert.equal(prefix.status, 0);
     assert.match(prefix.stdout, /gates plan/);
     assert.equal(flag.status, 0);
-    assert.match(flag.stdout, /USAGE/);
+    assert.match(flag.stdout, /Usage:/);
   });
 
   it('emits a stable plan schema from trusted config without executing gate commands', () => {
