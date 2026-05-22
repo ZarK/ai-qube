@@ -3,20 +3,20 @@ const { describe, it } = require('node:test');
 const { getDefaults } = require('../dist/config/index.js');
 
 describe('deps topic and blockers command module', () => {
-  it('loads and exposes correct static metadata for oclif discovery', () => {
-    const mod = require('../dist/commands/deps.js');
-    const Deps = mod.default || mod;
-    assert.ok(Deps.description.includes('Inspect the dependency graph'));
-    assert.ok(Deps.examples.some((e) => e.includes('deps blockers 93')));
+  it('publishes deps topic metadata through the shared registry', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const deps = getCommandMetadata('deps');
+    assert.ok(deps.description.includes('Inspect the dependency graph'));
+    assert.ok(deps.examples.some((e) => e.includes('deps blockers 93')));
   });
 
-  it('DepsBlockers loads and exposes correct static metadata', () => {
-    const mod = require('../dist/commands/deps/blockers.js');
-    const DepsBlockers = mod.default || mod;
-    assert.ok(DepsBlockers.description.includes('List direct blockers for an issue'));
-    assert.ok(DepsBlockers.args.issue);
-    assert.ok(DepsBlockers.flags.json);
-    assert.ok(DepsBlockers.examples.some((e) => e.includes('deps blockers #93')));
+  it('publishes deps blockers metadata through the shared registry', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const depsBlockers = getCommandMetadata('deps blockers');
+    assert.ok(depsBlockers.description.includes('List direct blockers for an issue'));
+    assert.deepEqual(depsBlockers.args, ['issue']);
+    assert.ok(depsBlockers.flags.includes('--json'));
+    assert.ok(depsBlockers.examples.some((e) => e.includes('deps blockers #93')));
   });
 });
 
@@ -228,7 +228,7 @@ describe('dependency graph service', () => {
 });
 
 describe('deps fix result reporting', () => {
-  const { formatStatusFixError, getStatusFixExitCode, mergeStatusFixPlanActions, summarizeStatusFixResults } = require('../dist/commands/deps/fix.js');
+  const { formatStatusFixError, getStatusFixExitCode, mergeStatusFixPlanActions, summarizeStatusFixResults } = require('../dist/runtime_deps_fix.js');
 
   it('marks summaries as failed when any per-issue label edit fails', () => {
     const results = [
@@ -308,9 +308,8 @@ describe('deps fix result reporting', () => {
 
 describe('deps schema metadata', () => {
   it('marks the deps topic read-only and deps fix mutating', () => {
-    const mod = require('../dist/commands/schema.js');
-    const Schema = mod.default || mod;
-    const commands = Schema.prototype.getImplementedCommands.call({});
+    const { getImplementedCommands } = require('../dist/command_metadata.js');
+    const commands = getImplementedCommands();
     const depsTopic = commands.find(c => c.name === 'deps');
     const depsFix = commands.find(c => c.name === 'deps fix');
 
@@ -319,9 +318,8 @@ describe('deps schema metadata', () => {
   });
 
   it('publishes deps blocked as an argument-free command', () => {
-    const mod = require('../dist/commands/schema.js');
-    const Schema = mod.default || mod;
-    const commands = Schema.prototype.getImplementedCommands.call({});
+    const { getImplementedCommands } = require('../dist/command_metadata.js');
+    const commands = getImplementedCommands();
     const depsBlocked = commands.find(c => c.name === 'deps blocked');
 
     assert.deepStrictEqual(depsBlocked.args, []);

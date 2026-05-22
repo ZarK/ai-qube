@@ -350,18 +350,18 @@ describe('branch service', () => {
 });
 
 describe('branch command metadata', () => {
-  it('loads branch command classes and publishes schema metadata', () => {
-    const Branch = require('../dist/commands/branch.js').default;
-    const BranchSuggest = require('../dist/commands/branch/suggest.js').default;
-    const BranchCheck = require('../dist/commands/branch/check.js').default;
-    const BranchCreate = require('../dist/commands/branch/create.js').default;
-    const Schema = require('../dist/commands/schema.js').default;
-    const commands = Schema.prototype.getImplementedCommands.call({});
+  it('publishes registry-backed schema metadata', () => {
+    const { getImplementedCommands, getCommandMetadata } = require('../dist/command_metadata.js');
+    const commands = getImplementedCommands();
+    const branch = getCommandMetadata('branch');
+    const branchSuggest = getCommandMetadata('branch suggest');
+    const branchCheck = getCommandMetadata('branch check');
+    const branchCreate = getCommandMetadata('branch create');
 
-    assert.ok(Branch.examples.some(example => example.includes('branch create')));
-    assert.ok(BranchSuggest.flags.json);
-    assert.ok(BranchCheck.flags.json);
-    assert.ok(BranchCreate.flags['dry-run']);
+    assert.ok(branch.examples.some(example => example.includes('branch create')));
+    assert.ok(branchSuggest.flags.includes('--json'));
+    assert.ok(branchCheck.flags.includes('--json'));
+    assert.ok(branchCreate.flags.includes('--dry-run'));
     assert.equal(commands.find(command => command.name === 'branch suggest').mutates, false);
     assert.equal(commands.find(command => command.name === 'branch check').mutates, false);
     assert.deepEqual(commands.find(command => command.name === 'branch create').mutationTargets, ['git']);

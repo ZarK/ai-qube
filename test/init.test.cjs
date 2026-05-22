@@ -600,24 +600,22 @@ describe('init service', () => {
 });
 
 describe('init command metadata', () => {
-  it('loads the command class and publishes schema metadata', () => {
-    const mod = require('../dist/commands/init.js');
-    const Init = mod.default || mod;
-    const { getImplementedCommands } = require('../dist/command_metadata.js');
-    const metadata = getImplementedCommands().find(command => command.name === 'init');
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const metadata = getCommandMetadata('init');
 
-    assert.ok(Init.description.includes('Initialize Executor config'));
-    assert.ok(Init.args.target);
-    assert.ok(Init.flags.json);
-    assert.ok(Init.flags['dry-run']);
-    assert.ok(Init.flags.force);
-    assert.ok(Init.flags.yes);
-    assert.ok(Init.flags.defaults);
-    assert.ok(Init.flags.tool);
-    assert.ok(Init.flags['naming-rules']);
-    assert.ok(Init.flags['opencode-command-alias']);
-    assert.ok(Init.flags['pin-ci-actions']);
-    assert.ok(Init.flags['package-manager-defaults']);
+    assert.ok(metadata.description.includes('Initialize Executor config'));
+    assert.deepEqual(metadata.args, ['target']);
+    assert.ok(metadata.flags.includes('--json'));
+    assert.ok(metadata.flags.includes('--dry-run'));
+    assert.ok(metadata.flags.includes('--force'));
+    assert.ok(metadata.flags.includes('--yes'));
+    assert.ok(metadata.flags.includes('--defaults'));
+    assert.ok(metadata.flags.includes('--tool'));
+    assert.ok(metadata.flags.includes('--naming-rules'));
+    assert.ok(metadata.flags.includes('--opencode-command-alias'));
+    assert.ok(metadata.flags.includes('--pin-ci-actions'));
+    assert.ok(metadata.flags.includes('--package-manager-defaults'));
     assert.equal(metadata.mutates, true);
     assert.deepEqual(metadata.mutationTargets, ['local-files']);
     assert.equal(metadata.supportsJson, true);

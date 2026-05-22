@@ -46,19 +46,19 @@ describe('labels command (via service)', () => {
   });
 });
 
-describe('LabelsSetup command module', () => {
-  it('loads and exposes correct static metadata for oclif discovery', () => {
-    const mod = require('../dist/commands/labels/setup.js');
-    const LabelsSetup = mod.default || mod;
-    assert.ok(LabelsSetup.description.includes('Create or update the configured Executor'));
-    assert.ok(LabelsSetup.flags.json);
-    assert.ok(LabelsSetup.flags['dry-run']);
-    assert.ok(LabelsSetup.examples.some((e) => e.includes('labels setup --dry-run')));
+describe('labels setup command metadata', () => {
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const labelsSetup = getCommandMetadata('labels setup');
+    assert.ok(labelsSetup.description.includes('Create or update the configured Executor'));
+    assert.ok(labelsSetup.flags.includes('--json'));
+    assert.ok(labelsSetup.flags.includes('--dry-run'));
+    assert.ok(labelsSetup.examples.some((e) => e.includes('labels setup --dry-run')));
   });
 });
 
 describe('labels command behavior (apply decision + doctor error surfacing)', () => {
-  const { computeDoctorOk } = require('../dist/commands/doctor.js');
+  const { computeDoctorOk } = require('../dist/doctor.js');
 
   it('applies create and update operations without touching unchanged or skipped labels', async () => {
     const config = getDefaults();

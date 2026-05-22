@@ -382,22 +382,21 @@ describe('view service', () => {
   });
 });
 
-describe('view command module', () => {
-  it('loads and exposes correct static metadata for oclif discovery', () => {
-    const mod = require('../dist/commands/view.js');
-    const View = mod.default || mod;
-    assert.ok(View.description.includes('issue context'));
-    assert.ok(View.args.issue);
-    assert.ok(View.flags.json);
-    assert.ok(View.examples.some((e) => e.includes('view 93')));
+describe('view command metadata', () => {
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const view = getCommandMetadata('view');
+    assert.ok(view.description.includes('issue context'));
+    assert.deepEqual(view.args, ['issue']);
+    assert.ok(view.flags.includes('--json'));
+    assert.ok(view.examples.some((e) => e.includes('view 93')));
   });
 });
 
 describe('view schema metadata', () => {
   it('marks view as read-only with json support', () => {
-    const mod = require('../dist/commands/schema.js');
-    const Schema = mod.default || mod;
-    const commands = Schema.prototype.getImplementedCommands.call({});
+    const { getImplementedCommands } = require('../dist/command_metadata.js');
+    const commands = getImplementedCommands();
     const viewCmd = commands.find(c => c.name === 'view');
 
     assert.ok(viewCmd, 'Expected view command metadata to be registered');

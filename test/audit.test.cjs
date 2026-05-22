@@ -209,13 +209,14 @@ describe('manual UI audit CLI', () => {
     const parsed = JSON.parse(result.stdout);
     const audit = parsed.commands.find(command => command.name === 'audit');
     const ui = parsed.commands.find(command => command.name === 'audit ui');
+    const checkFlag = ui.flags.find(flag => flag.name === 'check');
 
     assert.equal(result.status, 0);
-    assert.equal(audit.mutates, false);
-    assert.equal(ui.mutates, true);
-    assert.equal(ui.supportsJson, true);
-    assert.equal(ui.supportsDryRun, true);
-    assert.equal(ui.flagDetails.find(flag => flag.name === '--check').type, 'boolean');
-    assert.deepEqual(ui.mutationTargets, ['local-files']);
+    assert.equal(audit.mutation.mutates, false);
+    assert.equal(ui.mutation.mutates, true);
+    assert.equal(ui.interactions.json, true);
+    assert.equal(ui.dryRun.supported, true);
+    assert.equal(checkFlag.type, 'boolean');
+    assert.deepEqual(ui.mutation.categories, ['local-files']);
   });
 });

@@ -172,15 +172,13 @@ describe('complete service', () => {
 });
 
 describe('complete command metadata', () => {
-  it('loads the command class and publishes schema metadata', () => {
-    const mod = require('../dist/commands/complete.js');
-    const Complete = mod.default || mod;
-    const { getImplementedCommands } = require('../dist/command_metadata.js');
-    const metadata = getImplementedCommands().find(command => command.name === 'complete');
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const metadata = getCommandMetadata('complete');
 
-    assert.ok(Complete.description.includes('Complete post-merge issue work'));
-    assert.ok(Complete.flags['check-only']);
-    assert.ok(Complete.flags.force);
+    assert.ok(metadata.description.includes('Complete post-merge issue work'));
+    assert.ok(metadata.flags.includes('--check-only'));
+    assert.ok(metadata.flags.includes('--force'));
     assert.equal(metadata.mutates, true);
     assert.deepEqual(metadata.mutationTargets, ['github']);
     assert.equal(metadata.supportsJson, true);

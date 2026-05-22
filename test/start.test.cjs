@@ -341,16 +341,14 @@ describe('start service', () => {
 });
 
 describe('start command metadata', () => {
-  it('loads the command class and publishes schema metadata', () => {
-    const mod = require('../dist/commands/start.js');
-    const Start = mod.default || mod;
-    const { getImplementedCommands } = require('../dist/command_metadata.js');
-    const metadata = getImplementedCommands().find(command => command.name === 'start');
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const metadata = getCommandMetadata('start');
 
-    assert.ok(Start.description.includes('Start or resume issue work'));
-    assert.ok(Start.args.issue);
-    assert.ok(Start.flags.json);
-    assert.ok(Start.flags['dry-run']);
+    assert.ok(metadata.description.includes('Start or resume issue work'));
+    assert.deepEqual(metadata.args, ['issue']);
+    assert.ok(metadata.flags.includes('--json'));
+    assert.ok(metadata.flags.includes('--dry-run'));
     assert.equal(metadata.mutates, true);
     assert.deepEqual(metadata.mutationTargets, ['github']);
     assert.equal(metadata.supportsJson, true);

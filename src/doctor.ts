@@ -1,19 +1,16 @@
-import { Command, Flags } from '@oclif/core';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'path';
 import { cwd } from 'process';
-import { commandDescription, commandExamples } from '../command_metadata.js';
-import { Config, getDefaults, loadConfig, validateConfig, ValidationError } from '../config/index.js';
-import { detectLegacyState } from '../init/index.js';
-import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from '../labels.js';
-import { runGh } from '../gh.js';
-import { buildMigrationPlan } from '../migrate/index.js';
-import { buildMigrationReadinessDiagnostics } from '../migration_diagnostics.js';
-import { computeQueue } from '../queue/index.js';
-import { formatDoctorHuman } from '../renderers/doctor_renderer.js';
+import { Config, getDefaults, loadConfig, validateConfig, ValidationError } from './config/index.js';
+import { detectLegacyState } from './init/index.js';
+import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from './labels.js';
+import { runGh } from './gh.js';
+import { buildMigrationPlan } from './migrate/index.js';
+import { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
+import { computeQueue } from './queue/index.js';
 import {
   findMilestoneWarnings,
   getBaseRefStatus,
@@ -23,8 +20,8 @@ import {
   listMilestones,
   listOpenPullRequests,
   PullRequestSummary,
-} from '../repo/index.js';
-import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from '../doctor_diagnostics/index.js';
+} from './repo/index.js';
+import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from './doctor_diagnostics/index.js';
 
 export {
   buildGateReadinessDiagnostics,
@@ -33,35 +30,12 @@ export {
   buildProviderHealthDiagnostics,
   buildRepositoryPolicyDiagnostics,
   computeDoctorOk,
-} from '../doctor_diagnostics/index.js';
-export { buildMigrationReadinessDiagnostics } from '../migration_diagnostics.js';
+} from './doctor_diagnostics/index.js';
+export { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 
 const requirePackage = createRequire(import.meta.url);
 
-export default class Doctor extends Command {
-  static description = commandDescription('doctor');
-
-  static examples = commandExamples('doctor');
-
-  static flags = {
-    json: Flags.boolean({
-      char: 'j',
-      description: 'Emit machine-readable diagnostic report',
-      default: false,
-    }),
-  };
-
-  async run(): Promise<void> {
-    const { flags } = await this.parse(Doctor);
-    const diagnostics = await buildDoctorDiagnostics();
-
-    if (flags.json) {
-      this.logJson(diagnostics);
-      return;
-    }
-    this.log(formatDoctorHuman(diagnostics));
-  }
-
+class DoctorDiagnosticsBuilder {
   async buildDiagnostics(): Promise<DoctorDiagnostics> {
     const repoRoot = this.getRepoRoot();
     const isRepo = !!repoRoot;
@@ -177,7 +151,7 @@ export default class Doctor extends Command {
     ghStatus: { available: boolean; authenticated: boolean };
     isRepo: boolean;
     isWorktree: boolean;
-    configStatus: Awaited<ReturnType<Doctor['checkConfig']>>;
+    configStatus: Awaited<ReturnType<DoctorDiagnosticsBuilder['checkConfig']>>;
     effectiveConfig: Config;
     repoRoot: string | null;
     instructions: ReturnType<typeof getInstructionStatus>;
@@ -207,7 +181,7 @@ export default class Doctor extends Command {
     return recommendations;
   }
 
-  private addConfigRecommendations(configStatus: Awaited<ReturnType<Doctor['checkConfig']>>, recommendations: string[]): void {
+  private addConfigRecommendations(configStatus: Awaited<ReturnType<DoctorDiagnosticsBuilder['checkConfig']>>, recommendations: string[]): void {
     if (!configStatus.present) {
       recommendations.push('No aie.config.json found — using built-in defaults (create manually or run aie init once available).');
       return;
@@ -220,7 +194,7 @@ export default class Doctor extends Command {
     if (configStatus.note) recommendations.push(configStatus.note);
   }
 
-  private addLabelRecommendations(labelStatus: Awaited<ReturnType<Doctor['checkLabels']>>, recommendations: string[]): void {
+  private addLabelRecommendations(labelStatus: Awaited<ReturnType<DoctorDiagnosticsBuilder['checkLabels']>>, recommendations: string[]): void {
     if (labelStatus.ok) return;
     if (labelStatus.labelsError) recommendations.push(`Labels health check failed: ${labelStatus.labelsError}. Fix gh auth, repository state, or run \`aie doctor --json\` for full diagnostics.`);
     if (labelStatus.missing.length > 0) recommendations.push(`Missing Executor labels: ${labelStatus.missing.join(', ')}. Run \`aie labels setup --dry-run\` then \`aie labels setup\`.`);
@@ -228,7 +202,7 @@ export default class Doctor extends Command {
     if (labelStatus.duplicates.length > 0) recommendations.push(`Duplicate label names across families in aie.config.json: ${labelStatus.duplicates.join(', ')}. Fix config.`);
   }
 
-  private addInstructionRecommendations(input: Parameters<Doctor['buildEarlyRecommendations']>[0], recommendations: string[]): void {
+  private addInstructionRecommendations(input: Parameters<DoctorDiagnosticsBuilder['buildEarlyRecommendations']>[0], recommendations: string[]): void {
     const unmanagedTargets = input.repoRoot ? input.instructions.targets.filter(target => target.present && !target.managed) : [];
     const unhealthyTargets = input.repoRoot ? input.instructions.targets.filter(target => target.managed && !target.healthy) : [];
     const missingInstructionChecks = missingConfiguredInstructionChecks(input.instructionPolicy);
@@ -342,7 +316,7 @@ export default class Doctor extends Command {
 
   private checkNodeVersion(): { version: string; satisfies: boolean; required: string } {
     try {
-      const pkg = requirePackage('../../package.json') as { engines?: { node?: string } };
+      const pkg = requirePackage('../package.json') as { engines?: { node?: string } };
       const required = (pkg.engines && pkg.engines.node) || '>=24.0.0';
       const currentMajor = parseInt(process.version.replace(/^v/, '').split('.')[0], 10);
       return { version: process.version, satisfies: currentMajor >= 24, required };
@@ -418,11 +392,6 @@ export default class Doctor extends Command {
   }
 }
 
-type DoctorDiagnosticsSource = {
-  buildDiagnostics(): Promise<DoctorDiagnostics>;
-};
-
 export function buildDoctorDiagnostics(): Promise<DoctorDiagnostics> {
-  const source = Object.create(Doctor.prototype) as DoctorDiagnosticsSource;
-  return source.buildDiagnostics();
+  return new DoctorDiagnosticsBuilder().buildDiagnostics();
 }

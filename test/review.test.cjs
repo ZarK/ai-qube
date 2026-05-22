@@ -193,11 +193,11 @@ describe('review gate CLI', () => {
     const gate = parsed.commands.find(command => command.name === 'review gate');
 
     assert.equal(result.status, 0);
-    assert.equal(review.mutates, false);
-    assert.equal(gate.supportsJson, true);
-    assert.equal(gate.supportsDryRun, true);
-    assert.equal(gate.flagDetails.find(flag => flag.name === '--prompt').type, 'boolean');
-    assert.deepEqual(gate.mutationTargets, []);
+    assert.equal(review.mutation.mutates, false);
+    assert.equal(gate.interactions.json, true);
+    assert.equal(gate.dryRun.supported, true);
+    assert.equal(gate.flags.find(flag => flag.name === 'prompt').type, 'boolean');
+    assert.deepEqual(gate.mutation.categories, []);
   });
 });
 

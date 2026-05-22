@@ -295,60 +295,6 @@ describe('pre-start lifecycle policy', () => {
 describe('shared command metadata', () => {
   const { getImplementedCommands, isHelpToken } = require('../dist/command_metadata.js');
 
-  const commandModules = new Map([
-    ['doctor', '../dist/commands/doctor.js'],
-    ['schema', '../dist/commands/schema.js'],
-    ['labels', '../dist/commands/labels.js'],
-    ['labels setup', '../dist/commands/labels/setup.js'],
-    ['queue', '../dist/commands/queue.js'],
-    ['status', '../dist/commands/status.js'],
-    ['next', '../dist/commands/next.js'],
-    ['start', '../dist/commands/start.js'],
-    ['switch', '../dist/commands/switch.js'],
-    ['complete', '../dist/commands/complete.js'],
-    ['init', '../dist/commands/init.js'],
-    ['branch', '../dist/commands/branch.js'],
-    ['branch suggest', '../dist/commands/branch/suggest.js'],
-    ['branch check', '../dist/commands/branch/check.js'],
-    ['branch create', '../dist/commands/branch/create.js'],
-    ['repo', '../dist/commands/repo.js'],
-    ['repo prime', '../dist/commands/repo/prime.js'],
-    ['deps', '../dist/commands/deps.js'],
-    ['deps blockers', '../dist/commands/deps/blockers.js'],
-    ['deps blocked', '../dist/commands/deps/blocked.js'],
-    ['deps blocking', '../dist/commands/deps/blocking.js'],
-    ['deps ready', '../dist/commands/deps/ready.js'],
-    ['deps chain', '../dist/commands/deps/chain.js'],
-    ['deps graph', '../dist/commands/deps/graph.js'],
-    ['deps fix', '../dist/commands/deps/fix.js'],
-    ['gates', '../dist/commands/gates.js'],
-    ['gates plan', '../dist/commands/gates/plan.js'],
-    ['gates status', '../dist/commands/gates/status.js'],
-    ['migrate', '../dist/commands/migrate.js'],
-    ['migrate legacy', '../dist/commands/migrate/legacy.js'],
-    ['migrate map', '../dist/commands/migrate/map.js'],
-    ['audit', '../dist/commands/audit.js'],
-    ['audit ui', '../dist/commands/audit/ui.js'],
-    ['review', '../dist/commands/review.js'],
-    ['review gate', '../dist/commands/review/gate.js'],
-    ['pr', '../dist/commands/pr.js'],
-    ['pr view', '../dist/commands/pr/view.js'],
-    ['pr body', '../dist/commands/pr/body.js'],
-    ['pr gate', '../dist/commands/pr/gate.js'],
-    ['view', '../dist/commands/view.js'],
-  ]);
-
-  function loadCommand(commandName) {
-    const modulePath = commandModules.get(commandName);
-    assert.ok(modulePath, `Missing command module path for ${commandName}`);
-    const mod = require(modulePath);
-    return mod.default || mod;
-  }
-
-  function explicitMetadataFlags(flags, omitAllowNoAliases = false) {
-    return flags.filter(flag => flag !== '--help' && (!omitAllowNoAliases || !flag.startsWith('--no-'))).map(flag => flag.replace(/^--/, '')).sort();
-  }
-
   it('derives mutation labels and help forms from one metadata source', () => {
     const commands = getImplementedCommands();
     const depsFix = commands.find(command => command.name === 'deps fix');
@@ -361,16 +307,21 @@ describe('shared command metadata', () => {
     assert.deepEqual(queue.mutationTargets, []);
   });
 
-  it('keeps Oclif help statics synchronized with shared metadata', () => {
-    for (const metadata of getImplementedCommands()) {
-      const CommandClass = loadCommand(metadata.name);
-      const commandFlags = Object.keys(CommandClass.flags || {}).sort();
-      const commandArgs = Object.keys(CommandClass.args || {}).sort();
+  it('keeps toolkit registry metadata synchronized with the schema adapter', async () => {
+    const { EXECUTOR_COMMAND_REGISTRY } = await import('../dist/command_registry.js');
+    const { listCommands } = await import('@tjalve/qube-cli/registry');
+    const adapterCommands = getImplementedCommands();
+    const registryCommands = listCommands(EXECUTOR_COMMAND_REGISTRY);
 
-      assert.equal(CommandClass.description, metadata.description, `description drift for ${metadata.name}`);
-      assert.deepEqual(CommandClass.examples || [], metadata.examples, `examples drift for ${metadata.name}`);
-      assert.deepEqual(commandArgs, [...metadata.args].sort(), `args drift for ${metadata.name}`);
-      assert.deepEqual(commandFlags, explicitMetadataFlags(metadata.flags, metadata.name === 'init'), `flags drift for ${metadata.name}`);
+    assert.deepEqual(adapterCommands.map(command => command.name).sort(), registryCommands.map(command => command.name).sort());
+
+    for (const registryCommand of registryCommands) {
+      const metadata = adapterCommands.find(command => command.name === registryCommand.name);
+      assert.ok(metadata, `missing metadata for ${registryCommand.name}`);
+      assert.equal(registryCommand.description, metadata.description, `description drift for ${metadata.name}`);
+      assert.deepEqual((registryCommand.examples ?? []).map(example => example.command), metadata.examples, `examples drift for ${metadata.name}`);
+      assert.deepEqual((registryCommand.arguments ?? []).map(argument => argument.name).sort(), [...metadata.args].sort(), `args drift for ${metadata.name}`);
+      assert.ok(metadata.flags.every(flag => flag.startsWith('--')), `schema flags must use CLI tokens for ${metadata.name}`);
     }
   });
 
@@ -394,7 +345,7 @@ describe('shared command metadata', () => {
 
 describe('doctor lifecycle diagnostics', () => {
   it('reports lifecycle readiness, active issue branch matching, PR, worktree, and base branch state', () => {
-    const { buildLifecycleDiagnostics } = require('../dist/commands/doctor.js');
+    const { buildLifecycleDiagnostics } = require('../dist/doctor.js');
     const config = { ...getDefaults(), noWorktree: true, blockOnOpenPRs: true };
     const active = makeIssue(93, ['S-InProgress']);
     active.title = 'Ship lifecycle command';

@@ -63,14 +63,13 @@ Research sources for this direction:
 | [The CLI Spec](https://clispec.dev/) | Agent-facing structured output, schema introspection, stderr/stdout separation, non-interactive behavior, idempotent commands, bounded output |
 | [Heroku CLI Style Guide](https://devcenter.heroku.com/articles/cli-style-guide) | Humans before machines, consistent topics/commands, flags when clarity matters, prompts only when bypassable, human output plus JSON/terse output |
 | [PatternFly CLI Handbook](https://www.patternfly.org/developer-resources/cli-handbook/) | Accessibility, specific error wording, text labels instead of color-only meaning, keyboard/non-interactive-safe flows |
-| [oclif docs](https://oclif.io/docs/features/) | Multi-command framework, help customization, JSON flag behavior, test helpers, and space-separated topic support |
+| [@tjalve/qube-cli](https://www.npmjs.com/package/@tjalve/qube-cli) | Shared command metadata, runtime wiring, help, schema, output, redaction, prompt, and CLI contract helpers |
 | [Commander docs](https://www.npmjs.com/package/commander) | Minimal parser, generated help, usage errors, typo suggestions, low dependency surface |
 | [Yargs docs](https://yargs.js.org/) | Generated help and command/options structure |
 | [Clipanion docs](https://mael.dev/clipanion/docs/) | Type-safe command declarations and predictable option behavior |
-| [Clack prompts](https://www.npmjs.com/package/@clack/prompts) | Lightweight, attractive prompts for later interactive init flows |
 | [Ink](https://term.ink/) | Rich terminal UIs; likely too heavy for normal Executor commands unless a future dashboard-style command justifies it |
 
-M1 uses `@oclif/core` as the command-tree framework and `@clack/prompts` for interactive prompt UX where prompts are needed. Both must be used conservatively: no auto-updating installers, no just-in-time plugin installation, no hidden remote execution, and no install lifecycle scripts. `@oclif/core` maps well to Executor's multi-command shape, supports space-separated command topics, custom help, JSON command output, and test helpers. `@clack/prompts` gives `aie init` and interactive paths a polished prompt surface without turning normal commands into a TUI.
+Executor uses `@tjalve/qube-cli` for command metadata, runtime dispatch, help, schema, structured output, redaction, and prompt helpers. It must be used conservatively: no auto-updating installers, no just-in-time plugin installation, no hidden remote execution, and no install lifecycle scripts. Executor-owned modules keep domain behavior, provider fields, config policy schema, diagnostics, and command side effects.
 
 The library decision belongs to this milestone document and issue comments/PR discussion. Agents must not create a separate decision record, status document, implementation plan, progress document, or other meta documentation for it.
 

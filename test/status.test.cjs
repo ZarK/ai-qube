@@ -247,12 +247,14 @@ describe('status service', () => {
 });
 
 describe('status command metadata', () => {
-  it('loads command class and publishes schema metadata', () => {
-    const Status = require('../dist/commands/status.js').default;
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
     const schema = JSON.parse(binRun(['schema', '--json']).stdout);
-    const metadata = schema.commands.find(command => command.name === 'status');
+    const metadata = getCommandMetadata('status');
+    const command = schema.commands.find(command => command.name === 'status');
 
-    assert.ok(Status.description.includes('trusted continuation state'));
+    assert.ok(metadata.description.includes('trusted continuation state'));
+    assert.ok(command.description.includes('trusted continuation state'));
     assert.equal(metadata.mutates, false);
     assert.equal(metadata.supportsJson, true);
     assert.ok(metadata.externalServices.includes('github'));

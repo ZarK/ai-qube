@@ -192,21 +192,22 @@ describe('repo data helpers', () => {
 });
 
 describe('repo command metadata and schema', () => {
-  it('loads repo topic and repo prime command metadata', () => {
-    const Repo = require('../dist/commands/repo.js').default;
-    const RepoPrime = require('../dist/commands/repo/prime.js').default;
+  it('publishes repo topic and repo prime metadata through the shared registry', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const repo = getCommandMetadata('repo');
+    const repoPrime = getCommandMetadata('repo prime');
 
-    assert.ok(Repo.description.includes('Inspect and prepare repository state'));
-    assert.ok(Repo.examples.some(example => example.includes('repo prime --dry-run')));
-    assert.ok(RepoPrime.flags.json);
-    assert.ok(RepoPrime.flags['dry-run']);
-    assert.ok(RepoPrime.flags.yes);
-    assert.ok(RepoPrime.examples.some(example => example.includes('repo prime --yes')));
+    assert.ok(repo.description.includes('Inspect and prepare repository state'));
+    assert.ok(repo.examples.some(example => example.includes('repo prime --dry-run')));
+    assert.ok(repoPrime.flags.includes('--json'));
+    assert.ok(repoPrime.flags.includes('--dry-run'));
+    assert.ok(repoPrime.flags.includes('--yes'));
+    assert.ok(repoPrime.examples.some(example => example.includes('repo prime --yes')));
   });
 
   it('publishes repo commands with mutation, JSON, and dry-run markers', () => {
-    const Schema = require('../dist/commands/schema.js').default;
-    const commands = Schema.prototype.getImplementedCommands.call({});
+    const { getImplementedCommands } = require('../dist/command_metadata.js');
+    const commands = getImplementedCommands();
     const labels = commands.find(command => command.name === 'labels');
     const repo = commands.find(command => command.name === 'repo');
     const prime = commands.find(command => command.name === 'repo prime');

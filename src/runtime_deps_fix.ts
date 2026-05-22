@@ -6,7 +6,7 @@ import { computeStatusFixPlanFromWorkItems, configToWorkQueuePolicy, type Status
 import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
 import { commandFailure, readBooleanFlag, outputJson } from './runtime_result.js';
 
-interface StatusFixResult {
+export interface StatusFixResult {
   issueNumber: number;
   changed: boolean;
   add: string[];
@@ -15,6 +15,34 @@ interface StatusFixResult {
   failed: boolean;
   error?: string;
   reason?: string;
+}
+
+export interface StatusFixSummary {
+  ok: boolean;
+  failureCount: number;
+  failures: StatusFixResult[];
+  changedCount: number;
+  skippedCount: number;
+}
+
+export function summarizeStatusFixResults(results: StatusFixResult[]): StatusFixSummary {
+  const failures = results.filter(result => result.failed);
+  return {
+    ok: failures.length === 0,
+    failureCount: failures.length,
+    failures,
+    changedCount: results.filter(result => result.changed).length,
+    skippedCount: results.filter(result => result.skipped).length,
+  };
+}
+
+export function getStatusFixExitCode(summary: StatusFixSummary): 0 | 1 {
+  return summary.ok ? 0 : 1;
+}
+
+export function formatStatusFixError(issueNumber: number, err: unknown): string {
+  const cause = err instanceof Error ? err.message : String(err);
+  return `Failed to synchronize labels for issue #${issueNumber}: ${cause}. Check GitHub permissions, repository label names, and gh authentication, then rerun \`aie deps fix --dry-run\` before retrying.`;
 }
 
 function issueNumberFromActionResult(result: ActionResult): number | null {
@@ -27,7 +55,7 @@ function stringArrayDetail(details: Record<string, unknown>, key: string): strin
   return Array.isArray(value) && value.every(item => typeof item === 'string') ? value : [];
 }
 
-function mergeStatusFixPlanActions(plans: StatusFixPlan[], actionPlan: ActionPlan): StatusFixPlan[] {
+export function mergeStatusFixPlanActions(plans: StatusFixPlan[], actionPlan: ActionPlan): StatusFixPlan[] {
   const merged = new Map<number, StatusFixPlan>();
   for (const plan of plans) merged.set(plan.issueNumber, { ...plan, add: [...plan.add], remove: [...plan.remove] });
   for (const action of actionPlan.actions) {
@@ -55,13 +83,12 @@ export async function handleDepsFix(context: RuntimeCommandContext): Promise<Run
       }
     }
     const results = plans.map(plan => statusFixResult(plan, failures, dryRun));
-    const failureCount = results.filter(result => result.failed).length;
-    const summary = { ok: failureCount === 0, failureCount, failures: results.filter(result => result.failed), changedCount: results.filter(result => result.changed).length, skippedCount: results.filter(result => result.skipped).length };
+    const summary = summarizeStatusFixResults(results);
     if (readBooleanFlag(context, 'json')) {
       if (!summary.ok) process.exitCode = 1;
       return { jsonStdout: outputJson({ ok: summary.ok, command: 'deps fix', dryRun, failureCount: summary.failureCount, failures: summary.failures, plans: results }) };
     }
-    return { stdout: formatDepsFix(results, summary, dryRun), exitCode: summary.ok ? 0 : 1 };
+    return { stdout: formatDepsFix(results, summary, dryRun), exitCode: getStatusFixExitCode(summary) };
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
     const message = `Failed to run \`aie deps fix\`. Likely cause: ${cause}. Next action: verify GitHub authentication, repository config, and label permissions, then rerun \`aie deps fix --dry-run\`.`;
@@ -76,8 +103,7 @@ function statusFixResult(plan: StatusFixPlan, failures: Map<number, ActionResult
   if (dryRun) return { ...result, changed: true };
   const failedAction = failures.get(plan.issueNumber);
   if (!failedAction) return { ...result, changed: true };
-  const cause = failedAction.failure?.cause ?? 'provider apply failed';
-  return { ...result, failed: true, error: `Failed to synchronize labels for issue #${plan.issueNumber}: ${cause}. Check GitHub permissions, repository label names, and gh authentication, then rerun \`aie deps fix --dry-run\` before retrying.` };
+  return { ...result, failed: true, error: formatStatusFixError(plan.issueNumber, failedAction.failure?.cause ?? 'provider apply failed') };
 }
 
 function formatDepsFix(results: StatusFixResult[], summary: { ok: boolean; failureCount: number; changedCount: number; skippedCount: number }, dryRun: boolean): string {

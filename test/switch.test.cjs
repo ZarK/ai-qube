@@ -375,17 +375,15 @@ describe('switch service', () => {
 });
 
 describe('switch command metadata', () => {
-  it('loads the command class and publishes schema metadata', () => {
-    const mod = require('../dist/commands/switch.js');
-    const Switch = mod.default || mod;
-    const { getImplementedCommands } = require('../dist/command_metadata.js');
-    const metadata = getImplementedCommands().find(command => command.name === 'switch');
+  it('publishes registry-backed schema metadata', () => {
+    const { getCommandMetadata } = require('../dist/command_metadata.js');
+    const metadata = getCommandMetadata('switch');
 
-    assert.ok(Switch.description.includes('Pause the current in-progress issue'));
-    assert.ok(Switch.args.issue);
-    assert.ok(Switch.flags.from);
-    assert.ok(Switch.flags['dry-run']);
-    assert.equal(Switch.flags.force, undefined);
+    assert.ok(metadata.description.includes('Pause the current in-progress issue'));
+    assert.deepEqual(metadata.args, ['issue']);
+    assert.ok(metadata.flags.includes('--from'));
+    assert.ok(metadata.flags.includes('--dry-run'));
+    assert.equal(metadata.flags.includes('--force'), false);
     assert.equal(metadata.mutates, true);
     assert.deepEqual(metadata.mutationTargets, ['github']);
     assert.equal(metadata.supportsJson, true);

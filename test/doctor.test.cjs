@@ -8,7 +8,7 @@ const { join } = require('node:path');
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
-const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, computeDoctorOk } = require('../dist/commands/doctor.js');
+const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, computeDoctorOk } = require('../dist/doctor.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
 
 function makeGitRepo() {

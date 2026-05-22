@@ -10,7 +10,7 @@ import { commandDescription, commandExamples, isHelpToken } from './command_meta
 import { completeIssue } from './complete/index.js';
 import { getDefaults, loadConfig, loadConfigFile, type ValidationError } from './config/index.js';
 import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
-import { buildDoctorDiagnostics } from './commands/doctor.js';
+import { buildDoctorDiagnostics } from './doctor.js';
 import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGateStage } from './gates/index.js';
 import { runInit } from './init/index.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';

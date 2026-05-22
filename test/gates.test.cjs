@@ -277,10 +277,10 @@ describe('gates CLI', () => {
     const plan = parsed.commands.find(command => command.name === 'gates plan');
     const status = parsed.commands.find(command => command.name === 'gates status');
 
-    assert.equal(plan.mutates, false);
-    assert.equal(plan.supportsJson, true);
-    assert.equal(plan.supportsDryRun, true);
-    assert.deepEqual(plan.flagDetails.find(flag => flag.name === '--stage').options, ['all', 'pre-pr', 'pre-merge']);
-    assert.equal(status.mutates, false);
+    assert.equal(plan.mutation.mutates, false);
+    assert.equal(plan.interactions.json, true);
+    assert.equal(plan.dryRun.supported, true);
+    assert.deepEqual(plan.flags.find(flag => flag.name === 'stage').options, ['all', 'pre-merge', 'pre-pr']);
+    assert.equal(status.mutation.mutates, false);
   });
 });

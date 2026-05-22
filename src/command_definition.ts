@@ -2,6 +2,7 @@ import { defineCommand, defineFlag, type CommandMetadata, type FlagMetadata, typ
 import type { CommandFlagSchema, CommandMutationTarget } from './command_metadata.js';
 
 export interface ExecutorCommandExtensions extends MetadataExtensions {
+  readonly helpForms?: readonly string[];
   readonly supportsCheckOnly?: boolean;
   readonly stageValues?: readonly string[];
   readonly reviewAgentValues?: readonly string[];
@@ -172,6 +173,11 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       description: code === 0 ? 'Command completed successfully.' : 'Command failed.',
     })),
     extensions: {
+      helpForms: [
+        `aie ${command.name} --help`,
+        `aie help ${command.name}`,
+        `aie ${[...command.name.split(' '), 'help'].join(' ')}`,
+      ],
       ...(command.supportsCheckOnly === true ? { supportsCheckOnly: true } : {}),
       ...(command.stageValues ? { stageValues: [...command.stageValues] } : {}),
       ...(command.reviewAgentValues ? { reviewAgentValues: [...command.reviewAgentValues] } : {}),
