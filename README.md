@@ -1,69 +1,85 @@
 # AI Umpire
 
-`@tjalve/aiu` packages the AI Umpire continuation plugin, queue-policy assets, and repo bootstrap tooling for OpenCode workflows.
+`@tjalve/aiu` provides the `aiu` CLI and runtime for safe agent continuation. It reads configured trusted state commands, evaluates continuation policy, and wires supported host tools to package-backed Umpire entrypoints.
 
-## What it ships
+## What It Ships
 
-- the core continuation runtime from `opencode/ai-umpire-continuation.ts`
-- a repo-default OpenCode plugin export at `@tjalve/aiu/opencode`
-- queue assets under `scripts/` plus `queue-policy.json`
-- an `aiu` CLI that scaffolds those assets into another repository
+- a package-backed `aiu` CLI
+- repository config, init, doctor, paths, schema, status, and hook entrypoints
+- OpenCode project plugin wrapper support
+- Codex and Claude Code stop-hook entrypoints
+- dry-run planning for host installation and migration
+- TypeScript runtime/config/policy types for supported extension points
+
+It does not bundle companion CLIs or keep copied helper scripts as a runtime fallback path. Repositories configure trusted commands explicitly.
 
 ## Install
 
 ```bash
-npm install -D @tjalve/aiu
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiu
 ```
 
-System requirements for the queue scripts:
+System requirements:
 
-- Node.js 20.19+
-- `gh`
-- `jq`
+- Node.js 24+
+- pnpm for development and documented local workflows
+- host tool trust/enablement for project hooks where required
 
-## Quick start
+Install companion tools separately only when repository policy uses their commands as trusted state inputs.
 
-Bootstrap the current repository with the plugin wrapper, queue scripts, and `queue-policy.json`:
+## Quick Start
+
+Preview host setup without writing files:
 
 ```bash
-npx aiu init .
+pnpm exec aiu init . --dry-run
+pnpm exec aiu init . --tool all --dry-run --json
 ```
 
-That writes:
-
-- `.opencode/plugins/ai-umpire-continuation.ts`
-- `queue-policy.json`
-- `scripts/_queue-policy.sh`
-- `scripts/gh-ensure-labels.sh`
-- `scripts/gh-issue-start.sh`
-- `scripts/gh-priority-order.sh`
-- `scripts/gh-update-labels.sh`
-
-Optional repo-level continuation prompt customization:
-
-- add a repo-root `continuation.md` file to inject repository-specific instructions into both issue and WHIP continuation prompts
-- `continuation.md` supplements the built-in prompt, so repo-specific rules like `LOOP FOREVER` or references to local `program.md` can ride alongside the default AI Umpire workflow
-- `continuation.md` is trusted repo-authored prompt text; missing or empty files are ignored
-- `continuation.md` is loaded when the continuation controller starts, so restart the plugin/session after editing it
-
-If you need to overwrite existing assets:
+Apply selected host setup explicitly:
 
 ```bash
-npx aiu init . --force
+pnpm exec aiu init . --tool opencode
+pnpm exec aiu init . --tool codex
+pnpm exec aiu init . --tool claude-code
 ```
 
-Inspect the installed package asset paths:
+Inspect package and repository health:
 
 ```bash
-npx aiu paths --json
+pnpm exec aiu doctor
+pnpm exec aiu paths --json
+pnpm exec aiu schema --json
 ```
 
-## Package surfaces
+Tool support:
 
-- `@tjalve/aiu` - core continuation runtime plus installer helpers
-- `@tjalve/aiu/opencode` - repo-default OpenCode plugin export for local wrappers
+- OpenCode: installs a project plugin wrapper that delegates to the package runtime.
+- Codex: installs a project Stop hook that runs `aiu hook stop --tool codex`.
+- Claude Code: installs a project Stop hook that runs `aiu hook stop --tool claude-code`.
 
-Example local OpenCode wrapper:
+Stop hooks allow stopping unless trusted state loads successfully and the decision engine returns a safe, concrete continuation or repair prompt.
+
+## Migration
+
+Repositories that previously used repo-local Umpire hooks, local-checkout imports, copied helper scripts, or old host entries can use migration tooling to move to package-backed entrypoints.
+
+Migration is dry-run first:
+
+```bash
+pnpm exec aiu migrate --dry-run
+pnpm exec aiu migrate --dry-run --json
+```
+
+Migration does not stage, commit, branch, push, open PRs, close work items, or preserve old helper semantics as runtime fallback behavior.
+
+## Package Surfaces
+
+- `@tjalve/aiu` - public runtime/config/policy types and helpers
+- `@tjalve/aiu/opencode` - OpenCode plugin export for project wrappers
+- `aiu hook stop --tool codex|claude-code` - stop-hook entrypoint that emits host JSON
+
+Example OpenCode wrapper:
 
 ```ts
 import AiUmpireContinuationPlugin from "@tjalve/aiu/opencode";
@@ -71,19 +87,48 @@ import AiUmpireContinuationPlugin from "@tjalve/aiu/opencode";
 export default AiUmpireContinuationPlugin;
 ```
 
-## Commands
+## Development
 
 ```bash
-npm install
-npm run build
-npm test
-npm run typecheck
-npm run pack:dry-run
-npx aiu --help
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run build
+pnpm test
+pnpm run typecheck
+pnpm run pack:dry-run
+pnpm run release:check
+pnpm exec aiu --help
 ```
 
-## Development notes
+## Planning Specs
 
-- published assets are whitelisted via `package.json#files`
-- the installer copies queue assets from the installed package into the target repo
-- downstream repos can keep a local `queue-policy.json` or fall back to the bundled default
+- [Functional requirements](docs/spec.md)
+- [M1 - Package, CLI, Config, And Host Foundation](docs/M1-package-cli-config-and-host-foundation.md)
+- [M2 - Continuation State And Policy Engine](docs/M2-continuation-state-and-policy-engine.md)
+- [M3 - Provider Status Integration And Stop Hooks](docs/M3-provider-status-integration-and-stop-hooks.md)
+- [M4 - Whip Tasks, Quality Idle Work, And Planning Continuation](docs/M4-whip-tasks-quality-idle-work-and-planning-continuation.md)
+- [M5 - Existing Repository Migration And Release Readiness](docs/M5-migration-release-readiness-and-provider-architecture.md)
+
+## Publish Checklist
+
+Before public publish:
+
+- authenticate to npm as the account that owns the `@tjalve` scope
+- confirm the package version
+- keep the working tree clean so the tarball matches git
+- make the GitHub repo public, then enable branch protection or rulesets for `main`
+- configure the `npm-publish` environment with required reviewers
+- configure npm trusted publishing for the `Publish` workflow
+
+Release flow:
+
+```bash
+pnpm run release:check
+git tag v0.1.0
+git push origin main v0.1.0
+```
+
+The tagged release workflow publishes with npm provenance:
+
+```bash
+pnpm publish --access public --provenance
+```
