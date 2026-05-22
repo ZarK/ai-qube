@@ -1,6 +1,6 @@
-import type { GitHubIssue, GitHubMilestone } from '../../github';
-import { normalizeProviderSource } from '../../core/provider_source';
-import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item';
+import type { GitHubIssue, GitHubMilestone } from '../../github.js';
+import { normalizeProviderSource } from '../../core/provider_source.js';
+import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item.js';
 
 const PROVIDER_ID = 'github';
 

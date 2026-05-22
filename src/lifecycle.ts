@@ -1,8 +1,8 @@
-import { Config } from './config';
-import { Queue } from './queue';
-import { BaseRefStatus, PullRequestSummary, WorktreeStatus } from './repo';
-import { isHelpToken } from './command_metadata';
-import type { JsonObject } from './core/json_value';
+import { Config } from './config/index.js';
+import { Queue } from './queue/index.js';
+import { BaseRefStatus, PullRequestSummary, WorktreeStatus } from './repo/index.js';
+import { isHelpToken } from './command_metadata.js';
+import type { JsonObject } from './core/json_value.js';
 
 export type LifecycleMutation = 'github' | 'git' | 'none';
 export type LifecycleActionStatus = 'planned' | 'completed' | 'failed' | 'skipped';

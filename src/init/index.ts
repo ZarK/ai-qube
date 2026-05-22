@@ -1,14 +1,14 @@
 import { join, relative, resolve } from 'path';
-import { type Config, configToFileShape, getDefaults, validateConfig } from '../config';
-import { parseInitTool, uniqueTools } from '../init_content';
-import { getAgentHostProfiles } from '../agent_hosts';
-import { renderInitFiles } from '../init_renderer';
-import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file';
-import { getRepoRoot } from '../repo';
-import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state';
-export { detectLegacyState } from './legacy_state';
-export type { InitAction, InitActionOperation, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyChoice, LegacyState } from './types';
-import type { InitAction, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyState } from './types';
+import { type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
+import { parseInitTool, uniqueTools } from '../init_content.js';
+import { getAgentHostProfiles } from '../agent_hosts.js';
+import { renderInitFiles } from '../init_renderer.js';
+import { planManagedUpdate, readTextIfPresent, writeFileSafely } from '../managed_file.js';
+import { getRepoRoot } from '../repo/index.js';
+import { detectLegacyState, LEGACY_CHOICE_TEXT } from './legacy_state.js';
+export { detectLegacyState } from './legacy_state.js';
+export type { InitAction, InitActionOperation, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyChoice, LegacyState } from './types.js';
+import type { InitAction, InitActionStatus, InitOptions, InitPolicyOptions, InitPolicySummary, InitResult, LegacyState } from './types.js';
 
 interface PlannedWrite {
   actionId: string;

@@ -1,10 +1,10 @@
-import type { Config } from '../config';
-import { runUiAudit, type UiAuditResult } from '../audit';
-import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../core/gate_evidence';
-import { buildGateStatus, type GateStatusEntry, type GateStatusResult } from '../gates';
-import { runReviewGate, type ReviewGateResult } from '../review';
-import { createGitHubReviewProvider } from '../providers/github/github_review_provider';
-import { runPrGateService, type PrGateExec, type PrGateResult } from './pr_gate';
+import type { Config } from '../config/index.js';
+import { runUiAudit, type UiAuditResult } from '../audit.js';
+import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../core/gate_evidence.js';
+import { buildGateStatus, type GateStatusEntry, type GateStatusResult } from '../gates/index.js';
+import { runReviewGate, type ReviewGateResult } from '../review.js';
+import { createGitHubReviewProvider } from '../providers/github/github_review_provider.js';
+import { runPrGateService, type PrGateExec, type PrGateResult } from './pr_gate.js';
 
 function redactText(text: string): string {
   return text

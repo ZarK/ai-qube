@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { formatPrView, parsePrNumber, runPrViewService } from '../../app/pr_view';
-import { commandDescription, commandExamples, isHelpToken } from '../../command_metadata';
-import { loadConfigFile, ValidationError } from '../../config';
+import { formatPrView, parsePrNumber, runPrViewService } from '../../app/pr_view.js';
+import { commandDescription, commandExamples, isHelpToken } from '../../command_metadata.js';
+import { loadConfigFile, ValidationError } from '../../config/index.js';
 
 function formatConfigErrors(errors: ValidationError[]): string {
   return errors.map(error => `${error.path}: ${error.message}`).join('\n');

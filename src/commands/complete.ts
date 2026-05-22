@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples, isHelpToken } from '../command_metadata';
-import { completeIssue } from '../complete';
-import { formatCompleteHuman } from '../renderers/lifecycle_renderer';
+import { commandDescription, commandExamples, isHelpToken } from '../command_metadata.js';
+import { completeIssue } from '../complete/index.js';
+import { formatCompleteHuman } from '../renderers/lifecycle_renderer.js';
 
 function usageLines(): string[] {
   return [

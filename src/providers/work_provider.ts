@@ -1,6 +1,6 @@
-import type { ActionPlan, ActionResult } from '../core/action_plan';
-import type { ExecutorPolicy } from '../core/policy';
-import type { WorkItem, WorkItemKey } from '../core/work_item';
+import type { ActionPlan, ActionResult } from '../core/action_plan.js';
+import type { ExecutorPolicy } from '../core/policy.js';
+import type { WorkItem, WorkItemKey } from '../core/work_item.js';
 
 export interface WorkProviderCapabilities {
   listOpenWork: boolean;

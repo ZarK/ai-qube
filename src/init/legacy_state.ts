@@ -1,11 +1,11 @@
 import { readdir } from 'fs/promises';
 import { join } from 'path';
-import type { Config } from '../config';
-import { getDefaults } from '../config';
-import { getInstructionTargetPaths } from '../agent_hosts';
-import { categorizeLegacyPath, hasLegacyInstructionReference, type LegacyCategory } from '../legacy';
-import { readTextIfPresent } from '../managed_file';
-import type { LegacyChoice, LegacyState } from './types';
+import type { Config } from '../config/index.js';
+import { getDefaults } from '../config/index.js';
+import { getInstructionTargetPaths } from '../agent_hosts.js';
+import { categorizeLegacyPath, hasLegacyInstructionReference, type LegacyCategory } from '../legacy.js';
+import { readTextIfPresent } from '../managed_file.js';
+import type { LegacyChoice, LegacyState } from './types.js';
 
 const LEGACY_CHOICES: LegacyChoice[] = ['leave-untouched', 'install-alongside', 'install-compatibility-wrappers', 'cleanup-and-replace', 'defer-to-migration'];
 export const LEGACY_CHOICE_TEXT = 'leave untouched, install alongside managed Executor files, install compatibility wrappers, clean up and replace known helpers, or defer to migration';

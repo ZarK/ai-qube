@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { formatMigrationPlan, runMigration } from '../../migrate';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { formatMigrationPlan, runMigration } from '../../migrate/index.js';
 
 export default class MigrateLegacy extends Command {
   static description = commandDescription('migrate legacy');

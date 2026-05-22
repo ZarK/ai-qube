@@ -1,16 +1,16 @@
-import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan';
-import { normalizeGateEvidence, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../../core/gate_evidence';
-import type { JsonObject, JsonValue } from '../../core/json_value';
-import type { ExecutorPolicy } from '../../core/policy';
-import { normalizeProviderSource } from '../../core/provider_source';
-import type { ReviewFeedback, ReviewItem, ReviewItemKey } from '../../core/review_item';
-import { normalizeReviewItem } from '../../core/review_item';
-import { GhExecutionError, GhRunResult, parseGhJson, redact, runGh } from '../../gh';
-import { getRepositoryIdentity } from '../../repo';
-import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provider';
+import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
+import { normalizeGateEvidence, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../../core/gate_evidence.js';
+import type { JsonObject, JsonValue } from '../../core/json_value.js';
+import type { ExecutorPolicy } from '../../core/policy.js';
+import { normalizeProviderSource } from '../../core/provider_source.js';
+import type { ReviewFeedback, ReviewItem, ReviewItemKey } from '../../core/review_item.js';
+import { normalizeReviewItem } from '../../core/review_item.js';
+import { GhExecutionError, GhRunResult, parseGhJson, redact, runGh } from '../../gh.js';
+import { getRepositoryIdentity } from '../../repo/index.js';
+import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provider.js';
 
-import type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types';
-export type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types';
+import type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+export type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';

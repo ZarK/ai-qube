@@ -1,4 +1,4 @@
-import type { JsonObject } from './json_value';
+import type { JsonObject } from './json_value.js';
 
 export type ActionMutation = 'work-provider' | 'review-provider' | 'repository-provider' | 'local-only' | 'none';
 export type ActionStatus = 'planned' | 'completed' | 'failed' | 'skipped';

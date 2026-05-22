@@ -1,6 +1,6 @@
-import type { CompleteResult } from '../complete';
-import type { StartResult } from '../start';
-import type { SwitchResult } from '../switch';
+import type { CompleteResult } from '../complete/index.js';
+import type { StartResult } from '../start/index.js';
+import type { SwitchResult } from '../switch/index.js';
 
 function getStringArray(details: Record<string, unknown>, key: string): string[] {
   const value = details[key];

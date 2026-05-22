@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples, isHelpToken } from '../command_metadata';
-import { formatSwitchHuman } from '../renderers/lifecycle_renderer';
-import { switchIssue } from '../switch';
+import { commandDescription, commandExamples, isHelpToken } from '../command_metadata.js';
+import { formatSwitchHuman } from '../renderers/lifecycle_renderer.js';
+import { switchIssue } from '../switch/index.js';
 
 function usageLines(): string[] {
   return [

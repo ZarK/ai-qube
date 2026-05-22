@@ -1,8 +1,8 @@
-import type { Config } from '../config';
-import { configToExecutorPolicy } from '../config_policy';
-import type { Action, ActionPlan, ActionResult } from '../core/action_plan';
-import type { ReviewFeedback, ReviewItem } from '../core/review_item';
-import { createGitHubReviewProvider, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider';
+import type { Config } from '../config/index.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
+import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
+import { createGitHubReviewProvider, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
 
 export interface PrGateExecResult {
   args: string[];

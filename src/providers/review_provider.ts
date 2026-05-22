@@ -1,6 +1,6 @@
-import type { ActionPlan, ActionResult } from '../core/action_plan';
-import type { ExecutorPolicy } from '../core/policy';
-import type { ReviewItem, ReviewItemKey } from '../core/review_item';
+import type { ActionPlan, ActionResult } from '../core/action_plan.js';
+import type { ExecutorPolicy } from '../core/policy.js';
+import type { ReviewItem, ReviewItemKey } from '../core/review_item.js';
 
 export interface ReviewProviderCapabilities {
   loadReview: boolean;

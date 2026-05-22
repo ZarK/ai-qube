@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples, isHelpToken } from '../../command_metadata';
-import { getDefaults, loadConfigFile, ValidationError } from '../../config';
-import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from '../../review';
+import { commandDescription, commandExamples, isHelpToken } from '../../command_metadata.js';
+import { getDefaults, loadConfigFile, ValidationError } from '../../config/index.js';
+import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from '../../review.js';
 
 function formatConfigErrors(errors: ValidationError[]): string {
   return errors.map(error => `${error.path}: ${error.message}`).join('\n');

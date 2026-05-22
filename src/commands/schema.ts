@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples, CommandSchema, getImplementedCommands } from '../command_metadata';
-import { configToFileShape, getDefaults } from '../config';
+import { commandDescription, commandExamples, CommandSchema, getImplementedCommands } from '../command_metadata.js';
+import { configToFileShape, getDefaults } from '../config/index.js';
 
 export default class Schema extends Command {
   static description = commandDescription('schema');

@@ -1,4 +1,4 @@
-import type { StatusResult } from '../app/status_service';
+import type { StatusResult } from '../app/status_service.js';
 
 export function formatStatusHuman(result: StatusResult): string {
   const lines = [`Status: ${result.decision.state} (${result.decision.reasonCodes.join(', ')})`, result.decision.summary, `Next: ${result.decision.nextCommand}`];

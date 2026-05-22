@@ -1,9 +1,9 @@
-import { createAction, createActionPlan, type Action } from '../core/action_plan';
-import { suggestBranchName } from '../core/branch_rules';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item';
-import { buildLifecyclePlan, createLifecycleAction, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle';
-import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common';
-import { buildPreStartPolicy } from './pre_start_policy';
+import { createAction, createActionPlan, type Action } from '../core/action_plan.js';
+import { suggestBranchName } from '../core/branch_rules.js';
+import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import { buildLifecyclePlan, createLifecycleAction, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle.js';
+import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { buildPreStartPolicy } from './pre_start_policy.js';
 
 export interface SwitchServiceResult {
   ok: boolean;

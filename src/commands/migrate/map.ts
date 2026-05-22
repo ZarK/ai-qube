@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { buildMigrationMap, formatMigrationMap } from '../../migrate';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { buildMigrationMap, formatMigrationMap } from '../../migrate/index.js';
 
 export default class MigrateMap extends Command {
   static description = commandDescription('migrate map');

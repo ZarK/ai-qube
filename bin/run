@@ -1,29 +1,6 @@
 #!/usr/bin/env node
 
-const { execute } = require('@oclif/core');
-
-let args = process.argv.slice(2);
-
-// Normalize help forms to `<command> --help` so all three styles work:
-//   aie doctor --help
-//   aie help doctor
-//   aie doctor help
-if (args.length === 1 && args[0] === 'help') {
-  // bare `aie help` -> show root help
-  args = ['--help'];
-} else if (args.length >= 2 && args[0] === 'help') {
-  // `aie help doctor` -> `aie doctor --help`
-  const target = args.slice(1);
-  args = [...target, '--help'];
-} else if (args.length >= 2 && args[args.length - 1] === 'help') {
-  // `aie doctor help` -> `aie doctor --help`
-  args = [...args.slice(0, -1), '--help'];
-}
-
-execute({
-  dir: __dirname,
-  loadOptions: {
-    root: __dirname + '/..',
-  },
-  args,
+import('../dist/bin/run.js').then(({ run }) => run(process.argv.slice(2))).catch(error => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exitCode = 1;
 });

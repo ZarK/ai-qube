@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getDependencyGraph } from '../../deps';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getDependencyGraph } from '../../deps.js';
 
 export default class DepsGraph extends Command {
   static description = commandDescription('deps graph');

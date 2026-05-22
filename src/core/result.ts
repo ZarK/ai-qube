@@ -1,4 +1,4 @@
-import type { JsonObject } from './json_value';
+import type { JsonObject } from './json_value.js';
 
 export type CoreErrorKind = 'invalid-input' | 'conflict' | 'unavailable' | 'unsupported' | 'execution-failed';
 

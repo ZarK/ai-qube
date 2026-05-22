@@ -1,4 +1,4 @@
-import type { GateDefinition } from './gate_evidence';
+import type { GateDefinition } from './gate_evidence.js';
 
 export interface PolicyLabel {
   name: string;

@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getAllBlockedIssues } from '../../deps';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getAllBlockedIssues } from '../../deps.js';
 
 export default class DepsBlocked extends Command {
   static description = commandDescription('deps blocked');

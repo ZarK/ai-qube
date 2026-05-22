@@ -1,8 +1,8 @@
-import type { ExecutorPolicy } from '../core/policy';
-import { expandGateConfigs } from '../gate_config';
-import { isSupplyChainSensitive } from '../gate_sensitivity';
-import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig } from './types';
-import { DEFAULT_CONFIG_VERSION } from './types';
+import type { ExecutorPolicy } from '../core/policy.js';
+import { expandGateConfigs } from '../gate_config.js';
+import { isSupplyChainSensitive } from '../gate_sensitivity.js';
+import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig } from './types.js';
+import { DEFAULT_CONFIG_VERSION } from './types.js';
 
 export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
   version: DEFAULT_CONFIG_VERSION,

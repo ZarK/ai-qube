@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ShippingPolicy } from '../core/policy';
+import type { ExecutorPolicy, MigrationPolicy, ShippingPolicy } from '../core/policy.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 

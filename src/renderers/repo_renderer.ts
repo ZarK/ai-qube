@@ -1,4 +1,4 @@
-import type { RepoPrimePlan } from '../repo';
+import type { RepoPrimePlan } from '../repo/index.js';
 
 function formatList(title: string, values: string[]): string[] {
   if (values.length === 0) return [`${title}:`, '  None.', ''];

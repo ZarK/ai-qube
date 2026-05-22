@@ -1,12 +1,12 @@
-import { getDefaults, loadConfig, type Config } from './config';
-import { configToExecutorPolicy } from './config_policy';
-import type { GhExec } from './gh';
-import { createLifecycleContext } from './app/lifecycle_services';
-import { runViewService } from './app/view_work';
-import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider';
-import { workItemNumber } from './core/work_item';
-import type { BlockerDetail } from './deps';
-export { suggestBranchName } from './branch';
+import { getDefaults, loadConfig, type Config } from './config/index.js';
+import { configToExecutorPolicy } from './config_policy.js';
+import type { GhExec } from './gh.js';
+import { createLifecycleContext } from './app/lifecycle_services.js';
+import { runViewService } from './app/view_work.js';
+import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider.js';
+import { workItemNumber } from './core/work_item.js';
+import type { BlockerDetail } from './deps.js';
+export { suggestBranchName } from './branch.js';
 
 export interface ChecklistSummary { total: number; checked: number; unchecked: number; items: string[] }
 export interface BranchInfo { suggested: string; current: string | null; matches: boolean }

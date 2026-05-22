@@ -1,17 +1,17 @@
-import type { Config } from '../config';
-import { configToExecutorPolicy } from '../config_policy';
-import { evaluatePreStartBranchChecks, type PreStartBranchCheck as CorePreStartBranchCheck } from '../core/branch_rules';
-import type { BranchPolicy } from '../core/policy';
-import type { RepoState } from '../core/repo_state';
-import type { GhExec } from '../gh';
+import type { Config } from '../config/index.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import { evaluatePreStartBranchChecks, type PreStartBranchCheck as CorePreStartBranchCheck } from '../core/branch_rules.js';
+import type { BranchPolicy } from '../core/policy.js';
+import type { RepoState } from '../core/repo_state.js';
+import type { GhExec } from '../gh.js';
 import {
   getPreStartNextActions,
   makePreStartPolicyCheck,
   type PreStartPolicyCheck,
   type PreStartPolicyResult,
-} from '../lifecycle';
-import { BaseRefStatus, listOpenPullRequests, PullRequestSummary, WorktreeStatus } from '../repo';
-import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider';
+} from '../lifecycle.js';
+import { BaseRefStatus, listOpenPullRequests, PullRequestSummary, WorktreeStatus } from '../repo/index.js';
+import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
 
 export async function buildPreStartPolicy(input: {
   config: Config;

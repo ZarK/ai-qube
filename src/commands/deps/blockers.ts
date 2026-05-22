@@ -1,8 +1,8 @@
 import { Command, Flags, Args } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getDirectBlockers } from '../../deps';
-import { createGitHubWorkProvider } from '../../providers/github/github_work_provider';
-import { githubIssueNumber } from '../../providers/github/github_work_codec';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getDirectBlockers } from '../../deps.js';
+import { createGitHubWorkProvider } from '../../providers/github/github_work_provider.js';
+import { githubIssueNumber } from '../../providers/github/github_work_codec.js';
 
 function parseIssueNumber(input: string): number {
   const cleaned = input.replace(/^#/, '').trim();

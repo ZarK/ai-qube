@@ -1,4 +1,4 @@
-import type { GateConfig } from './config';
+import type { GateConfig } from './config/index.js';
 
 export function buildQualityGate(command: string, index: number): GateConfig {
   return {

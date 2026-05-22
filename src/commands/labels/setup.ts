@@ -1,9 +1,9 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { loadConfig, getDefaults } from '../../config';
-import { getDesiredLabels, computeLabelPlan, applyLabelPlan, LabelSpec } from '../../labels';
-import { runGh } from '../../gh';
-import { parseGhLabelList } from '../../labels';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { loadConfig, getDefaults } from '../../config/index.js';
+import { getDesiredLabels, computeLabelPlan, applyLabelPlan, LabelSpec } from '../../labels.js';
+import { runGh } from '../../gh.js';
+import { parseGhLabelList } from '../../labels.js';
 
 export default class LabelsSetup extends Command {
   static description = commandDescription('labels setup');

@@ -1,4 +1,4 @@
-import type { JsonObject } from './json_value';
+import type { JsonObject } from './json_value.js';
 
 export type GateStage = 'all' | 'pre-pr' | 'pre-merge';
 export type GateResult = 'passed' | 'failed' | 'skipped' | 'needs-work' | 'unknown' | 'stale' | 'missing';

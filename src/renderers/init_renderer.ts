@@ -1,4 +1,4 @@
-import type { InitResult } from '../init';
+import type { InitResult } from '../init/index.js';
 
 function formatList(title: string, values: string[]): string[] {
   if (values.length === 0) return [`${title}: none`];

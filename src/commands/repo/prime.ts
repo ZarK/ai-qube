@@ -1,8 +1,8 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getDefaults, loadConfig } from '../../config';
-import { buildRepoPrimePlan } from '../../repo';
-import { formatRepoPrimeHuman } from '../../renderers/repo_renderer';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getDefaults, loadConfig } from '../../config/index.js';
+import { buildRepoPrimePlan } from '../../repo/index.js';
+import { formatRepoPrimeHuman } from '../../renderers/repo_renderer.js';
 
 export default class RepoPrime extends Command {
   static description = commandDescription('repo prime');

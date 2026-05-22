@@ -1,4 +1,4 @@
-import type { ViewIssueResult } from '../view';
+import type { ViewIssueResult } from '../view.js';
 
 export function formatViewHuman(result: ViewIssueResult): string {
   const lines: string[] = [];

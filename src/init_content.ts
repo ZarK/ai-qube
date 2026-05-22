@@ -1,6 +1,6 @@
-import { Config } from './config';
-import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts';
-import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from './supply_chain_guard';
+import { Config } from './config/index.js';
+import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
+import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from './supply_chain_guard.js';
 
 export type InitTool = AgentHostId;
 

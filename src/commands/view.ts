@@ -1,7 +1,7 @@
 import { Command, Flags, Args } from '@oclif/core';
-import { commandDescription, commandExamples, isHelpToken } from '../command_metadata';
-import { formatViewHuman } from '../renderers/view_renderer';
-import { viewIssue } from '../view';
+import { commandDescription, commandExamples, isHelpToken } from '../command_metadata.js';
+import { formatViewHuman } from '../renderers/view_renderer.js';
+import { viewIssue } from '../view.js';
 
 function parseIssueNumber(input: string | undefined): number | null {
   if (!input) return null;

@@ -1,13 +1,13 @@
-import { getDefaults, loadConfig, Config } from '../config';
-import { GhExec } from '../gh';
+import { getDefaults, loadConfig, Config } from '../config/index.js';
+import { GhExec } from '../gh.js';
 import {
   PreStartPolicyResult,
-} from '../lifecycle';
+} from '../lifecycle.js';
 import {
   createLifecycleContext,
-} from '../app/lifecycle_services';
-import { runSwitchService } from '../app/switch_work';
-import { workItemNumber } from '../core/work_item';
+} from '../app/lifecycle_services.js';
+import { runSwitchService } from '../app/switch_work.js';
+import { workItemNumber } from '../core/work_item.js';
 
 export type SwitchAction = 'switched' | 'resumed' | 'blocked' | 'invalid';
 
@@ -40,7 +40,7 @@ export interface SwitchResult {
   };
   preStartPolicy?: PreStartPolicyResult;
   branchRecommendation: StartBranchRecommendation;
-  plan: import('../lifecycle').LifecyclePlan;
+  plan: import('../lifecycle.js').LifecyclePlan;
   warnings: string[];
   errors: string[];
 }
@@ -56,7 +56,7 @@ export interface SwitchOptions {
   config?: Config;
 }
 
-function issueSummary(item: import('../core/work_item').WorkItem): StartIssueSummary {
+function issueSummary(item: import('../core/work_item.js').WorkItem): StartIssueSummary {
   return {
     number: workItemNumber(item),
     title: item.title,

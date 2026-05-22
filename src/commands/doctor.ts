@@ -2,17 +2,18 @@ import { Command, Flags } from '@oclif/core';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
+import { createRequire } from 'node:module';
 import { join } from 'path';
 import { cwd } from 'process';
-import { commandDescription, commandExamples } from '../command_metadata';
-import { Config, getDefaults, loadConfig, validateConfig, ValidationError } from '../config';
-import { detectLegacyState } from '../init';
-import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from '../labels';
-import { runGh } from '../gh';
-import { buildMigrationPlan } from '../migrate';
-import { buildMigrationReadinessDiagnostics } from '../migration_diagnostics';
-import { computeQueue } from '../queue';
-import { formatDoctorHuman } from '../renderers/doctor_renderer';
+import { commandDescription, commandExamples } from '../command_metadata.js';
+import { Config, getDefaults, loadConfig, validateConfig, ValidationError } from '../config/index.js';
+import { detectLegacyState } from '../init/index.js';
+import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from '../labels.js';
+import { runGh } from '../gh.js';
+import { buildMigrationPlan } from '../migrate/index.js';
+import { buildMigrationReadinessDiagnostics } from '../migration_diagnostics.js';
+import { computeQueue } from '../queue/index.js';
+import { formatDoctorHuman } from '../renderers/doctor_renderer.js';
 import {
   findMilestoneWarnings,
   getBaseRefStatus,
@@ -22,8 +23,8 @@ import {
   listMilestones,
   listOpenPullRequests,
   PullRequestSummary,
-} from '../repo';
-import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from '../doctor_diagnostics';
+} from '../repo/index.js';
+import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from '../doctor_diagnostics/index.js';
 
 export {
   buildGateReadinessDiagnostics,
@@ -32,8 +33,10 @@ export {
   buildProviderHealthDiagnostics,
   buildRepositoryPolicyDiagnostics,
   computeDoctorOk,
-} from '../doctor_diagnostics';
-export { buildMigrationReadinessDiagnostics } from '../migration_diagnostics';
+} from '../doctor_diagnostics/index.js';
+export { buildMigrationReadinessDiagnostics } from '../migration_diagnostics.js';
+
+const requirePackage = createRequire(import.meta.url);
 
 export default class Doctor extends Command {
   static description = commandDescription('doctor');
@@ -339,7 +342,7 @@ export default class Doctor extends Command {
 
   private checkNodeVersion(): { version: string; satisfies: boolean; required: string } {
     try {
-      const pkg = require('../../package.json');
+      const pkg = requirePackage('../../package.json') as { engines?: { node?: string } };
       const required = (pkg.engines && pkg.engines.node) || '>=24.0.0';
       const currentMajor = parseInt(process.version.replace(/^v/, '').split('.')[0], 10);
       return { version: process.version, satisfies: currentMajor >= 24, required };

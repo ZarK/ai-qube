@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { getKnownLegacyScript } from './legacy';
-import type { MigrationInventoryItem, MigrationPlan } from './migrate';
+import { getKnownLegacyScript } from './legacy.js';
+import type { MigrationInventoryItem, MigrationPlan } from './migrate/index.js';
 
 export type MigrationCleanupStatus = 'safe' | 'blocked' | 'review-required' | 'not-needed';
 

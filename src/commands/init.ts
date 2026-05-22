@@ -1,10 +1,10 @@
 import { Args, Command, Flags } from '@oclif/core';
 import { resolve } from 'path';
-import { commandDescription, commandExamples, isHelpToken } from '../command_metadata';
-import { Config, getDefaults, loadConfig } from '../config';
-import { InitPolicyOptions, runInit } from '../init';
-import { getRepoRoot } from '../repo';
-import { formatInitHuman } from '../renderers/init_renderer';
+import { commandDescription, commandExamples, isHelpToken } from '../command_metadata.js';
+import { Config, getDefaults, loadConfig } from '../config/index.js';
+import { InitPolicyOptions, runInit } from '../init/index.js';
+import { getRepoRoot } from '../repo/index.js';
+import { formatInitHuman } from '../renderers/init_renderer.js';
 
 const INIT_USAGE = 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]';
 const TOOL_OPTIONS = ['opencode', 'codex', 'claude-code', 'all'] as const;

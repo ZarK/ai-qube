@@ -1,10 +1,10 @@
-import { getDefaults, loadConfig, type Config } from '../config';
-import type { GhExec } from '../gh';
-import { createLifecycleContext } from '../app/lifecycle_services';
-import { runCompleteService, type CompletionChecklist, type CompletionChecklistItem, type CompletionMilestoneContext, type CompletionState } from '../app/complete_work';
-import type { StartIssueSummary } from '../start';
-import type { LifecyclePlan } from '../lifecycle';
-import { workItemKeyNumber } from '../core/work_item';
+import { getDefaults, loadConfig, type Config } from '../config/index.js';
+import type { GhExec } from '../gh.js';
+import { createLifecycleContext } from '../app/lifecycle_services.js';
+import { runCompleteService, type CompletionChecklist, type CompletionChecklistItem, type CompletionMilestoneContext, type CompletionState } from '../app/complete_work.js';
+import type { StartIssueSummary } from '../start/index.js';
+import type { LifecyclePlan } from '../lifecycle.js';
+import { workItemKeyNumber } from '../core/work_item.js';
 
 export type CompleteAction = 'completed' | 'checked' | 'planned' | 'blocked' | 'failed';
 export type { CompletionChecklistItem, CompletionChecklist, CompletionMilestoneContext, CompletionState };

@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { Config } from './config';
-import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence';
-import { redact } from './gh';
+import { Config } from './config/index.js';
+import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
+import { redact } from './gh.js';
 
 export type ReviewGateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found';
 export type ReviewGateRecordedStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown';

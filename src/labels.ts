@@ -1,5 +1,5 @@
-import { runGh, GhExec, parseGhJson } from './gh';
-import { Config } from './config';
+import { runGh, GhExec, parseGhJson } from './gh.js';
+import { Config } from './config/index.js';
 
 export interface LabelSpec {
   name: string;

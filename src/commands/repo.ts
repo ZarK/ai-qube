@@ -1,5 +1,5 @@
 import { Command } from '@oclif/core';
-import { commandDescription, commandExamples } from '../command_metadata';
+import { commandDescription, commandExamples } from '../command_metadata.js';
 
 export default class Repo extends Command {
   static description = commandDescription('repo');

@@ -1,4 +1,4 @@
-import { COMMON_ERROR_KINDS, CommandMetadataInput, IMPLEMENTED_COMMANDS } from './command_catalog';
+import { COMMON_ERROR_KINDS, CommandMetadataInput, IMPLEMENTED_COMMANDS } from './command_catalog.js';
 
 export type CommandMutationTarget = 'github' | 'git' | 'local-files';
 

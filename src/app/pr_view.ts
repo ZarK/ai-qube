@@ -1,7 +1,7 @@
-import type { GateResult } from '../core/gate_evidence';
-import type { ReviewFeedback, ReviewItem } from '../core/review_item';
-import { createGitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider';
-import { parsePrNumber } from './pr_gate';
+import type { GateResult } from '../core/gate_evidence.js';
+import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
+import { createGitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { parsePrNumber } from './pr_gate.js';
 
 export interface PrViewExecResult {
   args: string[];

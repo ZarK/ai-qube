@@ -1,4 +1,4 @@
-import type { CommandFlagSchema } from './command_metadata';
+import type { CommandFlagSchema } from './command_metadata.js';
 
 export const GATE_STAGE_OPTIONS = ['all', 'pre-pr', 'pre-merge'];
 export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'coderabbit', 'custom'];

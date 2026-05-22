@@ -1,9 +1,9 @@
-import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey } from './core/work_item';
-import type { GhExec } from './gh';
-import { buildWorkDependencyGraph, computeWorkQueue, planStatusSyncFromWorkItems, resolveWorkStatusLabels, type WorkQueuePolicy } from './core/queue_rules';
-import { getDefaults, loadConfig, type Config } from './config';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider';
-import { githubIssueNumber } from './providers/github/github_work_codec';
+import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey } from './core/work_item.js';
+import type { GhExec } from './gh.js';
+import { buildWorkDependencyGraph, computeWorkQueue, planStatusSyncFromWorkItems, resolveWorkStatusLabels, type WorkQueuePolicy } from './core/queue_rules.js';
+import { getDefaults, loadConfig, type Config } from './config/index.js';
+import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
+import { githubIssueNumber } from './providers/github/github_work_codec.js';
 
 export interface BlockerDetail {
   number: number;

@@ -1,9 +1,9 @@
-import type { Action, ActionPlan } from './action_plan';
-import { createAction, createActionPlan } from './action_plan';
-import type { JsonObject } from './json_value';
-import type { BranchPolicy } from './policy';
-import type { RepoState } from './repo_state';
-import type { WorkItem } from './work_item';
+import type { Action, ActionPlan } from './action_plan.js';
+import { createAction, createActionPlan } from './action_plan.js';
+import type { JsonObject } from './json_value.js';
+import type { BranchPolicy } from './policy.js';
+import type { RepoState } from './repo_state.js';
+import type { WorkItem } from './work_item.js';
 
 export interface BranchNameResult {
   branchName: string;

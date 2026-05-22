@@ -1,9 +1,9 @@
-import { buildLifecyclePlan, type LifecyclePlan } from '../lifecycle';
-import { githubIssueNumber, parseWorkChecklistItems } from '../providers/github/github_work_codec';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item';
-import type { Action } from '../core/action_plan';
-import { getRepositoryIdentity, listMilestones } from '../repo';
-import { actionToLifecycle, applyProviderPlan, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common';
+import { buildLifecyclePlan, type LifecyclePlan } from '../lifecycle.js';
+import { githubIssueNumber, parseWorkChecklistItems } from '../providers/github/github_work_codec.js';
+import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import type { Action } from '../core/action_plan.js';
+import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
+import { actionToLifecycle, applyProviderPlan, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface CompletionChecklistItem { text: string; checked: boolean }
 export interface CompletionChecklist { total: number; checked: number; unchecked: number; items: CompletionChecklistItem[] }

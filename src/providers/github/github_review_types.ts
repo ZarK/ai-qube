@@ -1,5 +1,5 @@
-import type { ReviewItem } from '../../core/review_item';
-import type { GhExec } from '../../gh';
+import type { ReviewItem } from '../../core/review_item.js';
+import type { GhExec } from '../../gh.js';
 
 export type GitHubReviewRequestTrigger = 'github-reviewer' | 'comment';
 

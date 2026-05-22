@@ -1,9 +1,9 @@
 import { isAbsolute, join, relative, resolve } from 'path';
-import { Config } from './config';
-import { renderAgentInstructions } from './init_content';
-import { getAgentHostProfiles, getInstructionTargetPaths, hostIdsForInstructionPath } from './agent_hosts';
-import { getKnownLegacyScript, hasLegacyInstructionReference } from './legacy';
-import { hasManagedSection, planManagedUpdate, readTextIfPresent } from './managed_file';
+import { Config } from './config/index.js';
+import { renderAgentInstructions } from './init_content.js';
+import { getAgentHostProfiles, getInstructionTargetPaths, hostIdsForInstructionPath } from './agent_hosts.js';
+import { getKnownLegacyScript, hasLegacyInstructionReference } from './legacy.js';
+import { hasManagedSection, planManagedUpdate, readTextIfPresent } from './managed_file.js';
 
 export type MigrationInstructionOperation = 'replace-managed' | 'replace-references' | 'unchanged' | 'blocked';
 export type MigrationInstructionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';

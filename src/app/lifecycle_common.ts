@@ -1,16 +1,16 @@
-import type { Config } from '../config';
-import { getDefaults, loadConfig } from '../config';
-import { configToExecutorPolicy } from '../config_policy';
-import type { Action, ActionFailure, ActionPlan, ActionResult } from '../core/action_plan';
-import { createActionPlan } from '../core/action_plan';
-import { computeWorkQueue, type WorkQueueState } from '../core/queue_rules';
-import type { ExecutorPolicy } from '../core/policy';
-import type { WorkItem } from '../core/work_item';
-import { workItemNumber } from '../core/work_item';
-import type { GhExec } from '../gh';
-import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle';
-import { createGitHubWorkProvider } from '../providers/github/github_work_provider';
-import type { WorkProvider } from '../providers/work_provider';
+import type { Config } from '../config/index.js';
+import { getDefaults, loadConfig } from '../config/index.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import type { Action, ActionFailure, ActionPlan, ActionResult } from '../core/action_plan.js';
+import { createActionPlan } from '../core/action_plan.js';
+import { computeWorkQueue, type WorkQueueState } from '../core/queue_rules.js';
+import type { ExecutorPolicy } from '../core/policy.js';
+import type { WorkItem } from '../core/work_item.js';
+import { workItemNumber } from '../core/work_item.js';
+import type { GhExec } from '../gh.js';
+import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle.js';
+import { createGitHubWorkProvider } from '../providers/github/github_work_provider.js';
+import type { WorkProvider } from '../providers/work_provider.js';
 
 export interface LifecycleServiceContext {
   config: Config;

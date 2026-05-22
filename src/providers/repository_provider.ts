@@ -1,7 +1,7 @@
-import type { ActionPlan, ActionResult } from '../core/action_plan';
-import type { ExecutorPolicy } from '../core/policy';
-import type { RepoState } from '../core/repo_state';
-import type { WorkItem } from '../core/work_item';
+import type { ActionPlan, ActionResult } from '../core/action_plan.js';
+import type { ExecutorPolicy } from '../core/policy.js';
+import type { RepoState } from '../core/repo_state.js';
+import type { WorkItem } from '../core/work_item.js';
 
 export interface RepositoryProviderCapabilities {
   inspectRepository: boolean;

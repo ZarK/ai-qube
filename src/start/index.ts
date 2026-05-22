@@ -1,14 +1,14 @@
-import { getDefaults, loadConfig, Config } from '../config';
-import { GhExec } from '../gh';
+import { getDefaults, loadConfig, Config } from '../config/index.js';
+import { GhExec } from '../gh.js';
 import {
   LifecycleIssueSelection,
   PreStartPolicyResult,
-} from '../lifecycle';
+} from '../lifecycle.js';
 import {
   createLifecycleContext,
-} from '../app/lifecycle_services';
-import { runStartService } from '../app/start_work';
-import { workItemNumber } from '../core/work_item';
+} from '../app/lifecycle_services.js';
+import { runStartService } from '../app/start_work.js';
+import { workItemNumber } from '../core/work_item.js';
 
 export type StartAction = 'started' | 'resumed' | 'blocked' | 'empty' | 'invalid';
 
@@ -41,7 +41,7 @@ export interface StartResult {
   };
   preStartPolicy?: PreStartPolicyResult;
   branchRecommendation: StartBranchRecommendation;
-  plan: import('../lifecycle').LifecyclePlan;
+  plan: import('../lifecycle.js').LifecyclePlan;
   warnings: string[];
   errors: string[];
 }
@@ -56,7 +56,7 @@ export interface StartOptions {
   config?: Config;
 }
 
-function issueSummary(item: import('../core/work_item').WorkItem): StartIssueSummary {
+function issueSummary(item: import('../core/work_item.js').WorkItem): StartIssueSummary {
   return {
     number: workItemNumber(item),
     title: item.title,

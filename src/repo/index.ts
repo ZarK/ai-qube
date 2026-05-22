@@ -1,14 +1,14 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { writeFile } from 'fs/promises';
 import { join } from 'path';
-import { Config, formatConfigFile, getDefaults } from '../config';
-import { configToExecutorPolicy } from '../config_policy';
-import { getAllAgentHostProfiles } from '../agent_hosts';
-import { GhExec, parseGhJson, runGh } from '../gh';
-import { GitHubIssue, listOpenIssues } from '../github';
-import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels';
-import { getManagedSectionHealth } from '../managed_file';
-import { inspectBaseRef, inspectRepoRoot, inspectWorktree } from '../providers/local/local_git_provider';
+import { Config, formatConfigFile, getDefaults } from '../config/index.js';
+import { configToExecutorPolicy } from '../config_policy.js';
+import { getAllAgentHostProfiles } from '../agent_hosts.js';
+import { GhExec, parseGhJson, runGh } from '../gh.js';
+import { GitHubIssue, listOpenIssues } from '../github.js';
+import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels.js';
+import { getManagedSectionHealth } from '../managed_file.js';
+import { inspectBaseRef, inspectRepoRoot, inspectWorktree } from '../providers/local/local_git_provider.js';
 
 export interface RepositoryIdentity {
   nameWithOwner: string;

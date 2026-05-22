@@ -1,10 +1,10 @@
-import type { GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, SupplyChainConfig } from '../config';
-import type { InitTool } from '../init_content';
-import type { LegacyCategory } from '../legacy';
+import type { GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, SupplyChainConfig } from '../config/index.js';
+import type { InitTool } from '../init_content.js';
+import type { LegacyCategory } from '../legacy.js';
 
 export type InitActionStatus = 'planned' | 'completed' | 'skipped' | 'blocked' | 'failed';
 export type InitActionOperation = 'create' | 'append' | 'replace-managed' | 'replace-file' | 'update-config' | 'unchanged' | 'blocked';
-export type { LegacyCategory } from '../legacy';
+export type { LegacyCategory } from '../legacy.js';
 export type LegacyChoice = 'leave-untouched' | 'install-alongside' | 'install-compatibility-wrappers' | 'cleanup-and-replace' | 'defer-to-migration';
 
 export interface InitAction {

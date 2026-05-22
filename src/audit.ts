@@ -1,9 +1,9 @@
 import { existsSync, mkdirSync, readdirSync, statSync } from 'fs';
 import { basename, join } from 'path';
 import { homedir } from 'os';
-import { Config } from './config';
-import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence';
-import { redact } from './gh';
+import { Config } from './config/index.js';
+import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
+import { redact } from './gh.js';
 
 export type UiAuditEvidenceState = 'disabled' | 'missing' | 'incomplete' | 'local-evidence-found';
 

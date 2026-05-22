@@ -1,7 +1,7 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { runBranchCommand } from '../../branch';
-import { branchCommandError, formatBranchResult, parseBranchIssue, shouldShowBranchHelp, usage, usageJson } from '../../branch_command';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { runBranchCommand } from '../../branch.js';
+import { branchCommandError, formatBranchResult, parseBranchIssue, shouldShowBranchHelp, usage, usageJson } from '../../branch_command.js';
 
 export default class BranchCreate extends Command {
   static description = commandDescription('branch create');

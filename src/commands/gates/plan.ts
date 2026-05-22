@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getDefaults, loadConfigFile, ValidationError } from '../../config';
-import { buildGatePlan, formatGatePlan, isGateStage } from '../../gates';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getDefaults, loadConfigFile, ValidationError } from '../../config/index.js';
+import { buildGatePlan, formatGatePlan, isGateStage } from '../../gates/index.js';
 
 function formatConfigErrors(errors: ValidationError[]): string {
   return errors.map(error => `${error.path}: ${error.message}`).join('\n');

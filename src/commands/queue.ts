@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../command_metadata';
-import { computeQueue } from '../queue';
+import { commandDescription, commandExamples } from '../command_metadata.js';
+import { computeQueue } from '../queue/index.js';
 
 export default class Queue extends Command {
   static description = commandDescription('queue');

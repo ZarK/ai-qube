@@ -1,17 +1,17 @@
 import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { suggestBranchName, validateBranchPattern } from '../branch';
-import type { Config, GateKind, GateStage } from '../config';
-import type { BaseRefStatus } from '../repo';
-import type { GitHubIssue } from '../github';
-import { MANAGED_START } from '../managed_file';
-import { buildGatePlan, buildGateStatus, configuredGates } from '../gates';
-import { redact } from '../gh';
-import { getInstructionTargetPaths } from '../agent_hosts';
-import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard';
-export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types';
-import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types';
+import { suggestBranchName, validateBranchPattern } from '../branch.js';
+import type { Config, GateKind, GateStage } from '../config/index.js';
+import type { BaseRefStatus } from '../repo/index.js';
+import type { GitHubIssue } from '../github.js';
+import { MANAGED_START } from '../managed_file.js';
+import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.js';
+import { redact } from '../gh.js';
+import { getInstructionTargetPaths } from '../agent_hosts.js';
+import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
+export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
+import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 
 export function computeDoctorOk(input: DoctorOkInputs): boolean {
   const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate);

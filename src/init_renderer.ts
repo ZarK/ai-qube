@@ -1,6 +1,6 @@
-import type { Config } from './config';
-import type { AgentHostId, AgentHostProfile, CommandTarget, InstructionTarget } from './agent_hosts';
-import { renderAgentInstructions, renderMakeItSoCommand } from './init_content';
+import type { Config } from './config/index.js';
+import type { AgentHostId, AgentHostProfile, CommandTarget, InstructionTarget } from './agent_hosts.js';
+import { renderAgentInstructions, renderMakeItSoCommand } from './init_content.js';
 
 export type InitRenderedFileKind = 'instruction' | 'command';
 

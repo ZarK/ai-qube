@@ -1,8 +1,8 @@
-import type { GateKind, GateStage, ValidationError } from '../config';
-import type { LegacyState } from '../init';
-import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, MilestoneSummary, PlanningStatus, PullRequestSummary } from '../repo';
-import type { GateStatusResult } from '../gates';
-import type { MigrationReadinessDiagnostics } from '../migration_diagnostics';
+import type { GateKind, GateStage, ValidationError } from '../config/index.js';
+import type { LegacyState } from '../init/index.js';
+import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, MilestoneSummary, PlanningStatus, PullRequestSummary } from '../repo/index.js';
+import type { GateStatusResult } from '../gates/index.js';
+import type { MigrationReadinessDiagnostics } from '../migration_diagnostics.js';
 
 export interface DoctorDiagnostics {
   ok: boolean;

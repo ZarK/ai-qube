@@ -1,10 +1,10 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getDefaults, loadConfig } from '../../config';
-import { configToExecutorPolicy } from '../../config_policy';
-import { computeStatusFixPlanFromWorkItems, configToWorkQueuePolicy, StatusFixPlan } from '../../deps';
-import type { ActionPlan, ActionResult } from '../../core/action_plan';
-import { createGitHubWorkProvider } from '../../providers/github/github_work_provider';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getDefaults, loadConfig } from '../../config/index.js';
+import { configToExecutorPolicy } from '../../config_policy.js';
+import { computeStatusFixPlanFromWorkItems, configToWorkQueuePolicy, StatusFixPlan } from '../../deps.js';
+import type { ActionPlan, ActionResult } from '../../core/action_plan.js';
+import { createGitHubWorkProvider } from '../../providers/github/github_work_provider.js';
 
 export interface StatusFixResult {
   issueNumber: number;

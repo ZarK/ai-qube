@@ -1,6 +1,6 @@
 import { Command, Flags, Args } from '@oclif/core';
-import { commandDescription, commandExamples } from '../../command_metadata';
-import { getIssuesBlockedBy } from '../../deps';
+import { commandDescription, commandExamples } from '../../command_metadata.js';
+import { getIssuesBlockedBy } from '../../deps.js';
 
 function parseIssueNumber(input: string): number {
   const cleaned = input.replace(/^#/, '').trim();

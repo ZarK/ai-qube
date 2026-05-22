@@ -15,7 +15,7 @@ function collectTests(root) {
     const path = join(root, entry.name);
     if (entry.isDirectory()) {
       found.push(...collectTests(path));
-    } else if (entry.isFile() && entry.name.endsWith('.test.js')) {
+    } else if (entry.isFile() && (entry.name.endsWith('.test.js') || entry.name.endsWith('.test.cjs'))) {
       found.push(path);
     }
   }

@@ -1,4 +1,4 @@
-import { BranchResult, parseBranchIssueNumber } from './branch';
+import { BranchResult, parseBranchIssueNumber } from './branch.js';
 
 export function usage(command: string, examples: string[]): string {
   return [`Usage: aie ${command} <issue>`, '', 'Examples:', ...examples.map(example => `  ${example}`)].join('\n');

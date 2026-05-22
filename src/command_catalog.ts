@@ -12,8 +12,8 @@ import {
   PR_REVIEW_AGENT_VALUES,
   REVIEW_AGENT_VALUES,
   REVIEW_GATE_FLAG_DETAILS,
-} from './command_flag_details';
-import type { CommandFlagSchema, CommandMutationTarget } from './command_metadata';
+} from './command_flag_details.js';
+import type { CommandFlagSchema, CommandMutationTarget } from './command_metadata.js';
 
 export interface CommandMetadataInput {
   name: string;

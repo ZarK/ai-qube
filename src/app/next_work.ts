@@ -1,6 +1,6 @@
-import { selectNextWork } from '../core/queue_rules';
-import type { WorkItem } from '../core/work_item';
-import { loadQueueState, workItemNumber, type LifecycleServiceContext } from './lifecycle_common';
+import { selectNextWork } from '../core/queue_rules.js';
+import type { WorkItem } from '../core/work_item.js';
+import { loadQueueState, workItemNumber, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface NextWorkServiceResult {
   workItem: WorkItem | null;

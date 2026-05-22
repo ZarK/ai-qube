@@ -1,6 +1,6 @@
 import { isAbsolute, join, relative, resolve } from 'path';
-import { getKnownLegacyScript, KnownLegacyScript } from './legacy';
-import type { MigrationConflict, MigrationInventoryItem } from './migrate';
+import { getKnownLegacyScript, KnownLegacyScript } from './legacy.js';
+import type { MigrationConflict, MigrationInventoryItem } from './migrate/index.js';
 
 export interface PlannedMigrationWrite {
   path: string;

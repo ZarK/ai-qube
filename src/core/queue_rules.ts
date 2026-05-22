@@ -1,6 +1,6 @@
-import { createAction, createActionPlan, type Action, type ActionPlan } from './action_plan';
-import type { MilestoneOrderingPolicy } from './policy';
-import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey, type WorkPriority, type WorkStatus } from './work_item';
+import { createAction, createActionPlan, type Action, type ActionPlan } from './action_plan.js';
+import type { MilestoneOrderingPolicy } from './policy.js';
+import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey, type WorkPriority, type WorkStatus } from './work_item.js';
 
 export type EffectiveWorkStatus = 'InProgress' | 'Ready' | 'Blocked';
 

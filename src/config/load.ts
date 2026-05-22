@@ -2,8 +2,8 @@ import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { dirname, join, resolve } from 'path';
-import { ConfigLoadError, type Config, type ConfigLoadResult } from './types';
-import { validateConfig } from './schema';
+import { ConfigLoadError, type Config, type ConfigLoadResult } from './types.js';
+import { validateConfig } from './schema.js';
 
 async function findRepoRoot(startDir: string): Promise<string> {
   try {

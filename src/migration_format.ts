@@ -1,6 +1,6 @@
 import { relative } from 'path';
-import { getKnownLegacyScript } from './legacy';
-import type { MigrationPlan } from './migrate';
+import { getKnownLegacyScript } from './legacy.js';
+import type { MigrationPlan } from './migrate/index.js';
 
 export function formatMigrationPlan(plan: MigrationPlan): string {
   const lines = [

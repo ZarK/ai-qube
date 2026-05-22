@@ -1,5 +1,5 @@
-import type { JsonObject } from './json_value';
-import type { ProviderSource } from './provider_source';
+import type { JsonObject } from './json_value.js';
+import type { ProviderSource } from './provider_source.js';
 
 export type WorkItemState = 'open' | 'closed';
 export type WorkStatus = 'in-progress' | 'ready' | 'blocked' | 'unknown';

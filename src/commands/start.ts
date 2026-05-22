@@ -1,8 +1,8 @@
 import { Args, Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples, isHelpToken } from '../command_metadata';
-import { LifecycleIssueSelection, parseLifecycleIssueSelection } from '../lifecycle';
-import { formatStartHuman } from '../renderers/lifecycle_renderer';
-import { startIssue } from '../start';
+import { commandDescription, commandExamples, isHelpToken } from '../command_metadata.js';
+import { LifecycleIssueSelection, parseLifecycleIssueSelection } from '../lifecycle.js';
+import { formatStartHuman } from '../renderers/lifecycle_renderer.js';
+import { startIssue } from '../start/index.js';
 
 function usageLines(): string[] {
   return [

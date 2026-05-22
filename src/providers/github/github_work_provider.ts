@@ -1,11 +1,11 @@
-import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan';
-import type { ExecutorPolicy } from '../../core/policy';
-import type { WorkItem, WorkItemKey } from '../../core/work_item';
-import { buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, workItemIsInProgress, type WorkDependencyGraph, type WorkQueuePolicy } from '../../core/queue_rules';
-import { getIssue, listOpenIssues } from '../../github';
-import { GhExec, GhExecutionError, GhRunResult, parseGhJson, runGh } from '../../gh';
-import type { WorkProvider, WorkProviderCapabilities } from '../work_provider';
-import { attachBlockedBy, githubIssueNumber, githubIssueToWorkItem } from './github_work_codec';
+import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
+import type { ExecutorPolicy } from '../../core/policy.js';
+import type { WorkItem, WorkItemKey } from '../../core/work_item.js';
+import { buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, workItemIsInProgress, type WorkDependencyGraph, type WorkQueuePolicy } from '../../core/queue_rules.js';
+import { getIssue, listOpenIssues } from '../../github.js';
+import { GhExec, GhExecutionError, GhRunResult, parseGhJson, runGh } from '../../gh.js';
+import type { WorkProvider, WorkProviderCapabilities } from '../work_provider.js';
+import { attachBlockedBy, githubIssueNumber, githubIssueToWorkItem } from './github_work_codec.js';
 
 interface LoginResponse {
   login: string;

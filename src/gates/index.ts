@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { Config, GateConfig, GateKind, GateStage } from '../config';
-import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../core/gate_evidence';
-import type { JsonObject } from '../core/json_value';
-import { expandGateConfigs } from '../gate_config';
-import { isSupplyChainSensitive } from '../gate_sensitivity';
-import { redact } from '../gh';
-import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from '../supply_chain_guard';
+import { Config, GateConfig, GateKind, GateStage } from '../config/index.js';
+import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../core/gate_evidence.js';
+import type { JsonObject } from '../core/json_value.js';
+import { expandGateConfigs } from '../gate_config.js';
+import { isSupplyChainSensitive } from '../gate_sensitivity.js';
+import { redact } from '../gh.js';
+import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from '../supply_chain_guard.js';
 
 export type GateRequirement = 'required' | 'advisory';
 export type GateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found' | 'verified-from-trusted-state';

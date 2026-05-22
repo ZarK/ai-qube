@@ -1,13 +1,13 @@
 import { spawnSync } from 'child_process';
 import { existsSync, readdirSync } from 'fs';
 import { join } from 'path';
-import type { Action, ActionPlan, ActionResult } from '../../core/action_plan';
-import { createActionPlan } from '../../core/action_plan';
-import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName } from '../../core/branch_rules';
-import type { ExecutorPolicy } from '../../core/policy';
-import { normalizeRepoState, type CiSignal, type PackageManagerSignal, type RepoRef, type RepoState } from '../../core/repo_state';
-import type { WorkItem } from '../../core/work_item';
-import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../repository_provider';
+import type { Action, ActionPlan, ActionResult } from '../../core/action_plan.js';
+import { createActionPlan } from '../../core/action_plan.js';
+import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName } from '../../core/branch_rules.js';
+import type { ExecutorPolicy } from '../../core/policy.js';
+import { normalizeRepoState, type CiSignal, type PackageManagerSignal, type RepoRef, type RepoState } from '../../core/repo_state.js';
+import type { WorkItem } from '../../core/work_item.js';
+import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../repository_provider.js';
 
 export interface GitRunResult {
   args: string[];

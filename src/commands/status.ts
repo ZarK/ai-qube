@@ -1,7 +1,7 @@
 import { Command, Flags } from '@oclif/core';
-import { buildStatus, createStatusContext } from '../app/status_service';
-import { commandDescription, commandExamples } from '../command_metadata';
-import { formatStatusHuman } from '../renderers/status_renderer';
+import { buildStatus, createStatusContext } from '../app/status_service.js';
+import { commandDescription, commandExamples } from '../command_metadata.js';
+import { formatStatusHuman } from '../renderers/status_renderer.js';
 
 export default class Status extends Command {
   static description = commandDescription('status');

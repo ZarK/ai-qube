@@ -1,6 +1,6 @@
 import { Command, Flags } from '@oclif/core';
-import { commandDescription, commandExamples } from '../command_metadata';
-import { getNextIssue } from '../queue';
+import { commandDescription, commandExamples } from '../command_metadata.js';
+import { getNextIssue } from '../queue/index.js';
 
 export default class Next extends Command {
   static description = commandDescription('next');

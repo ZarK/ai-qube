@@ -1,13 +1,13 @@
 import { Dirent } from 'fs';
 import { chmod, readdir, readFile, rm } from 'fs/promises';
 import { basename, join, relative } from 'path';
-import { Config, getDefaults, loadConfigFile, ValidationError } from '../config';
-import { collectInstructionUpdates, MigrationInstructionUpdate, PlannedWrite, selectedInstructionPaths } from '../instruction_migration';
-import { cleanupRemovalFor, explicitCleanupItem, PlannedMigrationWrite, PlannedRemoval, selectedLegacyPaths, wrapperWriteFor } from '../legacy_file_migration';
-import { getKnownLegacyScript, hasLegacyInstructionReference, legacyCommandMappings, LegacyCommandMapping, LEGACY_HELPER_REFERENCE_PATTERN } from '../legacy';
-import { writeFileSafely } from '../managed_file';
-import { getRepoRoot } from '../repo';
-export { formatMigrationPlan } from '../migration_format';
+import { Config, getDefaults, loadConfigFile, ValidationError } from '../config/index.js';
+import { collectInstructionUpdates, MigrationInstructionUpdate, PlannedWrite, selectedInstructionPaths } from '../instruction_migration.js';
+import { cleanupRemovalFor, explicitCleanupItem, PlannedMigrationWrite, PlannedRemoval, selectedLegacyPaths, wrapperWriteFor } from '../legacy_file_migration.js';
+import { getKnownLegacyScript, hasLegacyInstructionReference, legacyCommandMappings, LegacyCommandMapping, LEGACY_HELPER_REFERENCE_PATTERN } from '../legacy.js';
+import { writeFileSafely } from '../managed_file.js';
+import { getRepoRoot } from '../repo/index.js';
+export { formatMigrationPlan } from '../migration_format.js';
 
 export type MigrationCategory = 'shell-helper' | 'project-command' | 'instruction-block' | 'workflow-doc';
 export type MigrationConfidence = 'high' | 'medium' | 'review-required';

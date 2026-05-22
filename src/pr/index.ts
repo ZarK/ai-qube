@@ -7,7 +7,7 @@ export {
   type PrViewOptions,
   type PrViewPullRequest,
   type PrViewResult,
-} from '../app/pr_view';
+} from '../app/pr_view.js';
 
 export {
   formatPrGate,
@@ -24,4 +24,4 @@ export {
   type PrGateReviewer,
   type PrGateStatus,
   type PrReviewerTrigger,
-} from '../app/pr_gate';
+} from '../app/pr_gate.js';

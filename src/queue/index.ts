@@ -1,10 +1,10 @@
-import { loadConfig, getDefaults, Config } from '../config';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item';
-import { computeWorkQueue, type WorkMilestoneGroup, type WorkQueuePolicy } from '../core/queue_rules';
-import { createGitHubWorkProvider } from '../providers/github/github_work_provider';
-import { githubIssueNumber } from '../providers/github/github_work_codec';
-import { createLifecycleContext } from '../app/lifecycle_services';
-import { runNextWorkService } from '../app/next_work';
+import { loadConfig, getDefaults, Config } from '../config/index.js';
+import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import { computeWorkQueue, type WorkMilestoneGroup, type WorkQueuePolicy } from '../core/queue_rules.js';
+import { createGitHubWorkProvider } from '../providers/github/github_work_provider.js';
+import { githubIssueNumber } from '../providers/github/github_work_codec.js';
+import { createLifecycleContext } from '../app/lifecycle_services.js';
+import { runNextWorkService } from '../app/next_work.js';
 
 export interface QueueIssueSummary {
   number: number;

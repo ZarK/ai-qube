@@ -1,9 +1,9 @@
-import type { GateEvidence } from './gate_evidence';
-import { normalizeGateEvidence } from './gate_evidence';
-import type { JsonObject } from './json_value';
-import type { ProviderSource } from './provider_source';
-import type { WorkItemKey } from './work_item';
-import { uniqueWorkItemKeys } from './work_item';
+import type { GateEvidence } from './gate_evidence.js';
+import { normalizeGateEvidence } from './gate_evidence.js';
+import type { JsonObject } from './json_value.js';
+import type { ProviderSource } from './provider_source.js';
+import type { WorkItemKey } from './work_item.js';
+import { uniqueWorkItemKeys } from './work_item.js';
 
 export type ReviewState = 'open' | 'closed' | 'merged' | 'draft' | 'unknown';
 export type ReviewDecision = 'approved' | 'changes-requested' | 'review-required' | 'commented' | 'none' | 'unknown';

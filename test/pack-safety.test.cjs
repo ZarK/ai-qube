@@ -1,7 +1,11 @@
 const assert = require('node:assert/strict');
+const { readFileSync } = require('node:fs');
+const { join } = require('node:path');
 const { describe, it } = require('node:test');
 
+const { normalizeHelpArgs } = require('../dist/bin/run.js');
 const pkg = require('../package.json');
+const tsconfig = require('../tsconfig.json');
 
 describe('package publish surface safety', () => {
   it('does not declare any install lifecycle scripts', () => {
@@ -32,6 +36,26 @@ describe('package publish surface safety', () => {
         `Package files must not expose repository-only path ${entry}`
       );
     }
+  });
+
+  it('preserves public help normalization forms', () => {
+    assert.deepEqual(normalizeHelpArgs(['help']), ['--help']);
+    assert.deepEqual(normalizeHelpArgs(['help', 'init']), ['init', '--help']);
+    assert.deepEqual(normalizeHelpArgs(['init', 'help']), ['init', '--help']);
+    assert.deepEqual(normalizeHelpArgs(['init', '.', 'help']), ['init', '.', 'help']);
+    assert.deepEqual(normalizeHelpArgs(['unknown', 'help']), ['unknown', 'help']);
+    assert.deepEqual(normalizeHelpArgs(['init', '.']), ['init', '.']);
+  });
+
+  it('uses the final ESM runtime shape', () => {
+    const bin = readFileSync(join(__dirname, '..', 'bin', 'run'), 'utf8');
+
+    assert.equal(pkg.type, 'module');
+    assert.equal(tsconfig.compilerOptions.module, 'NodeNext');
+    assert.equal(tsconfig.compilerOptions.moduleResolution, 'NodeNext');
+    assert.match(bin, /dist\/bin\/run\.js/);
+    assert.doesNotMatch(bin, /@oclif\/core/);
+    assert.doesNotMatch(bin, /require\(/);
   });
 
   it('keeps dependencies minimal and exact', () => {

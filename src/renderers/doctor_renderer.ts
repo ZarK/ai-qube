@@ -1,4 +1,4 @@
-import type { DoctorDiagnostics } from '../doctor_diagnostics';
+import type { DoctorDiagnostics } from '../doctor_diagnostics/index.js';
 
 function pushConfigAndQueue(lines: string[], diagnostics: DoctorDiagnostics): void {
   if (diagnostics.configErrors && diagnostics.configErrors.length > 0) lines.push(`Config errors: ${diagnostics.configErrors.length} (see recommendations)`);

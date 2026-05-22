@@ -1,15 +1,15 @@
-import type { ActionPlan } from './core/action_plan';
-import type { ExecutorPolicy } from './core/policy';
-import type { RepoState } from './core/repo_state';
-import type { WorkItem } from './core/work_item';
-import { Config, getDefaults, loadConfig } from './config';
-import { configToExecutorPolicy } from './config_policy';
-import type { GitHubIssue } from './github';
-import type { GhExec } from './gh';
-import { createLocalGitRepositoryProvider, actionPlanWithResults, type GitExec, type GitRunResult } from './providers/local/local_git_provider';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider';
-import { githubIssueNumber, githubIssueToWorkItem } from './providers/github/github_work_codec';
-import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, validateBranchPattern } from './core/branch_rules';
+import type { ActionPlan } from './core/action_plan.js';
+import type { ExecutorPolicy } from './core/policy.js';
+import type { RepoState } from './core/repo_state.js';
+import type { WorkItem } from './core/work_item.js';
+import { Config, getDefaults, loadConfig } from './config/index.js';
+import { configToExecutorPolicy } from './config_policy.js';
+import type { GitHubIssue } from './github.js';
+import type { GhExec } from './gh.js';
+import { createLocalGitRepositoryProvider, actionPlanWithResults, type GitExec, type GitRunResult } from './providers/local/local_git_provider.js';
+import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
+import { githubIssueNumber, githubIssueToWorkItem } from './providers/github/github_work_codec.js';
+import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, validateBranchPattern } from './core/branch_rules.js';
 
 export type { GitExec, GitRunResult };
 
