@@ -40,4 +40,4 @@ jobs:
           test "$(npm --version)" = "11.15.0"
 
       - name: Stage npm package
-        run: npm stage publish . --access public
+        run: npm stage publish . --access public --loglevel=verbose
