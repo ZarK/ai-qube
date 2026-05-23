@@ -54,7 +54,7 @@ describe("package foundation", () => {
     assert.match(pnpmLock, /lockfileVersion:/);
   });
 
-  it("does not depend on companion workflow CLIs", async () => {
+  it("verifies CLI dependency contract", async () => {
     const packageJson = await readPackageJson();
     const dependencies = {
       ...packageJson.dependencies,
@@ -63,6 +63,7 @@ describe("package foundation", () => {
 
     assert.equal(Object.hasOwn(dependencies, "@tjalve/aie"), false);
     assert.equal(Object.hasOwn(dependencies, "@tjalve/aiq"), false);
+    assert.equal(dependencies["@tjalve/qube-cli"], "0.1.1");
   });
 
   it("does not pull frontend build tooling through the test runner", async () => {
