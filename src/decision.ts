@@ -49,6 +49,16 @@ export interface AiuContinuationDecisionInput {
   readonly states: readonly AiuTrustedStateEnvelope[];
   readonly policy?: AiuContinuationDecisionPolicy;
   readonly whipTaskReady?: boolean;
+  readonly whipTask?: AiuDecisionWhipTask;
+  readonly whipStateError?: AiuDecisionSelectedItem;
+}
+
+export interface AiuDecisionWhipTask {
+  readonly id: string;
+  readonly title: string;
+  readonly prompt: string;
+  readonly priority?: number;
+  readonly promptFingerprint?: string;
 }
 
 export interface AiuContinuationDecision {
@@ -84,6 +94,9 @@ export interface AiuDecisionSelectedItem {
   readonly rerunCommand?: { readonly id: string; readonly argv: readonly [string, ...string[]]; readonly cwd?: string; readonly timeoutMs?: number; readonly maxOutputBytes?: number };
   readonly artifactChecks?: readonly string[];
   readonly expectedEvidence?: string;
+  readonly prompt?: string;
+  readonly priority?: number;
+  readonly promptFingerprint?: string;
 }
 
 interface DecisionPolicy {
@@ -218,6 +231,10 @@ export function decideAiuContinuation(input: AiuContinuationDecisionInput): AiuC
     return decision(policy, "continue", "continue-active-work", summaries, "work", selectWorkItem(activeWork[0]), "Continue: resume the active work item before starting new work.");
   }
 
+  if (input.whipStateError) {
+    return decision(policy, "stop", "stop-malformed-input", summaries, "stop", input.whipStateError, "Stop: fix malformed whip task state before continuing idle work.");
+  }
+
   const planning = findPlanningContinuation(indexed, policy);
   if (planning) {
     return decision(policy, "continue", "continue-planning", summaries, "planning", planning, "Continue: run the next planning action from trusted planning state.");
@@ -233,8 +250,9 @@ export function decideAiuContinuation(input: AiuContinuationDecisionInput): AiuC
     return decision(policy, "continue", "continue-quality", summaries, "quality", quality, "Continue: run the ready quality or idle-work action.");
   }
 
-  if (input.whipTaskReady === true) {
-    return decision(policy, "continue", "continue-whip-task", summaries, "whip", { kind: "whip", id: "ready" }, "Continue: use the ready whip task slot.");
+  const whipTask = input.whipTask ?? (input.whipTaskReady === true ? { id: "ready", title: "Ready whip task", prompt: "Use the ready whip task slot." } : undefined);
+  if (whipTask) {
+    return decision(policy, "continue", "continue-whip-task", summaries, "whip", selectWhipTask(whipTask), "Continue: use the ready whip task slot.");
   }
 
   return decision(policy, "stop", "stop-clean", summaries, "stop", undefined, "Stop: no continuation, repair, or wait condition remains.");
@@ -737,6 +755,18 @@ function selectQualityTarget(item: IndexedState & { readonly value: Extract<AiuT
     ...(command ? { command } : {}),
     ...(rerunCommand ? { rerunCommand } : {}),
     expectedEvidence: target.expectedEvidence ?? "Updated trusted quality state plus the rerun check output.",
+  });
+}
+
+function selectWhipTask(task: AiuDecisionWhipTask): AiuDecisionSelectedItem {
+  return Object.freeze({
+    kind: "whip",
+    id: task.id,
+    title: task.title,
+    status: "ready",
+    prompt: task.prompt,
+    ...(task.priority !== undefined ? { priority: task.priority } : {}),
+    ...(task.promptFingerprint ? { promptFingerprint: task.promptFingerprint } : {}),
   });
 }
 
