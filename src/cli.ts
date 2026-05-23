@@ -13,8 +13,9 @@ import {
   getDefaultAiuConfig,
   loadAiuConfig,
 } from "./config.js";
-import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, initCommand, migrateCommand, pathsCommand } from "./command_registry.js";
+import { AIU_COMMAND_REGISTRY, configCommand, doctorCommand, hookStopCommand, initCommand, migrateCommand, pathsCommand } from "./command_registry.js";
 import { formatAiuDoctorReport, formatAiuPaths, getAiuResolvedPaths, runAiuDoctor } from "./doctor.js";
+import { formatHookStopJson, readHookStopStdin, runAiuHookStop } from "./hook_stop.js";
 import { applyAiuInitPlan, formatInitPlan, planAiuInit, type AiuInitTool } from "./init.js";
 import { formatMigrationPlan, planAiuMigration } from "./migrate.js";
 
@@ -82,6 +83,32 @@ export const aiuCli = createCli({
         },
       };
     }),
+    createCommand(hookStopCommand, async (context) => {
+      const tool = readHookStopTool(context.flags.tool);
+      if (tool === undefined) {
+        return {
+          stderr: `Invalid --tool value: ${String(context.flags.tool)}\n`,
+          exitCode: 2,
+        };
+      }
+      const result = runAiuHookStop({ tool, stdin: await readHookStopStdin() });
+      if (context.flags.json === true) {
+        return {
+          json: {
+            hookStop: {
+              tool: result.tool,
+              decision: result.decision,
+              reason: result.reason,
+              inputBytes: result.inputBytes,
+              stdoutJson: result.stdoutJson,
+            },
+          },
+        };
+      }
+      return {
+        stdout: formatHookStopJson(result),
+      };
+    }),
     createCommand(migrateCommand, (context) => {
       const dryRun = context.flags["dry-run"] === true;
       const plan = planAiuMigration({ dryRun });
@@ -120,6 +147,10 @@ export const aiuCli = createCli({
     }),
   ],
 });
+
+function readHookStopTool(value: unknown): "codex" | "claude-code" | undefined {
+  return value === "codex" || value === "claude-code" ? value : undefined;
+}
 
 runtimeRegistry = aiuCli.registry;
 
