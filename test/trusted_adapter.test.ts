@@ -197,6 +197,62 @@ describe("trusted command adapters", () => {
     assert.equal(result.states[0]?.command.argv[0], "fixture");
     assert.equal(result.states[0]?.value.status, "pass");
   });
+
+  it("normalizes quality stages, findings, commands, and approval blocks", async () => {
+    const { parseAiuTrustedStateJson, toAiuTrustedStateCommandRef } = await loadTrustedAdapter();
+    const command = toAiuTrustedStateCommandRef("quality", { argv: ["fixture"] });
+    const result = parseAiuTrustedStateJson({
+      sourceId: "quality",
+      command,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        observedAt,
+        value: {
+          kind: "quality",
+          status: "pass",
+          ready: true,
+          lastRunStatus: "fail",
+          stages: [{
+            id: "typecheck",
+            title: "Typecheck",
+            status: "fail",
+            affectedPaths: ["src/state.ts", 42],
+            command: { id: "quality-typecheck", argv: ["pnpm", "run", "typecheck"], timeoutMs: 10.5, maxOutputBytes: -1 },
+            rerunCommand: { id: "quality-typecheck", argv: ["pnpm", "run", "typecheck"], timeoutMs: 1000, maxOutputBytes: 16384 },
+          }],
+          findings: [{
+            id: "supply-chain-risk",
+            status: "fail",
+            severity: "critical",
+            affectedPaths: ["package.json"],
+            supplyChainApprovalRequired: true,
+          }],
+          selectedTarget: {
+            kind: "stage",
+            id: "incomplete-selection",
+            affectedPaths: ["src/state.ts"],
+          },
+          failingChecks: ["typecheck"],
+          affectedPaths: ["src/state.ts"],
+        },
+      }),
+      observedAt,
+    });
+
+    assert.equal(result.ok, true);
+    const value = result.states[0]?.value;
+    assert.equal(value?.kind, "quality");
+    assert.equal(value?.kind === "quality" ? value.stages[0]?.command?.argv.join(" ") : "", "pnpm run typecheck");
+    assert.equal(value?.kind === "quality" ? value.stages[0]?.command?.timeoutMs : undefined, undefined);
+    assert.equal(value?.kind === "quality" ? value.stages[0]?.command?.maxOutputBytes : undefined, undefined);
+    assert.equal(value?.kind === "quality" ? value.stages[0]?.rerunCommand?.timeoutMs : undefined, 1000);
+    assert.equal(value?.kind === "quality" ? value.stages[0]?.rerunCommand?.maxOutputBytes : undefined, 16384);
+    assert.deepEqual(value?.kind === "quality" ? value.stages[0]?.affectedPaths : [], ["src/state.ts"]);
+    assert.equal(value?.kind === "quality" ? value.findings[0]?.supplyChainApprovalRequired : false, true);
+    assert.equal(value?.kind === "quality" ? value.selectedTarget?.status : undefined, "unknown");
+    assert.deepEqual(value?.kind === "quality" ? value.failingChecks : [], ["typecheck"]);
+    assert.deepEqual(value?.kind === "quality" ? value.affectedPaths : [], ["src/state.ts"]);
+  });
 });
 
 async function loadTrustedAdapter(): Promise<typeof TrustedAdapter> {

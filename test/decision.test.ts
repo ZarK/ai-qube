@@ -208,7 +208,119 @@ describe("continuation decision engine", () => {
     assertDecision(ready, "continue", "continue-ready-work");
     assert.equal(ready.selectedItem?.id, "critical");
 
-    assertDecision(decideAiuContinuation({ states: [env(quality({ ready: true, lastRunStatus: "fail" }))] }), "continue", "continue-quality");
+    const qualityDecision = decideAiuContinuation({ states: [env(quality({
+      ready: true,
+      lastRunStatus: "fail",
+      stages: [{
+        id: "typecheck",
+        title: "Typecheck",
+        status: "fail",
+        affectedPaths: ["src/decision.ts"],
+        command: { id: "quality-typecheck", argv: ["pnpm", "run", "typecheck"] },
+        rerunCommand: { id: "quality-typecheck", argv: ["pnpm", "run", "typecheck"] },
+      }],
+      failingChecks: ["typecheck"],
+    }))] });
+    assertDecision(qualityDecision, "continue", "continue-quality");
+    assert.equal(qualityDecision.promptKind, "quality");
+    assert.equal(qualityDecision.selectedItem?.id, "typecheck");
+    assert.equal(qualityDecision.selectedItem?.targetKind, "stage");
+    assert.deepEqual(qualityDecision.selectedItem?.affectedPaths, ["src/decision.ts"]);
+
+    const selectedFailDecision = decideAiuContinuation({ states: [env(quality({
+      ready: true,
+      lastRunStatus: "fail",
+      selectedTarget: {
+        kind: "stage",
+        id: "selected-typecheck",
+        status: "fail",
+        affectedPaths: ["src/trusted_adapter.ts"],
+      },
+      stages: [{ id: "lint", status: "fail", affectedPaths: ["src/decision.ts"] }],
+    }))] });
+    assertDecision(selectedFailDecision, "continue", "continue-quality");
+    assert.equal(selectedFailDecision.selectedItem?.id, "selected-typecheck");
+    assert.deepEqual(selectedFailDecision.selectedItem?.affectedPaths, ["src/trusted_adapter.ts"]);
+
+    const selectedPassFallbackDecision = decideAiuContinuation({ states: [env(quality({
+      ready: true,
+      lastRunStatus: "fail",
+      selectedTarget: {
+        kind: "stage",
+        id: "stale-selection",
+        status: "pass",
+        affectedPaths: ["src/stale.ts"],
+      },
+      findings: [{
+        id: "real-failure",
+        status: "fail",
+        affectedPaths: ["src/decision.ts"],
+      }],
+    }))] });
+    assertDecision(selectedPassFallbackDecision, "continue", "continue-quality");
+    assert.equal(selectedPassFallbackDecision.selectedItem?.id, "real-failure");
+    assert.equal(selectedPassFallbackDecision.selectedItem?.targetKind, "finding");
+
+    assertDecision(
+      decideAiuContinuation({
+        states: [env(quality({
+          ready: true,
+          lastRunStatus: "fail",
+          selectedTarget: {
+            kind: "stage",
+            id: "incomplete-selection",
+            status: "unknown",
+            affectedPaths: [],
+          },
+        }))],
+      }),
+      "stop",
+      "stop-unknown-input",
+    );
+
+    assertDecision(
+      decideAiuContinuation({
+        states: [env(quality({
+          ready: true,
+          lastRunStatus: "fail",
+          findings: [{
+            id: "unsafe-package",
+            status: "fail",
+            affectedPaths: ["package.json"],
+            supplyChainApprovalRequired: true,
+          }],
+        }))],
+      }),
+      "stop",
+      "stop-supply-chain-approval",
+    );
+    assertDecision(
+      decideAiuContinuation({ states: [env(quality({ ready: "unknown", lastRunStatus: "unknown" }))] }),
+      "stop",
+      "stop-unknown-input",
+    );
+    assertDecision(
+      decideAiuContinuation({ states: [env(quality({ ready: "unsupported", lastRunStatus: "unsupported" }))] }),
+      "stop",
+      "stop-unsupported-input",
+    );
+    assertDecision(
+      decideAiuContinuation({ states: [env(quality({ ready: true, lastRunStatus: "fail" }))] }),
+      "stop",
+      "stop-unknown-input",
+    );
+    assertDecision(
+      decideAiuContinuation({
+        states: [env(quality({
+          ready: true,
+          lastRunStatus: "fail",
+          stages: [{ id: "lint", status: "fail", affectedPaths: [] }],
+        }))],
+        policy: { qualityEnabled: false },
+      }),
+      "stop",
+      "stop-clean",
+    );
     assertDecision(decideAiuContinuation({ states: [], whipTaskReady: true }), "continue", "continue-whip-task");
     assertDecision(decideAiuContinuation({ states: [env(workQueue())] }), "stop", "stop-clean");
   });
@@ -354,6 +466,10 @@ function quality(overrides: Partial<AiuQualityState> = {}): AiuQualityState {
     status: "pass",
     ready: false,
     lastRunStatus: "pass",
+    stages: [],
+    findings: [],
+    failingChecks: [],
+    affectedPaths: [],
     ...overrides,
   };
 }
