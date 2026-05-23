@@ -222,9 +222,18 @@ function renderStageLines(config: Config): string[] {
   ];
 }
 
+function renderAnalysisLines(): string[] {
+  return [
+    'Issue-gated implementation starts only after Executor selects or starts valid GitHub issue work.',
+    'User-directed analysis, investigation, queue triage, and issue creation or issue suggestion are allowed before implementation starts, even when no issue is currently ready.',
+    'When analysis confirms a product gap, create or suggest GitHub issue work with clear requirements and acceptance criteria, then start implementation only after normal Executor queue and pre-start policy pass.',
+  ];
+}
+
 function renderStopLines(config: Config): string[] {
   const lines = [
-    'Stop cleanly and report the exact blocker when the queue is empty, every open issue is blocked, multiple active issues need repair, required runtime tools are unavailable, or configured gates cannot run.',
+    'Stop implementation work cleanly and report the exact blocker when the queue is empty, every open issue is blocked, multiple active issues need repair, required runtime tools are unavailable, or configured gates cannot run.',
+    'These implementation stop conditions do not block user-directed analysis, investigation, queue triage, or issue creation and issue suggestion for confirmed product gaps.',
   ];
   if (config.noWorktree) lines.push('Stop before starting new issue work from a linked git worktree; use the primary checkout instead.');
   if (config.blockOnOpenPRs) lines.push('Stop before starting new issue work while non-automation open pull requests remain.');
@@ -239,7 +248,7 @@ function renderMakeItSoStopText(config: Config): string {
   if (config.blockOnOpenPRs) states.push('blocking open pull requests remain');
   if (config.requireBaseBranchFreshness) states.push(`the local \`${config.baseBranch}\` branch is not current with \`${config.baseRemote}/${config.baseBranch}\``);
   if (!config.autonomousMode) states.push('policy disables autonomous shipping');
-  return `Stop only when ${states.join(', ')}. Report the exact blocker and the next Executor command or repository action that would unblock work.`;
+  return `Stop implementation only when ${states.join(', ')}. User-directed analysis, investigation, queue triage, and issue creation or issue suggestion may still proceed before implementation starts. Report the exact blocker and the next Executor command or repository action that would unblock implementation work.`;
 }
 
 function renderMakeItSoAuthorizationText(config: Config): string {
@@ -283,6 +292,10 @@ Work cycle:
 7. ${renderMergeStep(config)}
 8. After merge, run \`aie complete <issue>\`, return to the configured base branch, pull the latest remote base branch, verify pre-start policy is still clear, and continue to the next ready issue.
 
+Analysis and discovered work:
+
+${renderBulletList(renderAnalysisLines())}
+
 Stage checklist:
 
 ${renderBulletList(renderStageLines(config))}
@@ -322,6 +335,7 @@ Rules:
 - Think holistically. Consider system-wide impact, not just the immediate issue.
 - Follow installed repository instructions and Executor policy.
 - ${renderMakeItSoAuthorizationText(config)}
+- Analysis, investigation, queue triage, and issue creation or issue suggestion are allowed before implementation starts when the user asks for them or when a product gap is discovered; start implementation only after normal Executor queue and pre-start policy pass.
 - Use \`aie\` commands for queue and lifecycle state instead of manually changing labels whenever possible.
 - Use \`aie pr view <pr> --json\`, \`aie pr gate <pr>\`, and \`aie pr body <issue>\` for pull request state instead of raw \`gh pr view\` review/comment payloads whenever possible.
 - ${renderMakeItSoPreStartText(config)}
