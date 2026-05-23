@@ -37,6 +37,7 @@ describe('schema command', () => {
 
     assert.ok(commandNames.includes('deps blockers'));
     assert.ok(commandNames.includes('pr gate'));
+    assert.ok(commandNames.includes('checklist update'));
     assert.deepEqual(depsBlockers.arguments.map(argument => argument.name), ['issue']);
     assert.equal(depsBlockers.arguments[0].required, true);
     assert.equal(jsonFlag.short, 'j');
@@ -64,6 +65,7 @@ describe('schema command', () => {
     const prView = parsed.commands.find(command => command.name === 'pr view');
     const prBody = parsed.commands.find(command => command.name === 'pr body');
     const prGate = parsed.commands.find(command => command.name === 'pr gate');
+    const checklistUpdate = parsed.commands.find(command => command.name === 'checklist update');
     const flag = (command, name) => command.flags.find(item => item.name === name);
     const argument = (command, name) => command.arguments.find(item => item.name === name);
     const serviceNames = command => command.externalServices.map(service => service.name);
@@ -100,6 +102,11 @@ describe('schema command', () => {
     assert.equal(prView.dryRun.supported, false);
     assert.equal(flag(prView, 'json').type, 'boolean');
     assert.deepEqual(argument(prGate, 'pr'), { name: 'pr', description: 'Pull request number for the PR review gate, for example 12 or #12', required: true, multiple: false });
+    assert.deepEqual(argument(checklistUpdate, 'issue'), { name: 'issue', description: 'Issue number whose checklist should be updated, for example 93 or #93', required: true, multiple: false });
+    assert.equal(flag(checklistUpdate, 'state').type, 'option');
+    assert.deepEqual(flag(checklistUpdate, 'state').options, ['checked', 'unchecked']);
+    assert.equal(checklistUpdate.mutation.mutates, true);
+    assert.deepEqual(checklistUpdate.mutation.categories, ['github']);
     assert.deepEqual(argument(parsed.commands.find(command => command.name === 'deps blockers'), 'issue'), { name: 'issue', description: 'Issue number, for example 93 or #93', required: true, multiple: false });
     assert.deepEqual(argument(parsed.commands.find(command => command.name === 'start'), 'issue'), { name: 'issue', description: 'Issue selector: next, a bare number such as 93, or shell-safe #93', required: false, multiple: false });
     assert.deepEqual(gatesPlan.extensions.stageValues, ['all', 'pre-pr', 'pre-merge']);

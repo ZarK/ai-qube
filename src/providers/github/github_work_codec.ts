@@ -1,4 +1,5 @@
 import type { GitHubIssue, GitHubMilestone } from '../../github.js';
+import { parseChecklist } from '../../checklist.js';
 import { normalizeProviderSource } from '../../core/provider_source.js';
 import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item.js';
 
@@ -20,17 +21,12 @@ export interface WorkChecklistItem {
 }
 
 export function parseWorkChecklistItems(body: string): WorkChecklistItem[] {
-  const items: WorkChecklistItem[] = [];
-  for (const line of body.split(/\r?\n/)) {
-    const match = line.match(/^\s*(?:[-*+]\s+)?\[([ xX])\]\s+(.*)$/);
-    if (match) items.push({ text: match[2].trim(), checked: match[1].toLowerCase() === 'x' });
-  }
-  return items;
+  return parseChecklist(body).items.map(item => ({ text: item.text, checked: item.checked }));
 }
 
 export function parseWorkChecklist(body: string): WorkChecklist {
-  const items = parseWorkChecklistItems(body);
-  return { total: items.length, completed: items.filter(item => item.checked).length };
+  const checklist = parseChecklist(body);
+  return { total: checklist.total, completed: checklist.checked };
 }
 
 function mapStatus(labels: string[]): WorkStatus {

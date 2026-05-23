@@ -133,3 +133,12 @@ export const PR_BODY_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable PR body draft and merge-readiness output', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
+
+export const CHECKLIST_UPDATE_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable issue checklist mutation output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Plan the issue checklist body update without mutating GitHub', default: false },
+  { name: '--item', type: 'string', description: 'Exact checklist item text to update' },
+  { name: '--index', type: 'integer', description: '1-based checklist item index to update' },
+  { name: '--state', type: 'string', description: 'Target checklist state', options: ['checked', 'unchecked'], default: 'checked' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];

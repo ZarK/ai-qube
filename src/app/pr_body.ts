@@ -1,5 +1,6 @@
 import type { Config } from '../config/index.js';
 import { runUiAudit, type UiAuditResult } from '../audit.js';
+import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../core/gate_evidence.js';
 import { buildGateStatus, type GateStatusEntry, type GateStatusResult } from '../gates/index.js';
 import { runReviewGate, type ReviewGateResult } from '../review.js';
@@ -14,7 +15,7 @@ function redactText(text: string): string {
 
 export type PrBodyReadinessStatus = 'ready' | 'blocked' | 'pending';
 export type PrBodyGateState = 'passed' | 'failed' | 'skipped' | 'pending' | 'unknown' | 'stale' | 'missing';
-export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker';
+export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable';
 
 export interface PrBodyReadinessItem {
   reasonCode: PrBodyReadinessReasonCode;
@@ -82,6 +83,7 @@ export interface PrBodyResult {
     result: PrGateResult | null;
     reviewers: PrBodyPrReviewerLine[];
   };
+  issueChecklist: IssueChecklistSummary | null;
   warnings: string[];
 }
 
@@ -160,6 +162,15 @@ function prReviewerLines(result: PrGateResult | null): PrBodyPrReviewerLine[] {
   });
 }
 
+async function inspectIssueChecklistState(options: PrBodyOptions): Promise<{ result: IssueChecklistSummary | null; warning: string | null }> {
+  try {
+    return { result: await inspectIssueChecklist(options.issueNumber, { cwd: options.repoRoot, exec: options.exec }), warning: null };
+  } catch (error: unknown) {
+    const detail = error instanceof Error ? error.message : String(error);
+    return { result: null, warning: `Issue checklist state unavailable: ${redactText(detail)}` };
+  }
+}
+
 function reviewState(result: ReviewGateResult): 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown' {
   if (result.evidence.source === 'not-recorded') return 'pending';
   return result.evidence.status;
@@ -182,7 +193,7 @@ function githubReviewDecisionBlocks(pr: PrBodyPullRequest | null): boolean {
   return pr?.reviewDecision === 'CHANGES_REQUESTED';
 }
 
-function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null): PrBodyReadinessItem[] {
+function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyReadinessItem[] {
   const pending: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
   if (audit.required && audit.evidence.state !== 'local-evidence-found') pending.push(readinessItem(audit.evidence.reasonCode, 'Record manual UI audit evidence for the real running app.', audit.evidence.source, audit.evidence.trust));
@@ -202,10 +213,11 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
     }
   }
   if (prReview?.status === 'unavailable') pending.push(readinessItem('pr-review-state-unavailable', 'Inspect unavailable PR review state before merge.', 'pr-review-gate', 'trusted-provider'));
+  if (!issueChecklist) pending.push(readinessItem('issue-checklist-unavailable', 'Inspect GitHub issue checklist state before merge.', 'github-pr', 'trusted-provider'));
   return pending;
 }
 
-function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null): PrBodyReadinessItem[] {
+function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyReadinessItem[] {
   const blockers: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'failed' && gate.requirement === 'required') blockers.push(readinessItem(gate.reasonCode, `Required gate ${gate.name} failed.`, gate.source, gate.trust));
   if (review.evidence.status === 'failed' || review.evidence.status === 'needs-work') blockers.push(readinessItem(review.evidence.reasonCode, 'Review-agent evidence reports findings that need work.', review.evidence.evidenceSource, review.evidence.trust));
@@ -216,6 +228,7 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr?.mergeStateStatus === 'DIRTY') blockers.push(readinessItem('merge-conflict', 'Pull request branch is dirty and cannot merge cleanly.', 'github-pr', 'trusted-provider'));
   if (audit.required && audit.evidence.state === 'incomplete') blockers.push(readinessItem(audit.evidence.reasonCode, 'Manual UI audit evidence directory exists but evidence is incomplete.', audit.evidence.source, audit.evidence.trust));
   if (prReview?.status === 'failed') blockers.push(readinessItem('review-feedback-blocker', 'PR review gate reports feedback that must be addressed.', 'pr-review-gate', 'trusted-provider'));
+  if (issueChecklist && issueChecklist.checklist.unchecked > 0) blockers.push(readinessItem('issue-checklist-unchecked', `Issue #${issueChecklist.issue.number} has ${issueChecklist.checklist.unchecked} unchecked checklist item(s).`, 'github-pr', 'trusted-provider'));
   return blockers;
 }
 
@@ -226,9 +239,9 @@ function readinessNextCommand(status: PrBodyReadinessStatus, issueNumber: number
   return `Squash merge PR #${pr.number} when repository policy and CI are satisfied, then run \`aie complete ${issueNumber}\`.`;
 }
 
-function readiness(issueNumber: number, gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null): PrBodyResult['readiness'] {
-  const blockers = blockerItems(gates, audit, review, pr, prReview);
-  const pending = pendingItems(gates, audit, review, pr, prReview);
+function readiness(issueNumber: number, gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyResult['readiness'] {
+  const blockers = blockerItems(gates, audit, review, pr, prReview, issueChecklist);
+  const pending = pendingItems(gates, audit, review, pr, prReview, issueChecklist);
   const status = blockers.length > 0 ? 'blocked' : pending.length > 0 ? 'pending' : 'ready';
   return { status, blockers: blockers.map(item => item.message), pending: pending.map(item => item.message), blockerDetails: blockers, pendingDetails: pending, nextCommand: readinessNextCommand(status, issueNumber, pr), mergeStrategy: 'squash' };
 }
@@ -252,6 +265,12 @@ function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   for (const gate of result.gates.lines) lines.push(`- ${gate.state}: ${gate.name} (${gate.stage}, ${gate.requirement}) - ${gate.recorded ? 'recorded' : 'pending evidence'}; ${gate.summary}`);
   lines.push(`- Manual UI audit: ${uiAuditState(result.uiAudit)} - ${result.uiAudit.nextAction}`);
   lines.push(`- Review-agent gate: ${reviewState(result.reviewGate)} - reviewers: ${formatReviewers(result.reviewGate)}; ${result.reviewGate.evidence.summary}`);
+  if (result.issueChecklist) {
+    lines.push(`- Issue checklist: ${result.issueChecklist.checklist.checked}/${result.issueChecklist.checklist.total} checked.`);
+    for (const item of result.issueChecklist.checklist.items.filter(item => !item.checked)) lines.push(`  - unchecked #${item.index}: ${item.text}`);
+  } else {
+    lines.push('- Issue checklist: unavailable.');
+  }
   lines.push('- PR review agents:');
   lines.push(...formatPrReviewers(result.prReviewGate, result.pullRequest));
   lines.push('', '## Merge readiness');
@@ -281,14 +300,16 @@ export async function buildPrBodyService(config: Config, options: PrBodyOptions)
   const gates = gateLines(gateStatus);
   const uiAudit = runUiAudit(config, { issueNumber: options.issueNumber, repoRoot: options.repoRoot, homeDirectory: options.homeDirectory, check: true });
   const reviewGate = runReviewGate(config, { issueNumber: options.issueNumber, repoRoot: options.repoRoot });
+  const issueChecklist = await inspectIssueChecklistState(options);
   const currentPr = await getCurrentPullRequest(options);
   const prReview = await inspectPrReviewGate(config, currentPr.pr, options);
   const prReviewers = prReviewerLines(prReview.result);
-  const ready = readiness(options.issueNumber, gates, uiAudit, reviewGate, currentPr.pr, prReview.result);
+  const ready = readiness(options.issueNumber, gates, uiAudit, reviewGate, currentPr.pr, prReview.result, issueChecklist.result);
   const warnings = ['PR body output is a draft; inspect it before posting and keep only accurate verification claims.', 'Executor recommends next commands only; it never silently merges pull requests.'];
+  if (issueChecklist.warning) warnings.push(issueChecklist.warning);
   if (currentPr.warning) warnings.push(currentPr.warning);
   if (prReview.warning) warnings.push(prReview.warning);
-  const result = { ok: true as const, command: 'pr body' as const, issue: options.issueNumber, readiness: ready, pullRequest: currentPr.pr, gates: { result: gateStatus, lines: gates }, uiAudit, reviewGate, prReviewGate: { result: prReview.result, reviewers: prReviewers }, warnings };
+  const result = { ok: true as const, command: 'pr body' as const, issue: options.issueNumber, readiness: ready, pullRequest: currentPr.pr, gates: { result: gateStatus, lines: gates }, uiAudit, reviewGate, prReviewGate: { result: prReview.result, reviewers: prReviewers }, issueChecklist: issueChecklist.result, warnings };
   return { ...result, body: buildBody(result) };
 }
 

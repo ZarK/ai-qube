@@ -10,7 +10,7 @@ const { createGitHubReviewProvider } = require('../dist/providers/github/github_
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 
-const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup';
+const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-pr-gate-'));
@@ -64,6 +64,26 @@ function issueCommentsFromPr(pr) {
   }));
 }
 
+function issueViewKey(number) {
+  return `issue view ${number} --json number,title,state,labels,body,milestone,url`;
+}
+
+function issuePayload(number, body = '') {
+  return {
+    number,
+    title: `Issue ${number}`,
+    body,
+    state: 'OPEN',
+    labels: [{ name: 'S-InProgress' }],
+    milestone: null,
+    url: `https://github.com/example/repo/issues/${number}`,
+  };
+}
+
+function issueViewResponse(args, number, body = '') {
+  return args.join(' ') === issueViewKey(number) ? { args, exitCode: 0, stdout: JSON.stringify(issuePayload(number, body)), stderr: '' } : null;
+}
+
 function makePrExec(options = {}) {
   const calls = [];
   const events = [];
@@ -78,6 +98,11 @@ function makePrExec(options = {}) {
       const payload = prViews.length > 1 ? prViews.shift() : prViews[0];
       currentPr = payload;
       return { args, exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
+    }
+    if (args[0] === 'issue' && args[1] === 'view') {
+      const issueNumber = Number(args[2]);
+      const body = options.issueBodies?.[issueNumber] ?? '';
+      return { args, exitCode: 0, stdout: JSON.stringify(issuePayload(issueNumber, body)), stderr: '' };
     }
     if (args.join(' ') === 'repo view --json nameWithOwner,url') {
       return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
@@ -233,6 +258,25 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'complete');
     assert.match(result.nextAction, /no detected blockers/);
+  });
+
+  it('blocks PR gate when a linked issue has unchecked checklist items', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+      closingIssuesReferences: [{ number: 93 }],
+    });
+    const { exec } = makePrExec({ prViews: [pr], issueBodies: { 93: '- [x] Done\n- [ ] Acceptance B' } });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.issueChecklists[0].issue.number, 93);
+    assert.equal(result.issueChecklists[0].checklist.unchecked, 1);
+    assert.match(result.nextAction, /aie checklist update/);
   });
 
   it('uses a comments-only fallback when issue comment fetch fails', async () => {
@@ -551,6 +595,8 @@ describe('PR body service', () => {
       { name: 'pack', kind: 'build', command: 'npm run pack:check', stage: 'pre-merge', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
     ];
     const exec = async args => {
+      const issue = issueViewResponse(args, 93);
+      if (issue) return issue;
       if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') {
         return { args, exitCode: 0, stdout: JSON.stringify({ number: 44, title: 'Ship issue 93', state: 'OPEN', url: 'https://github.com/example/repo/pull/44', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false }), stderr: '' };
       }
@@ -597,6 +643,27 @@ describe('PR body service', () => {
     assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'pr-review-pending' && item.source === 'pr-review-gate'));
   });
 
+  it('blocks PR body readiness when the issue checklist is unchecked', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const exec = async args => {
+      const issue = issueViewResponse(args, 93, '- [x] Done\n- [ ] Acceptance B');
+      if (issue) return issue;
+      return { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 93, repoRoot: repo, exec });
+
+    assert.equal(result.issueChecklist.checklist.unchecked, 1);
+    assert.equal(result.readiness.status, 'blocked');
+    assert.ok(result.readiness.blockerDetails.some(item => item.reasonCode === 'issue-checklist-unchecked'));
+    assert.match(result.body, /Issue checklist: 1\/2 checked/);
+  });
+
   it('does not report ready while GitHub merge state is still blocked', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
@@ -605,6 +672,8 @@ describe('PR body service', () => {
     config.manualUiAudit = false;
     config.reviewAgents = [];
     const exec = async args => {
+      const issue = issueViewResponse(args, 95);
+      if (issue) return issue;
       if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') {
         return { args, exitCode: 0, stdout: JSON.stringify({ number: 45, title: 'Blocked merge', state: 'OPEN', url: 'https://github.com/example/repo/pull/45', reviewDecision: 'APPROVED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', isDraft: false }), stderr: '' };
       }
@@ -641,6 +710,8 @@ describe('PR body service', () => {
     config.manualUiAudit = false;
     config.reviewAgents = [];
     const exec = async args => {
+      const issue = issueViewResponse(args, 99);
+      if (issue) return issue;
       if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') {
         return { args, exitCode: 0, stdout: JSON.stringify({ number: 49, title: 'Needs changes', state: 'OPEN', url: 'https://github.com/example/repo/pull/49', reviewDecision: 'CHANGES_REQUESTED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false }), stderr: '' };
       }
@@ -670,7 +741,7 @@ describe('PR body service', () => {
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
-    const exec = async args => ({ args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' });
+    const exec = async args => issueViewResponse(args, 98) ?? { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
 
     const result = await buildPrBody(config, { issueNumber: 98, repoRoot: repo, exec });
 
@@ -687,6 +758,8 @@ describe('PR body service', () => {
     config.manualUiAudit = false;
     config.reviewAgents = [];
     const exec = async args => {
+      const issue = issueViewResponse(args, 96);
+      if (issue) return issue;
       if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') {
         return { args, exitCode: 0, stdout: JSON.stringify({ number: 46, title: 'Inspection failure', state: 'OPEN', url: 'https://github.com/example/repo/pull/46', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false }), stderr: '' };
       }
@@ -712,6 +785,8 @@ describe('PR body service', () => {
     config.manualUiAudit = false;
     config.reviewAgents = [];
     const exec = async args => {
+      const issue = issueViewResponse(args, 97);
+      if (issue) return issue;
       if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') return { args, exitCode: 0, stdout: JSON.stringify({ number: 47, title: 'Pending reviews', state: 'OPEN', url: 'https://github.com/example/repo/pull/47', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false }), stderr: '' };
       if (args[0] === 'pr' && args[1] === 'view' && args[2] === '47') return { args, exitCode: 0, stdout: JSON.stringify(basePr({ number: 47, title: 'Pending reviews', url: 'https://github.com/example/repo/pull/47', reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE' })), stderr: '' };
       if (args.join(' ') === 'repo view --json nameWithOwner,url') return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
@@ -735,7 +810,7 @@ describe('PR body service', () => {
     const config = getDefaults();
     config.manualUiAudit = false;
     config.gates = [{ name: 'typecheck', kind: 'typecheck', command: 'npm run typecheck', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }];
-    const exec = async args => ({ args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' });
+    const exec = async args => issueViewResponse(args, 94) ?? { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
 
     const result = await buildPrBody(config, { issueNumber: 94, repoRoot: repo, exec });
 

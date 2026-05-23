@@ -1,4 +1,5 @@
 import type { Config } from '../config/index.js';
+import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { configToExecutorPolicy } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
@@ -75,6 +76,7 @@ export interface PrGateResult {
   reviewers: PrGateReviewer[];
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
+  issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
   externalServices: string[];
@@ -185,8 +187,13 @@ function hasIncompleteChecks(item: ReviewItem): boolean {
   return item.checks.some(check => check.result !== 'passed' && check.result !== 'skipped');
 }
 
-function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[]): PrGateStatus {
+function hasUncheckedIssueChecklist(issueChecklists: IssueChecklistSummary[]): boolean {
+  return issueChecklists.some(issue => issue.checklist.unchecked > 0);
+}
+
+function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[]): PrGateStatus {
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
+  if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
   if (feedback.some(entry => entry.source === 'thread' || (entry.source === 'review' && entry.state === 'CHANGES_REQUESTED'))) return 'failed';
   if (unavailable.length > 0) return 'unavailable';
   if (item.reviewDecision === 'review-required' || reviewers.some(reviewer => reviewer.pending)) return 'pending';
@@ -195,8 +202,9 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   return 'pending';
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean): string {
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[]): string {
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
+  if (hasUncheckedIssueChecklist(issueChecklists)) return 'Update linked GitHub issue checklist items with `aie checklist update <issue> --index <n>`, rerun affected gates if needed, then rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
   if (status === 'unavailable') return 'Some PR review state was unavailable. Inspect GitHub manually, fix permissions or connectivity, then rerun `aie pr gate`.';
   if (dryRun && reviewers.length > 0) return 'Review the planned PR reviewer requests/comments, then rerun without --dry-run when ready to request reviewers.';
@@ -237,6 +245,18 @@ async function applyReviewPlan(provider: GitHubReviewProvider, plan: ActionPlan)
   return actionsFromPlan(plan, results);
 }
 
+async function loadIssueChecklists(issueNumbers: number[], options: PrGateOptions, warnings: string[]): Promise<IssueChecklistSummary[]> {
+  const summaries: IssueChecklistSummary[] = [];
+  for (const issueNumber of issueNumbers) {
+    try {
+      summaries.push(await inspectIssueChecklist(issueNumber, { cwd: options.repoRoot, exec: options.exec }));
+    } catch (error: unknown) {
+      warnings.push(`Issue #${issueNumber} checklist state unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return summaries;
+}
+
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = configToExecutorPolicy(config);
@@ -268,7 +288,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);
   const reviewers = reviewersFromPlan(finalPlan);
   const feedback = prFeedback(finalSnapshot.item);
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, finalSnapshot.unavailable);
+  const linkedChecklistWarnings: string[] = [];
+  const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
+  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings];
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists);
   return {
     ok: true,
     command: 'pr gate',
@@ -280,8 +303,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     reviewers,
     actions,
     feedback,
+    issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
-    unavailable: finalSnapshot.unavailable,
+    unavailable,
     externalServices: reviewers.filter(reviewer => reviewer.externalService).map(reviewer => reviewer.handle),
     headChangedSinceRequest: reviewers.some(reviewer => reviewer.staleRequest),
     counts: {
@@ -291,7 +315,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists),
   };
 }
 
@@ -310,6 +334,13 @@ export function formatPrGate(result: PrGateResult): string {
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);
+  }
+  if (result.issueChecklists.length > 0) {
+    lines.push('Linked issue checklists:');
+    for (const issue of result.issueChecklists) {
+      lines.push(`- #${issue.issue.number}: ${issue.checklist.checked}/${issue.checklist.total} checked.`);
+      for (const item of issue.checklist.items.filter(item => !item.checked)) lines.push(`  - #${item.index}: ${item.text}`);
+    }
   }
   if (result.unavailable.length > 0) {
     lines.push('Unavailable review state:');

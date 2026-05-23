@@ -1,5 +1,6 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
 import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/pr_body.js';
+import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
@@ -29,7 +30,7 @@ import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from './revie
 import { startIssue } from './start/index.js';
 import { switchIssue } from './switch/index.js';
 import { viewIssue } from './view.js';
-import { commandFailure, commandResult, readBooleanFlag, stringArg, stringFlag, stringListFlag } from './runtime_result.js';
+import { commandFailure, commandResult, numberFlag, readBooleanFlag, stringArg, stringFlag, stringListFlag } from './runtime_result.js';
 import { policyFromRuntimeFlags } from './runtime_init_policy.js';
 import { handleDepsFix } from './runtime_deps_fix.js';
 import { handleLabelsSetup } from './runtime_labels_setup.js';
@@ -137,6 +138,51 @@ async function handleComplete(context: Parameters<RuntimeCommandHandler>[0]) {
     const cause = err instanceof Error ? err.message : String(err);
     const message = `Failed to run \`aie complete\`. Likely cause: ${cause}. Next action: verify GitHub authentication, issue state, repository config, and rerun \`aie complete ${issue} --check-only\`.`;
     return commandFailure(context, { ok: false, command: 'complete', error: message }, message);
+  }
+}
+
+function parseChecklistState(input: string | undefined): 'checked' | 'unchecked' {
+  if (input === undefined) return 'checked';
+  if (input === 'checked' || input === 'unchecked') return input;
+  throw new Error(`Invalid checklist state "${input}". Use checked or unchecked.`);
+}
+
+async function handleChecklistUpdate(context: Parameters<RuntimeCommandHandler>[0]) {
+  const issue = stringArg(context, 'issue');
+  if (isHelpToken(issue)) return usageResult(context, 'checklist update', 'aie checklist update <issue> [--item <text>|--index <n>] [--state checked|unchecked] [--dry-run] [--json]', [
+    'Usage: aie checklist update <issue> [--item <text>|--index <n>] [--state checked|unchecked] [--dry-run] [--json]',
+    commandDescription('checklist update'),
+    '',
+    'Behavior:',
+    '  Updates one GitHub issue task-list checkbox in the issue body while preserving unrelated text.',
+    '  Use --item for exact unique checklist text or --index for a 1-based checklist item index.',
+    '  --dry-run shows the planned body mutation without editing the issue.',
+    '',
+    'Examples:',
+    ...commandExamples('checklist update').map(example => `  ${example}`),
+  ]);
+  let issueNumber: number;
+  let state: 'checked' | 'unchecked';
+  try {
+    issueNumber = parseIssueNumber(issue, 'checklist update');
+    state = parseChecklistState(stringFlag(context, 'state'));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to parse checklist update. Likely cause: ${cause}. Next action: run \`aie checklist update 93 --index 1 --dry-run\` or \`aie checklist update --help\`.`;
+    return commandFailure(context, { ok: false, command: 'checklist update', error: message }, message);
+  }
+  try {
+    const result = await updateIssueChecklist({
+      issueNumber,
+      selector: { index: numberFlag(context, 'index'), text: stringFlag(context, 'item') },
+      state,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+    });
+    return commandResult(context, result, formatChecklistUpdate(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to update checklist for issue #${issueNumber}. Likely cause: ${cause}. Next action: run \`aie view ${issueNumber}\`, choose an unambiguous checklist selector, then rerun with --dry-run.`;
+    return commandFailure(context, { ok: false, command: 'checklist update', issue: issueNumber, error: message }, message);
   }
 }
 
@@ -387,6 +433,8 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'branch suggest': context => handleBranch(context, 'branch suggest'),
   'branch check': context => handleBranch(context, 'branch check'),
   'branch create': context => handleBranch(context, 'branch create'),
+  checklist: topic(['Use `aie checklist update <issue> --item <text> --dry-run` or `aie checklist update <issue> --index <n> --state checked`.', 'Issue checklists are durable GitHub workflow state and can block `aie complete` until all items are checked.']),
+  'checklist update': handleChecklistUpdate,
   complete: handleComplete,
   deps: topic(['Use `aie deps blockers <issue>`, `aie deps blocking <issue>`, `aie deps chain <issue>`, `aie deps ready`, `aie deps blocked`, `aie deps graph --json`, or `aie deps fix --dry-run`.', 'Read-only commands explain the dependency state from "Blocked by: #N" lines in issue bodies. `aie deps fix` plans and applies S-Ready/S-Blocked/S-Blocking label changes (S-InProgress issues are never changed).']),
   doctor: async context => {

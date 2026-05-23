@@ -12,7 +12,7 @@ import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provi
 import type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
 export type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
 
-const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup';
+const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
 const MARKER_PREFIX = 'aie:pr-gate';
 
@@ -127,6 +127,13 @@ function configuredReviewerNames(policy: ExecutorPolicy): string[] {
 }
 
 function reviewRequestNames(raw: RawReviewRequest[] | undefined): string[] { return (raw ?? []).map(request => request.login ?? request.slug ?? request.name ?? '').filter(name => name !== '').map(redact); }
+
+function closingIssueNumbers(raw: RawPrView): number[] {
+  const numbers = (raw.closingIssuesReferences ?? [])
+    .map(issue => issue.number)
+    .filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && Number.isInteger(issueNumber) && issueNumber > 0);
+  return [...new Set(numbers)].sort((left, right) => left - right);
+}
 
 function commentBodyFor(name: string, policy: ExecutorPolicy, headSha: string): { body: string; marker: string } {
   const handle = normalizeHandle(name);
@@ -412,6 +419,7 @@ export class GitHubReviewProvider implements ReviewProvider {
     return {
       item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor),
       pr: normalizePr(rawPr),
+      closingIssueNumbers: closingIssueNumbers(rawPr),
       reviewRequests,
       commentsCount: comments.length,
       reviewsCount: latestReviews.length,
