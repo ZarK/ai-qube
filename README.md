@@ -11,7 +11,7 @@ Executor follows strict supply-chain policy.
 ```bash
 pnpm install --frozen-lockfile --ignore-scripts
 # or for one-off:
-pnpm add @tjalve/aie@0.1.0 --ignore-scripts --save-exact
+pnpm add @tjalve/aie@0.1.2 --ignore-scripts --save-exact
 ```
 
 Do not use `pnpm add @tjalve/aie@latest` as the preferred path.

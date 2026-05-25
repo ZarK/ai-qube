@@ -281,8 +281,8 @@ describe('init service', () => {
     assert.match(agents, /run `aie complete <issue>`/);
     assert.match(agents, /Analysis and discovered work:/);
     assert.match(agents, /Issue-gated implementation starts only after Executor selects or starts valid GitHub issue work/);
-    assert.match(agents, /User-directed analysis, investigation, queue triage, and issue creation or issue suggestion are allowed before implementation starts/);
-    assert.match(agents, /create or suggest GitHub issue work with clear requirements and acceptance criteria/);
+    assert.match(agents, /manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
+    assert.match(agents, /When explicitly directed to record a confirmed product gap, create or suggest GitHub issue work with clear requirements and acceptance criteria/);
     assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
     assert.match(agents, /implementation: implement the complete issue scope/);
     assert.match(agents, /audit: run the configured manual UI audit/);
@@ -304,7 +304,7 @@ describe('init service', () => {
     assert.match(agents, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state/);
     assert.match(agents, /Avoid raw `gh pr view` comment or review payloads/);
     assert.match(agents, /Stop implementation work cleanly and report the exact blocker/);
-    assert.match(agents, /implementation stop conditions do not block user-directed analysis, investigation, queue triage, or issue creation and issue suggestion/);
+    assert.match(agents, /implementation stop conditions do not block explicitly user-directed analysis, investigation, queue triage, or manual GitHub issue creation and issue suggestion/);
     assert.match(agents, /repository meta documentation/);
     assert.match(agents, /Create or edit repository docs only when the active issue explicitly asks/);
     assert.match(agents, /Do not commit generated build output unless repository policy explicitly allows it/);
@@ -319,7 +319,7 @@ describe('init service', () => {
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
     assert.match(command, /explicit full authorization under repository policy to commit, push, create PRs, run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `aie complete <issue>`, pull the configured base branch, and continue/);
-    assert.match(command, /Analysis, investigation, queue triage, and issue creation or issue suggestion are allowed before implementation starts/);
+    assert.match(command, /Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
     assert.match(command, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);
@@ -327,7 +327,7 @@ describe('init service', () => {
     assert.match(command, /merge once repository policy, CI, required tests, and configured gates are satisfied/);
     assert.match(command, /configured gates cannot run/);
     assert.match(command, /Stop implementation only when/);
-    assert.match(command, /may still proceed before implementation starts/);
+    assert.match(command, /manual GitHub issue creation or issue suggestion may still proceed before implementation starts/);
     assert.match(command, /Report the exact blocker and the next Executor command or repository action/);
     assert.match(command, /Go\./);
   });
