@@ -1,7 +1,11 @@
 import { watch as watchFileSystem } from "node:fs";
 import path from "node:path";
 
-import { type LoadedAiqProgress, loadAiqProgress } from "@tjalve/aiq-config-schema";
+import {
+  type LoadedAiqProgress,
+  loadAiqProgress,
+  resolveAiqProgressStageIds,
+} from "@tjalve/aiq-config-schema";
 import { buildRunPlan, resolveRunRequest, runResolvedRequest } from "@tjalve/aiq-engine";
 import type { ResolvedRunRequest, RunPlan, RunRequest } from "@tjalve/aiq-model";
 
@@ -287,11 +291,13 @@ async function createWatchPreparedRun(
   cachedStreamFiles?: string[],
 ): Promise<WatchPreparedRun> {
   const manifest = await createManifestInput(parsed, io, cachedStreamFiles);
+  const progress = await loadOptionalWatchProgress(parsed, io);
   const resolvedConfig = await resolveCliConfig(parsed, io, {
-    includeProgressStage: true,
+    ...(progress === undefined
+      ? {}
+      : { stageOverrides: resolveAiqProgressStageIds(progress.progress.current_stage) }),
     surface: "watch",
   });
-  const progress = await loadOptionalWatchProgress(parsed, io);
   const baseRequest: RunRequest = {
     context: "watch",
     cwd: resolvedConfig.cwd,
@@ -340,6 +346,7 @@ async function createWatchPreparedRun(
       targetRequest.cwd,
       targetRequest.manifest.files,
       resolvedConfig.configPath,
+      progress?.path,
       filesFromPath,
     ),
   };
@@ -385,6 +392,8 @@ function buildWatchReplanPaths(
   }
   if (progressPath !== undefined) {
     replanPaths.add(path.resolve(progressPath));
+  } else {
+    replanPaths.add(path.resolve(cwd, ".aiq", "progress.json"));
   }
   if (filesFromPath !== undefined) {
     replanPaths.add(path.resolve(filesFromPath));
@@ -419,6 +428,7 @@ function buildWatchTargets(
   cwd: string,
   files: readonly string[],
   configPath?: string,
+  progressPath?: string,
   filesFromPath?: string,
 ): WatchDirectoryTarget[] {
   const targets = new Map<string, Set<string>>();
@@ -436,6 +446,12 @@ function buildWatchTargets(
   } else {
     addWatchTarget(targets, cwd, path.join(cwd, "aiq.config.json"));
     addWatchTarget(targets, cwd, path.join(cwd, ".aiq", "aiq.config.json"));
+  }
+
+  if (progressPath !== undefined) {
+    addWatchTarget(targets, cwd, progressPath);
+  } else {
+    addWatchTarget(targets, cwd, path.join(cwd, ".aiq", "progress.json"));
   }
 
   return [...targets.entries()]

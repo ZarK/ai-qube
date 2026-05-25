@@ -6,6 +6,7 @@ import {
   type LoadedAiqProgress,
   aiqProfileNames,
   loadAiqProgress,
+  resolveAiqProgressStageIds,
 } from "@tjalve/aiq-config-schema";
 import { resolveRunRequest, runEngine } from "@tjalve/aiq-engine";
 import {
@@ -196,17 +197,20 @@ async function createServeRunRequest(
   io: CliIo,
   signal: AbortSignal,
 ): Promise<PreparedServeRun> {
-  const resolvedConfig = await resolveCliConfig(parsed, io, {
-    includeProgressStage: true,
-    surface: "serve",
-    ...(body.stages === undefined
-      ? {}
-      : { stageOverrides: parseStageList(body.stages, "serve stages") }),
-    ...(body.profile === undefined
-      ? {}
-      : { profileOverride: parseProfile(body.profile, "serve profile") }),
-  });
+  const stageOverrides =
+    body.stages === undefined ? undefined : parseStageList(body.stages, "serve stages");
+  const profileOverride =
+    body.profile === undefined ? undefined : parseProfile(body.profile, "serve profile");
   const progress = await loadOptionalServeProgress(body, parsed, io);
+  const resolvedConfig = await resolveCliConfig(parsed, io, {
+    surface: "serve",
+    ...(stageOverrides === undefined
+      ? progress === undefined
+        ? {}
+        : { stageOverrides: resolveAiqProgressStageIds(progress.progress.current_stage) }
+      : { stageOverrides }),
+    ...(profileOverride === undefined ? {} : { profileOverride }),
+  });
 
   const runRequest: RunRequest = {
     context: "serve",
