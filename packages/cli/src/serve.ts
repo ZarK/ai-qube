@@ -1,7 +1,13 @@
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 
-import { type AiqProfileName, aiqProfileNames } from "@tjalve/aiq-config-schema";
+import {
+  type AiqProfileName,
+  type LoadedAiqProgress,
+  aiqProfileNames,
+  loadAiqProgress,
+  resolveAiqProgressStageIds,
+} from "@tjalve/aiq-config-schema";
 import { resolveRunRequest, runEngine } from "@tjalve/aiq-engine";
 import {
   type ManifestSource,
@@ -26,6 +32,7 @@ import {
   type ParsedArgs,
   maxServeRequestBodyBytes,
 } from "./types.js";
+import { createRunWorkflowOutput } from "./workflow.js";
 
 interface ServeManifestRequest {
   files: string[];
@@ -41,6 +48,11 @@ interface ServeRunRequestBody {
 
 interface ServeRunLock {
   active: boolean;
+}
+
+interface PreparedServeRun {
+  progress?: LoadedAiqProgress;
+  request: RunRequest;
 }
 
 class ServeRequestValidationError extends Error {
@@ -133,10 +145,17 @@ async function handleServeRequest(
     }
 
     const body = parseServeRunRequestBody(await readJsonRequest(request, requestSignal.signal));
-    const engineRequest = await createServeRunRequest(body, parsed, io, requestSignal.signal);
-    const result = await runEngine(engineRequest);
+    const preparedRun = await createServeRunRequest(body, parsed, io, requestSignal.signal);
+    const result = await runEngine(preparedRun.request);
     if (!response.destroyed && !response.writableEnded) {
-      writeJsonResponse(response, 200, result);
+      writeJsonResponse(response, 200, {
+        ...result,
+        ...(preparedRun.progress === undefined
+          ? {}
+          : {
+              workflow: createRunWorkflowOutput(preparedRun.progress, preparedRun.request, result),
+            }),
+      });
     }
   } catch (error) {
     if (isCliCancellation(error, signal)) {
@@ -177,15 +196,20 @@ async function createServeRunRequest(
   parsed: ParsedArgs,
   io: CliIo,
   signal: AbortSignal,
-): Promise<RunRequest> {
+): Promise<PreparedServeRun> {
+  const stageOverrides =
+    body.stages === undefined ? undefined : parseStageList(body.stages, "serve stages");
+  const profileOverride =
+    body.profile === undefined ? undefined : parseProfile(body.profile, "serve profile");
+  const progress = await loadOptionalServeProgress(body, parsed, io);
   const resolvedConfig = await resolveCliConfig(parsed, io, {
     surface: "serve",
-    ...(body.stages === undefined
-      ? {}
-      : { stageOverrides: parseStageList(body.stages, "serve stages") }),
-    ...(body.profile === undefined
-      ? {}
-      : { profileOverride: parseProfile(body.profile, "serve profile") }),
+    ...(stageOverrides === undefined
+      ? progress === undefined
+        ? {}
+        : { stageOverrides: resolveAiqProgressStageIds(progress.progress.current_stage) }
+      : { stageOverrides }),
+    ...(profileOverride === undefined ? {} : { profileOverride }),
   });
 
   const runRequest: RunRequest = {
@@ -209,7 +233,28 @@ async function createServeRunRequest(
     throw new ServeRequestValidationError(formatError(error));
   }
 
-  return runRequest;
+  return {
+    ...(progress === undefined ? {} : { progress }),
+    request: runRequest,
+  };
+}
+
+async function loadOptionalServeProgress(
+  body: ServeRunRequestBody,
+  parsed: ParsedArgs,
+  io: CliIo,
+): Promise<LoadedAiqProgress | undefined> {
+  if (
+    body.stages !== undefined ||
+    body.profile !== undefined ||
+    parsed.stages.length > 0 ||
+    parsed.profile !== undefined
+  ) {
+    return undefined;
+  }
+
+  const progress = await loadAiqProgress(io.cwd);
+  return progress.source === "file" ? progress : undefined;
 }
 
 function tryAcquireServeRunLock(runLock: ServeRunLock): (() => void) | undefined {

@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { type AiqProfileName, resolveAiqConfig } from "@tjalve/aiq-config-schema";
+import {
+  type AiqProfileName,
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+} from "@tjalve/aiq-config-schema";
 import { AiqEngineCancelledError, runEngine } from "@tjalve/aiq-engine";
 import {
   type Diagnostic,
@@ -329,9 +334,17 @@ export class AiqLspAdapter {
 
   private async resolveSelection(scope: "document" | "workspace"): Promise<ResolvedLspSelection> {
     const configuredStages = scope === "document" ? this.documentStages : this.workspaceStages;
+    const progress =
+      configuredStages === undefined && this.profile === undefined
+        ? await loadFileBackedProgress(this.cwd)
+        : undefined;
     const resolved = await this.resolveConfigImpl({
       cwd: this.cwd,
-      ...(configuredStages === undefined ? {} : { stages: [...configuredStages] }),
+      ...(configuredStages === undefined
+        ? progress === undefined
+          ? {}
+          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+        : { stages: [...configuredStages] }),
       ...(this.profile === undefined ? {} : { profile: this.profile }),
       surface: "lsp",
     });
@@ -597,6 +610,11 @@ function toEngineStageIds(stages: readonly string[]): StageId[] {
   }
 
   return resolved;
+}
+
+async function loadFileBackedProgress(cwd: string) {
+  const progress = await loadAiqProgress(cwd);
+  return progress.source === "file" ? progress : undefined;
 }
 
 function toZeroBasedPosition(value: number): number {

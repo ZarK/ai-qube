@@ -8,10 +8,10 @@ inputs:
     description: Path to a newline-separated file list, relative to the GitHub workspace.
     required: false
   stages:
-    description: Newline-separated AIQ stages to run.
+    description: Newline-separated AIQ stages to run. Defaults to cumulative stages through `.aiq/progress.json` current_stage when present, otherwise the GitHub surface profile.
     required: false
   profile:
-    description: AIQ profile override.
+    description: AIQ profile override. When set, this overrides current-stage selection.
     required: false
   out-dir:
     description: Output directory for canonical AIQ artifacts.
@@ -45,6 +45,14 @@ outputs:
     description: Absolute path to the canonical `aiq.report.json` artifact.
   plan-path:
     description: Absolute path to the canonical `aiq.plan.json` artifact.
+  stages:
+    description: Comma-separated AIQ stages selected for this run.
+  current-stage:
+    description: Persisted current-stage index when `.aiq/progress.json` selected the default run.
+  current-stage-name:
+    description: Persisted current-stage name when `.aiq/progress.json` selected the default run.
+  progress-path:
+    description: Absolute path to `.aiq/progress.json` when it selected the default run.
   artifact-id:
     description: Uploaded GitHub Actions artifact ID, if artifacts were uploaded.
   artifact-size:

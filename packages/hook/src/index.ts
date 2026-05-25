@@ -2,7 +2,14 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { type AiqProfileName, resolveAiqConfig } from "@tjalve/aiq-config-schema";
+import {
+  type AiqProfileName,
+  type AiqProgressRunSelection,
+  createAiqProgressRunSelection,
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+} from "@tjalve/aiq-config-schema";
 import { AiqEngineCancelledError, runEngine } from "@tjalve/aiq-engine";
 import type { RunRequest, RunResult, RunStageConfigurations, StageId } from "@tjalve/aiq-model";
 
@@ -41,6 +48,7 @@ export interface AiqHookRunResult {
   result?: RunResult;
   skipped: boolean;
   stagedFiles: string[];
+  workflow?: AiqProgressRunSelection;
 }
 
 interface ResolvedHookSelection {
@@ -48,6 +56,7 @@ interface ResolvedHookSelection {
   stages: StageId[];
   stageConfigurations?: RunStageConfigurations;
   profile: AiqProfileName;
+  workflow?: AiqProgressRunSelection;
 }
 
 export class AiqHookCancelledError extends Error {
@@ -135,6 +144,7 @@ export class AiqHookAdapter {
         result,
         skipped: false,
         stagedFiles,
+        ...(selection.workflow === undefined ? {} : { workflow: selection.workflow }),
       };
     } catch (error) {
       if (isCancellationError(error)) {
@@ -146,9 +156,17 @@ export class AiqHookAdapter {
   }
 
   private async resolveSelection(): Promise<ResolvedHookSelection> {
+    const progress =
+      this.stages === undefined && this.profile === undefined
+        ? await loadFileBackedProgress(this.cwd)
+        : undefined;
     const resolved = await this.resolveConfigImpl({
       cwd: this.cwd,
-      ...(this.stages === undefined ? {} : { stages: [...this.stages] }),
+      ...(this.stages === undefined
+        ? progress === undefined
+          ? {}
+          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+        : { stages: [...this.stages] }),
       ...(this.profile === undefined ? {} : { profile: this.profile }),
       surface: "hook",
     });
@@ -160,6 +178,9 @@ export class AiqHookAdapter {
         ? {}
         : { stageConfigurations: resolved.stageConfigurations }),
       profile: resolved.profile,
+      ...(progress === undefined
+        ? {}
+        : { workflow: createAiqProgressRunSelection(progress, resolved.stages) }),
     };
   }
 }
@@ -248,4 +269,9 @@ function isCancellationError(error: unknown): boolean {
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+async function loadFileBackedProgress(cwd: string) {
+  const progress = await loadAiqProgress(cwd);
+  return progress.source === "file" ? progress : undefined;
 }

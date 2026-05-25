@@ -135,6 +135,7 @@ interface WatchRunEnvelope {
   event: "run";
   result: RunResult;
   trigger: string;
+  workflow?: RunWorkflowOutput;
 }
 
 interface ServeListeningEnvelope {
@@ -500,18 +501,22 @@ export function writeWatchOutput(
   format: OutputFormat,
   trigger: string,
   result: RunResult,
+  workflow?: RunWorkflowOutput,
 ): void {
   if (format === "json") {
     const payload: WatchRunEnvelope = {
       event: "run",
       result,
       trigger,
+      ...(workflow === undefined ? {} : { workflow }),
     };
     io.stdout.write(`${JSON.stringify(payload)}\n`);
     return;
   }
 
-  const body = formatRunResultAsText(result).trimEnd();
+  const body = formatRunResultOutput("text", result, undefined, {
+    ...(workflow === undefined ? {} : { workflow }),
+  }).trimEnd();
   io.stdout.write(`AIQ watch (${trigger})\n${body}\n`);
 }
 

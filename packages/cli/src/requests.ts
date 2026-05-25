@@ -8,13 +8,13 @@ import {
   type AiqSurfaceId,
   loadAiqProgress,
   resolveAiqConfig,
+  resolveAiqProgressStageIds,
 } from "@tjalve/aiq-config-schema";
 import { resolveRunRequest } from "@tjalve/aiq-engine";
 import type { FileManifestInput, RunContext, RunRequest, StageId } from "@tjalve/aiq-model";
 
 import { isErrorCode, readStdin, splitLines } from "./shared.js";
 import type { CliIo, ParsedArgs } from "./types.js";
-import { cliStageShortcutIds } from "./types.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -214,7 +214,7 @@ async function resolveProgressStageOverrides(
     return undefined;
   }
 
-  return [...cliStageShortcutIds.slice(0, progress.progress.current_stage + 1)];
+  return resolveAiqProgressStageIds(progress.progress.current_stage);
 }
 
 function resolveManifestSource(

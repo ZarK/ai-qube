@@ -34,6 +34,19 @@ export const aiqProgressStageIndexes = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9] as const;
 
 export type AiqProgressStageIndex = (typeof aiqProgressStageIndexes)[number];
 
+export const aiqStageLadderIds = [
+  "e2e",
+  "lint",
+  "format",
+  "typecheck",
+  "unit",
+  "sloc",
+  "complexity",
+  "maintainability",
+  "coverage",
+  "security",
+] as const satisfies readonly AiqStageId[];
+
 export const aiqToolIds = [
   "bash",
   "biome",
@@ -122,6 +135,23 @@ export interface LoadedAiqProgress {
   path: string;
   progress: AiqProgressState;
   source: "defaults" | "file";
+}
+
+export interface AiqWorkflowStage {
+  id: AiqStageId;
+  index: number;
+  name: AiqStageId;
+}
+
+export interface AiqProgressRunSelection {
+  currentStage: AiqWorkflowStage;
+  defaultRun: {
+    range: string;
+    stages: AiqWorkflowStage[];
+  };
+  progressPath: string;
+  progressSource: "defaults" | "file";
+  selectedStages: AiqStageId[];
 }
 
 export interface InitializedAiqProjectConfig {
@@ -427,6 +457,53 @@ export async function loadAiqProgress(cwd: string): Promise<LoadedAiqProgress> {
     path: progressPath,
     progress: validateAiqProgressState(rawValue, progressPath),
     source: "file",
+  };
+}
+
+export function resolveAiqProgressStageIds(currentStage: AiqProgressStageIndex): AiqStageId[] {
+  return [...aiqStageLadderIds.slice(0, currentStage + 1)];
+}
+
+export function resolveAiqProgressStageIndex(stageId: AiqStageId): number {
+  const index = aiqStageLadderIds.indexOf(stageId);
+  if (index < 0) {
+    throw new Error(
+      `Unknown AIQ stage id '${stageId}'. Expected one of ${aiqStageLadderIds.join(", ")}.`,
+    );
+  }
+
+  return index;
+}
+
+export function toAiqWorkflowStage(index: number): AiqWorkflowStage {
+  const id = aiqStageLadderIds[index];
+  if (id === undefined) {
+    throw new Error(`Unknown AIQ stage index: ${index}`);
+  }
+
+  return {
+    id,
+    index,
+    name: id,
+  };
+}
+
+export function createAiqProgressRunSelection(
+  loadedProgress: LoadedAiqProgress,
+  selectedStages: readonly AiqStageId[],
+): AiqProgressRunSelection {
+  const currentStage = toAiqWorkflowStage(loadedProgress.progress.current_stage);
+  return {
+    currentStage,
+    defaultRun: {
+      range: `0..${loadedProgress.progress.current_stage}`,
+      stages: resolveAiqProgressStageIds(loadedProgress.progress.current_stage).map(
+        (_stageId, index) => toAiqWorkflowStage(index),
+      ),
+    },
+    progressPath: loadedProgress.path,
+    progressSource: loadedProgress.source,
+    selectedStages: [...selectedStages],
   };
 }
 

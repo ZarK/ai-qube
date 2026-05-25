@@ -6,6 +6,8 @@ import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { defaultConfig } from "../../config-schema/src/index.js";
+import { parseHookArgs } from "../src/bin/aiq-hook.js";
 import { AiqHookCancelledError, renderPreCommitHookScript, runAiqHook } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -95,6 +97,193 @@ describe("hook adapter", () => {
     ]);
   });
 
+  it("uses persisted current_stage as the default cumulative hook target", async () => {
+    const repoDir = await createGitRepo();
+    await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
+    await writeFile(
+      path.join(repoDir, ".aiq", "progress.json"),
+      `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
+      "utf8",
+    );
+
+    const stagedFile = path.join(repoDir, "src", "index.ts");
+    const result = await runAiqHook({
+      cwd: repoDir,
+      listStagedFilesImpl: async () => [stagedFile],
+      runEngineImpl: async (request) => ({
+        artifactType: "report",
+        artifactVersion: 1,
+        artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
+        context: "hook",
+        durationMs: 1,
+        engineVersion: "0.0.0",
+        finishedAt: "2026-03-23T00:00:00.000Z",
+        mode: "check",
+        ok: true,
+        stages: [],
+        plan: {
+          artifactType: "plan",
+          artifactVersion: 1,
+          artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
+          context: "hook",
+          createdAt: "2026-03-23T00:00:00.000Z",
+          engineVersion: "0.0.0",
+          input: {
+            entries: [],
+            files: [stagedFile],
+            root: repoDir,
+            source: "direct",
+            summary: { fileCount: 1 },
+          },
+          stages: [...(request.stages ?? [])],
+          profile: request.profile ?? "fast",
+          runId: "run_123",
+          summary: { fileCount: 1, stageCount: request.stages?.length ?? 0, taskCount: 0 },
+          tasks: [],
+        },
+        request: {
+          context: "hook",
+          cwd: repoDir,
+          manifest: {
+            entries: [],
+            files: [stagedFile],
+            root: repoDir,
+            source: "direct",
+            summary: { fileCount: 1 },
+          },
+          mode: "check",
+          outDir: path.join(repoDir, ".aiq", "out"),
+          selection: {
+            stages: [...(request.stages ?? [])],
+            profile: request.profile ?? "fast",
+          },
+          writeArtifacts: false,
+        },
+        runId: "run_123",
+        startedAt: "2026-03-23T00:00:00.000Z",
+        summary: {
+          cacheHitCount: 0,
+          cacheHitRate: 0,
+          cacheMissCount: 0,
+          diagnosticCount: 0,
+          durationMs: 1,
+          fileCount: 1,
+          notImplementedStageCount: 0,
+          stageCount: request.stages?.length ?? 0,
+          status: "passed",
+          taskCount: 0,
+          toolDurationMs: 0,
+          toolRunCount: 0,
+        },
+      }),
+      writeArtifacts: false,
+    });
+
+    expect(result.result?.request.selection.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+    expect(result.workflow).toMatchObject({
+      currentStage: { id: "typecheck", index: 3 },
+      selectedStages: ["e2e", "lint", "format", "typecheck"],
+    });
+  });
+
+  it("lets explicit hook stages override persisted current_stage", async () => {
+    const repoDir = await createGitRepo();
+    await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
+    await writeFile(
+      path.join(repoDir, ".aiq", "progress.json"),
+      `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
+      "utf8",
+    );
+    const resolvedOptions: Array<readonly string[] | undefined> = [];
+
+    const result = await runAiqHook({
+      cwd: repoDir,
+      listStagedFilesImpl: async () => [path.join(repoDir, "src", "index.ts")],
+      resolveConfigImpl: async (options) => {
+        resolvedOptions.push(options.stages);
+        return {
+          cadenceStages: [],
+          changedOnly: true,
+          config: defaultConfig,
+          cwd: repoDir,
+          stages: ["lint"],
+          profile: "fast",
+          publishDiagnostics: false,
+          source: "defaults",
+          surface: "hook",
+        };
+      },
+      runEngineImpl: async () => ({
+        artifactType: "report",
+        artifactVersion: 1,
+        artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
+        context: "hook",
+        durationMs: 1,
+        engineVersion: "0.0.0",
+        finishedAt: "2026-03-23T00:00:00.000Z",
+        mode: "check",
+        ok: true,
+        stages: [],
+        plan: {
+          artifactType: "plan",
+          artifactVersion: 1,
+          artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
+          context: "hook",
+          createdAt: "2026-03-23T00:00:00.000Z",
+          engineVersion: "0.0.0",
+          input: {
+            entries: [],
+            files: [],
+            root: repoDir,
+            source: "direct",
+            summary: { fileCount: 0 },
+          },
+          stages: [],
+          profile: "fast",
+          runId: "run_123",
+          summary: { fileCount: 0, stageCount: 0, taskCount: 0 },
+          tasks: [],
+        },
+        request: {
+          context: "hook",
+          cwd: repoDir,
+          manifest: {
+            entries: [],
+            files: [],
+            root: repoDir,
+            source: "direct",
+            summary: { fileCount: 0 },
+          },
+          mode: "check",
+          outDir: path.join(repoDir, ".aiq", "out"),
+          selection: { stages: ["lint"], profile: "fast" },
+          writeArtifacts: false,
+        },
+        runId: "run_123",
+        startedAt: "2026-03-23T00:00:00.000Z",
+        summary: {
+          cacheHitCount: 0,
+          cacheHitRate: 0,
+          cacheMissCount: 0,
+          diagnosticCount: 0,
+          durationMs: 1,
+          fileCount: 0,
+          notImplementedStageCount: 0,
+          stageCount: 0,
+          status: "passed",
+          taskCount: 0,
+          toolDurationMs: 0,
+          toolRunCount: 0,
+        },
+      }),
+      stages: ["lint"],
+      writeArtifacts: false,
+    });
+
+    expect(resolvedOptions).toEqual([["lint"]]);
+    expect(result.workflow).toBeUndefined();
+  });
+
   it("throws when the hook is cancelled before git diff runs", async () => {
     const repoDir = await createGitRepo();
     const controller = new AbortController();
@@ -111,6 +300,12 @@ describe("hook adapter", () => {
     expect(script).toContain("#!/usr/bin/env sh");
     expect(script).toContain("git rev-parse --show-toplevel");
     expect(script).toContain("node_modules/.bin/aiq-hook");
+  });
+
+  it("rejects multiple hook stage selector flags", () => {
+    expect(() => parseHookArgs(["--only", "1", "--stage", "lint"])).toThrowError(
+      "Specify only one of --only, --up-to, or --stage.",
+    );
   });
 });
 

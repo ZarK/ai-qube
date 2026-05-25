@@ -7,8 +7,10 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 import { withExclusiveToolLock } from "../../engine/test/exclusive-tool-lock.js";
+import type { RunRequest, RunResult } from "../../model/src/index.js";
 import { runCli } from "../src/index.js";
 import { writeServeListeningOutput } from "../src/output.js";
+import { createRunWorkflowOutput } from "../src/workflow.js";
 
 const repoRoot = path.resolve(".");
 const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
@@ -1520,6 +1522,32 @@ describe("CLI foundation", () => {
       nextCommand: "aiq run <paths...> --only 0 --verbose",
       selectedStages: ["e2e", "lint", "format", "typecheck"],
     });
+  });
+
+  it("reports progress default stages when workflow requests omit explicit stages", () => {
+    const workflow = createRunWorkflowOutput(
+      {
+        path: "/tmp/project/.aiq/progress.json",
+        progress: {
+          current_stage: 3,
+          disabled: [],
+          last_run: null,
+          order: [0, 1, 2, 3],
+        },
+        source: "file",
+      },
+      {
+        stages: undefined,
+      } as RunRequest,
+      {
+        stages: [],
+        summary: {
+          status: "passed",
+        },
+      } as RunResult,
+    );
+
+    expect(workflow.selectedStages).toEqual(["e2e", "lint", "format", "typecheck"]);
   });
 
   it("reports status before any run without writing config state", async () => {

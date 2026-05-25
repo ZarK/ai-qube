@@ -3,7 +3,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 
-import { type AiqProfileName, resolveAiqConfig } from "@tjalve/aiq-config-schema";
+import {
+  type AiqProfileName,
+  type AiqProgressRunSelection,
+  createAiqProgressRunSelection,
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+} from "@tjalve/aiq-config-schema";
 import { runEngine } from "@tjalve/aiq-engine";
 import {
   type RunRequest,
@@ -75,6 +82,7 @@ export interface AiqGitHubActionExecutionResult {
   artifactPaths: string[];
   files: string[];
   report?: RunResult;
+  workflow?: AiqProgressRunSelection;
   skipped: boolean;
 }
 
@@ -87,6 +95,7 @@ interface ResolvedGitHubSelection {
   stages: StageId[];
   stageConfigurations?: RunStageConfigurations;
   profile: AiqProfileName;
+  workflow?: AiqProgressRunSelection;
   publishDiagnostics: boolean;
 }
 
@@ -173,6 +182,7 @@ export class AiqGitHubActionAdapter {
       ),
       files,
       report,
+      ...(selection.workflow === undefined ? {} : { workflow: selection.workflow }),
       skipped: false,
     };
   }
@@ -199,9 +209,17 @@ export class AiqGitHubActionAdapter {
     cwd: string,
     options: AiqGitHubActionRunOptions,
   ): Promise<ResolvedGitHubSelection> {
+    const progress =
+      options.stages === undefined && options.profile === undefined
+        ? await loadFileBackedProgress(cwd)
+        : undefined;
     const resolved = await this.resolveConfigImpl({
       cwd,
-      ...(options.stages === undefined ? {} : { stages: [...options.stages] }),
+      ...(options.stages === undefined
+        ? progress === undefined
+          ? {}
+          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+        : { stages: [...options.stages] }),
       ...(options.profile === undefined ? {} : { profile: options.profile }),
       surface: "github",
     });
@@ -213,6 +231,9 @@ export class AiqGitHubActionAdapter {
         ? {}
         : { stageConfigurations: resolved.stageConfigurations }),
       profile: resolved.profile,
+      ...(progress === undefined
+        ? {}
+        : { workflow: createAiqProgressRunSelection(progress, resolved.stages) }),
       publishDiagnostics: resolved.publishDiagnostics,
     };
   }
@@ -265,6 +286,15 @@ export async function runAiqGitHubAction(
   io.setOutput("annotation-count", outcome.annotations.length);
   io.setOutput("report-path", outcome.report.artifacts.reportPath ?? "");
   io.setOutput("plan-path", outcome.report.artifacts.planPath ?? "");
+  io.setOutput(
+    "stages",
+    (outcome.workflow?.selectedStages ?? outcome.report.request.selection.stages).join(","),
+  );
+  if (outcome.workflow !== undefined) {
+    io.setOutput("current-stage", outcome.workflow.currentStage.index);
+    io.setOutput("current-stage-name", outcome.workflow.currentStage.id);
+    io.setOutput("progress-path", outcome.workflow.progressPath);
+  }
 
   if (upload?.id !== undefined) {
     io.setOutput("artifact-id", upload.id);
@@ -371,4 +401,9 @@ function splitLines(value: string): string[] {
     .split(/\r?\n/u)
     .map((line) => line.trim())
     .filter((line) => line.length > 0);
+}
+
+async function loadFileBackedProgress(cwd: string) {
+  const progress = await loadAiqProgress(cwd);
+  return progress.source === "file" ? progress : undefined;
 }

@@ -1,5 +1,9 @@
 import type { BenchmarkScenarioKind } from "@tjalve/aiq-benchmark";
-import type { AiqProfileName, AiqProgressStageIndex } from "@tjalve/aiq-config-schema";
+import {
+  type AiqProfileName,
+  type AiqProgressStageIndex,
+  aiqStageLadderIds,
+} from "@tjalve/aiq-config-schema";
 import type { StageId, ToolRunResult } from "@tjalve/aiq-model";
 
 export type CommandName =
@@ -66,18 +70,7 @@ export interface ParsedArgs {
   verbose: boolean;
 }
 
-export const cliStageShortcutIds = [
-  "e2e",
-  "lint",
-  "format",
-  "typecheck",
-  "unit",
-  "sloc",
-  "complexity",
-  "maintainability",
-  "coverage",
-  "security",
-] as const;
+export const cliStageShortcutIds = aiqStageLadderIds;
 
 export interface CliRunOptions {
   signal?: AbortSignal;

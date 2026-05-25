@@ -3,12 +3,18 @@ import path from "node:path";
 import { type Plugin, tool } from "@opencode-ai/plugin";
 import {
   type AiqProfileName,
+  type AiqProgressRunSelection,
   type ResolvedAiqConfig,
   aiqProfileNames,
+  createAiqProgressRunSelection,
+  loadAiqProgress,
   resolveAiqConfig,
+  resolveAiqProgressStageIds,
 } from "@tjalve/aiq-config-schema";
-import { runEngine } from "@tjalve/aiq-engine";
+import { createRunPlan, runEngine } from "@tjalve/aiq-engine";
 import {
+  type RunPlan,
+  type RunRequest,
   type RunResult,
   type RunStageConfigurations,
   type StageId,
@@ -43,6 +49,22 @@ export interface AiqOpenCodeCheckResult {
   report: RunResult;
   reportPath?: string;
   text: string;
+  workflow?: AiqProgressRunSelection;
+}
+
+export interface AiqOpenCodePlanResult {
+  files: string[];
+  plan: RunPlan;
+  text: string;
+  workflow?: AiqProgressRunSelection;
+}
+
+export interface AiqOpenCodeStatusResult {
+  cwd: string;
+  profile: AiqProfileName;
+  stages: StageId[];
+  text: string;
+  workflow?: AiqProgressRunSelection;
 }
 
 export interface AiqOpenCodePluginContext {
@@ -62,6 +84,7 @@ interface ResolvedOpenCodeSelection {
   stageConfigurations?: RunStageConfigurations;
   profile: AiqProfileName;
   publishDiagnostics: boolean;
+  workflow?: AiqProgressRunSelection;
 }
 
 export class AiqOpenCodeAdapter {
@@ -127,6 +150,60 @@ export class AiqOpenCodeAdapter {
         ? {}
         : { reportPath: report.artifacts.reportPath }),
       text: formatAiqOpenCodeResult(report, selection.publishDiagnostics),
+      ...(selection.workflow === undefined ? {} : { workflow: selection.workflow }),
+    };
+  }
+
+  async plan(options: AiqOpenCodeRunOptions): Promise<AiqOpenCodePlanResult> {
+    const cwd = path.resolve(options.cwd ?? this.cwd);
+    const files = normalizeExplicitFiles(cwd, options.files);
+    if (files.length === 0) {
+      throw new Error("OpenCode AIQ plans require at least one file.");
+    }
+
+    const selection = await this.resolveSelection(cwd, options);
+    const plan = await createRunPlan(this.createRunRequest(selection, files, "plan", options));
+    return {
+      files,
+      plan,
+      text: formatOpenCodePlanText(plan),
+      ...(selection.workflow === undefined ? {} : { workflow: selection.workflow }),
+    };
+  }
+
+  async status(options: { cwd?: string } = {}): Promise<AiqOpenCodeStatusResult> {
+    const selection = await this.resolveSelection(path.resolve(options.cwd ?? this.cwd), {});
+    return {
+      cwd: selection.cwd,
+      profile: selection.profile,
+      stages: selection.stages,
+      text: formatOpenCodeStatusText(selection),
+      ...(selection.workflow === undefined ? {} : { workflow: selection.workflow }),
+    };
+  }
+
+  private createRunRequest(
+    selection: ResolvedOpenCodeSelection,
+    files: readonly string[],
+    mode: RunRequest["mode"],
+    options: Pick<AiqOpenCodeRunOptions, "outDir" | "signal">,
+  ): RunRequest {
+    return {
+      context: "opencode",
+      cwd: selection.cwd,
+      manifest: {
+        files,
+        source: "direct",
+      },
+      mode,
+      ...(options.outDir === undefined ? {} : { outDir: options.outDir }),
+      stages: selection.stages,
+      ...(selection.stageConfigurations === undefined
+        ? {}
+        : { stageConfigurations: selection.stageConfigurations }),
+      profile: selection.profile,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      writeArtifacts: this.writeArtifacts,
     };
   }
 
@@ -134,20 +211,37 @@ export class AiqOpenCodeAdapter {
     cwd: string,
     options: Pick<AiqOpenCodeRunOptions, "stages" | "profile">,
   ): Promise<ResolvedOpenCodeSelection> {
+    const adapterStages =
+      this.stages === undefined || this.stages.length === 0 ? undefined : [...this.stages];
+    const adapterProfile = this.profile;
+    const optionStages = normalizeStageOverride(options.stages, "OpenCode stages");
+    const optionProfile = normalizeProfileOverride(options.profile, "OpenCode profile");
+    const progress =
+      adapterStages === undefined &&
+      adapterProfile === undefined &&
+      optionStages === undefined &&
+      optionProfile === undefined
+        ? await loadFileBackedProgress(cwd)
+        : undefined;
     const resolved = await this.resolveConfigImpl({
       cwd,
-      ...(this.stages === undefined ? {} : { stages: [...this.stages] }),
-      ...(this.profile === undefined ? {} : { profile: this.profile }),
-      ...(options.stages === undefined
-        ? {}
-        : { stages: parseStageList(options.stages, "OpenCode stages") }),
-      ...(options.profile === undefined
-        ? {}
-        : { profile: parseProfile(options.profile, "OpenCode profile") }),
+      ...(adapterStages === undefined
+        ? progress === undefined
+          ? {}
+          : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
+        : { stages: adapterStages }),
+      ...(adapterProfile === undefined ? {} : { profile: adapterProfile }),
+      ...(optionStages === undefined ? {} : { stages: optionStages }),
+      ...(optionProfile === undefined ? {} : { profile: optionProfile }),
       surface: "opencode",
     });
 
-    return mapResolvedSelection(resolved);
+    return {
+      ...mapResolvedSelection(resolved),
+      ...(progress === undefined
+        ? {}
+        : { workflow: createAiqProgressRunSelection(progress, resolved.stages) }),
+    };
   }
 }
 
@@ -170,7 +264,8 @@ export async function buildAiqOpenCodeHooks(
   return {
     tool: {
       aiq_check_files: tool({
-        description: "Run AIQ checks for explicit files with read-only defaults.",
+        description:
+          "Run AIQ checks for explicit files. Defaults to current-stage cumulative stages when .aiq/progress.json is present.",
         args: {
           files: tool.schema.array(tool.schema.string()).min(1),
           outDir: tool.schema.string().optional(),
@@ -195,6 +290,62 @@ export async function buildAiqOpenCodeHooks(
           });
 
           return result.text;
+        },
+      }),
+      aiq_plan_files: tool({
+        description: "Plan AIQ checks for explicit files without executing tools.",
+        args: {
+          files: tool.schema.array(tool.schema.string()).min(1),
+          outDir: tool.schema.string().optional(),
+          stages: tool.schema.array(tool.schema.string()).optional(),
+          profile: tool.schema.string().optional(),
+        },
+        async execute(
+          args: { files: string[]; outDir?: string; stages?: string[]; profile?: string },
+          toolContext: AiqOpenCodeToolContext,
+        ) {
+          const result = await adapter.plan({
+            cwd:
+              toolContext.worktree ??
+              toolContext.directory ??
+              context.worktree ??
+              context.directory,
+            files: args.files,
+            ...(args.outDir === undefined ? {} : { outDir: args.outDir }),
+            ...(args.stages === undefined ? {} : { stages: args.stages }),
+            ...(args.profile === undefined ? {} : { profile: args.profile }),
+            ...(toolContext.signal === undefined ? {} : { signal: toolContext.signal }),
+          });
+
+          return result.text;
+        },
+      }),
+      aiq_status: tool({
+        description: "Report AIQ stage/profile status and current-stage defaults.",
+        args: {},
+        async execute(_args: Record<string, never>, toolContext: AiqOpenCodeToolContext) {
+          const result = await adapter.status({
+            cwd:
+              toolContext.worktree ??
+              toolContext.directory ??
+              context.worktree ??
+              context.directory,
+          });
+          return result.text;
+        },
+      }),
+      aiq_doctor: tool({
+        description: "Validate AIQ OpenCode config/progress stage selection.",
+        args: {},
+        async execute(_args: Record<string, never>, toolContext: AiqOpenCodeToolContext) {
+          const result = await adapter.status({
+            cwd:
+              toolContext.worktree ??
+              toolContext.directory ??
+              context.worktree ??
+              context.directory,
+          });
+          return `AIQ doctor\n${result.text}\nStatus: passed`;
         },
       }),
     },
@@ -235,6 +386,34 @@ function mapResolvedSelection(resolved: ResolvedAiqConfig): ResolvedOpenCodeSele
   };
 }
 
+function formatOpenCodePlanText(plan: RunPlan): string {
+  return [
+    "AIQ plan",
+    `Profile: ${plan.profile}`,
+    `Stages: ${plan.stages.length === 0 ? "none configured yet" : plan.stages.join(", ")}`,
+    `Files: ${plan.summary.fileCount}`,
+    `Tasks: ${plan.summary.taskCount}`,
+  ].join("\n");
+}
+
+function formatOpenCodeStatusText(selection: ResolvedOpenCodeSelection): string {
+  return [
+    "AIQ status",
+    `Profile: ${selection.profile}`,
+    `Stages: ${selection.stages.length === 0 ? "none configured yet" : selection.stages.join(", ")}`,
+    selection.workflow === undefined
+      ? undefined
+      : `Current stage: ${selection.workflow.currentStage.index} ${selection.workflow.currentStage.id}`,
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
+}
+
+async function loadFileBackedProgress(cwd: string) {
+  const progress = await loadAiqProgress(cwd);
+  return progress.source === "file" ? progress : undefined;
+}
+
 function normalizeExplicitFiles(cwd: string, files: readonly string[]): string[] {
   const normalized = new Set<string>();
 
@@ -262,6 +441,22 @@ function parseStageList(values: readonly string[], label: string): StageId[] {
   }
 
   return stages;
+}
+
+function normalizeStageOverride(values: readonly string[] | undefined, label: string) {
+  if (values === undefined) {
+    return undefined;
+  }
+
+  const stages = parseStageList(values, label);
+  return stages.length === 0 ? undefined : stages;
+}
+
+function normalizeProfileOverride(value: string | undefined, label: string) {
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0
+    ? undefined
+    : parseProfile(normalized, label);
 }
 
 function parseProfile(value: string, label: string): AiqProfileName {

@@ -51,6 +51,7 @@ import {
   type SetupGuidanceCommand,
   cliStageShortcutIds,
 } from "./types.js";
+import { createDefaultRunOutput, createRunWorkflowOutput, resolveNextCommand } from "./workflow.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -631,37 +632,6 @@ async function readStatusReport(reportPath: string): Promise<{
   };
 }
 
-function createRunWorkflowOutput(
-  loadedProgress: Awaited<ReturnType<typeof loadAiqProgress>>,
-  request: RunRequest,
-  result: RunResult,
-) {
-  const currentStage = toWorkflowStageOutput(loadedProgress.progress.current_stage);
-  const failedStages = result.stages
-    .filter((stage) => stage.status !== "passed")
-    .map((stage) => toWorkflowStageOutput(resolveStageIndex(stage.stageId)));
-  const currentStageResult = result.stages.find((stage) => stage.stageId === currentStage.id);
-  const currentStageSatisfied =
-    currentStageResult === undefined ? undefined : currentStageResult.status === "passed";
-
-  return {
-    currentStage,
-    ...(currentStageSatisfied === undefined ? {} : { currentStageSatisfied }),
-    debugCommands: failedStages.map((stage) => createDebugCommand(stage.index)),
-    defaultRun: createDefaultRunOutput(loadedProgress.progress.current_stage),
-    failedStages,
-    nextCommand: resolveNextCommand(
-      currentStage,
-      failedStages,
-      result.summary.status,
-      currentStageSatisfied,
-    ),
-    progressPath: loadedProgress.path,
-    progressSource: loadedProgress.source,
-    selectedStages: [...(request.stages ?? [])],
-  };
-}
-
 async function loadOptionalRunProgress(
   parsed: ParsedArgs,
   io: CliIo,
@@ -675,41 +645,6 @@ async function loadOptionalRunProgress(
 
     throw error;
   }
-}
-
-function createDefaultRunOutput(currentStageIndex: number) {
-  const stages = cliStageShortcutIds
-    .slice(0, currentStageIndex + 1)
-    .map((_stageId, index) => toWorkflowStageOutput(index));
-  return {
-    range: `0..${currentStageIndex}`,
-    stages,
-  };
-}
-
-function resolveNextCommand(
-  currentStage: ReturnType<typeof toWorkflowStageOutput>,
-  failedStages: readonly ReturnType<typeof toWorkflowStageOutput>[],
-  status: StatusLastRun["status"],
-  currentStageSatisfied?: boolean,
-): string {
-  const [firstFailedStage] = failedStages;
-  if (firstFailedStage !== undefined) {
-    return createDebugCommand(firstFailedStage.index);
-  }
-
-  if (status === "passed" && currentStageSatisfied === true) {
-    const nextStage = currentStage.index + 1;
-    return nextStage < cliStageShortcutIds.length
-      ? `aiq config --set-stage ${nextStage}`
-      : "aiq run <paths...>";
-  }
-
-  return "aiq run <paths...>";
-}
-
-function createDebugCommand(stageIndex: number): string {
-  return `aiq run <paths...> --only ${stageIndex} --verbose`;
 }
 
 function readRunStatus(value: Record<string, unknown>): StatusLastRun["status"] | undefined {
