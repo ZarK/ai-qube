@@ -210,9 +210,12 @@ async function createPackedPackageFixture(): Promise<{ fixtureFilePath: string; 
     tarballs.push(await packWorkspacePackage(workspace));
   }
 
-  const installResult = await runNpmCommand(["install", "--no-package-lock", ...tarballs], {
-    cwd: root,
-  });
+  const installResult = await runNpmCommand(
+    ["install", "--ignore-scripts", "--no-package-lock", ...tarballs],
+    {
+      cwd: root,
+    },
+  );
   expect(installResult.exitCode).toBe(0);
 
   return { fixtureFilePath, root };
@@ -3383,6 +3386,11 @@ describePackageSmoke("CLI package smoke", () => {
       });
       expect(packedHelp.exitCode).toBe(0);
       expect(packedHelp.stdout).toContain("Usage:");
+      expect(packedHelp.stdout).toContain("aiq <files...>");
+      expect(packedHelp.stdout).toContain("aiq run <files...>");
+      expect(packedHelp.stdout).toContain("0=e2e 1=lint 2=format 3=typecheck");
+      expect(packedHelp.stdout).toContain("--up-to <0-9>");
+      expect(packedHelp.stdout).toContain("--only <0-9>");
       expect(packedHelp.stderr).not.toContain("ReferenceError");
 
       const packedFirstRun = await runNpmCommand(["exec", "--", "aiq"], {
@@ -3397,22 +3405,92 @@ describePackageSmoke("CLI package smoke", () => {
       await access(path.join(packedFixture.root, ".aiq", "aiq.config.json"));
       await access(path.join(packedFixture.root, ".aiq", "progress.json"));
 
-      const packedCheck = await runNpmCommand(
-        ["exec", "--", "aiq", "--", "check", "src/index.ts", "--stage", "lint", "--format", "json"],
+      const packedSetStage = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "config", "--set-stage", "3"],
         { cwd: packedFixture.root },
       );
-      expect(packedCheck.exitCode).toBe(0);
-      expect(packedCheck.stderr).not.toContain("ReferenceError");
+      expect(packedSetStage.exitCode).toBe(0);
+      expect(packedSetStage.stderr).not.toContain("ReferenceError");
+      expect(packedSetStage.stdout).toContain("Set current_stage=3");
 
-      const packedReport = JSON.parse(packedCheck.stdout) as {
+      const packedDefaultRunPlan = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "run", "src/index.ts", "--dry-run", "--format", "json"],
+        { cwd: packedFixture.root },
+      );
+      expect(packedDefaultRunPlan.exitCode).toBe(0);
+      expect(packedDefaultRunPlan.stderr).not.toContain("ReferenceError");
+      const defaultRunPlan = JSON.parse(packedDefaultRunPlan.stdout) as {
+        plan: { stages: string[] };
+      };
+      expect(defaultRunPlan.plan.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+
+      const packedUpToRunPlan = await runNpmCommand(
+        [
+          "exec",
+          "--",
+          "aiq",
+          "--",
+          "run",
+          "src/index.ts",
+          "--up-to",
+          "3",
+          "--dry-run",
+          "--format",
+          "json",
+        ],
+        { cwd: packedFixture.root },
+      );
+      expect(packedUpToRunPlan.exitCode).toBe(0);
+      expect(packedUpToRunPlan.stderr).not.toContain("ReferenceError");
+      const upToRunPlan = JSON.parse(packedUpToRunPlan.stdout) as {
+        plan: { stages: string[] };
+      };
+      expect(upToRunPlan.plan.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+
+      const packedOnlyRun = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "run", "src/index.ts", "--only", "1"],
+        { cwd: packedFixture.root },
+      );
+      expect(packedOnlyRun.exitCode).toBe(0);
+      expect(packedOnlyRun.stderr).not.toContain("ReferenceError");
+      expect(packedOnlyRun.stdout).toContain("AIQ run");
+      expect(packedOnlyRun.stdout).toContain("- lint: passed");
+      expect(packedOnlyRun.stdout).not.toContain("AIQ check");
+
+      const packedImplicitRun = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "src/index.ts", "--only", "1"],
+        { cwd: packedFixture.root },
+      );
+      expect(packedImplicitRun.exitCode).toBe(0);
+      expect(packedImplicitRun.stderr).not.toContain("ReferenceError");
+      expect(packedImplicitRun.stdout).toContain("AIQ run");
+      expect(packedImplicitRun.stdout).toContain("- lint: passed");
+      expect(packedImplicitRun.stdout).not.toContain("AIQ check");
+
+      const packedRunJson = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "run", "src/index.ts", "--only", "1", "--format", "json"],
+        { cwd: packedFixture.root },
+      );
+      expect(packedRunJson.exitCode).toBe(0);
+      expect(packedRunJson.stderr).not.toContain("ReferenceError");
+
+      const packedReport = JSON.parse(packedRunJson.stdout) as {
         context: string;
-        request: { context: string };
+        request: { context: string; selection: { stages: string[] } };
         summary: { fileCount: number; status: string };
       };
       expect(packedReport.context).toBe("cli");
       expect(packedReport.request.context).toBe("cli");
+      expect(packedReport.request.selection.stages).toEqual(["lint"]);
       expect(packedReport.summary.fileCount).toBe(1);
       expect(packedReport.summary.status).toBe("passed");
+
+      const packedRemovedCommand = await runNpmCommand(["exec", "--", "aiq", "--", "ci", "setup"], {
+        cwd: packedFixture.root,
+      });
+      expect(packedRemovedCommand.exitCode).toBe(0);
+      expect(packedRemovedCommand.stderr).not.toContain("ReferenceError");
+      expect(packedRemovedCommand.stdout).toContain("CI setup generation is replaced");
 
       const packedBench = await runNpmCommand(
         [
