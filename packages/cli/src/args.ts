@@ -204,9 +204,11 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
   if (
     parsed.command !== "run" &&
     parsed.command !== "check" &&
-    (parsed.diffOnly || parsed.dryRun || parsed.verbose)
+    (parsed.diffOnly || parsed.dryRun || (parsed.verbose && parsed.command !== "doctor"))
   ) {
-    throw new Error("--diff-only, --dry-run, and --verbose are only supported by run/check.");
+    throw new Error(
+      "--diff-only and --dry-run are only supported by run/check; --verbose is supported by run/check/doctor.",
+    );
   }
 
   if (parsed.help) {
@@ -274,8 +276,6 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.filesFrom !== undefined ||
       parsed.setupSubcommand !== undefined ||
       parsed.stdinFileList ||
-      parsed.stages.length > 0 ||
-      parsed.profile !== undefined ||
       parsed.outDir !== undefined ||
       parsed.benchmarkCorpusRoot !== undefined ||
       parsed.benchmarkScenarioIds.length > 0 ||
@@ -285,7 +285,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.host !== defaultServeHost ||
       parsed.port !== defaultServePort
     ) {
-      throw new Error("The doctor command only accepts --format.");
+      throw new Error(
+        "The doctor command accepts --format, --verbose, --up-to, --only, --stage, and --profile.",
+      );
     }
   }
 

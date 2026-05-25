@@ -34,15 +34,18 @@ export interface ConfigStageOutput {
 
 export interface DoctorCheckOutput {
   detail?: string;
+  install?: string;
   name: string;
   ok: boolean;
   required?: boolean;
+  source?: "bundled" | "external" | "project";
 }
 
 export interface DoctorCommandOutput {
   checks: DoctorCheckOutput[];
   configPath?: string;
   cwd: string;
+  detectedTech: string[];
   ok: boolean;
   progressPath: string;
   progressSource: "defaults" | "file";
@@ -178,6 +181,7 @@ export function formatDoctorOutput(format: OutputFormat, output: DoctorCommandOu
     `Progress: ${output.progressPath} (${output.progressSource})`,
     `Profile: ${output.profile}`,
     `Stages: ${output.stages.join(", ")}`,
+    `Technologies: ${output.detectedTech.length === 0 ? "none detected" : output.detectedTech.join(", ")}`,
     ...output.checks.map(
       (check) =>
         `${formatDoctorCheckStatus(check)} ${check.name}${check.detail === undefined ? "" : ` - ${check.detail}`}`,
@@ -236,6 +240,10 @@ export function formatFirstRunSetupOutput(
 }
 
 function formatDoctorCheckStatus(check: DoctorCheckOutput): "INFO" | "MISSING" | "OK" {
+  if (check.source === "bundled" || check.source === "project") {
+    return "INFO";
+  }
+
   if (check.ok) {
     return check.detail?.startsWith("not detected;") ? "INFO" : "OK";
   }

@@ -1058,6 +1058,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("AIQ doctor");
     expect(stdout.value).toContain("Config:");
     expect(stdout.value).toContain("Progress:");
+    expect(stdout.value).toContain("Technologies:");
     expect(stdout.value).toContain("Node.js runtime");
     expect(stdout.value).toContain("Status:");
     expect(stdout.value).not.toContain("OK Git - not detected");
@@ -1082,10 +1083,18 @@ describe("CLI foundation", () => {
       expect(exitCode).toBe(0);
       expect(stderr.value).toBe("");
       const output = JSON.parse(stdout.value) as {
-        checks: Array<{ name: string; ok: boolean; detail?: string; required?: boolean }>;
+        checks: Array<{
+          detail?: string;
+          name: string;
+          ok: boolean;
+          required?: boolean;
+          source?: string;
+        }>;
+        detectedTech: string[];
         ok: boolean;
       };
       expect(output.ok).toBe(true);
+      expect(output.detectedTech).toEqual([]);
       expect(output.checks).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ name: "Node.js runtime", ok: true }),
@@ -1096,6 +1105,151 @@ describe("CLI foundation", () => {
       );
       expect(output.checks.find((check) => check.name === "Git")).toMatchObject({
         detail: expect.stringContaining("not detected"),
+        required: false,
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("uses persisted current_stage and reports detected technology setup", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-doctor-progress-");
+    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await writeFile(
+      path.join(project.root, ".aiq", "progress.json"),
+      `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
+      "utf8",
+    );
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "doctor", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const output = JSON.parse(stdout.value) as {
+      checks: Array<{ name: string; ok: boolean; source?: string }>;
+      detectedTech: string[];
+      stages: string[];
+    };
+    expect(output.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+    expect(output.detectedTech).toEqual(["TypeScript"]);
+    expect(output.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "Biome JS/TS lint/format tool", source: "bundled" }),
+        expect.objectContaining({ name: "TypeScript compiler", source: "bundled" }),
+      ]),
+    );
+  });
+
+  it("accepts explicit doctor stage targeting flags", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-doctor-stage-targets-");
+
+    const cases: Array<{ args: string[]; stages: string[] }> = [
+      { args: ["--up-to", "3"], stages: ["e2e", "lint", "format", "typecheck"] },
+      { args: ["--only", "1"], stages: ["lint"] },
+      { args: ["--stage", "typecheck"], stages: ["typecheck"] },
+      { args: ["--profile", "standard"], stages: ["lint", "typecheck", "unit"] },
+    ];
+
+    for (const testCase of cases) {
+      const stdout = new MemoryOutput();
+      const stderr = new MemoryOutput();
+      const exitCode = await runCli(
+        ["node", "aiq", "doctor", ...testCase.args, "--format", "json"],
+        {
+          cwd: project.root,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      const output = JSON.parse(stdout.value) as { stages: string[] };
+      expect(output.stages).toEqual(testCase.stages);
+    }
+  });
+
+  it("fails doctor when detected selected tech is missing required host tools", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-doctor-python-missing-"));
+    tempDirs.push(tempDir);
+    await writeFile(path.join(tempDir, "main.py"), "print('hello')\n", "utf8");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(
+        ["node", "aiq", "doctor", "--stage", "typecheck", "--format", "json"],
+        {
+          cwd: tempDir,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stderr.value).toBe("");
+      const output = JSON.parse(stdout.value) as {
+        checks: Array<{ detail?: string; name: string; ok: boolean; required?: boolean }>;
+        detectedTech: string[];
+        ok: boolean;
+      };
+      expect(output.ok).toBe(false);
+      expect(output.detectedTech).toEqual(["Python"]);
+      expect(output.checks.find((check) => check.name === "Python runtime")).toMatchObject({
+        detail: expect.stringContaining("Install Python 3"),
+        ok: false,
+        required: true,
+      });
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("ignores reference-only directories when detecting doctor setup requirements", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-doctor-reference-files-");
+    await mkdir(path.join(project.root, "docs"), { recursive: true });
+    await writeFile(
+      path.join(project.root, "docs", "example.py"),
+      "print('reference only')\n",
+      "utf8",
+    );
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(
+        ["node", "aiq", "doctor", "--stage", "typecheck", "--format", "json"],
+        {
+          cwd: project.root,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      expect(exitCode).toBe(0);
+      expect(stderr.value).toBe("");
+      const output = JSON.parse(stdout.value) as {
+        checks: Array<{ name: string; required?: boolean }>;
+        detectedTech: string[];
+        ok: boolean;
+      };
+      expect(output.ok).toBe(true);
+      expect(output.detectedTech).toEqual(["TypeScript"]);
+      expect(output.checks.find((check) => check.name === "Python runtime")).toMatchObject({
         required: false,
       });
     } finally {

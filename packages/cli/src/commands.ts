@@ -1,4 +1,7 @@
 import { execFile } from "node:child_process";
+import type { Dirent } from "node:fs";
+import { readdir } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
 
 import { runBenchmarkSuite } from "@tjalve/aiq-benchmark";
@@ -9,7 +12,7 @@ import {
   setAiqProgressStage,
 } from "@tjalve/aiq-config-schema";
 import { createRunPlan, runEngine, writePlanArtifact } from "@tjalve/aiq-engine";
-import type { RunRequest } from "@tjalve/aiq-model";
+import type { LanguageId, RunRequest, StageId } from "@tjalve/aiq-model";
 
 import {
   collectFirstRunManifestFiles,
@@ -32,7 +35,7 @@ import {
   formatRunResultOutput,
   formatSetupGuidanceOutput,
 } from "./output.js";
-import { createRunRequest } from "./requests.js";
+import { createRunRequest, resolveCliConfig } from "./requests.js";
 import { formatError } from "./shared.js";
 import type { CliIo, ParsedArgs, SetupGuidanceCommand } from "./types.js";
 
@@ -41,45 +44,146 @@ const execFileAsync = promisify(execFile);
 const doctorPrerequisites = [
   {
     binaries: ["node"],
+    install: "Install Node.js 24 or newer from your normal Node version manager.",
+    minimumMajor: 24,
     required: true,
     name: "Node.js runtime",
   },
   {
     binaries: ["npm"],
+    install: "Install npm with Node.js, or use the package manager configured for this project.",
     required: false,
     name: "npm package manager",
   },
   {
     binaries: ["git"],
+    install: "Install Git from your OS package manager or git-scm.com.",
     required: false,
     name: "Git",
   },
   {
     binaries: ["python3", "python"],
+    install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
     required: false,
     name: "Python runtime",
   },
   {
     binaries: ["go"],
+    install: "Install the Go toolchain from your normal toolchain manager.",
     required: false,
     name: "Go toolchain",
   },
   {
     binaries: ["cargo"],
+    install: "Install Rust and Cargo with rustup or your normal toolchain manager.",
     required: false,
     name: "Rust Cargo",
   },
   {
     binaries: ["dotnet"],
+    install: "Install the .NET SDK for this project.",
     required: false,
     name: ".NET SDK",
   },
   {
     binaries: ["java"],
+    install: "Install a JVM runtime and the project build tool wrapper or Maven/Gradle.",
     required: false,
     name: "JVM runtime",
   },
-] as const;
+] as const satisfies readonly DoctorPrerequisite[];
+
+interface DoctorPrerequisite {
+  binaries: readonly string[];
+  install: string;
+  minimumMajor?: number;
+  name: string;
+  required: boolean;
+}
+
+interface DoctorToolRequirement extends DoctorPrerequisite {
+  source: "external";
+}
+
+interface DoctorBundledTool {
+  detail: string;
+  name: string;
+  source: "bundled" | "project";
+}
+
+const doctorIgnoredDirectoryNames = new Set([
+  ".aiq",
+  ".git",
+  ".github",
+  ".gradle",
+  ".hg",
+  ".idea",
+  ".mypy_cache",
+  ".pytest_cache",
+  ".ruff_cache",
+  ".svn",
+  ".terraform",
+  ".venv",
+  "__pycache__",
+  "bin",
+  "build",
+  "coverage",
+  "dist",
+  "docs",
+  "documentation",
+  "examples",
+  "fixtures",
+  "node_modules",
+  "obj",
+  "samples",
+  "target",
+  "test-projects",
+  "testdata",
+  "vendor",
+  "venv",
+]);
+
+const doctorMaxScannedFiles = 2_000;
+
+const doctorLanguageLabels: Record<LanguageId, string> = {
+  bash: "Bash",
+  css: "CSS",
+  documents: "Documents",
+  dotnet: ".NET",
+  go: "Go",
+  hcl: "HCL",
+  html: "HTML",
+  java: "Java",
+  javascript: "JavaScript",
+  kotlin: "Kotlin",
+  powershell: "PowerShell",
+  python: "Python",
+  rust: "Rust",
+  sql: "SQL",
+  terraform: "Terraform",
+  typescript: "TypeScript",
+  yaml: "YAML",
+};
+
+const doctorLanguageOrder: LanguageId[] = [
+  "javascript",
+  "typescript",
+  "python",
+  "go",
+  "rust",
+  "dotnet",
+  "java",
+  "kotlin",
+  "terraform",
+  "hcl",
+  "bash",
+  "powershell",
+  "html",
+  "css",
+  "yaml",
+  "sql",
+  "documents",
+];
 
 export async function runBenchCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {
   try {
@@ -175,17 +279,51 @@ export async function runPlanCommand(parsed: ParsedArgs, io: CliIo): Promise<num
 
 export async function runDoctorCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {
   try {
-    const [resolvedConfig, loadedProgress, prerequisiteChecks] = await Promise.all([
-      resolveAiqConfig({ cwd: io.cwd, surface: "cli" }),
+    const [resolvedConfig, loadedProgress, detectedLanguages] = await Promise.all([
+      resolveCliConfig(parsed, io, {
+        includeProgressStage: true,
+        surface: "cli",
+      }),
       loadAiqProgress(io.cwd),
-      Promise.all(
-        doctorPrerequisites.map(async (prerequisite) => ({
-          detail: await resolveInstalledCommand(prerequisite.binaries),
-          name: prerequisite.name,
-          required: prerequisite.required,
-        })),
-      ),
+      detectProjectLanguages(io.cwd),
     ]);
+    const externalRequirements = resolveDoctorToolRequirements(
+      detectedLanguages,
+      resolvedConfig.stages,
+    );
+    const prerequisites = mergeDoctorPrerequisites(doctorPrerequisites, externalRequirements);
+    const prerequisiteChecks = await Promise.all(
+      prerequisites.map(async (prerequisite) => {
+        const installed = await resolveInstalledCommand(prerequisite.binaries, {
+          includeVersion: parsed.verbose,
+        });
+        const versionProblem =
+          installed === undefined ? undefined : validateDoctorPrerequisiteVersion(prerequisite);
+        return {
+          detail:
+            versionProblem ??
+            installed ??
+            (prerequisite.required
+              ? `not detected; ${prerequisite.install}`
+              : `not detected; ${prerequisite.install}`),
+          install: prerequisite.install,
+          name: prerequisite.name,
+          ok:
+            installed !== undefined && versionProblem === undefined ? true : !prerequisite.required,
+          required: prerequisite.required,
+          source: "source" in prerequisite ? prerequisite.source : "external",
+        };
+      }),
+    );
+    const bundledChecks = resolveDoctorBundledTools(detectedLanguages, resolvedConfig.stages).map(
+      (tool) => ({
+        detail: tool.detail,
+        name: tool.name,
+        ok: true,
+        required: false,
+        source: tool.source,
+      }),
+    );
     const checks = [
       {
         detail: resolvedConfig.configPath ?? "using built-in defaults",
@@ -197,16 +335,8 @@ export async function runDoctorCommand(parsed: ParsedArgs, io: CliIo): Promise<n
         name: "Progress state is valid",
         ok: true,
       },
-      ...prerequisiteChecks.map((check) => ({
-        detail:
-          check.detail ??
-          (check.required
-            ? "not detected; install this required CLI runtime prerequisite"
-            : "not detected; install it if selected stages require it"),
-        name: check.name,
-        ok: check.detail !== undefined || !check.required,
-        required: check.required,
-      })),
+      ...prerequisiteChecks,
+      ...bundledChecks,
     ];
     io.stdout.write(
       formatDoctorOutput(parsed.format, {
@@ -215,6 +345,7 @@ export async function runDoctorCommand(parsed: ParsedArgs, io: CliIo): Promise<n
           ? {}
           : { configPath: resolvedConfig.configPath }),
         cwd: resolvedConfig.cwd,
+        detectedTech: formatDetectedLanguages(detectedLanguages),
         ok: checks.every((check) => check.ok),
         progressPath: loadedProgress.path,
         progressSource: loadedProgress.source,
@@ -343,12 +474,439 @@ export async function runCheckCommand(parsed: ParsedArgs, io: CliIo): Promise<nu
   }
 }
 
+async function detectProjectLanguages(cwd: string): Promise<Set<LanguageId>> {
+  const languages = new Set<LanguageId>();
+  await collectProjectLanguages(cwd, languages, { scannedFiles: 0 });
+  return languages;
+}
+
+async function collectProjectLanguages(
+  directory: string,
+  languages: Set<LanguageId>,
+  state: { scannedFiles: number },
+): Promise<void> {
+  if (state.scannedFiles >= doctorMaxScannedFiles) {
+    return;
+  }
+
+  let entries: Dirent[];
+  try {
+    entries = await readdir(directory, { withFileTypes: true });
+  } catch {
+    return;
+  }
+
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    if (state.scannedFiles >= doctorMaxScannedFiles) {
+      return;
+    }
+
+    const entryPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      if (!doctorIgnoredDirectoryNames.has(entry.name)) {
+        await collectProjectLanguages(entryPath, languages, state);
+      }
+      continue;
+    }
+
+    if (!entry.isFile()) {
+      continue;
+    }
+
+    state.scannedFiles += 1;
+    addDetectedLanguages(entry.name, languages);
+    addMarkerLanguages(entry.name, languages);
+  }
+}
+
+function addMarkerLanguages(fileName: string, languages: Set<LanguageId>): void {
+  switch (fileName) {
+    case "Cargo.toml":
+      languages.add("rust");
+      return;
+    case "go.mod":
+      languages.add("go");
+      return;
+    case "package.json":
+      languages.add("javascript");
+      return;
+    case "pyproject.toml":
+    case "requirements.txt":
+      languages.add("python");
+      return;
+    case "tsconfig.json":
+      languages.add("typescript");
+      return;
+    case "pom.xml":
+    case "build.gradle":
+    case "build.gradle.kts":
+    case "settings.gradle":
+    case "settings.gradle.kts":
+      languages.add("java");
+      return;
+  }
+}
+
+function addDetectedLanguages(fileName: string, languages: Set<LanguageId>): void {
+  const extension = path.extname(fileName).toLowerCase();
+  switch (extension) {
+    case ".bash":
+    case ".bats":
+    case ".sh":
+      languages.add("bash");
+      return;
+    case ".cjs":
+    case ".js":
+    case ".jsx":
+    case ".mjs":
+      languages.add("javascript");
+      return;
+    case ".css":
+      languages.add("css");
+      return;
+    case ".cs":
+    case ".csproj":
+    case ".fsproj":
+    case ".sln":
+    case ".slnx":
+    case ".vbproj":
+      languages.add("dotnet");
+      return;
+    case ".go":
+      languages.add("go");
+      return;
+    case ".hcl":
+      languages.add("hcl");
+      return;
+    case ".htm":
+    case ".html":
+      languages.add("html");
+      return;
+    case ".java":
+      languages.add("java");
+      return;
+    case ".kt":
+    case ".kts":
+      languages.add("kotlin");
+      return;
+    case ".ps1":
+    case ".psd1":
+    case ".psm1":
+      languages.add("powershell");
+      return;
+    case ".py":
+    case ".pyi":
+      languages.add("python");
+      return;
+    case ".rs":
+      languages.add("rust");
+      return;
+    case ".sql":
+      languages.add("sql");
+      return;
+    case ".tf":
+    case ".tfvars":
+      languages.add("terraform");
+      return;
+    case ".ts":
+    case ".tsx":
+    case ".cts":
+    case ".mts":
+      languages.add("typescript");
+      return;
+    case ".yaml":
+    case ".yml":
+      languages.add("yaml");
+      return;
+  }
+}
+
+function formatDetectedLanguages(languages: ReadonlySet<LanguageId>): string[] {
+  return doctorLanguageOrder
+    .filter((language) => languages.has(language))
+    .map((language) => doctorLanguageLabels[language]);
+}
+
+function resolveDoctorToolRequirements(
+  languages: ReadonlySet<LanguageId>,
+  stages: readonly StageId[],
+): DoctorToolRequirement[] {
+  const requirements = new Map<string, DoctorToolRequirement>();
+  const selected = new Set(stages);
+
+  const addRequirement = (requirement: DoctorToolRequirement) => {
+    requirements.set(requirement.name, requirement);
+  };
+
+  if (
+    languages.has("python") &&
+    usesAnyStage(selected, [
+      "lint",
+      "format",
+      "typecheck",
+      "unit",
+      "sloc",
+      "complexity",
+      "maintainability",
+      "coverage",
+    ])
+  ) {
+    addRequirement({
+      binaries: ["python3", "python"],
+      install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
+      name: "Python runtime",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    languages.has("go") &&
+    usesAnyStage(selected, [
+      "lint",
+      "format",
+      "typecheck",
+      "unit",
+      "sloc",
+      "complexity",
+      "maintainability",
+      "coverage",
+    ])
+  ) {
+    addRequirement({
+      binaries: ["go"],
+      install: "Install the Go toolchain from your normal toolchain manager.",
+      name: "Go toolchain",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    languages.has("rust") &&
+    usesAnyStage(selected, [
+      "lint",
+      "format",
+      "typecheck",
+      "unit",
+      "sloc",
+      "complexity",
+      "maintainability",
+      "coverage",
+    ])
+  ) {
+    addRequirement({
+      binaries: ["cargo"],
+      install: "Install Rust and Cargo with rustup or your normal toolchain manager.",
+      name: "Rust Cargo",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    languages.has("dotnet") &&
+    usesAnyStage(selected, [
+      "lint",
+      "format",
+      "typecheck",
+      "unit",
+      "sloc",
+      "complexity",
+      "maintainability",
+      "coverage",
+    ])
+  ) {
+    addRequirement({
+      binaries: ["dotnet"],
+      install: "Install the .NET SDK for this project.",
+      name: ".NET SDK",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    (languages.has("java") || languages.has("kotlin")) &&
+    usesAnyStage(selected, [
+      "lint",
+      "format",
+      "typecheck",
+      "unit",
+      "sloc",
+      "complexity",
+      "maintainability",
+      "coverage",
+    ])
+  ) {
+    addRequirement({
+      binaries: ["java"],
+      install: "Install a JVM runtime and the project build tool wrapper or Maven/Gradle.",
+      name: "JVM runtime",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    (languages.has("terraform") || languages.has("hcl")) &&
+    usesAnyStage(selected, ["lint", "format", "typecheck"])
+  ) {
+    addRequirement({
+      binaries: ["terraform"],
+      install: "Install Terraform CLI to enable Terraform/HCL lint, format, and validation.",
+      name: "Terraform CLI",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (
+    languages.has("powershell") &&
+    usesAnyStage(selected, ["lint", "format", "unit", "coverage"])
+  ) {
+    addRequirement({
+      binaries:
+        process.platform === "win32"
+          ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
+          : ["pwsh"],
+      install: "Install PowerShell 7 (pwsh) and project PowerShell modules.",
+      name: "PowerShell runtime",
+      required: true,
+      source: "external",
+    });
+  }
+
+  if (usesAnyStage(selected, ["sloc", "complexity", "maintainability"])) {
+    const lizardLanguages: LanguageId[] = [
+      "javascript",
+      "typescript",
+      "go",
+      "rust",
+      "dotnet",
+      "java",
+      "kotlin",
+    ];
+    if (lizardLanguages.some((language) => languages.has(language))) {
+      addRequirement({
+        binaries: ["lizard"],
+        install: "Install lizard where AIQ runs to enable non-Python metrics stages.",
+        name: "Lizard metrics tool",
+        required: true,
+        source: "external",
+      });
+    }
+  }
+
+  return [...requirements.values()];
+}
+
+function resolveDoctorBundledTools(
+  languages: ReadonlySet<LanguageId>,
+  stages: readonly StageId[],
+): DoctorBundledTool[] {
+  const selected = new Set(stages);
+  const checks = new Map<string, DoctorBundledTool>();
+  const add = (tool: DoctorBundledTool) => {
+    checks.set(tool.name, tool);
+  };
+
+  if (
+    (languages.has("javascript") || languages.has("typescript")) &&
+    usesAnyStage(selected, ["lint", "format"])
+  ) {
+    add({
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "Biome JS/TS lint/format tool",
+      source: "bundled",
+    });
+  }
+
+  if (languages.has("typescript") && selected.has("typecheck")) {
+    add({
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "TypeScript compiler",
+      source: "bundled",
+    });
+  }
+
+  if (
+    usesAnyStage(selected, ["unit", "coverage"]) &&
+    (languages.has("javascript") || languages.has("typescript"))
+  ) {
+    add({
+      detail: "uses the project's configured npm test runner when present",
+      name: "JS/TS test runner",
+      source: "project",
+    });
+  }
+
+  if (
+    usesAnyStage(selected, ["lint", "format"]) &&
+    (languages.has("html") || languages.has("css") || languages.has("yaml") || languages.has("sql"))
+  ) {
+    add({
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "Bundled web/data document tools",
+      source: "bundled",
+    });
+  }
+
+  if (selected.has("security") && languages.size > 0) {
+    add({
+      detail: "provided by the @tjalve/aiq package runtime",
+      name: "AIQ shared security scanner",
+      source: "bundled",
+    });
+  }
+
+  return [...checks.values()];
+}
+
+function mergeDoctorPrerequisites(
+  prerequisites: readonly DoctorPrerequisite[],
+  requirements: readonly DoctorToolRequirement[],
+): Array<DoctorPrerequisite | DoctorToolRequirement> {
+  const merged = new Map<string, DoctorPrerequisite | DoctorToolRequirement>();
+  for (const prerequisite of prerequisites) {
+    merged.set(prerequisite.name, prerequisite);
+  }
+
+  for (const requirement of requirements) {
+    merged.set(requirement.name, requirement);
+  }
+
+  return [...merged.values()];
+}
+
+function usesAnyStage(selected: ReadonlySet<StageId>, stages: readonly StageId[]): boolean {
+  return stages.some((stage) => selected.has(stage));
+}
+
+function validateDoctorPrerequisiteVersion(prerequisite: DoctorPrerequisite): string | undefined {
+  if (prerequisite.minimumMajor === undefined) {
+    return undefined;
+  }
+
+  if (!prerequisite.binaries.includes("node")) {
+    return undefined;
+  }
+
+  const major = Number.parseInt(process.versions.node.split(".")[0] ?? "", 10);
+  if (Number.isFinite(major) && major >= prerequisite.minimumMajor) {
+    return undefined;
+  }
+
+  return `detected Node.js ${process.version}; ${prerequisite.install}`;
+}
+
 async function resolveInstalledCommand(
   commandNames: readonly string[],
+  options: { includeVersion?: boolean } = {},
 ): Promise<string | undefined> {
   for (const commandName of commandNames) {
     if (commandName === "node") {
-      return process.execPath;
+      return options.includeVersion ? `${process.execPath}; ${process.version}` : "detected";
     }
 
     const result = await runCommand(process.platform === "win32" ? "where" : "which", [
@@ -359,11 +917,28 @@ async function resolveInstalledCommand(
         .split(/\r?\n/u)
         .map((value) => value.trim())
         .find((value) => value.length > 0);
-      return resolved ?? commandName;
+      const resolvedCommand = resolved ?? commandName;
+      if (!options.includeVersion) {
+        return "detected";
+      }
+      const version = await resolveCommandVersion(resolvedCommand);
+      return version === undefined ? resolvedCommand : `${resolvedCommand}; ${version}`;
     }
   }
 
   return undefined;
+}
+
+async function resolveCommandVersion(command: string): Promise<string | undefined> {
+  const result = await runCommand(command, ["--version"]);
+  if (result.exitCode !== 0) {
+    return undefined;
+  }
+
+  return result.stdout
+    .split(/\r?\n/u)
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
 }
 
 async function runCommand(

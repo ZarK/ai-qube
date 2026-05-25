@@ -96,7 +96,7 @@ Usage:
   aiq bench [--corpus-root <path>] [--scenario <id>] [--tag <tag>] [--kind <cold|warm|diff-only>]
   aiq check <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq config [--print-config | --set-stage <0-9>]
-  aiq doctor
+  aiq doctor [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq install-tools
   aiq hook install
   aiq ci setup
@@ -156,7 +156,7 @@ Stage selection:
 Operational checks:
   --dry-run prints the run plan without executing tools or writing artifacts.
   --verbose adds command/tool details to text run output.
-  aiq doctor validates config/progress state and reports detected runtime prerequisites.
+  aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
   install-tools, hook install, ci setup, and ignore write are replaced by explicit guidance; use aiq doctor for diagnostics and aiq config for canonical project state.
 
 Config state:
