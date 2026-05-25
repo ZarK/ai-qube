@@ -7,6 +7,7 @@ import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defaultConfig } from "../../config-schema/src/index.js";
+import { parseHookArgs } from "../src/bin/aiq-hook.js";
 import { AiqHookCancelledError, renderPreCommitHookScript, runAiqHook } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -299,6 +300,12 @@ describe("hook adapter", () => {
     expect(script).toContain("#!/usr/bin/env sh");
     expect(script).toContain("git rev-parse --show-toplevel");
     expect(script).toContain("node_modules/.bin/aiq-hook");
+  });
+
+  it("rejects multiple hook stage selector flags", () => {
+    expect(() => parseHookArgs(["--only", "1", "--stage", "lint"])).toThrowError(
+      "Specify only one of --only, --up-to, or --stage.",
+    );
   });
 });
 

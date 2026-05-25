@@ -141,10 +141,21 @@ describe("MCP adapter", () => {
     });
 
     const check = await adapter.check({ files: ["index.ts"] });
+    const blankOverrideCheck = await adapter.check({
+      files: ["index.ts"],
+      profile: " ",
+      stages: [" "],
+    });
     const plan = await adapter.plan({ files: ["index.ts"] });
     const status = await adapter.status();
 
     expect(check.report.request.selection.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+    expect(blankOverrideCheck.report.request.selection.stages).toEqual([
+      "e2e",
+      "lint",
+      "format",
+      "typecheck",
+    ]);
     expect(plan.plan.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
     expect(status.workflow).toMatchObject({
       currentStage: { id: "typecheck", index: 3 },

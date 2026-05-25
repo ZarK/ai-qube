@@ -18,6 +18,7 @@ import {
   loadAiqProgress,
   resolveAiqConfig,
   resolveAiqProgressStageIds,
+  resolveAiqProgressStageIndex,
   setAiqProgressStage,
   validateAiqConfigFile,
   validateAiqProgressState,
@@ -78,6 +79,12 @@ describe("config schema", () => {
       progressSource: "file",
       selectedStages: ["e2e", "lint", "format", "typecheck"],
     });
+  });
+
+  it("fails fast when resolving an unknown progress stage index", () => {
+    expect(() => resolveAiqProgressStageIndex("unknown" as never)).toThrowError(
+      "Unknown AIQ stage id 'unknown'",
+    );
   });
 
   it("prefers .aiq/aiq.config.json during ancestor discovery", async () => {

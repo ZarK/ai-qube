@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { stderr, stdout } from "node:process";
+import { pathToFileURL } from "node:url";
 
 import { type AiqProfileName, aiqProfileNames, aiqStageLadderIds } from "@tjalve/aiq-config-schema";
 import { type StageId, stageIds } from "@tjalve/aiq-model";
@@ -15,7 +16,7 @@ Usage:
 Defaults to cumulative stages through .aiq/progress.json current_stage when present; explicit stage/profile flags override that selection.
 `;
 
-async function main(argv: string[]): Promise<number> {
+export async function main(argv: string[]): Promise<number> {
   if (argv.includes("--help") || argv.includes("-h")) {
     stdout.write(helpText);
     return 0;
@@ -36,20 +37,32 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-process.exitCode = await main(process.argv);
+if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
+  process.exitCode = await main(process.argv);
+}
 
 function formatError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function parseHookArgs(argv: string[]): { profile?: AiqProfileName; stages?: StageId[] } {
+export function parseHookArgs(argv: string[]): { profile?: AiqProfileName; stages?: StageId[] } {
   let profile: AiqProfileName | undefined;
   let stages: StageId[] | undefined;
+  let stageSelector: "--only" | "--stage" | "--up-to" | undefined;
+
+  const assertSingleStageSelector = (next: "--only" | "--stage" | "--up-to"): void => {
+    if (stageSelector !== undefined) {
+      throw new Error("Specify only one of --only, --up-to, or --stage.");
+    }
+
+    stageSelector = next;
+  };
 
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     switch (arg) {
       case "--only": {
+        assertSingleStageSelector("--only");
         const stageIndex = parseStageIndex(argv[++index], "--only");
         const stage = aiqStageLadderIds[stageIndex];
         if (stage === undefined) {
@@ -59,11 +72,13 @@ function parseHookArgs(argv: string[]): { profile?: AiqProfileName; stages?: Sta
         break;
       }
       case "--up-to": {
+        assertSingleStageSelector("--up-to");
         const stageIndex = parseStageIndex(argv[++index], "--up-to");
         stages = [...aiqStageLadderIds.slice(0, stageIndex + 1)];
         break;
       }
       case "--stage": {
+        assertSingleStageSelector("--stage");
         const stage = argv[++index];
         if (stage === undefined || !stageIds.includes(stage as StageId)) {
           throw new Error(`--stage must be one of ${stageIds.join(", ")}.`);

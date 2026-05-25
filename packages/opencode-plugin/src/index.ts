@@ -211,27 +211,28 @@ export class AiqOpenCodeAdapter {
     cwd: string,
     options: Pick<AiqOpenCodeRunOptions, "stages" | "profile">,
   ): Promise<ResolvedOpenCodeSelection> {
+    const adapterStages =
+      this.stages === undefined || this.stages.length === 0 ? undefined : [...this.stages];
+    const adapterProfile = this.profile;
+    const optionStages = normalizeStageOverride(options.stages, "OpenCode stages");
+    const optionProfile = normalizeProfileOverride(options.profile, "OpenCode profile");
     const progress =
-      this.stages === undefined &&
-      this.profile === undefined &&
-      options.stages === undefined &&
-      options.profile === undefined
+      adapterStages === undefined &&
+      adapterProfile === undefined &&
+      optionStages === undefined &&
+      optionProfile === undefined
         ? await loadFileBackedProgress(cwd)
         : undefined;
     const resolved = await this.resolveConfigImpl({
       cwd,
-      ...(this.stages === undefined
+      ...(adapterStages === undefined
         ? progress === undefined
           ? {}
           : { stages: resolveAiqProgressStageIds(progress.progress.current_stage) }
-        : { stages: [...this.stages] }),
-      ...(this.profile === undefined ? {} : { profile: this.profile }),
-      ...(options.stages === undefined
-        ? {}
-        : { stages: parseStageList(options.stages, "OpenCode stages") }),
-      ...(options.profile === undefined
-        ? {}
-        : { profile: parseProfile(options.profile, "OpenCode profile") }),
+        : { stages: adapterStages }),
+      ...(adapterProfile === undefined ? {} : { profile: adapterProfile }),
+      ...(optionStages === undefined ? {} : { stages: optionStages }),
+      ...(optionProfile === undefined ? {} : { profile: optionProfile }),
       surface: "opencode",
     });
 
@@ -440,6 +441,22 @@ function parseStageList(values: readonly string[], label: string): StageId[] {
   }
 
   return stages;
+}
+
+function normalizeStageOverride(values: readonly string[] | undefined, label: string) {
+  if (values === undefined) {
+    return undefined;
+  }
+
+  const stages = parseStageList(values, label);
+  return stages.length === 0 ? undefined : stages;
+}
+
+function normalizeProfileOverride(value: string | undefined, label: string) {
+  const normalized = value?.trim();
+  return normalized === undefined || normalized.length === 0
+    ? undefined
+    : parseProfile(normalized, label);
 }
 
 function parseProfile(value: string, label: string): AiqProfileName {

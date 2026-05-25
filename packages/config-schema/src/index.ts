@@ -465,7 +465,14 @@ export function resolveAiqProgressStageIds(currentStage: AiqProgressStageIndex):
 }
 
 export function resolveAiqProgressStageIndex(stageId: AiqStageId): number {
-  return aiqStageLadderIds.indexOf(stageId);
+  const index = aiqStageLadderIds.indexOf(stageId);
+  if (index < 0) {
+    throw new Error(
+      `Unknown AIQ stage id '${stageId}'. Expected one of ${aiqStageLadderIds.join(", ")}.`,
+    );
+  }
+
+  return index;
 }
 
 export function toAiqWorkflowStage(index: number): AiqWorkflowStage {

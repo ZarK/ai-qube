@@ -171,10 +171,21 @@ describe("OpenCode adapter", () => {
     });
 
     const check = await adapter.run({ files: ["src/index.ts"] });
+    const blankOverrideCheck = await adapter.run({
+      files: ["src/index.ts"],
+      profile: " ",
+      stages: [" "],
+    });
     const plan = await adapter.plan({ files: ["src/index.ts"] });
     const status = await adapter.status();
 
     expect(check.report.request.selection.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
+    expect(blankOverrideCheck.report.request.selection.stages).toEqual([
+      "e2e",
+      "lint",
+      "format",
+      "typecheck",
+    ]);
     expect(plan.plan.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
     expect(status.workflow).toMatchObject({
       currentStage: { id: "typecheck", index: 3 },

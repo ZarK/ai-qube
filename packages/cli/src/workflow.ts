@@ -1,6 +1,7 @@
 import {
   type LoadedAiqProgress,
   createAiqProgressRunSelection,
+  resolveAiqProgressStageIds,
   resolveAiqProgressStageIndex,
   toAiqWorkflowStage,
 } from "@tjalve/aiq-config-schema";
@@ -20,7 +21,11 @@ export function createRunWorkflowOutput(
   request: RunRequest,
   result: RunResult,
 ): RunWorkflowOutput {
-  return createRunWorkflowForStages(loadedProgress, [...(request.stages ?? [])], result);
+  return createRunWorkflowForStages(
+    loadedProgress,
+    request.stages ?? resolveAiqProgressStageIds(loadedProgress.progress.current_stage),
+    result,
+  );
 }
 
 export function createRunWorkflowForStages(
