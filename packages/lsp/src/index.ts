@@ -3,20 +3,19 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
+  AiqEngineCancelledError,
   type AiqProfileName,
-  loadAiqProgress,
-  resolveAiqConfig,
-  resolveAiqProgressStageIds,
-} from "@tjalve/aiq-config-schema";
-import { AiqEngineCancelledError, runEngine } from "@tjalve/aiq-engine";
-import {
   type Diagnostic,
   type RunRequest,
   type RunResult,
   type RunStageConfigurations,
   type StageId,
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+  runEngine,
   stageIds,
-} from "@tjalve/aiq-model";
+} from "@tjalve/aiq/api";
 
 export const lspDiagnosticSeverities = {
   error: 1,

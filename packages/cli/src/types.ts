@@ -156,6 +156,9 @@ Operational checks:
   aiq status shows the current stage, default cumulative run range, latest artifact paths, last run status, and next suggested command.
   install-tools, hook install, ci setup, and ignore write are replaced by explicit guidance; use aiq doctor for diagnostics and aiq config for canonical project state.
 
+Package surface:
+  @tjalve/aiq exports the CLI; @tjalve/aiq/api exports the model, config, engine, reporter, and benchmark APIs used by adapters.
+
 Config state:
   aiq config initializes .aiq/aiq.config.json and .aiq/progress.json.
   aiq config --print-config prints effective config plus progress/current-stage state.

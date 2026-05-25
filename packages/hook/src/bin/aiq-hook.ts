@@ -2,9 +2,14 @@
 import { stderr, stdout } from "node:process";
 import { pathToFileURL } from "node:url";
 
-import { type AiqProfileName, aiqProfileNames, aiqStageLadderIds } from "@tjalve/aiq-config-schema";
-import { type StageId, stageIds } from "@tjalve/aiq-model";
-import { formatRunResultAsText } from "@tjalve/aiq-reporters";
+import {
+  type AiqProfileName,
+  type StageId,
+  aiqProfileNames,
+  aiqStageLadderIds,
+  formatRunResultAsText,
+  stageIds,
+} from "@tjalve/aiq/api";
 
 import { runAiqHook } from "../index.js";
 

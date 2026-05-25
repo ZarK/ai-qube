@@ -6,24 +6,20 @@ import { promisify } from "node:util";
 import {
   type AiqProfileName,
   type AiqProgressRunSelection,
-  createAiqProgressRunSelection,
-  loadAiqProgress,
-  resolveAiqConfig,
-  resolveAiqProgressStageIds,
-} from "@tjalve/aiq-config-schema";
-import { runEngine } from "@tjalve/aiq-engine";
-import {
+  type GitHubAnnotation,
   type RunRequest,
   type RunResult,
   type RunStageConfigurations,
   type StageId,
-  stageIds,
-} from "@tjalve/aiq-model";
-import {
-  type GitHubAnnotation,
   collectGitHubAnnotations,
+  createAiqProgressRunSelection,
   formatRunResultAsText,
-} from "@tjalve/aiq-reporters";
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+  runEngine,
+  stageIds,
+} from "@tjalve/aiq/api";
 
 const execFileAsync = promisify(execFile);
 

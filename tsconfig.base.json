@@ -19,6 +19,7 @@
     "types": ["node"],
     "baseUrl": ".",
     "paths": {
+      "@tjalve/aiq/api": ["packages/cli/src/api.ts"],
       "@tjalve/aiq": ["packages/cli/src/index.ts"],
       "@tjalve/aiq-benchmark": ["packages/benchmark/src/index.ts"],
       "@tjalve/aiq-config-schema": ["packages/config-schema/src/index.ts"],

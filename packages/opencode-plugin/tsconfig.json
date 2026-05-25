@@ -6,16 +6,7 @@
   },
   "references": [
     {
-      "path": "../config-schema"
-    },
-    {
-      "path": "../model"
-    },
-    {
-      "path": "../engine"
-    },
-    {
-      "path": "../reporters"
+      "path": "../cli"
     }
   ],
   "include": ["src/**/*.ts"]

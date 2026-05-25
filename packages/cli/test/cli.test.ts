@@ -42,6 +42,13 @@ const publishedPackageWorkspaces = [
   "packages/opencode-plugin",
   "packages/reporters",
 ] as const;
+const adapterPackageWorkspaces = [
+  "packages/github-action",
+  "packages/hook",
+  "packages/lsp",
+  "packages/mcp",
+  "packages/opencode-plugin",
+] as const;
 const describePackageSmoke = process.env.AIQ_SMOKE === "1" ? describe : describe.skip;
 
 let packageSmokeBuildPromise: Promise<void> | undefined;
@@ -317,14 +324,28 @@ afterEach(async () => {
 
 describe("CLI foundation", () => {
   it("keeps published package metadata aligned with the clean repository", async () => {
+    const publishedPackageNames = new Set(
+      await Promise.all(
+        publishedPackageWorkspaces.map(async (publishedWorkspace) => {
+          const publishedPackageJson = JSON.parse(
+            await readFile(path.join(repoRoot, publishedWorkspace, "package.json"), "utf8"),
+          ) as { name: string };
+          return publishedPackageJson.name;
+        }),
+      ),
+    );
+
     for (const workspace of publishedPackageWorkspaces) {
       const packageJson = JSON.parse(
         await readFile(path.join(repoRoot, workspace, "package.json"), "utf8"),
       ) as {
         bin?: Record<string, string>;
+        dependencies?: Record<string, string>;
         files: string[];
+        name: string;
         publishConfig: { access: string; provenance: boolean };
         repository: { directory: string; type: string; url: string };
+        version: string;
       };
 
       expect(packageJson.publishConfig).toEqual({ access: "public", provenance: true });
@@ -337,18 +358,44 @@ describe("CLI foundation", () => {
       expect(
         Object.values(packageJson.bin ?? {}).every((binPath) => !binPath.startsWith("./")),
       ).toBe(true);
+
+      for (const [dependencyName, dependencyVersion] of Object.entries(
+        packageJson.dependencies ?? {},
+      )) {
+        if (!dependencyName.startsWith("@tjalve/aiq")) {
+          continue;
+        }
+
+        expect(publishedPackageNames.has(dependencyName)).toBe(true);
+        expect(dependencyVersion).toBe(packageJson.version);
+      }
+    }
+  });
+
+  it("keeps adapter packages on the canonical aiq package surface", async () => {
+    for (const workspace of adapterPackageWorkspaces) {
+      const packageJson = JSON.parse(
+        await readFile(path.join(repoRoot, workspace, "package.json"), "utf8"),
+      ) as { dependencies?: Record<string, string>; version: string };
+      const aiqDependencies = Object.keys(packageJson.dependencies ?? {}).filter((dependency) =>
+        dependency.startsWith("@tjalve/aiq"),
+      );
+
+      expect(packageJson.dependencies?.["@tjalve/aiq"]).toBe(packageJson.version);
+      expect(aiqDependencies).toEqual(["@tjalve/aiq"]);
     }
   });
 
   it("restores the published quality bin alias", async () => {
     const packageJson = JSON.parse(
       await readFile(path.join(repoRoot, "packages", "cli", "package.json"), "utf8"),
-    ) as { bin?: Record<string, string> };
+    ) as { bin?: Record<string, string>; exports?: Record<string, unknown> };
 
     expect(packageJson.bin).toMatchObject({
       aiq: "dist/bin/aiq.js",
       quality: "dist/bin/aiq.js",
     });
+    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([".", "./api"]);
   });
 
   it("shows help and exits with 0", async () => {
@@ -399,6 +446,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
     expect(stdout.value).toContain("aiq status shows the current stage");
+    expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
     expect(stdout.value).toContain("aiq watch <files...>");
     expect(stdout.value).toContain("aiq serve [--host <host>] [--port <port>]");
   });
@@ -3902,7 +3950,7 @@ describePackageSmoke("CLI package smoke", () => {
       const packedFixture = await createPackedPackageFixture();
       const cliPackage = packedFixture.packages.find((entry) => entry.workspace === "packages/cli");
       expect(cliPackage?.files.map((entry) => entry.path).sort()).toEqual(
-        expect.arrayContaining(["README.md", "dist/bin/aiq.js"]),
+        expect.arrayContaining(["README.md", "dist/api.js", "dist/bin/aiq.js"]),
       );
 
       const installedPackageReadme = await readFile(
@@ -4074,7 +4122,7 @@ describePackageSmoke("CLI package smoke", () => {
         },
       });
 
-      const packedImport = await runCommand(
+      const packedTopLevelImport = await runCommand(
         process.execPath,
         [
           "--input-type=module",
@@ -4083,9 +4131,39 @@ describePackageSmoke("CLI package smoke", () => {
         ],
         { cwd: packedFixture.root },
       );
-      expect(packedImport.exitCode).toBe(0);
-      expect(packedImport.stderr).toBe("");
-      expect(packedImport.stdout.trim()).toBe("function");
+      expect(packedTopLevelImport.exitCode).toBe(0);
+      expect(packedTopLevelImport.stderr).toBe("");
+      expect(packedTopLevelImport.stdout.trim()).toBe("function");
+
+      const packedApiImport = await runCommand(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          [
+            "const api = await import('@tjalve/aiq/api');",
+            "console.log(JSON.stringify({",
+            "runEngine: typeof api.runEngine,",
+            "createRunPlan: typeof api.createRunPlan,",
+            "resolveAiqConfig: typeof api.resolveAiqConfig,",
+            "stageIds: Array.isArray(api.stageIds),",
+            "formatRunResultAsText: typeof api.formatRunResultAsText,",
+            "runBenchmarkSuite: typeof api.runBenchmarkSuite",
+            "}));",
+          ].join(" "),
+        ],
+        { cwd: packedFixture.root },
+      );
+      expect(packedApiImport.exitCode).toBe(0);
+      expect(packedApiImport.stderr).toBe("");
+      expect(JSON.parse(packedApiImport.stdout) as Record<string, unknown>).toEqual({
+        createRunPlan: "function",
+        formatRunResultAsText: "function",
+        resolveAiqConfig: "function",
+        runBenchmarkSuite: "function",
+        runEngine: "function",
+        stageIds: true,
+      });
     });
   }, 120_000);
 });

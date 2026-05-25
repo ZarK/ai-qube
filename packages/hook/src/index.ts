@@ -3,15 +3,19 @@ import path from "node:path";
 import { promisify } from "node:util";
 
 import {
+  AiqEngineCancelledError,
   type AiqProfileName,
   type AiqProgressRunSelection,
+  type RunRequest,
+  type RunResult,
+  type RunStageConfigurations,
+  type StageId,
   createAiqProgressRunSelection,
   loadAiqProgress,
   resolveAiqConfig,
   resolveAiqProgressStageIds,
-} from "@tjalve/aiq-config-schema";
-import { AiqEngineCancelledError, runEngine } from "@tjalve/aiq-engine";
-import type { RunRequest, RunResult, RunStageConfigurations, StageId } from "@tjalve/aiq-model";
+  runEngine,
+} from "@tjalve/aiq/api";
 
 const execFileAsync = promisify(execFile);
 

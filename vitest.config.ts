@@ -9,6 +9,7 @@ const runInCi = Boolean(process.env.CI);
 export default defineConfig({
   resolve: {
     alias: {
+      "@tjalve/aiq/api": path.resolve(workspaceRoot, "packages/cli/src/api.ts"),
       "@tjalve/aiq": path.resolve(workspaceRoot, "packages/cli/src/index.ts"),
       "@tjalve/aiq-benchmark": path.resolve(workspaceRoot, "packages/benchmark/src/index.ts"),
       "@tjalve/aiq-config-schema": path.resolve(

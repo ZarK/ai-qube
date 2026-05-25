@@ -24,6 +24,10 @@ npx @tjalve/aiq run src --format json
 
 `run` is the primary command. `plan` shows what would run. `--dry-run` prints the resolved plan without executing tools or writing artifacts. `check` remains available as a compatibility alias for older automation.
 
+## Package Surface
+
+`@tjalve/aiq` is the canonical package for standalone users and adapters. It ships the `aiq` and `quality` binaries from the top-level export, and `@tjalve/aiq/api` exposes the model, config, engine, reporter, and benchmark APIs used by the hook, MCP, LSP, GitHub Action, and OpenCode packages.
+
 ## Stage Ladder
 
 | # | Stage | Scope |

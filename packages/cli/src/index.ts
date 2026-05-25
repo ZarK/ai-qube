@@ -20,6 +20,7 @@ import { formatError } from "./shared.js";
 import { type CliIo, type CliRunOptions, type ParsedArgs, cliHelp } from "./types.js";
 import { runWatchCommand } from "./watch.js";
 
+export * from "./api.js";
 export { cliHelp, type CliInput, type CliIo, type CliRunOptions } from "./types.js";
 
 export async function runCli(

@@ -1,7 +1,6 @@
 import * as artifact from "@actions/artifact";
 import * as core from "@actions/core";
-import { type AiqProfileName, aiqProfileNames } from "@tjalve/aiq-config-schema";
-import type { GitHubAnnotation } from "@tjalve/aiq-reporters";
+import { type AiqProfileName, type GitHubAnnotation, aiqProfileNames } from "@tjalve/aiq/api";
 
 import {
   type AiqGitHubActionRunOptions,

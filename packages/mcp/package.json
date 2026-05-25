@@ -19,10 +19,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.27.1",
-    "@tjalve/aiq-config-schema": "0.2.0",
-    "@tjalve/aiq-model": "0.2.0",
-    "@tjalve/aiq-engine": "0.2.0",
-    "@tjalve/aiq-reporters": "0.2.0",
+    "@tjalve/aiq": "0.2.0",
     "zod": "4.3.6"
   },
   "publishConfig": {

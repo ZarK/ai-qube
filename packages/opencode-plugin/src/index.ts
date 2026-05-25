@@ -5,22 +5,21 @@ import {
   type AiqProfileName,
   type AiqProgressRunSelection,
   type ResolvedAiqConfig,
-  aiqProfileNames,
-  createAiqProgressRunSelection,
-  loadAiqProgress,
-  resolveAiqConfig,
-  resolveAiqProgressStageIds,
-} from "@tjalve/aiq-config-schema";
-import { createRunPlan, runEngine } from "@tjalve/aiq-engine";
-import {
   type RunPlan,
   type RunRequest,
   type RunResult,
   type RunStageConfigurations,
   type StageId,
+  aiqProfileNames,
+  createAiqProgressRunSelection,
+  createRunPlan,
+  formatRunResultAsText,
+  loadAiqProgress,
+  resolveAiqConfig,
+  resolveAiqProgressStageIds,
+  runEngine,
   stageIds,
-} from "@tjalve/aiq-model";
-import { formatRunResultAsText } from "@tjalve/aiq-reporters";
+} from "@tjalve/aiq/api";
 
 export interface AiqOpenCodeAdapterOptions {
   cwd?: string;

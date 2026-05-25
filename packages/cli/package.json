@@ -12,6 +12,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
     }
   },
   "homepage": "https://github.com/ZarK/ai-quality/tree/main/packages/cli#readme",
