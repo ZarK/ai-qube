@@ -292,6 +292,7 @@ async function createWatchPreparedRun(
 ): Promise<WatchPreparedRun> {
   const manifest = await createManifestInput(parsed, io, cachedStreamFiles);
   const progress = await loadOptionalWatchProgress(parsed, io);
+  const watchProgressPath = usesWatchProgressDefaults(parsed);
   const resolvedConfig = await resolveCliConfig(parsed, io, {
     ...(progress === undefined
       ? {}
@@ -336,6 +337,7 @@ async function createWatchPreparedRun(
     targetRequest.cwd,
     resolvedConfig.configPath,
     progress?.path,
+    watchProgressPath,
     filesFromPath,
   );
   const preparedRun: WatchPreparedRun = {
@@ -347,6 +349,7 @@ async function createWatchPreparedRun(
       targetRequest.manifest.files,
       resolvedConfig.configPath,
       progress?.path,
+      watchProgressPath,
       filesFromPath,
     ),
   };
@@ -381,6 +384,7 @@ function buildWatchReplanPaths(
   cwd: string,
   configPath?: string,
   progressPath?: string,
+  watchProgressPath = false,
   filesFromPath?: string,
 ): Set<string> {
   const replanPaths = new Set<string>();
@@ -392,7 +396,7 @@ function buildWatchReplanPaths(
   }
   if (progressPath !== undefined) {
     replanPaths.add(path.resolve(progressPath));
-  } else {
+  } else if (watchProgressPath) {
     replanPaths.add(path.resolve(cwd, ".aiq", "progress.json"));
   }
   if (filesFromPath !== undefined) {
@@ -405,12 +409,16 @@ async function loadOptionalWatchProgress(
   parsed: ParsedArgs,
   io: CliIo,
 ): Promise<LoadedAiqProgress | undefined> {
-  if (parsed.stages.length > 0 || parsed.profile !== undefined) {
+  if (!usesWatchProgressDefaults(parsed)) {
     return undefined;
   }
 
   const progress = await loadAiqProgress(io.cwd);
   return progress.source === "file" ? progress : undefined;
+}
+
+function usesWatchProgressDefaults(parsed: ParsedArgs): boolean {
+  return parsed.stages.length === 0 && parsed.profile === undefined;
 }
 
 function shouldReprepareWatchRun(prepared: WatchPreparedRun, trigger: string): boolean {
@@ -429,6 +437,7 @@ function buildWatchTargets(
   files: readonly string[],
   configPath?: string,
   progressPath?: string,
+  watchProgressPath = false,
   filesFromPath?: string,
 ): WatchDirectoryTarget[] {
   const targets = new Map<string, Set<string>>();
@@ -450,7 +459,7 @@ function buildWatchTargets(
 
   if (progressPath !== undefined) {
     addWatchTarget(targets, cwd, progressPath);
-  } else {
+  } else if (watchProgressPath) {
     addWatchTarget(targets, cwd, path.join(cwd, ".aiq", "progress.json"));
   }
 
