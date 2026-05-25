@@ -86,7 +86,7 @@ function renderMakeItSoPreStartText(config: Config): string {
 
 function buildWorkCycleText(config: Config): string {
   const shipping = config.autonomousMode
-    ? 'commit -> push -> pull request with issue closure -> `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status -> address feedback -> merge -> `aie complete <issue>` -> update base -> repeat'
+    ? 'commit -> push -> non-draft, ready-for-review pull request with issue closure -> `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status -> address feedback -> merge -> `aie complete <issue>` -> update base -> repeat'
     : 'stop before commit, push, pull request creation, or merge';
   return `\`aie start next\` or resume active issue -> \`aie view <issue>\` -> branch check/create -> implement -> tests/audits/configured gates -> ${shipping}.`;
 }
@@ -94,7 +94,7 @@ function buildWorkCycleText(config: Config): string {
 function renderShippingStep(config: Config): string {
   if (!config.autonomousMode) return 'Stop before commit, push, pull request creation, or merge when autonomous shipping mode is disabled.';
   const reviewWait = hasReviewWait(config) ? ' run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status,' : '';
-  return `Commit intentional source changes, push the issue branch, open a pull request that closes the issue,${reviewWait} and address review or check feedback.`;
+  return `Commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue,${reviewWait} and address review or check feedback.`;
 }
 
 function renderMergeStep(config: Config): string {
@@ -105,7 +105,7 @@ function renderMergeStep(config: Config): string {
 function renderAutonomousAuthority(config: Config): string {
   if (!config.autonomousMode) return 'Autonomous shipping mode is disabled. Stop before commit, push, pull request creation, merge, or continuation into new issue work and report the exact next human action.';
   const reviewText = hasReviewWait(config) ? ' run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status,' : ' inspect required reviews and checks,';
-  return `Autonomous shipping mode is enabled. You have standing authorization under repository policy to run tests, commit, push, create PRs,${reviewText} address feedback, merge when gates pass, run \`aie complete <issue>\`, pull the configured base branch, and continue to the next issue without asking for normal confirmation.`;
+  return `Autonomous shipping mode is enabled. You have standing authorization under repository policy to run tests, commit, push, create non-draft PRs,${reviewText} address feedback, merge when gates pass, run \`aie complete <issue>\`, pull the configured base branch, and continue to the next issue without asking for normal confirmation.`;
 }
 
 function renderNamingRulesSection(config: Config): string {
@@ -214,7 +214,7 @@ function renderStageLines(config: Config): string[] {
     'audit: run the configured manual UI audit with `aie audit ui <issue> --prepare` for user-facing UI changes, inspect the real running app with agent-browser first, keep evidence local, or record why no UI audit applies.',
     reviewStage,
     'test: run configured quality gates plus the relevant build, typecheck, and test commands for changed code.',
-    'PR: commit intentional source changes, push the issue branch, open a pull request that closes the issue, and request configured reviews when enabled.',
+    'PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
     'merge: address review/check feedback, loop back to implementation when a gate fails, rerun affected gates, and merge only after policy and checks pass.',
     'completion: after merge, run `aie complete <issue>` even when the pull request already closed the issue.',
     `pull-base: return to \`${config.baseBranch}\` and pull \`${config.baseRemote}/${config.baseBranch}\` before new issue work.`,
@@ -255,7 +255,7 @@ function renderMakeItSoAuthorizationText(config: Config): string {
   const reviewText = hasReviewWait(config)
     ? 'run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status'
     : 'inspect required reviews and checks';
-  return `You have explicit full authorization under repository policy to commit, push, create PRs, ${reviewText}, merge, run \`aie complete <issue>\`, pull the configured base branch, and continue when autonomous mode is enabled.`;
+  return `You have explicit full authorization under repository policy to commit, push, create non-draft PRs, ${reviewText}, merge, run \`aie complete <issue>\`, pull the configured base branch, and continue when autonomous mode is enabled.`;
 }
 
 export function renderAgentInstructions(config: Config, hosts: AgentHostProfile[]): string {
@@ -320,7 +320,7 @@ ${renderBulletList([...collectSafetyLines(config), ...collectSupplyChainLines(co
 
 export function renderMakeItSoCommand(config: Config): string {
   const reviewText = config.reviewAgents.length > 0 ? 'run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, ' : 'inspect required reviews and checks, ';
-  const shippingText = config.autonomousMode ? `Commit intentional changes, push, open the pull request, ${reviewText}address feedback, merge once repository policy, CI, required tests, and configured gates are satisfied, run \`aie complete <issue>\`, update the base branch, and continue.` : 'Stop before commit, push, pull request creation, or merge because autonomous shipping mode is disabled.';
+  const shippingText = config.autonomousMode ? `Commit intentional changes, push, open the non-draft, ready-for-review pull request, ${reviewText}address feedback, merge once repository policy, CI, required tests, and configured gates are satisfied, run \`aie complete <issue>\`, update the base branch, and continue.` : 'Stop before commit, push, pull request creation, or merge because autonomous shipping mode is disabled.';
   return `---
 description: Continue autonomous Executor GitHub issue workflow
 ---

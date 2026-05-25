@@ -198,7 +198,7 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
   if (audit.required && audit.evidence.state !== 'local-evidence-found') pending.push(readinessItem(audit.evidence.reasonCode, 'Record manual UI audit evidence for the real running app.', audit.evidence.source, audit.evidence.trust));
   if (reviewEvidencePending(review.evidence)) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
-  if (!pr) pending.push(readinessItem('missing-pr', 'Create the pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
+  if (!pr) pending.push(readinessItem('missing-pr', 'Create a non-draft, ready-for-review pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
   else {
     if (pr.reviewDecision !== 'APPROVED' && !githubReviewDecisionBlocks(pr)) pending.push(readinessItem('pr-review-pending', `Run or rerun \`aie pr gate ${pr.number}\` until PR review state is ready.`, 'github-pr', 'trusted-provider'));
     if (pr.mergeStateStatus !== 'CLEAN') pending.push(readinessItem('merge-state-not-ready', `Wait for or fix GitHub merge state ${pr.mergeStateStatus}.`, 'github-pr', 'trusted-provider'));
@@ -234,7 +234,7 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
 
 function readinessNextCommand(status: PrBodyReadinessStatus, issueNumber: number, pr: PrBodyPullRequest | null): string {
   if (status === 'blocked') return 'Fix blockers, rerun affected checks, then run `aie pr body <issue>` again.';
-  if (!pr) return 'Create the pull request with this body, then run `aie pr gate <pr>` before merge.';
+  if (!pr) return 'Create a non-draft, ready-for-review pull request with this body, then run `aie pr gate <pr>` before merge.';
   if (status === 'pending') return `Run \`aie pr gate ${pr.number}\`, address feedback, and rerun \`aie pr body ${issueNumber}\`.`;
   return `Squash merge PR #${pr.number} when repository policy and CI are satisfied, then run \`aie complete ${issueNumber}\`.`;
 }

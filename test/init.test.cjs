@@ -262,7 +262,7 @@ describe('init service', () => {
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
 
     assert.match(agents, /issue-driven autonomous development/);
-    assert.match(agents, /standing authorization under repository policy to run tests, commit, push, create PRs/);
+    assert.match(agents, /standing authorization under repository policy to run tests, commit, push, create non-draft PRs/);
     assert.match(agents, /Keep at most one open issue in progress/);
     assert.match(agents, /For OpenCode, use `todowrite` and `todoread` directly/);
     assert.match(agents, /For Codex, use `update_plan` or the host plan\/todo tool directly/);
@@ -288,7 +288,7 @@ describe('init service', () => {
     assert.match(agents, /audit: run the configured manual UI audit/);
     assert.match(agents, /review: run `aie review gate <issue> --prompt`, use `aie pr view <pr> --json` for concise PR state when inspecting, run `aie pr gate <pr>` when a PR exists to request reviewers/);
     assert.match(agents, /test: run configured quality gates/);
-    assert.match(agents, /PR: commit intentional source changes, push the issue branch, open a pull request that closes the issue/);
+    assert.match(agents, /PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue/);
     assert.match(agents, /merge: address review\/check feedback, loop back to implementation when a gate fails/);
     assert.match(agents, /completion: after merge, run `aie complete <issue>`/);
     assert.match(agents, /pull-base: return to `main` and pull `origin\/main`/);
@@ -318,12 +318,13 @@ describe('init service', () => {
     assert.match(agents, /Stop for explicit user approval when package age, identity, source\/provenance, integrity, or execution risk cannot be verified/);
     assert.match(command, /Never ask questions during normal work/);
     assert.match(command, /Think holistically/);
-    assert.match(command, /explicit full authorization under repository policy to commit, push, create PRs, run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `aie complete <issue>`, pull the configured base branch, and continue/);
+    assert.match(command, /explicit full authorization under repository policy to commit, push, create non-draft PRs, run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `aie complete <issue>`, pull the configured base branch, and continue/);
     assert.match(command, /Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
     assert.match(command, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);
-    assert.match(command, /`aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status/);
+    assert.match(command, /non-draft, ready-for-review pull request with issue closure -> `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status/);
+    assert.match(command, /open the non-draft, ready-for-review pull request/);
     assert.match(command, /merge once repository policy, CI, required tests, and configured gates are satisfied/);
     assert.match(command, /configured gates cannot run/);
     assert.match(command, /Stop implementation only when/);

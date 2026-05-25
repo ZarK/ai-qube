@@ -702,6 +702,37 @@ describe('PR body service', () => {
     assert.match(result.body, /GitHub state: review=APPROVED; merge=BLOCKED/);
   });
 
+  it('blocks PR body readiness for draft pull requests', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.aie', 'reviews', '96.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const exec = async args => {
+      const issue = issueViewResponse(args, 96);
+      if (issue) return issue;
+      if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') {
+        return { args, exitCode: 0, stdout: JSON.stringify({ number: 46, title: 'Draft PR', state: 'OPEN', url: 'https://github.com/example/repo/pull/46', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: true }), stderr: '' };
+      }
+      if (args[0] === 'pr' && args[1] === 'view' && args[2] === '46') {
+        return { args, exitCode: 0, stdout: JSON.stringify(basePr({ number: 46, title: 'Draft PR', url: 'https://github.com/example/repo/pull/46', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: true })), stderr: '' };
+      }
+      if (args.join(' ') === 'repo view --json nameWithOwner,url') return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/46/comments') return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/46/comments') return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'graphql') return { args, exitCode: 0, stdout: JSON.stringify(threadResponse()), stderr: '' };
+      return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 96, repoRoot: repo, exec });
+
+    assert.equal(result.readiness.status, 'blocked');
+    assert.ok(result.readiness.blockerDetails.some(item => item.reasonCode === 'pull-request-draft'));
+    assert.match(result.body, /draft=yes/);
+    assert.match(result.body, /Pull request is still a draft/);
+  });
+
   it('blocks readiness when GitHub has requested PR changes', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
@@ -819,6 +850,24 @@ describe('PR body service', () => {
     assert.ok(result.readiness.blockers.some(item => item.includes('typecheck')));
     assert.match(result.body, /Pull request: not detected/);
     assert.match(result.body, /Closes #94/);
+  });
+
+  it('recommends a non-draft pull request when no current PR exists', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.aie', 'reviews', '98.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const exec = async args => issueViewResponse(args, 98) ?? { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+
+    const result = await buildPrBody(config, { issueNumber: 98, repoRoot: repo, exec });
+
+    assert.equal(result.pullRequest, null);
+    assert.equal(result.readiness.status, 'pending');
+    assert.equal(result.readiness.nextCommand, 'Create a non-draft, ready-for-review pull request with this body, then run `aie pr gate <pr>` before merge.');
+    assert.ok(result.readiness.pending.some(item => item.includes('non-draft, ready-for-review pull request')));
+    assert.match(result.body, /Create a non-draft, ready-for-review pull request/);
   });
 });
 
