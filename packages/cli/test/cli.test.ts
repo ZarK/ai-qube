@@ -322,10 +322,14 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq ignore write");
     expect(stdout.value).toContain("Run is the primary command.");
     expect(stdout.value).toContain("Check is kept as a compatibility alias");
+    expect(stdout.value).toContain("Examples:");
+    expect(stdout.value).toContain("aiq config --set-stage 3");
+    expect(stdout.value).toContain("aiq run src --up-to 3");
     expect(stdout.value).toContain("0=e2e 1=lint 2=format 3=typecheck");
     expect(stdout.value).toContain(
       "By default aiq run and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present",
     );
+    expect(stdout.value).toContain("Set the current stage once with aiq config --set-stage N");
     expect(stdout.value).toContain("--only <0-9>");
     expect(stdout.value).toContain("--diff-only");
     expect(stdout.value).toContain("--dry-run");
@@ -353,7 +357,9 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("aiq run <files...>");
+    expect(stdout.value).toContain("Examples:");
     expect(stdout.value).toContain("Stage ladder:");
+    expect(stdout.value).toContain("--stage <name> is the advanced named-stage form");
     expect(stdout.value).toContain("--up-to N runs every ladder stage from 0 through N.");
   });
 

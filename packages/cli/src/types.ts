@@ -109,6 +109,14 @@ Run is the primary command. With no arguments, aiq looks for a supported project
 A leading file path is treated as aiq run.
 Check is kept as a compatibility alias for existing automation.
 
+Examples:
+  aiq config --set-stage 3
+  aiq run src
+  aiq plan src
+  aiq run src --up-to 3
+  aiq run src --only 1
+  aiq run src --stage typecheck
+
 Options:
   --diff-only
   --dry-run
@@ -138,8 +146,10 @@ Stage ladder:
 
 Stage selection:
   By default aiq run and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
+  Set the current stage once with aiq config --set-stage N, then run aiq run <paths...> for the normal cumulative workflow.
   --only N runs one stage from the ladder.
   --up-to N runs every ladder stage from 0 through N.
+  --stage <name> is the advanced named-stage form for scripts or focused diagnostics.
   --diff-only scopes safe file-local stages to the supplied changed-file manifest: lint, format, sloc, complexity, maintainability.
   Full-run stages stay selected without additional narrowing: e2e, typecheck, unit, coverage, security.
 
