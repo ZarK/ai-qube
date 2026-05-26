@@ -80,6 +80,7 @@ reports/
 htmlcov/
 .aiq/out/
 .aiq/cache/
+.aie/gates/
 
 # Lock files
 yarn.lock
@@ -96,6 +97,9 @@ packages/github-action/dist/*
 !packages/github-action/dist/main.mjs
 
 # Generated fixture outputs
+test-projects/dotnet/**/bin/
+test-projects/dotnet/**/obj/
+test-projects/java-maven/target/
 test-projects/rust/target/
 .opencode/*
 !.opencode/commands/

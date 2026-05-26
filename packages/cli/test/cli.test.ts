@@ -5,6 +5,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import os from "node:os";
 import path from "node:path";
 
+import { parseAiuTrustedStateJson } from "@tjalve/aiu";
 import { afterEach, describe, expect, it } from "vitest";
 import { withExclusiveToolLock } from "../../engine/test/exclusive-tool-lock.js";
 import type { RunRequest, RunResult } from "../../model/src/index.js";
@@ -469,6 +470,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq check <files...>");
     expect(stdout.value).toContain("aiq config [--print-config | --set-stage <0-9>]");
     expect(stdout.value).toContain("aiq doctor");
+    expect(stdout.value).toContain("aiq evidence [--format json]");
     expect(stdout.value).toContain("aiq status [--format <json|text>]");
     expect(stdout.value).toContain("aiq schema [--format json]");
     expect(stdout.value).toContain("aiq install-tools");
@@ -480,6 +482,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Examples:");
     expect(stdout.value).toContain("aiq config --set-stage 3");
     expect(stdout.value).toContain("aiq run src --up-to 3");
+    expect(stdout.value).toContain("aiq evidence --format json");
     expect(stdout.value).toContain("aiq schema --format json");
     expect(stdout.value).toContain("0=e2e 1=lint 2=format 3=typecheck");
     expect(stdout.value).toContain(
@@ -495,6 +498,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--verbose, -v");
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
+    expect(stdout.value).toContain("aiq evidence emits structured AIQ quality evidence");
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
     expect(stdout.value).toContain("aiq schema --format json expose QUBE-compatible");
@@ -562,7 +566,15 @@ describe("CLI foundation", () => {
       command: "aiq schema --format json",
       packageExport: "@tjalve/aiq/schema",
     });
-    expect([...commands.keys()]).toEqual(["config", "doctor", "plan", "run", "schema", "status"]);
+    expect([...commands.keys()]).toEqual([
+      "config",
+      "doctor",
+      "evidence",
+      "plan",
+      "run",
+      "schema",
+      "status",
+    ]);
     expect(commands.get("run")?.extensions?.aiq?.capability).toBe("quality-control");
     expect(commands.get("run")?.extensions?.aiq?.contexts).toContain("qube");
     expect(commands.get("run")?.dryRun.supported).toBe(true);
@@ -574,13 +586,31 @@ describe("CLI foundation", () => {
       defaultFormat: "json",
       formats: ["json"],
     });
+    expect(commands.get("evidence")?.output).toEqual({
+      defaultFormat: "json",
+      formats: ["json"],
+    });
   });
 
-  it("rejects text output for the schema command", async () => {
-    for (const args of [
-      ["node", "aiq", "schema", "--format", "text"],
-      ["node", "aiq", "schema", "--format", "text", "--format", "json"],
-    ]) {
+  it("rejects text output for JSON-only commands", async () => {
+    for (const [args, message] of [
+      [
+        ["node", "aiq", "schema", "--format", "text"],
+        "The schema command only supports --format json.",
+      ],
+      [
+        ["node", "aiq", "schema", "--format", "text", "--format", "json"],
+        "The schema command only supports --format json.",
+      ],
+      [
+        ["node", "aiq", "evidence", "--format", "text"],
+        "The evidence command only supports --format json.",
+      ],
+      [
+        ["node", "aiq", "evidence", "--format", "text", "--format", "json"],
+        "The evidence command only supports --format json.",
+      ],
+    ] as const) {
       const stdout = new MemoryOutput();
       const stderr = new MemoryOutput();
 
@@ -593,7 +623,7 @@ describe("CLI foundation", () => {
 
       expect(exitCode).toBe(2);
       expect(stdout.value).toBe("");
-      expect(stderr.value).toContain("The schema command only supports --format json.");
+      expect(stderr.value).toContain(message);
     }
   });
 
@@ -1831,6 +1861,128 @@ describe("CLI foundation", () => {
     await expect(access(path.join(project.root, ".aiq", "aiq.config.json"))).rejects.toThrow();
   });
 
+  it("emits trusted missing-quality evidence before any run", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-evidence-no-run-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "evidence", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const evidence = JSON.parse(stdout.value) as {
+      reasonCode: string;
+      result: string;
+      schemaVersion: number;
+      states: Array<{
+        value: {
+          kind: string;
+          lastRunStatus: string;
+          ready: boolean;
+          selectedTarget?: { id: string; status: string };
+          status: string;
+        };
+      }>;
+      trust: string;
+    };
+    expect(evidence.schemaVersion).toBe(1);
+    expect(evidence.result).toBe("missing");
+    expect(evidence.reasonCode).toBe("missing-evidence");
+    expect(evidence.trust).toBe("local-evidence");
+    expect(evidence.states[0]?.value).toMatchObject({
+      kind: "quality",
+      lastRunStatus: "missing",
+      ready: true,
+      status: "fail",
+    });
+    expect(evidence.states[0]?.value.selectedTarget).toMatchObject({
+      id: "missing-report",
+      status: "fail",
+    });
+
+    const trustedState = parseAiuTrustedStateJson({
+      sourceId: "quality",
+      command: { id: "quality", argv: ["aiq", "evidence", "--format", "json"] },
+      stdout: stdout.value,
+    });
+    expect(trustedState.ok).toBe(true);
+    if (trustedState.ok) {
+      expect(trustedState.states[0]?.value.kind).toBe("quality");
+      expect(trustedState.states[0]?.value.status).toBe("fail");
+    }
+  });
+
+  it("emits trusted malformed-quality evidence for invalid report shapes", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-evidence-malformed-run-");
+    const reportDir = path.join(project.root, ".aiq", "out");
+    await mkdir(reportDir, { recursive: true });
+    await writeFile(
+      path.join(reportDir, "aiq.report.json"),
+      `${JSON.stringify({
+        artifactType: "report",
+        finishedAt: new Date().toISOString(),
+        runId: "run-invalid",
+        summary: { status: "failed" },
+        stages: [
+          {
+            stageId: "typecheck",
+            status: "failed",
+            diagnostics: [{ file: 42, message: "bad diagnostic", severity: "error" }],
+          },
+        ],
+        request: { manifest: { files: ["src/index.ts"] } },
+      })}\n`,
+      "utf8",
+    );
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "evidence", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const evidence = JSON.parse(stdout.value) as {
+      reasonCode: string;
+      result: string;
+      states: Array<{
+        value: {
+          lastRunStatus: string;
+          ready: boolean;
+          selectedTarget?: { id: string; status: string };
+          status: string;
+        };
+      }>;
+    };
+    expect(evidence.result).toBe("failed");
+    expect(evidence.reasonCode).toBe("malformed-evidence");
+    expect(evidence.states[0]?.value).toMatchObject({
+      lastRunStatus: "malformed",
+      ready: true,
+      status: "fail",
+    });
+    expect(evidence.states[0]?.value.selectedTarget).toMatchObject({
+      id: "malformed-report",
+      status: "fail",
+    });
+
+    const trustedState = parseAiuTrustedStateJson({
+      sourceId: "quality",
+      command: { id: "quality", argv: ["aiq", "evidence", "--format", "json"] },
+      stdout: stdout.value,
+    });
+    expect(trustedState.ok).toBe(true);
+  });
+
   it("prints focused failed-stage workflow guidance and records failed status", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-status-failed-run-");
     await writeFile(project.filePath, "export const value: string = 1;\n", "utf8");
@@ -1877,6 +2029,48 @@ describe("CLI foundation", () => {
     expect(status.lastRun.status).toBe("failed");
     expect(status.lastRun.failedStages).toEqual([{ id: "typecheck", index: 3, name: "typecheck" }]);
     expect(status.nextCommand).toBe("aiq run <paths...> --only 3 --verbose");
+
+    const evidenceStdout = new MemoryOutput();
+    const evidenceStderr = new MemoryOutput();
+    const evidenceExitCode = await runCli(["node", "aiq", "evidence", "--format", "json"], {
+      cwd: project.root,
+      stderr: evidenceStderr,
+      stdin: new MemoryInput(),
+      stdout: evidenceStdout,
+    });
+
+    expect(evidenceExitCode).toBe(0);
+    expect(evidenceStderr.value).toBe("");
+    const evidence = JSON.parse(evidenceStdout.value) as {
+      result: string;
+      states: Array<{
+        value: {
+          failingChecks: string[];
+          lastRunStatus: string;
+          ready: boolean;
+          selectedTarget?: { id: string; status: string };
+          status: string;
+        };
+      }>;
+    };
+    expect(evidence.result).toBe("failed");
+    expect(evidence.states[0]?.value).toMatchObject({
+      failingChecks: ["typecheck"],
+      lastRunStatus: "fail",
+      ready: true,
+      status: "fail",
+    });
+    expect(evidence.states[0]?.value.selectedTarget).toMatchObject({
+      id: "typecheck",
+      status: "fail",
+    });
+
+    const trustedState = parseAiuTrustedStateJson({
+      sourceId: "quality",
+      command: { id: "quality", argv: ["aiq", "evidence", "--format", "json"] },
+      stdout: evidenceStdout.value,
+    });
+    expect(trustedState.ok).toBe(true);
   });
 
   it("prints successful current-stage workflow guidance and advancement", async () => {
@@ -1902,6 +2096,85 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("Current stage satisfied: yes (3 typecheck)");
     expect(stdout.value).toContain("Advance: aiq config --set-stage 4");
+
+    const evidenceStdout = new MemoryOutput();
+    const evidenceStderr = new MemoryOutput();
+    const evidenceExitCode = await runCli(["node", "aiq", "evidence", "--format", "json"], {
+      cwd: project.root,
+      stderr: evidenceStderr,
+      stdin: new MemoryInput(),
+      stdout: evidenceStdout,
+    });
+
+    expect(evidenceExitCode).toBe(0);
+    expect(evidenceStderr.value).toBe("");
+    const evidence = JSON.parse(evidenceStdout.value) as {
+      result: string;
+      stale: boolean;
+      states: Array<{
+        value: {
+          lastRunStatus: string;
+          ready: boolean;
+          status: string;
+        };
+      }>;
+    };
+    expect(evidence.result).toBe("passed");
+    expect(evidence.stale).toBe(false);
+    expect(evidence.states[0]?.value).toMatchObject({
+      lastRunStatus: "pass",
+      ready: false,
+      status: "pass",
+    });
+
+    const reportPath = path.join(project.root, ".aiq", "out", "aiq.report.json");
+    const report = JSON.parse(await readFile(reportPath, "utf8")) as { finishedAt: string };
+    report.finishedAt = "2020-01-01T00:00:00.000Z";
+    await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
+
+    const staleStdout = new MemoryOutput();
+    const staleStderr = new MemoryOutput();
+    const staleExitCode = await runCli(["node", "aiq", "evidence", "--format", "json"], {
+      cwd: project.root,
+      stderr: staleStderr,
+      stdin: new MemoryInput(),
+      stdout: staleStdout,
+    });
+
+    expect(staleExitCode).toBe(0);
+    expect(staleStderr.value).toBe("");
+    const staleEvidence = JSON.parse(staleStdout.value) as {
+      reasonCode: string;
+      result: string;
+      stale: boolean;
+      states: Array<{
+        value: {
+          lastRunStatus: string;
+          ready: boolean;
+          selectedTarget?: { id: string; status: string };
+          status: string;
+        };
+      }>;
+    };
+    expect(staleEvidence.result).toBe("stale");
+    expect(staleEvidence.reasonCode).toBe("stale-evidence");
+    expect(staleEvidence.stale).toBe(true);
+    expect(staleEvidence.states[0]?.value).toMatchObject({
+      lastRunStatus: "stale",
+      ready: true,
+      status: "fail",
+    });
+    expect(staleEvidence.states[0]?.value.selectedTarget).toMatchObject({
+      id: "stale-report",
+      status: "fail",
+    });
+
+    const trustedState = parseAiuTrustedStateJson({
+      sourceId: "quality",
+      command: { id: "quality", argv: ["aiq", "evidence", "--format", "json"] },
+      stdout: staleStdout.value,
+    });
+    expect(trustedState.ok).toBe(true);
 
     const statusStdout = new MemoryOutput();
     const statusStderr = new MemoryOutput();
@@ -4323,7 +4596,7 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedSchemaImport.exitCode).toBe(0);
       expect(packedSchemaImport.stderr).toBe("");
       expect(JSON.parse(packedSchemaImport.stdout) as Record<string, unknown>).toEqual({
-        commands: 6,
+        commands: 7,
         json: "function",
         render: "function",
       });

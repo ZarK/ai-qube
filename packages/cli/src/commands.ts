@@ -20,6 +20,7 @@ import {
 } from "@tjalve/aiq-engine";
 import type { LanguageId, RunRequest, RunResult, StageId } from "@tjalve/aiq-model";
 
+import { createAiqQualityEvidence, formatAiqQualityEvidenceJson } from "./evidence.js";
 import {
   collectFirstRunManifestFiles,
   createFirstRunSetupGuidance,
@@ -430,6 +431,17 @@ export function runSetupGuidanceCommand(parsed: ParsedArgs, io: CliIo): number {
 export function runSchemaCommand(_parsed: ParsedArgs, io: CliIo): number {
   io.stdout.write(renderAiqCommandSchemaJson());
   return 0;
+}
+
+export async function runEvidenceCommand(_parsed: ParsedArgs, io: CliIo): Promise<number> {
+  try {
+    const evidence = await createAiqQualityEvidence(io.cwd);
+    io.stdout.write(formatAiqQualityEvidenceJson(evidence));
+    return 0;
+  } catch (error) {
+    io.stderr.write(`${formatError(error)}\n`);
+    return 2;
+  }
 }
 
 export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {

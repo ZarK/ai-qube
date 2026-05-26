@@ -20,15 +20,17 @@ npx @tjalve/aiq run src
 npx @tjalve/aiq plan src
 npx @tjalve/aiq run src --dry-run
 npx @tjalve/aiq run src --format json
+npx @tjalve/aiq evidence --format json
 ```
 
 `run` is the primary command. `plan` shows what would run. `--dry-run` prints the resolved plan without executing tools or writing artifacts. `check` remains available as a compatibility alias for older automation.
+`evidence` reads the latest AIQ report and emits structured JSON that orchestration tools can store as gate evidence or parse as trusted quality state.
 
 ## Package Surface
 
 `@tjalve/aiq` is the canonical package for standalone users and adapters. It ships the `aiq` and `quality` binaries from the top-level export, and `@tjalve/aiq/api` exposes the model, config, engine, reporter, and benchmark APIs used by the hook, MCP, LSP, GitHub Action, and OpenCode packages.
 
-QUBE orchestration can discover the implemented AIQ command surface with `npx @tjalve/aiq schema --format json` or by importing `@tjalve/aiq/schema`.
+QUBE orchestration can discover the implemented AIQ command surface with `npx @tjalve/aiq schema --format json` or by importing `@tjalve/aiq/schema`. AIE and AIU integrations should consume `aiq evidence --format json` instead of agent narration.
 
 ## Stage Ladder
 

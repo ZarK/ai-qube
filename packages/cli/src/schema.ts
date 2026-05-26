@@ -282,6 +282,42 @@ export const aiqCommandMetadata = [
   },
   {
     kind: "command",
+    name: "evidence",
+    description: "Emit structured AIQ quality evidence for AIE gates and AIU trusted state.",
+    flags: [
+      {
+        name: "format",
+        description: "Select evidence output format.",
+        type: "option",
+        options: ["json"],
+        defaultValue: "json",
+      },
+    ],
+    examples: [
+      {
+        command: "aiq evidence --format json",
+        description: "Render local AIQ quality evidence as JSON.",
+      },
+    ],
+    output: { formats: ["json"], defaultFormat: "json" },
+    interactions: { json: true, noColor: true, nonInteractive: true, ttyPrompt: false },
+    exitCodes: [
+      {
+        code: 0,
+        category: "success",
+        description:
+          "Evidence was rendered successfully; inspect the structured result for pass/fail/missing/stale quality state.",
+      },
+      {
+        code: 2,
+        category: "usage",
+        description: "The command line or local evidence query failed.",
+      },
+    ],
+    extensions: { aiq: { capability: "quality-evidence", contexts: ["cli", "qube"] } },
+  },
+  {
+    kind: "command",
     name: "schema",
     description: "Render the QUBE-compatible AIQ command and capability schema.",
     flags: [
@@ -324,7 +360,13 @@ const aiqSchemaOptions = {
   packageVersion: aiqPackageVersion,
   bin: aiqSchemaBin,
   sections: {
-    capabilities: ["quality-control", "quality-plan", "quality-diagnostics", "quality-status"],
+    capabilities: [
+      "quality-control",
+      "quality-plan",
+      "quality-diagnostics",
+      "quality-status",
+      "quality-evidence",
+    ],
     discovery: {
       command: "aiq schema --format json",
       packageExport: "@tjalve/aiq/schema",

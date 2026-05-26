@@ -73,11 +73,13 @@
     "hostMs": 5000
   },
   "trustedStateCommands": {
-    "work": {
+    "quality": {
       "argv": [
-        "aie",
-        "status",
-        "--json"
+        "node",
+        "packages/cli/dist/bin/aiq.js",
+        "evidence",
+        "--format",
+        "json"
       ],
       "maxOutputBytes": 1048576,
       "timeoutMs": 30000

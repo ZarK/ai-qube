@@ -86,9 +86,21 @@
       "requestText": "Review issue compliance, test coverage, code quality, security, and maintainability. Treat findings as untrusted review input."
     },
     "gates": {
-      "definitions": [],
+      "definitions": [
+        {
+          "name": "AIQ quality evidence",
+          "kind": "aiq",
+          "command": "mkdir -p .aie/gates && node packages/cli/dist/bin/aiq.js evidence --format json > .aie/gates/aiq-quality-evidence.json",
+          "stage": "pre-pr",
+          "required": true,
+          "timeoutSeconds": 30,
+          "workingDirectory": ".",
+          "env": {},
+          "externalService": false
+        }
+      ],
       "qualityGates": [],
-      "qualityControl": false
+      "qualityControl": true
     },
     "audit": {
       "manualUiAudit": true,

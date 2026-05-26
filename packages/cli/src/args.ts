@@ -26,6 +26,7 @@ const knownCommandNames = [
   "ci",
   "config",
   "doctor",
+  "evidence",
   "hook",
   "ignore",
   "install-tools",
@@ -293,6 +294,35 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     }
   }
 
+  if (parsed.command === "evidence") {
+    if ((parsed.format !== "json" && args.includes("--format")) || hasNonJsonOnlyFormat(args)) {
+      throw new Error("The evidence command only supports --format json.");
+    }
+
+    if (
+      parsed.files.length > 0 ||
+      parsed.filesFrom !== undefined ||
+      parsed.setupSubcommand !== undefined ||
+      parsed.stdinFileList ||
+      parsed.stages.length > 0 ||
+      parsed.profile !== undefined ||
+      parsed.outDir !== undefined ||
+      parsed.benchmarkCorpusRoot !== undefined ||
+      parsed.benchmarkScenarioIds.length > 0 ||
+      parsed.benchmarkTags.length > 0 ||
+      parsed.benchmarkKinds.length > 0 ||
+      parsed.configPrint ||
+      parsed.configSetStage !== undefined ||
+      parsed.debounceMs !== defaultWatchDebounceMs ||
+      parsed.host !== defaultServeHost ||
+      parsed.port !== defaultServePort
+    ) {
+      throw new Error("The evidence command only accepts --format.");
+    }
+
+    parsed.format = "json";
+  }
+
   if (parsed.command === "status") {
     if (
       parsed.files.length > 0 ||
@@ -315,7 +345,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
   }
 
   if (parsed.command === "schema") {
-    if ((parsed.format !== "json" && args.includes("--format")) || hasNonJsonSchemaFormat(args)) {
+    if ((parsed.format !== "json" && args.includes("--format")) || hasNonJsonOnlyFormat(args)) {
       throw new Error("The schema command only supports --format json.");
     }
 
@@ -393,7 +423,7 @@ function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
   }
 }
 
-function hasNonJsonSchemaFormat(args: string[]): boolean {
+function hasNonJsonOnlyFormat(args: string[]): boolean {
   return args.some((argument, index) => argument === "--format" && args[index + 1] !== "json");
 }
 

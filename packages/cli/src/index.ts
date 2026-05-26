@@ -10,6 +10,7 @@ import {
   runCheckCommand,
   runConfigCommand,
   runDoctorCommand,
+  runEvidenceCommand,
   runFirstRunCommand,
   runPlanCommand,
   runSchemaCommand,
@@ -56,6 +57,8 @@ export async function runCli(
       return runConfigCommand(parsed, io);
     case "doctor":
       return runDoctorCommand(parsed, io);
+    case "evidence":
+      return runEvidenceCommand(parsed, io);
     case "status":
       return runStatusCommand(parsed, io);
     case "schema":
