@@ -29,6 +29,13 @@ const packageSmokeWorkspaces = [
   "packages/reporters",
   "packages/cli",
 ] as const;
+const approvedPackageSmokeDependencies = [
+  {
+    name: "@tjalve/qube-cli",
+    packageRoot: path.join(repoRoot, "packages", "cli", "node_modules", "@tjalve", "qube-cli"),
+    version: "0.1.1",
+  },
+] as const;
 const publishedPackageWorkspaces = [
   "packages/benchmark",
   "packages/cli",
@@ -226,6 +233,39 @@ async function packWorkspacePackage(
   };
 }
 
+async function packApprovedPackageSmokeDependency(
+  dependency: (typeof approvedPackageSmokeDependencies)[number],
+  destination: string,
+): Promise<string> {
+  await access(dependency.packageRoot);
+  const packResult = await runNpmCommand(
+    [
+      "pack",
+      "--json",
+      "--ignore-scripts",
+      "--pack-destination",
+      destination,
+      dependency.packageRoot,
+    ],
+    {
+      cwd: repoRoot,
+    },
+  );
+
+  expect(packResult.exitCode, packResult.stderr || packResult.stdout).toBe(0);
+  const [packMetadata] = JSON.parse(packResult.stdout) as Array<{
+    filename: string;
+    name: string;
+    version: string;
+  }>;
+  expect(packMetadata).toMatchObject({
+    name: dependency.name,
+    version: dependency.version,
+  });
+
+  return path.join(destination, packMetadata.filename);
+}
+
 async function createPackedPackageFixture(): Promise<{
   fixtureFilePath: string;
   packages: PackedWorkspacePackage[];
@@ -244,7 +284,14 @@ async function createPackedPackageFixture(): Promise<{
   const fixtureFilePath = path.join(root, "src", "index.ts");
   await writeFile(fixtureFilePath, "export const value = 1;\n", "utf8");
 
-  const packages = await Promise.all(packageSmokeWorkspaces.map(packWorkspacePackage));
+  const [packages, approvedDependencies] = await Promise.all([
+    Promise.all(packageSmokeWorkspaces.map(packWorkspacePackage)),
+    Promise.all(
+      approvedPackageSmokeDependencies.map((dependency) =>
+        packApprovedPackageSmokeDependency(dependency, root),
+      ),
+    ),
+  ]);
 
   const installResult = await runNpmCommand(
     [
@@ -252,12 +299,13 @@ async function createPackedPackageFixture(): Promise<{
       "--ignore-scripts",
       "--no-package-lock",
       ...packages.map((entry) => entry.tarballPath),
+      ...approvedDependencies,
     ],
     {
       cwd: root,
     },
   );
-  expect(installResult.exitCode).toBe(0);
+  expect(installResult.exitCode, installResult.stderr || installResult.stdout).toBe(0);
 
   return { fixtureFilePath, packages, root };
 }
@@ -395,7 +443,7 @@ describe("CLI foundation", () => {
       aiq: "dist/bin/aiq.js",
       quality: "dist/bin/aiq.js",
     });
-    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([".", "./api"]);
+    expect(Object.keys(packageJson.exports ?? {}).sort()).toEqual([".", "./api", "./schema"]);
   });
 
   it("shows help and exits with 0", async () => {
@@ -422,6 +470,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq config [--print-config | --set-stage <0-9>]");
     expect(stdout.value).toContain("aiq doctor");
     expect(stdout.value).toContain("aiq status [--format <json|text>]");
+    expect(stdout.value).toContain("aiq schema [--format json]");
     expect(stdout.value).toContain("aiq install-tools");
     expect(stdout.value).toContain("aiq hook install");
     expect(stdout.value).toContain("aiq ci setup");
@@ -431,6 +480,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Examples:");
     expect(stdout.value).toContain("aiq config --set-stage 3");
     expect(stdout.value).toContain("aiq run src --up-to 3");
+    expect(stdout.value).toContain("aiq schema --format json");
     expect(stdout.value).toContain("0=e2e 1=lint 2=format 3=typecheck");
     expect(stdout.value).toContain(
       "By default aiq run and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present",
@@ -447,6 +497,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
+    expect(stdout.value).toContain("aiq schema --format json expose QUBE-compatible");
     expect(stdout.value).toContain("aiq watch <files...>");
     expect(stdout.value).toContain("aiq serve [--host <host>] [--port <port>]");
   });
@@ -469,6 +520,81 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Stage ladder:");
     expect(stdout.value).toContain("--stage <name> is the advanced named-stage form");
     expect(stdout.value).toContain("--up-to N runs every ladder stage from 0 through N.");
+  });
+
+  it("renders a QUBE-compatible command schema", async () => {
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "schema", "--format", "json"], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const schema = JSON.parse(stdout.value) as {
+      bin: string;
+      commands: Array<{
+        name: string;
+        dryRun: { supported: boolean };
+        extensions?: { aiq?: { capability?: string; contexts?: string[] } };
+        output: { defaultFormat?: string; formats: string[] };
+        supplyChain: { kinds: string[]; sensitive: boolean };
+      }>;
+      extensions?: { qube?: { discoverable?: boolean } };
+      package: { name: string; version: string };
+      schemaVersion: number;
+      sections?: { discovery?: { command?: string; packageExport?: string } };
+    };
+    const packageJson = JSON.parse(
+      await readFile(path.join(repoRoot, "packages", "cli", "package.json"), "utf8"),
+    ) as { name: string; version: string };
+    const commands = new Map(schema.commands.map((command) => [command.name, command]));
+
+    expect(schema.schemaVersion).toBe(1);
+    expect(schema.package).toEqual({ name: packageJson.name, version: packageJson.version });
+    expect(schema.bin).toBe("aiq");
+    expect(schema.extensions?.qube?.discoverable).toBe(true);
+    expect(schema.sections?.discovery).toEqual({
+      command: "aiq schema --format json",
+      packageExport: "@tjalve/aiq/schema",
+    });
+    expect([...commands.keys()]).toEqual(["config", "doctor", "plan", "run", "schema", "status"]);
+    expect(commands.get("run")?.extensions?.aiq?.capability).toBe("quality-control");
+    expect(commands.get("run")?.extensions?.aiq?.contexts).toContain("qube");
+    expect(commands.get("run")?.dryRun.supported).toBe(true);
+    expect(commands.get("run")?.supplyChain).toMatchObject({
+      kinds: ["dependency", "package-manager"],
+      sensitive: true,
+    });
+    expect(commands.get("schema")?.output).toEqual({
+      defaultFormat: "json",
+      formats: ["json"],
+    });
+  });
+
+  it("rejects text output for the schema command", async () => {
+    for (const args of [
+      ["node", "aiq", "schema", "--format", "text"],
+      ["node", "aiq", "schema", "--format", "text", "--format", "json"],
+    ]) {
+      const stdout = new MemoryOutput();
+      const stderr = new MemoryOutput();
+
+      const exitCode = await runCli(args, {
+        cwd: process.cwd(),
+        stderr,
+        stdin: new MemoryInput(),
+        stdout,
+      });
+
+      expect(exitCode).toBe(2);
+      expect(stdout.value).toBe("");
+      expect(stderr.value).toContain("The schema command only supports --format json.");
+    }
   });
 
   it("shows help for operational guidance commands without requiring subcommands", async () => {
@@ -3973,6 +4099,18 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedHelp.stdout).toContain("--only <0-9>");
       expect(packedHelp.stderr).not.toContain("ReferenceError");
 
+      const packedSchema = await runNpmCommand(
+        ["exec", "--", "aiq", "--", "schema", "--format", "json"],
+        { cwd: packedFixture.root },
+      );
+      expect(packedSchema.exitCode).toBe(0);
+      expect(packedSchema.stderr).not.toContain("ReferenceError");
+      expect(JSON.parse(packedSchema.stdout)).toMatchObject({
+        bin: "aiq",
+        package: { name: "@tjalve/aiq" },
+        schemaVersion: 1,
+      });
+
       const packedFirstRun = await runNpmCommand(["exec", "--", "aiq"], {
         cwd: packedFixture.root,
       });
@@ -4163,6 +4301,31 @@ describePackageSmoke("CLI package smoke", () => {
         runBenchmarkSuite: "function",
         runEngine: "function",
         stageIds: true,
+      });
+
+      const packedSchemaImport = await runCommand(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          [
+            "const schema = await import('@tjalve/aiq/schema');",
+            "const rendered = schema.renderAiqCommandSchema();",
+            "console.log(JSON.stringify({",
+            "render: typeof schema.renderAiqCommandSchema,",
+            "json: typeof schema.renderAiqCommandSchemaJson,",
+            "commands: rendered.commands.length",
+            "}));",
+          ].join(" "),
+        ],
+        { cwd: packedFixture.root },
+      );
+      expect(packedSchemaImport.exitCode).toBe(0);
+      expect(packedSchemaImport.stderr).toBe("");
+      expect(JSON.parse(packedSchemaImport.stdout) as Record<string, unknown>).toEqual({
+        commands: 6,
+        json: "function",
+        render: "function",
       });
     });
   }, 120_000);

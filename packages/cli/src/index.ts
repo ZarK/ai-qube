@@ -12,6 +12,7 @@ import {
   runDoctorCommand,
   runFirstRunCommand,
   runPlanCommand,
+  runSchemaCommand,
   runSetupGuidanceCommand,
   runStatusCommand,
 } from "./commands.js";
@@ -21,6 +22,7 @@ import { type CliIo, type CliRunOptions, type ParsedArgs, cliHelp } from "./type
 import { runWatchCommand } from "./watch.js";
 
 export * from "./api.js";
+export * from "./schema.js";
 export { cliHelp, type CliInput, type CliIo, type CliRunOptions } from "./types.js";
 
 export async function runCli(
@@ -56,6 +58,8 @@ export async function runCli(
       return runDoctorCommand(parsed, io);
     case "status":
       return runStatusCommand(parsed, io);
+    case "schema":
+      return runSchemaCommand(parsed, io);
     case "first-run":
       return runFirstRunCommand(parsed, io);
     case "ci":

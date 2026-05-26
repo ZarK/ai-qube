@@ -28,6 +28,8 @@ npx @tjalve/aiq run src --format json
 
 `@tjalve/aiq` is the canonical package for standalone users and adapters. It ships the `aiq` and `quality` binaries from the top-level export, and `@tjalve/aiq/api` exposes the model, config, engine, reporter, and benchmark APIs used by the hook, MCP, LSP, GitHub Action, and OpenCode packages.
 
+QUBE orchestration can discover the implemented AIQ command surface with `npx @tjalve/aiq schema --format json` or by importing `@tjalve/aiq/schema`.
+
 ## Stage Ladder
 
 | # | Stage | Scope |

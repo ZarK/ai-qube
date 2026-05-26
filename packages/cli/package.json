@@ -16,6 +16,10 @@
     "./api": {
       "types": "./dist/api.d.ts",
       "import": "./dist/api.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
     }
   },
   "homepage": "https://github.com/ZarK/ai-quality/tree/main/packages/cli#readme",
@@ -28,7 +32,8 @@
     "@tjalve/aiq-config-schema": "0.2.0",
     "@tjalve/aiq-model": "0.2.0",
     "@tjalve/aiq-engine": "0.2.0",
-    "@tjalve/aiq-reporters": "0.2.0"
+    "@tjalve/aiq-reporters": "0.2.0",
+    "@tjalve/qube-cli": "0.1.1"
   },
   "publishConfig": {
     "access": "public",

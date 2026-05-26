@@ -31,6 +31,7 @@ const knownCommandNames = [
   "install-tools",
   "plan",
   "run",
+  "schema",
   "serve",
   "status",
   "watch",
@@ -313,6 +314,35 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     }
   }
 
+  if (parsed.command === "schema") {
+    if ((parsed.format !== "json" && args.includes("--format")) || hasNonJsonSchemaFormat(args)) {
+      throw new Error("The schema command only supports --format json.");
+    }
+
+    if (
+      parsed.files.length > 0 ||
+      parsed.filesFrom !== undefined ||
+      parsed.setupSubcommand !== undefined ||
+      parsed.stdinFileList ||
+      parsed.stages.length > 0 ||
+      parsed.profile !== undefined ||
+      parsed.outDir !== undefined ||
+      parsed.benchmarkCorpusRoot !== undefined ||
+      parsed.benchmarkScenarioIds.length > 0 ||
+      parsed.benchmarkTags.length > 0 ||
+      parsed.benchmarkKinds.length > 0 ||
+      parsed.configPrint ||
+      parsed.configSetStage !== undefined ||
+      parsed.debounceMs !== defaultWatchDebounceMs ||
+      parsed.host !== defaultServeHost ||
+      parsed.port !== defaultServePort
+    ) {
+      throw new Error("The schema command only accepts --format.");
+    }
+
+    parsed.format = "json";
+  }
+
   if (isSetupGuidanceCommand(parsed.command)) {
     validateSetupGuidanceCommand(parsed);
   }
@@ -361,6 +391,10 @@ function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
   if (parsed.setupSubcommand !== expectedSubcommand) {
     throw new Error(`Use aiq ${parsed.command} ${expectedSubcommand}.`);
   }
+}
+
+function hasNonJsonSchemaFormat(args: string[]): boolean {
+  return args.some((argument, index) => argument === "--format" && args[index + 1] !== "json");
 }
 
 function parseCommand(command?: string): CommandName {

@@ -44,6 +44,7 @@ import {
   toWorkflowStageOutput,
 } from "./output.js";
 import { createRunRequest, resolveCliConfig } from "./requests.js";
+import { renderAiqCommandSchemaJson } from "./schema.js";
 import { formatError, isErrorCode } from "./shared.js";
 import {
   type CliIo,
@@ -423,6 +424,11 @@ export function runSetupGuidanceCommand(parsed: ParsedArgs, io: CliIo): number {
   const command = parsed.command as SetupGuidanceCommand;
   const output = createSetupGuidanceOutput(command, parsed.setupSubcommand);
   io.stdout.write(formatSetupGuidanceOutput(parsed.format, output));
+  return 0;
+}
+
+export function runSchemaCommand(_parsed: ParsedArgs, io: CliIo): number {
+  io.stdout.write(renderAiqCommandSchemaJson());
   return 0;
 }
 

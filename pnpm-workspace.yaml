@@ -12,6 +12,8 @@ packages:
   - "packages/mcp"
 
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - "@tjalve/qube-cli"
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
 trustPolicy: no-downgrade

@@ -18,6 +18,7 @@ export type CommandName =
   | "install-tools"
   | "plan"
   | "run"
+  | "schema"
   | "serve"
   | "status"
   | "watch";
@@ -92,6 +93,7 @@ Usage:
   aiq config [--print-config | --set-stage <0-9>]
   aiq doctor [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq status [--format <json|text>]
+  aiq schema [--format json]
   aiq install-tools
   aiq hook install
   aiq ci setup
@@ -112,6 +114,7 @@ Examples:
   aiq run src --only 1
   aiq run src --stage typecheck
   aiq status
+  aiq schema --format json
 
 Options:
   --diff-only
@@ -158,6 +161,7 @@ Operational checks:
 
 Package surface:
   @tjalve/aiq exports the CLI; @tjalve/aiq/api exports the model, config, engine, reporter, and benchmark APIs used by adapters.
+  @tjalve/aiq/schema and aiq schema --format json expose QUBE-compatible command metadata.
 
 Config state:
   aiq config initializes .aiq/aiq.config.json and .aiq/progress.json.

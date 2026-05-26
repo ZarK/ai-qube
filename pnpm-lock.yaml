@@ -62,6 +62,9 @@ importers:
       '@tjalve/aiq-reporters':
         specifier: 0.2.0
         version: link:../reporters
+      '@tjalve/qube-cli':
+        specifier: 0.1.1
+        version: 0.1.1
 
   packages/config-schema:
     dependencies:
