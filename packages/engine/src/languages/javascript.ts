@@ -14,6 +14,7 @@ import type {
 import * as parsers from "../parsers/index.js";
 import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
+import * as binaries from "../tools/binary-resolver.js";
 import * as commands from "../tools/command-builders.js";
 import { createJavaScriptTestCommand } from "../tools/node.js";
 import {
@@ -21,7 +22,9 @@ import {
   type JavaScriptTestRunner,
   detectJavaScriptTestRunner,
   findNearestPackageJson,
+  hasPackageDependency,
   javaScriptMetricsSourceExtensions,
+  readPackageJson,
   resolveJavaScriptTestExecutionMode,
 } from "../utils/node-utils.js";
 import type { JavaScriptRunnerRuntime, SharedMetricsMode } from "./contracts.js";
@@ -52,6 +55,31 @@ type JavaScriptMetricsProject = {
   projectRoot: string;
 };
 
+type JavaScriptE2eProject = {
+  files: string[];
+  packageJsonPath: string;
+  projectRoot: string;
+};
+
+type JavaScriptE2eRunner =
+  | {
+      args: string[];
+      command: string;
+      kind: "agent-browser" | "playwright-script" | "script";
+      name: "agent-browser" | "e2e" | "playwright";
+    }
+  | {
+      installMessage: string;
+      kind: "missing-playwright";
+      name: "playwright";
+    }
+  | {
+      args: string[];
+      command: string;
+      kind: "playwright";
+      name: "playwright";
+    };
+
 type JavaScriptMetricsProjectMetrics = {
   args: string[];
   durationMs: number;
@@ -73,6 +101,15 @@ type JavaScriptProjectExecution = {
   };
   toolRun: ToolRunResult;
 };
+
+const playwrightConfigNames = [
+  "playwright.config.cjs",
+  "playwright.config.cts",
+  "playwright.config.js",
+  "playwright.config.mjs",
+  "playwright.config.mts",
+  "playwright.config.ts",
+];
 
 export async function discoverJavaScriptProjects(file: string): Promise<ProjectDescriptor[]> {
   const project = await createJavaScriptPackageProject(file);
@@ -114,6 +151,89 @@ export async function runJavaScriptCoverageTask(
   runtime: JavaScriptRunnerRuntime,
 ): Promise<StageResult> {
   return runJavaScriptTestStage(task, runtime, "coverage");
+}
+
+export async function runJavaScriptE2eTask(
+  task: PlannedTask,
+  runtime: JavaScriptRunnerRuntime,
+): Promise<StageResult> {
+  const files = filterJavaScriptTestFiles(task.files);
+  if (files.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      "No JavaScript or TypeScript project files were selected for e2e.",
+    );
+  }
+
+  const diagnostics = [] as ReturnType<JavaScriptRunnerRuntime["createProcessFailureDiagnostic"]>[];
+  const toolRuns = [] as ReturnType<JavaScriptRunnerRuntime["createToolRunResult"]>[];
+  const notes: string[] = [];
+  let totalDurationMs = 0;
+
+  try {
+    const resolvedProjects = await resolveJavaScriptE2eProjects(runtime.graph, files);
+    const projects = await collapseConfiguredJavaScriptE2eProjects(
+      resolvedProjects.projects,
+      runtime,
+    );
+    for (const file of resolvedProjects.unsupportedFiles) {
+      const message =
+        "No JavaScript or TypeScript package project was found for e2e. Add package.json plus a Playwright config/tests or an agent-browser/manual-audit script before using AIQ refactoring gates.";
+      diagnostics.push(runtime.createProcessFailureDiagnostic(file, "aiq-e2e", message));
+      notes.push(message);
+    }
+
+    if (projects.length === 0) {
+      if (diagnostics.length > 0) {
+        return {
+          diagnostics,
+          durationMs: totalDurationMs,
+          notes,
+          stageId: task.stageId,
+          status: "failed",
+          toolRuns,
+        };
+      }
+
+      return runtime.createNoopStageResult(
+        task.stageId,
+        "No JavaScript or TypeScript package projects were selected for e2e.",
+      );
+    }
+
+    const projectResults = await runProjectBatches(projects, async (project) =>
+      runJavaScriptE2eProjectTask(project, runtime),
+    );
+
+    for (const projectResult of projectResults) {
+      totalDurationMs += projectResult.durationMs;
+      diagnostics.push(...projectResult.diagnostics);
+      notes.push(projectResult.note);
+      if (projectResult.toolRun !== undefined) {
+        toolRuns.push(projectResult.toolRun);
+      }
+    }
+  } catch (error) {
+    runtime.throwIfAbortError(error);
+    return runtime.createExecutionFailureStage(
+      task.stageId,
+      "e2e",
+      files[0] ?? runtime.cwd,
+      error,
+      totalDurationMs,
+      diagnostics,
+      toolRuns,
+    );
+  }
+
+  return {
+    diagnostics,
+    durationMs: totalDurationMs,
+    notes,
+    stageId: task.stageId,
+    status: diagnostics.length > 0 ? "failed" : "passed",
+    toolRuns,
+  };
 }
 
 export async function runJavaScriptMetricsTask(
@@ -340,6 +460,151 @@ async function resolveJavaScriptMetricsProjects(
   return resolvePackageProjectsFromFiles(files, isJavaScriptMetricsTaskFile);
 }
 
+async function resolveJavaScriptE2eProjects(
+  graph: ProjectGraph | undefined,
+  files: readonly string[],
+): Promise<{ projects: JavaScriptE2eProject[]; unsupportedFiles: string[] }> {
+  if (graph !== undefined) {
+    const grouped = selectJavaScriptPackageProjects(graph, files);
+    return {
+      projects: grouped.projects.map((project) => ({
+        files: project.files,
+        packageJsonPath: project.packageJsonPath,
+        projectRoot: project.projectRoot,
+      })),
+      unsupportedFiles: grouped.unsupportedFiles,
+    };
+  }
+
+  return resolvePackageProjectsFromFiles(files, isJavaScriptTestTaskFile);
+}
+
+async function collapseConfiguredJavaScriptE2eProjects(
+  projects: readonly JavaScriptE2eProject[],
+  runtime: JavaScriptRunnerRuntime,
+): Promise<JavaScriptE2eProject[]> {
+  const collapsedProjects = new Map<string, JavaScriptE2eProject>();
+
+  for (const project of projects) {
+    const effectiveProject =
+      (await findConfiguredJavaScriptE2eProject(project, runtime)) ?? project;
+    const existingProject = collapsedProjects.get(effectiveProject.packageJsonPath);
+    if (existingProject === undefined) {
+      collapsedProjects.set(effectiveProject.packageJsonPath, {
+        ...effectiveProject,
+        files: [...new Set(project.files)].sort((left, right) => left.localeCompare(right)),
+      });
+      continue;
+    }
+
+    existingProject.files = [...new Set([...existingProject.files, ...project.files])].sort(
+      (left, right) => left.localeCompare(right),
+    );
+  }
+
+  return [...collapsedProjects.values()].sort((left, right) =>
+    left.projectRoot.localeCompare(right.projectRoot),
+  );
+}
+
+async function findConfiguredJavaScriptE2eProject(
+  project: JavaScriptE2eProject,
+  runtime: JavaScriptRunnerRuntime,
+): Promise<JavaScriptE2eProject | undefined> {
+  let projectRoot = project.projectRoot;
+  let packageJsonPath = project.packageJsonPath;
+
+  while (true) {
+    const candidate = {
+      files: project.files,
+      packageJsonPath,
+      projectRoot,
+    };
+    if (
+      (await resolveJavaScriptE2eRunner(candidate, runtime)) !== undefined &&
+      (candidate.packageJsonPath === project.packageJsonPath ||
+        (await packageJsonCoversWorkspaceProject(candidate.packageJsonPath, project.projectRoot)))
+    ) {
+      return candidate;
+    }
+
+    let foundAncestorPackage = false;
+    let nextRoot = path.dirname(projectRoot);
+    while (nextRoot !== projectRoot) {
+      const parentPackageJsonPath = path.join(nextRoot, "package.json");
+      if (await fileExists(parentPackageJsonPath)) {
+        projectRoot = nextRoot;
+        packageJsonPath = parentPackageJsonPath;
+        foundAncestorPackage = true;
+        break;
+      }
+
+      projectRoot = nextRoot;
+      nextRoot = path.dirname(nextRoot);
+    }
+
+    if (!foundAncestorPackage) {
+      return undefined;
+    }
+  }
+}
+
+async function packageJsonCoversWorkspaceProject(
+  packageJsonPath: string,
+  projectRoot: string,
+): Promise<boolean> {
+  const packageJson = await readPackageJson(packageJsonPath);
+  const workspacePatterns = readWorkspacePatterns(packageJson);
+  if (workspacePatterns.length === 0) {
+    return false;
+  }
+
+  const root = path.dirname(packageJsonPath);
+  const relativeProjectRoot = path.relative(root, projectRoot).replace(/\\/gu, "/");
+  if (relativeProjectRoot.length === 0 || relativeProjectRoot.startsWith("../")) {
+    return false;
+  }
+
+  return workspacePatterns.some((pattern) =>
+    workspacePatternMatchesProject(pattern, relativeProjectRoot),
+  );
+}
+
+function readWorkspacePatterns(packageJson: Record<string, unknown>): string[] {
+  const workspaces = packageJson.workspaces;
+  if (Array.isArray(workspaces)) {
+    return workspaces.filter((entry): entry is string => typeof entry === "string");
+  }
+
+  if (typeof workspaces === "object" && workspaces !== null) {
+    const packages = (workspaces as Record<string, unknown>).packages;
+    return Array.isArray(packages)
+      ? packages.filter((entry): entry is string => typeof entry === "string")
+      : [];
+  }
+
+  return [];
+}
+
+function workspacePatternMatchesProject(pattern: string, relativeProjectRoot: string): boolean {
+  const normalizedPattern = pattern.replace(/\\/gu, "/").replace(/\/+$/u, "");
+  if (normalizedPattern.endsWith("/**")) {
+    const prefix = normalizedPattern.slice(0, -"/**".length);
+    return relativeProjectRoot === prefix || relativeProjectRoot.startsWith(`${prefix}/`);
+  }
+
+  if (normalizedPattern.endsWith("/*")) {
+    const prefix = normalizedPattern.slice(0, -"/*".length);
+    if (!relativeProjectRoot.startsWith(`${prefix}/`)) {
+      return false;
+    }
+
+    return !relativeProjectRoot.slice(prefix.length + 1).includes("/");
+  }
+
+  return relativeProjectRoot === normalizedPattern;
+}
+
 async function resolvePackageProjectsFromFiles(
   files: readonly string[],
   isSupportedFile: (file: string) => boolean,
@@ -476,6 +741,207 @@ async function runJavaScriptTestStage(
     status,
     toolRuns,
   };
+}
+
+async function runJavaScriptE2eProjectTask(
+  project: JavaScriptE2eProject,
+  runtime: JavaScriptRunnerRuntime,
+): Promise<{
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  note: string;
+  toolRun?: ToolRunResult;
+}> {
+  const runner = await resolveJavaScriptE2eRunner(project, runtime);
+  if (runner === undefined) {
+    const note = `No e2e runner is configured for ${project.projectRoot}. Add Playwright config/tests or an agent-browser/manual-audit script, then run aiq setup if project dependencies are missing.`;
+    return {
+      diagnostics: [
+        runtime.createProcessFailureDiagnostic(project.packageJsonPath, "aiq-e2e", note),
+      ],
+      durationMs: 0,
+      note,
+    };
+  }
+
+  if (runner.kind === "missing-playwright") {
+    return {
+      diagnostics: [
+        runtime.createProcessFailureDiagnostic(
+          project.packageJsonPath,
+          runner.name,
+          runner.installMessage,
+        ),
+      ],
+      durationMs: 0,
+      note: runner.installMessage,
+      toolRun: runtime.createToolRunResult(runner.name, [], 0, undefined, "failed"),
+    };
+  }
+
+  const outcome = await runtime.runExecutable(
+    runner.command,
+    runner.args,
+    project.projectRoot,
+    runtime.signal,
+  );
+  const status = outcome.exitCode === 0 ? "passed" : "failed";
+  const diagnostics: Diagnostic[] = [];
+  if (status === "failed") {
+    diagnostics.push(
+      runtime.createProcessFailureDiagnostic(
+        project.files[0] ?? project.packageJsonPath,
+        runner.name,
+        runtime.readProcessFailureMessage(
+          runner.name,
+          outcome.stderr,
+          outcome.stdout,
+          outcome.exitCode,
+        ),
+      ),
+    );
+  }
+
+  return {
+    diagnostics,
+    durationMs: outcome.durationMs,
+    note: readE2eNote(runner, outcome.stdout, status),
+    toolRun: runtime.createToolRunResult(
+      runner.name,
+      runner.args,
+      outcome.durationMs,
+      outcome.exitCode,
+      status,
+      outcome.finishedAt,
+      outcome.startedAt,
+    ),
+  };
+}
+
+async function resolveJavaScriptE2eRunner(
+  project: JavaScriptE2eProject,
+  runtime: JavaScriptRunnerRuntime,
+): Promise<JavaScriptE2eRunner | undefined> {
+  const packageJson = await readPackageJson(project.packageJsonPath);
+  const script = selectE2eScript(packageJson);
+  if (script !== undefined) {
+    return {
+      args: ["run", script.name, "--", ...script.extraArgs],
+      command: binaries.resolveNpmCommand(),
+      kind: script.kind,
+      name:
+        script.kind === "agent-browser"
+          ? "agent-browser"
+          : script.kind === "script"
+            ? "e2e"
+            : "playwright",
+    };
+  }
+
+  if (!(await hasPlaywrightSignals(project, runtime, packageJson))) {
+    return undefined;
+  }
+
+  const playwrightBinary = await resolveLocalPlaywrightBinary(project.projectRoot);
+  if (playwrightBinary === undefined) {
+    return {
+      installMessage:
+        "Playwright e2e is configured, but the local Playwright binary was not found in node_modules/.bin. Run aiq setup for required setup steps, then install this project's dependencies.",
+      kind: "missing-playwright",
+      name: "playwright",
+    };
+  }
+
+  return {
+    args: commands.createPlaywrightTestArgs(),
+    command: playwrightBinary,
+    kind: "playwright",
+    name: "playwright",
+  };
+}
+
+function selectE2eScript(
+  packageJson: Record<string, unknown>,
+):
+  | { extraArgs: string[]; kind: "agent-browser" | "playwright-script" | "script"; name: string }
+  | undefined {
+  const scripts = readPackageScripts(packageJson);
+  const preferredNames = ["aiq:e2e", "test:e2e", "e2e", "audit:ui", "aiq:audit-ui"];
+  for (const name of preferredNames) {
+    const script = scripts.get(name)?.toLowerCase();
+    if (script === undefined) {
+      continue;
+    }
+
+    if (script.includes("agent-browser") || script.includes("manual-audit")) {
+      return { extraArgs: [], kind: "agent-browser", name };
+    }
+
+    if (script.includes("playwright")) {
+      return { extraArgs: ["--reporter=json"], kind: "playwright-script", name };
+    }
+
+    if (name === "aiq:e2e" || name === "test:e2e" || name === "e2e") {
+      return { extraArgs: [], kind: "script", name };
+    }
+  }
+
+  return undefined;
+}
+
+async function hasPlaywrightSignals(
+  project: JavaScriptE2eProject,
+  runtime: JavaScriptRunnerRuntime,
+  packageJson: Record<string, unknown>,
+): Promise<boolean> {
+  return (
+    hasPackageDependency(packageJson, "@playwright/test") ||
+    hasPackageDependency(packageJson, "playwright") ||
+    (await hasAnyProjectFile(project.projectRoot, playwrightConfigNames)) ||
+    (await hasAnyPlaywrightSpec(project.projectRoot, runtime))
+  );
+}
+
+async function hasAnyProjectFile(root: string, names: readonly string[]): Promise<boolean> {
+  for (const name of names) {
+    if (await fileExists(path.join(root, name))) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function hasAnyPlaywrightSpec(
+  root: string,
+  runtime: JavaScriptRunnerRuntime,
+): Promise<boolean> {
+  const files = await runtime.findMatchingFiles(
+    root,
+    (filePath) => isPlaywrightSpecFile(filePath),
+    runtime.shouldSkipProjectDirectory,
+  );
+  return files.length > 0;
+}
+
+async function resolveLocalPlaywrightBinary(projectRoot: string): Promise<string | undefined> {
+  const binName = process.platform === "win32" ? "playwright.cmd" : "playwright";
+  const binaryPath = path.join(projectRoot, "node_modules", ".bin", binName);
+  return (await fileExists(binaryPath)) ? binaryPath : undefined;
+}
+
+async function fileExists(filePath: string): Promise<boolean> {
+  try {
+    const stats = await stat(filePath);
+    return stats.isFile();
+  } catch {
+    return false;
+  }
+}
+
+function isPlaywrightSpecFile(filePath: string): boolean {
+  const name = path.basename(filePath).toLowerCase();
+  return /\.(?:e2e|spec)\.[cm]?[jt]sx?$/u.test(name);
 }
 
 async function runJavaScriptProjectTask(
@@ -970,6 +1436,144 @@ function readCoverageNote(
   }
 
   return `${capitalize(runner)} coverage lines: ${totalCoverage.toFixed(1)}% across ${summary.total} test${summary.total === 1 ? "" : "s"}: ${summary.passed} passed, ${summary.failed} failed.`;
+}
+
+function readE2eNote(
+  runner: JavaScriptE2eRunner,
+  stdout: string,
+  status: "failed" | "passed",
+): string {
+  if (runner.kind === "agent-browser") {
+    return `Agent-browser e2e audit ${status}.`;
+  }
+
+  if (runner.kind === "script") {
+    return `E2E script ${status}.`;
+  }
+
+  const summary = readPlaywrightSummary(stdout);
+  if (summary === undefined) {
+    return `Playwright e2e ${status}.`;
+  }
+
+  return `Playwright ran ${summary.total} e2e test${summary.total === 1 ? "" : "s"}: ${summary.passed} passed, ${summary.failed} failed.`;
+}
+
+function readPlaywrightSummary(
+  stdout: string,
+): { failed: number; passed: number; total: number } | undefined {
+  let value: unknown;
+  try {
+    value = JSON.parse(stdout);
+  } catch {
+    return undefined;
+  }
+
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const suites = Array.isArray((value as Record<string, unknown>).suites)
+    ? ((value as Record<string, unknown>).suites as unknown[])
+    : [];
+  const counts = countPlaywrightTests(suites);
+  return counts.total === 0 ? undefined : counts;
+}
+
+function countPlaywrightTests(entries: readonly unknown[]): {
+  failed: number;
+  passed: number;
+  total: number;
+} {
+  let failed = 0;
+  let passed = 0;
+  let total = 0;
+
+  for (const entry of entries) {
+    if (typeof entry !== "object" || entry === null) {
+      continue;
+    }
+
+    const record = entry as Record<string, unknown>;
+    if (Array.isArray(record.specs)) {
+      for (const spec of record.specs) {
+        const specCounts = countPlaywrightSpecTests(spec);
+        failed += specCounts.failed;
+        passed += specCounts.passed;
+        total += specCounts.total;
+      }
+    }
+
+    if (Array.isArray(record.suites)) {
+      const suiteCounts = countPlaywrightTests(record.suites);
+      failed += suiteCounts.failed;
+      passed += suiteCounts.passed;
+      total += suiteCounts.total;
+    }
+  }
+
+  return { failed, passed, total };
+}
+
+function countPlaywrightSpecTests(spec: unknown): {
+  failed: number;
+  passed: number;
+  total: number;
+} {
+  if (typeof spec !== "object" || spec === null) {
+    return { failed: 0, passed: 0, total: 0 };
+  }
+
+  const tests = Array.isArray((spec as Record<string, unknown>).tests)
+    ? ((spec as Record<string, unknown>).tests as unknown[])
+    : [];
+  let failed = 0;
+  let passed = 0;
+  for (const test of tests) {
+    const outcome = readPlaywrightTestOutcome(test);
+    if (outcome === "passed") {
+      passed += 1;
+    } else if (outcome === "failed") {
+      failed += 1;
+    }
+  }
+
+  return { failed, passed, total: tests.length };
+}
+
+function readPlaywrightTestOutcome(test: unknown): "failed" | "passed" | undefined {
+  if (typeof test !== "object" || test === null) {
+    return undefined;
+  }
+
+  const results = Array.isArray((test as Record<string, unknown>).results)
+    ? ((test as Record<string, unknown>).results as unknown[])
+    : [];
+  if (
+    results.some(
+      (result) =>
+        typeof result === "object" &&
+        result !== null &&
+        (result as Record<string, unknown>).status !== "passed",
+    )
+  ) {
+    return "failed";
+  }
+
+  return results.length > 0 ? "passed" : undefined;
+}
+
+function readPackageScripts(packageJson: Record<string, unknown>): Map<string, string> {
+  const scripts = packageJson.scripts;
+  if (typeof scripts !== "object" || scripts === null) {
+    return new Map();
+  }
+
+  return new Map(
+    Object.entries(scripts)
+      .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+      .map(([name, script]) => [name, script]),
+  );
 }
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | undefined> {

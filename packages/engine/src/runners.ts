@@ -59,6 +59,7 @@ import {
 } from "./languages/go.js";
 import {
   runJavaScriptCoverageTask as runJavaScriptCoverageLanguageTask,
+  runJavaScriptE2eTask as runJavaScriptE2eLanguageTask,
   runJavaScriptMetricsTask as runJavaScriptMetricsLanguageTask,
   runJavaScriptUnitTask as runJavaScriptUnitLanguageTask,
 } from "./languages/javascript.js";
@@ -1036,6 +1037,11 @@ export const defaultRunnerLanguageModules = createRunnerLanguageModuleRegistry([
           task,
           createJavaScriptRunnerRuntime(context.cwd, context.signal),
         ),
+      e2e: (task, context) =>
+        runJavaScriptE2eLanguageTask(
+          task,
+          createJavaScriptRunnerRuntime(context.cwd, context.signal),
+        ),
       maintainability: (task, context) =>
         runJavaScriptMetricsLanguageTask(
           task,
@@ -1141,7 +1147,7 @@ export const defaultStageDefinitions = createRunnerStageDefinitionRegistry([
     "javascript",
     "python",
   ]),
-  createCombinedStageDefinition("e2e", []),
+  createCombinedStageDefinition("e2e", ["javascript"]),
   createCombinedStageDefinition("sloc", ["javascript", "go", "rust", "dotnet", "jvm", "python"]),
   createCombinedStageDefinition("complexity", [
     "javascript",

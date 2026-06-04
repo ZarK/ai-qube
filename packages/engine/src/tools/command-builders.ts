@@ -5,6 +5,10 @@ export interface JavaScriptTestArgsOptions {
   runner: "jest" | "vitest";
 }
 
+export function createPlaywrightTestArgs(): string[] {
+  return ["test", "--reporter=json"];
+}
+
 export function createDirectJavaScriptTestArgs(options: JavaScriptTestArgsOptions): string[] {
   const { coverageDirectory, mode, reportPath, runner } = options;
 

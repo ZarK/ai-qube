@@ -242,7 +242,10 @@ const defaultStageLanguageTools: Record<AiqStageId, Partial<Record<AiqLanguageId
     typescript: "javascript",
     python: "python",
   },
-  e2e: {},
+  e2e: {
+    javascript: "javascript",
+    typescript: "javascript",
+  },
   sloc: {
     javascript: "javascript",
     typescript: "javascript",

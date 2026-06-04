@@ -400,6 +400,44 @@ async function createCustomJavaScriptRunnerProject(options: {
   };
 }
 
+async function createCustomJavaScriptE2eProject(options: {
+  e2eScript?: string;
+  packageJson?: Record<string, unknown>;
+  prefix: string;
+}): Promise<{
+  packageJsonPath: string;
+  root: string;
+  sourceFile: string;
+}> {
+  const root = await mkdtemp(path.join(os.tmpdir(), options.prefix));
+  tempDirs.push(root);
+
+  const srcDir = path.join(root, "src");
+  await mkdir(srcDir, { recursive: true });
+
+  const packageJsonPath = path.join(root, "package.json");
+  const sourceFile = path.join(srcDir, "index.ts");
+  const packageJson = options.packageJson ?? {
+    name: options.prefix,
+    private: true,
+    scripts:
+      options.e2eScript === undefined
+        ? {}
+        : {
+            "aiq:e2e": options.e2eScript,
+          },
+  };
+
+  await writeFile(packageJsonPath, `${JSON.stringify(packageJson, null, 2)}\n`, "utf8");
+  await writeFile(sourceFile, "export const value = 1;\n", "utf8");
+
+  return {
+    packageJsonPath,
+    root,
+    sourceFile,
+  };
+}
+
 async function createCustomPythonRunnerProject(options: {
   prefix: string;
   runnerScript: string;
@@ -1647,6 +1685,155 @@ describe("engine runners", () => {
       source: "test-runner",
     });
     expect(result.toolRuns).toEqual([]);
+  });
+
+  it("passes e2e as noop when no JavaScript or TypeScript project files are selected", async () => {
+    const textFile = path.join(await mkdtemp(path.join(os.tmpdir(), "aiq-e2e-no-js-")), "note.txt");
+    tempDirs.push(path.dirname(textFile));
+    await writeFile(textFile, "notes\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [textFile],
+        id: "test:1:e2e-no-js",
+        stageId: "e2e",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.toolRuns).toEqual([]);
+    expect(result.notes[0]).toContain("No supported files were selected for e2e.");
+  });
+
+  it("fails e2e when a JavaScript package has no configured e2e runner", async () => {
+    const project = await createCustomJavaScriptE2eProject({
+      prefix: "aiq-js-e2e-none-",
+    });
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "test:1:e2e-js-none",
+        stageId: "e2e",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.toolRuns).toEqual([]);
+    expect(result.notes[0]).toContain("No e2e runner is configured");
+    expect(result.diagnostics[0]).toMatchObject({
+      file: project.packageJsonPath,
+      severity: "error",
+      source: "aiq-e2e",
+    });
+  });
+
+  it("runs e2e through a configured agent-browser audit script", async () => {
+    const project = await createCustomJavaScriptE2eProject({
+      e2eScript: "node e2e.cjs --agent-browser",
+      prefix: "aiq-js-e2e-agent-browser-",
+    });
+    await writeFile(path.join(project.root, "e2e.cjs"), "process.exit(0);\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "test:1:e2e-js-agent-browser",
+        stageId: "e2e",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.notes[0]).toBe("Agent-browser e2e audit passed.");
+    expect(result.toolRuns[0]).toMatchObject({
+      args: ["run", "aiq:e2e", "--"],
+      status: "passed",
+      tool: "agent-browser",
+    });
+  });
+
+  it("runs e2e through an explicit package e2e script", async () => {
+    const project = await createCustomJavaScriptE2eProject({
+      e2eScript: "node e2e.cjs",
+      prefix: "aiq-js-e2e-script-",
+    });
+    await writeFile(path.join(project.root, "e2e.cjs"), "process.exit(0);\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "test:1:e2e-js-script",
+        stageId: "e2e",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.notes[0]).toBe("E2E script passed.");
+    expect(result.toolRuns[0]).toMatchObject({
+      args: ["run", "aiq:e2e", "--"],
+      status: "passed",
+      tool: "e2e",
+    });
+  });
+
+  it("uses an ancestor e2e script to cover nested package projects", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "aiq-js-e2e-workspace-root-"));
+    tempDirs.push(root);
+    const packageRoot = path.join(root, "packages", "app");
+    const sourceFile = path.join(packageRoot, "src", "index.ts");
+    await mkdir(path.dirname(sourceFile), { recursive: true });
+    await writeFile(
+      path.join(root, "package.json"),
+      `${JSON.stringify(
+        {
+          name: "workspace-root",
+          private: true,
+          scripts: {
+            "aiq:e2e": "node e2e.cjs",
+          },
+          workspaces: ["packages/*"],
+        },
+        null,
+        2,
+      )}\n`,
+      "utf8",
+    );
+    await writeFile(path.join(root, "e2e.cjs"), "process.exit(0);\n", "utf8");
+    await writeFile(
+      path.join(packageRoot, "package.json"),
+      `${JSON.stringify({ name: "workspace-app", private: true }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(sourceFile, "export const value = 1;\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [sourceFile],
+        id: "test:1:e2e-js-workspace-root",
+        stageId: "e2e",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.toolRuns).toHaveLength(1);
+    expect(result.toolRuns[0]).toMatchObject({
+      args: ["run", "aiq:e2e", "--"],
+      status: "passed",
+      tool: "e2e",
+    });
   });
 
   it("fails JavaScript unit when the runner summary reports failures despite exit code 0", async () => {
@@ -5464,7 +5651,7 @@ describe("engine runners", () => {
     });
   });
 
-  it("keeps other stages as not_implemented", async () => {
+  it("fails e2e setup when selected TypeScript project has no e2e runner", async () => {
     const result = await runPlannedTask(
       {
         fileCount: 1,
@@ -5475,8 +5662,12 @@ describe("engine runners", () => {
       process.cwd(),
     );
 
-    expect(result.status).toBe("not_implemented");
+    expect(result.status).toBe("failed");
     expect(result.toolRuns).toEqual([]);
-    expect(result.notes[0]).toContain("no tool runner is implemented");
+    expect(result.notes[0]).toContain("No e2e runner is configured");
+    expect(result.diagnostics[0]).toMatchObject({
+      severity: "error",
+      source: "aiq-e2e",
+    });
   });
 });

@@ -1189,7 +1189,7 @@ describe("CLI foundation", () => {
       },
     );
 
-    expect(exitCode).toBe(1);
+    expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
 
     const output = JSON.parse(stdout.value) as {
@@ -1272,10 +1272,15 @@ describe("CLI foundation", () => {
 
     const output = JSON.parse(stdout.value) as {
       request: { selection: { stages: string[] } };
-      stages: Array<{ stageId: string; status: string }>;
+      stages: Array<{
+        diagnostics: Array<{ source: string }>;
+        stageId: string;
+        status: string;
+      }>;
     };
     expect(output.request.selection.stages).toEqual(["e2e"]);
-    expect(output.stages).toMatchObject([{ stageId: "e2e", status: "not_implemented" }]);
+    expect(output.stages).toMatchObject([{ stageId: "e2e", status: "failed" }]);
+    expect(output.stages[0]?.diagnostics[0]?.source).toBe("aiq-e2e");
   });
 
   it("runs cumulative stages for run --up-to stage shortcuts", async () => {
