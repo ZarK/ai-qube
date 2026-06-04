@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 export type TextExpectation = string | RegExp | readonly (string | RegExp)[];
@@ -231,7 +233,7 @@ export function assertCliDryRun(result: CliCommandResult, expectation: CliDryRun
 export function runPackDryRun(options: PackDryRunOptions = {}): PackEntry {
   const packageManager = options.packageManager ?? "pnpm";
   const args = options.args ?? ["pack", "--dry-run", "--json"];
-  const result = runCliCommand(packageManager, args, {
+  const commandOptions = {
     ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
     env: {
       ...process.env,
@@ -240,7 +242,12 @@ export function runPackDryRun(options: PackDryRunOptions = {}): PackEntry {
     },
     ...(options.input !== undefined ? { input: options.input } : {}),
     ...(options.timeout !== undefined ? { timeout: options.timeout } : {})
-  });
+  };
+  const directResult = runCliCommand(packageManager, args, commandOptions);
+  const corepackFallback = createCorepackInvocation(packageManager, args);
+  const result = isMissingCommand(directResult, packageManager) && corepackFallback
+    ? runCliCommand(corepackFallback.command, corepackFallback.args, commandOptions)
+    : directResult;
   assertCliResult(result, { status: 0 });
   return parsePackJson(result.stdout);
 }
@@ -353,6 +360,24 @@ function toExpectationList(expectation: TextExpectation | undefined): readonly (
     return [expectation];
   }
   return expectation;
+}
+
+function isMissingCommand(result: CliCommandResult, command: string): boolean {
+  const error = result.error as NodeJS.ErrnoException | undefined;
+  return command === "pnpm" && error?.code === "ENOENT";
+}
+
+function createCorepackInvocation(packageManager: string, args: readonly string[]): { readonly command: string; readonly args: readonly string[] } | undefined {
+  if (packageManager !== "pnpm") {
+    return undefined;
+  }
+  if (process.platform === "win32") {
+    const corepackScript = join(dirname(process.execPath), "node_modules", "corepack", "dist", "corepack.js");
+    if (existsSync(corepackScript)) {
+      return { command: process.execPath, args: [corepackScript, packageManager, ...args] };
+    }
+  }
+  return { command: "corepack", args: [packageManager, ...args] };
 }
 
 function assertExpectedValue(actual: unknown, expected: unknown, label: string): void {

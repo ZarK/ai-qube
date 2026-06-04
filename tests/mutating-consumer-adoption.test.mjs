@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, beforeEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,7 +26,7 @@ function copyCompiledConsumer() {
   const nodeModulesDir = join(consumerRoot, "node_modules");
   const packageScopeDir = join(nodeModulesDir, "@tjalve");
   mkdirSync(packageScopeDir, { recursive: true });
-  symlinkSync(repoRoot, join(packageScopeDir, "qube-cli"), "dir");
+  linkPackageRoot(join(packageScopeDir, "qube-cli"));
   writeFileSync(
     join(consumerRoot, "package.json"),
     `${JSON.stringify({ name: "mutating-consumer-contract", private: true, type: "module" }, null, 2)}\n`
@@ -51,6 +51,10 @@ function readState() {
 
 function runConsumer(...args) {
   return runNodeCliCommand(consumerCliPath, args, { cwd: consumerRoot });
+}
+
+function linkPackageRoot(target) {
+  symlinkSync(repoRoot, target, platform() === "win32" ? "junction" : "dir");
 }
 
 describe("mutating consumer adoption", () => {
@@ -81,7 +85,7 @@ describe("mutating consumer adoption", () => {
     const tokenHelp = runConsumer("catalog", "prune", "help");
 
     assertCliHelp(rootHelp, {
-      contains: [/mutating-consumer\nMutating consumer CLI validating @tjalve\/qube-cli dry-run adoption\./, /catalog prune\s+Remove archived catalog items/]
+      contains: [/mutating-consumer\nMutating consumer CLI validating @tjalve\/qube-cli dry-run adoption\./, /mutating-consumer --version/, /catalog prune\s+Remove archived catalog items/]
     });
     assertCliHelp(commandHelp, {
       contains: ["Usage:\n  mutating-consumer catalog prune [state-file] [--dry-run] [--json] [--yes]", /Dry run: supported/, /Mutation: local-files/]
@@ -90,6 +94,23 @@ describe("mutating consumer adoption", () => {
     assertCliHelp(tokenHelp);
     assert.equal(commandHelp.stdout, flagHelp.stdout);
     assert.equal(flagHelp.stdout, tokenHelp.stdout);
+  });
+
+  it("inherits global version output from the shared runtime", () => {
+    const human = runConsumer("--version");
+    const json = runConsumer("-v", "--json");
+
+    assertCliSuccess(human, { stdout: "0.1.0\n", stdoutExcludes: /MUTATING HANDLER EXECUTED/ });
+    assertCliJsonSuccess(json, {
+      ok: true,
+      command: "version",
+      package: {
+        name: "mutating-consumer",
+        version: "0.1.0"
+      },
+      version: "0.1.0"
+    });
+    assert.doesNotMatch(json.stdout, /MUTATING HANDLER EXECUTED/);
   });
 
   it("renders deterministic schema metadata for the adopted mutating command", () => {

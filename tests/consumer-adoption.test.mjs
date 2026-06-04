@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { platform, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -17,7 +17,7 @@ function copyCompiledConsumer() {
   const nodeModulesDir = join(consumerRoot, "node_modules");
   const packageScopeDir = join(nodeModulesDir, "@tjalve");
   mkdirSync(packageScopeDir, { recursive: true });
-  symlinkSync(repoRoot, join(packageScopeDir, "qube-cli"), "dir");
+  linkPackageRoot(join(packageScopeDir, "qube-cli"));
   writeFileSync(
     join(consumerRoot, "package.json"),
     `${JSON.stringify({ name: "read-only-consumer-contract", private: true, type: "module" }, null, 2)}\n`
@@ -33,6 +33,10 @@ function copyCompiledConsumer() {
 
 function runConsumer(...args) {
   return runNodeCliCommand(consumerCliPath, args, { cwd: consumerRoot });
+}
+
+function linkPackageRoot(target) {
+  symlinkSync(repoRoot, target, platform() === "win32" ? "junction" : "dir");
 }
 
 describe("read-only consumer adoption", () => {
@@ -63,7 +67,7 @@ describe("read-only consumer adoption", () => {
     const tokenHelp = runConsumer("catalog", "inspect", "help");
 
     assertCliHelp(rootHelp, {
-      contains: [/consumer\nRead-only consumer CLI validating @tjalve\/qube-cli adoption\./, /catalog inspect\s+Inspect a catalog item/]
+      contains: [/consumer\nRead-only consumer CLI validating @tjalve\/qube-cli adoption\./, /consumer --version/, /catalog inspect\s+Inspect a catalog item/]
     });
     assertCliHelp(commandHelp, {
       contains: ["Usage:\n  consumer catalog inspect <id> [--json] [--output <value>]", /JSON output: supported/]
@@ -72,6 +76,23 @@ describe("read-only consumer adoption", () => {
     assertCliHelp(tokenHelp);
     assert.equal(commandHelp.stdout, flagHelp.stdout);
     assert.equal(flagHelp.stdout, tokenHelp.stdout);
+  });
+
+  it("inherits global version output from the shared runtime", () => {
+    const human = runConsumer("--version");
+    const json = runConsumer("--version", "--json");
+
+    assertCliSuccess(human, { stdout: "0.1.0\n", stdoutExcludes: /READ-ONLY HANDLER EXECUTED/ });
+    assertCliJsonSuccess(json, {
+      ok: true,
+      command: "version",
+      package: {
+        name: "read-only-consumer",
+        version: "0.1.0"
+      },
+      version: "0.1.0"
+    });
+    assert.doesNotMatch(json.stdout, /READ-ONLY HANDLER EXECUTED/);
   });
 
   it("emits clean JSON success output for read-only behavior", () => {
