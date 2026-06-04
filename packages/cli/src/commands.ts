@@ -44,6 +44,7 @@ import {
   formatStatusOutput,
   toWorkflowStageOutput,
 } from "./output.js";
+import { defaultProjectScopeIgnoredDirectoryNames } from "./project-scope.js";
 import { createRunRequest, resolveCliConfig } from "./requests.js";
 import { renderAiqCommandSchemaJson } from "./schema.js";
 import { formatError, isErrorCode } from "./shared.js";
@@ -126,38 +127,6 @@ interface DoctorBundledTool {
   name: string;
   source: "bundled" | "project";
 }
-
-const doctorIgnoredDirectoryNames = new Set([
-  ".aiq",
-  ".git",
-  ".github",
-  ".gradle",
-  ".hg",
-  ".idea",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".svn",
-  ".terraform",
-  ".venv",
-  "__pycache__",
-  "bin",
-  "build",
-  "coverage",
-  "dist",
-  "docs",
-  "documentation",
-  "examples",
-  "fixtures",
-  "node_modules",
-  "obj",
-  "samples",
-  "target",
-  "test-projects",
-  "testdata",
-  "vendor",
-  "venv",
-]);
 
 const doctorMaxScannedFiles = 2_000;
 
@@ -774,7 +743,7 @@ async function collectProjectLanguages(
 
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!doctorIgnoredDirectoryNames.has(entry.name)) {
+      if (!defaultProjectScopeIgnoredDirectoryNames.has(entry.name)) {
         await collectProjectLanguages(entryPath, languages, state);
       }
       continue;

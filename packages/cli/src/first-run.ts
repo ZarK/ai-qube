@@ -1,6 +1,7 @@
 import { readdir, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { defaultProjectScopeIgnoredDirectoryNames } from "./project-scope.js";
 import type { OutputFormat } from "./types.js";
 
 export interface FirstRunProjectInference {
@@ -21,29 +22,6 @@ export interface FirstRunSetupGuidance {
   remediation: string;
   summary: string;
 }
-
-const firstRunIgnoredDirectoryNames = new Set([
-  ".aiq",
-  ".git",
-  ".gradle",
-  ".hg",
-  ".idea",
-  ".mypy_cache",
-  ".pytest_cache",
-  ".ruff_cache",
-  ".svn",
-  ".terraform",
-  ".venv",
-  "__pycache__",
-  "bin",
-  "build",
-  "coverage",
-  "dist",
-  "node_modules",
-  "obj",
-  "target",
-  "venv",
-]);
 
 const firstRunSupportedFileExtensions = new Set([
   ".bash",
@@ -213,7 +191,7 @@ async function collectSupportedFiles(
 
     const entryPath = path.join(directory, entry.name);
     if (entry.isDirectory()) {
-      if (!firstRunIgnoredDirectoryNames.has(entry.name)) {
+      if (!defaultProjectScopeIgnoredDirectoryNames.has(entry.name)) {
         const truncated = await collectSupportedFiles(root, entryPath, files, warnings);
         if (truncated) {
           return true;
