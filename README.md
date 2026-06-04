@@ -37,3 +37,26 @@ pnpm run typecheck
 pnpm test
 pnpm run package-dry-run
 ```
+
+## Release Provenance
+
+Publish releases from immutable `publish-*` tags, not from `main`.
+
+Release checklist:
+
+1. Verify `main` is current and the release commit has passed CI.
+2. Create an immutable release tag at the exact commit being published:
+
+   ```sh
+   git tag publish-<version>-<short-sha> <commit-sha>
+   git push origin publish-<version>-<short-sha>
+   ```
+
+3. Confirm the tag resolves to the published commit:
+
+   ```sh
+   git fetch origin --tags
+   git rev-parse publish-<version>-<short-sha>^{commit}
+   ```
+
+4. After npm publish completes, inspect the package attestation. The provenance external parameters must identify the tag ref, for example `refs/tags/publish-<version>-<short-sha>`, and the resolved source digest must match the tagged commit.

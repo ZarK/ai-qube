@@ -117,6 +117,16 @@ describe("package metadata", () => {
     assert.match(workspace, /savePrefix: ""/);
   });
 
+  it("publishes from immutable release tags for npm provenance", async () => {
+    const workflow = await readProjectFile(".github/workflows/publish.yml");
+
+    assert.match(workflow, /tags:\s*\n\s+- "publish-\*"/);
+    assert.match(workflow, /if: startsWith\(github\.ref, 'refs\/tags\/publish-'\)/);
+    assert.doesNotMatch(workflow, /refs\/heads\/main/);
+    assert.doesNotMatch(workflow, /workflow_dispatch/);
+    assert.match(workflow, /persist-credentials: false/);
+  });
+
   it("runs real tests and pack-safety assertions", async () => {
     const packageJson = await readPackageJson();
 
