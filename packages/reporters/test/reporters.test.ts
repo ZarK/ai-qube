@@ -123,10 +123,13 @@ describe("reporters", () => {
 
     expect(formatRunResultAsText(missingPython)).toContain("Missing tools:");
     expect(formatRunResultAsText(missingPython)).toContain("[stage 3 typecheck] Python/ty");
+    expect(formatRunResultAsText(missingPython)).toContain("aiq setup");
     expect(formatRunResultAsText(unsupportedJs)).toContain("Unsupported projects:");
     expect(formatRunResultAsText(qualityFailure)).toContain("Quality failures:");
     expect(formatRunResultAsText(qualityFailure)).toContain("Suggested next commands:");
+    expect(formatRunResultAsText(qualityFailure)).not.toContain("aiq setup");
     expect(formatRunResultAsText(setupFailure)).toContain("Setup issues:");
+    expect(formatRunResultAsText(setupFailure)).toContain("aiq setup");
     expect(formatRunResultAsText(multiWordTool)).toContain("Go/go test");
   });
 });

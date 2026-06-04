@@ -133,6 +133,13 @@ export function formatRunResultAsText(result: RunResult): string {
       lines.push(...group.items.map((item) => `  - ${item}`));
     }
     lines.push("Suggested next commands:");
+    if (
+      problemGroups.some(
+        (group) => group.heading === missingToolsCategory || group.heading === setupIssuesCategory,
+      )
+    ) {
+      lines.push("  - aiq setup");
+    }
     lines.push("  - aiq doctor");
     lines.push("  - aiq run <paths...> --only <stage-number> --verbose");
     lines.push("  - aiq config --set-stage <0-9>");
@@ -141,11 +148,14 @@ export function formatRunResultAsText(result: RunResult): string {
   return `${lines.join("\n")}\n`;
 }
 
+const missingToolsCategory = "Missing tools";
+const setupIssuesCategory = "Setup issues";
+
 type ProblemCategory =
   | "Internal errors"
-  | "Missing tools"
+  | typeof missingToolsCategory
   | "Quality failures"
-  | "Setup issues"
+  | typeof setupIssuesCategory
   | "Unsupported projects";
 
 interface ProblemGroup {
@@ -199,8 +209,8 @@ function collectProblemGroups(result: RunResult): ProblemGroup[] {
   const groups: ProblemGroup[] = [];
 
   for (const heading of [
-    "Setup issues",
-    "Missing tools",
+    setupIssuesCategory,
+    missingToolsCategory,
     "Unsupported projects",
     "Quality failures",
     "Internal errors",
@@ -231,8 +241,8 @@ function summarizeStageProblems(stage: StageResult): ProblemSummary[] {
   if (isMissingToolStage(stage, text)) {
     return [
       {
-        category: "Missing tools",
-        item: `${formatStageLabel(stage.stageId)} ${formatToolContext(stage)}${firstMessage} Fix: run aiq doctor, then install the reported tool through the project or language toolchain.`,
+        category: missingToolsCategory,
+        item: `${formatStageLabel(stage.stageId)} ${formatToolContext(stage)}${firstMessage} Fix: run aiq setup for required setup steps, then install the reported tool through the project or language toolchain.`,
       },
     ];
   }
@@ -249,8 +259,8 @@ function summarizeStageProblems(stage: StageResult): ProblemSummary[] {
   if (isSetupIssueMessage(text)) {
     return [
       {
-        category: "Setup issues",
-        item: `${formatStageLabel(stage.stageId)} ${firstMessage} Fix: inspect config with aiq config --print-config or run aiq doctor.`,
+        category: setupIssuesCategory,
+        item: `${formatStageLabel(stage.stageId)} ${firstMessage} Fix: run aiq setup for prerequisite steps or inspect config with aiq config --print-config.`,
       },
     ];
   }

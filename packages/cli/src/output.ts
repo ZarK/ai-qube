@@ -224,7 +224,7 @@ export function formatFirstRunResultDetails(result: RunResult): string {
       return `  - ${stageId}/${diagnostic.source}: ${file} - ${diagnostic.message}`;
     }),
     diagnostics.length > 5 ? `  ... ${diagnostics.length - 5} more diagnostic(s)` : undefined,
-    "Remediation: fix the listed diagnostics, or run aiq doctor if a tool prerequisite appears to be missing.",
+    "Remediation: fix the listed diagnostics, or run aiq setup if a tool prerequisite appears to be missing.",
     "",
   ]
     .filter((line): line is string => line !== undefined)

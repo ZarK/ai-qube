@@ -12,7 +12,7 @@ import {
   runEngine,
   writeReportArtifact,
 } from "../src/index.js";
-import { ToolRunner } from "../src/tool-runner.js";
+import { type ToolRunOutcome, ToolRunner } from "../src/tool-runner.js";
 import { resolvePythonCommand } from "../src/tools/binary-resolver.js";
 import { withExclusiveToolLock } from "./exclusive-tool-lock.js";
 import {
@@ -201,6 +201,18 @@ async function createTypeScriptFixtureProject(
   return {
     root,
     sourceFile: path.join(root, "src", "index.ts"),
+  };
+}
+
+function createToolRunOutcome(overrides: Partial<ToolRunOutcome> = {}): ToolRunOutcome {
+  return {
+    durationMs: 1,
+    exitCode: 0,
+    finishedAt: "2026-03-25T00:00:01.000Z",
+    startedAt: "2026-03-25T00:00:00.000Z",
+    stderr: "",
+    stdout: "",
+    ...overrides,
   };
 }
 
@@ -606,6 +618,40 @@ describe("engine foundation", () => {
     });
   });
 
+  it("reports missing bundled TypeScript runner as setup guidance", async () => {
+    const { root, sourceFile } = await createTypeScriptFixtureProject(
+      "aiq-engine-ts-missing-runner-",
+    );
+    vi.spyOn(ToolRunner.prototype, "runNodeTool").mockResolvedValueOnce(
+      createToolRunOutcome({ exitCode: undefined }),
+    );
+
+    const result = await runEngine({
+      context: "cli",
+      cwd: root,
+      manifest: {
+        files: [sourceFile],
+        source: "direct",
+      },
+      mode: "check",
+      stages: ["typecheck"],
+      writeArtifacts: false,
+    });
+
+    const diagnostic = result.stages[0]?.diagnostics[0];
+
+    expect(result.ok).toBe(false);
+    expect(result.stages[0]).toMatchObject({
+      stageId: "typecheck",
+      status: "failed",
+    });
+    expect(diagnostic).toMatchObject({
+      source: "tsc",
+      message: expect.stringContaining("Run aiq setup"),
+    });
+    expect(diagnostic?.message).not.toContain("spawn");
+  });
+
   it("runs lint, format, unit, coverage, and security against JavaScript and TypeScript fixtures", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-jsonc-"));
     tempDirs.push(tempDir);
@@ -690,6 +736,40 @@ describe("engine foundation", () => {
     ]);
     expect(unitStage?.notes.join(" ")).toContain("Vitest ran");
     expect(unitStage?.notes.join(" ")).not.toContain("Jest ran");
+  });
+
+  it("reports missing project-managed JavaScript runner as setup guidance", async () => {
+    const { root, sourceFile } = await createJavaScriptFixtureProject(
+      "aiq-engine-js-missing-runner-",
+    );
+    vi.spyOn(ToolRunner.prototype, "run").mockResolvedValueOnce(
+      createToolRunOutcome({ exitCode: undefined }),
+    );
+
+    const result = await runEngine({
+      context: "cli",
+      cwd: root,
+      manifest: {
+        files: [sourceFile],
+        source: "direct",
+      },
+      mode: "check",
+      stages: ["unit"],
+      writeArtifacts: false,
+    });
+
+    const diagnostic = result.stages[0]?.diagnostics[0];
+
+    expect(result.ok).toBe(false);
+    expect(result.stages[0]).toMatchObject({
+      stageId: "unit",
+      status: "failed",
+    });
+    expect(diagnostic).toMatchObject({
+      source: "jest",
+      message: expect.stringContaining("Run aiq setup"),
+    });
+    expect(diagnostic?.message).not.toContain("spawn");
   });
 
   it("keeps configured Biome language selections while including shared JSON inputs", async () => {

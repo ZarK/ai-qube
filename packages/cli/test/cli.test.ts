@@ -3504,7 +3504,7 @@ describe("CLI foundation", () => {
       expect(stderr.value).toBe("");
       expect(stdout.value).toContain("Missing tools:");
       expect(stdout.value).toContain("[stage 3 typecheck]");
-      expect(stdout.value).toContain("aiq doctor");
+      expect(stdout.value).toContain("aiq setup");
     } finally {
       process.env.PATH = originalPath;
     }
@@ -3533,6 +3533,45 @@ describe("CLI foundation", () => {
       expect(stdout.value).toContain("Missing tools:");
       expect(stdout.value).toContain("[stage 5 sloc]");
       expect(stdout.value).toContain("lizard");
+      expect(stdout.value).toContain("aiq setup");
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("keeps external missing-tool setup guidance in JSON output", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-go-missing-lizard-json-"));
+    tempDirs.push(tempDir);
+    await writeFile(path.join(tempDir, "go.mod"), "module example.com/aiq\n\ngo 1.22\n", "utf8");
+    await writeFile(path.join(tempDir, "main.go"), "package main\n\nfunc main() {}\n", "utf8");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(
+        ["node", "aiq", "run", "main.go", "--stage", "sloc", "--format", "json"],
+        {
+          cwd: tempDir,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      const output = JSON.parse(stdout.value) as {
+        stages: Array<{ diagnostics: Array<{ message: string; source: string }> }>;
+      };
+      const diagnostic = output.stages[0]?.diagnostics[0];
+
+      expect(exitCode).toBe(1);
+      expect(stderr.value).toBe("");
+      expect(diagnostic).toMatchObject({
+        source: "lizard",
+        message: expect.stringContaining("Run aiq setup"),
+      });
+      expect(diagnostic?.message).not.toContain("spawn");
     } finally {
       process.env.PATH = originalPath;
     }
