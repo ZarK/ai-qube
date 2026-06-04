@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 
 import type {
+  Diagnostic,
   PlannedTask,
   ProjectDescriptor,
   ProjectGraph,
@@ -10,6 +11,7 @@ import type {
   StageResult,
   ToolRunResult,
 } from "../contracts.js";
+import { createPythonMetricsDiagnostics } from "../metrics-thresholds.js";
 import * as parsers from "../parsers/index.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { findNearestAnyConfig, pathExists } from "../utils/path-utils.js";
@@ -434,6 +436,7 @@ async function runPythonMetricsTask(
   const unsupportedFiles = task.files.filter((file) => {
     return !isPythonTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file);
   });
+  const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: StageResult["toolRuns"] = [];
   let totalDurationMs = 0;
@@ -482,6 +485,9 @@ async function runPythonMetricsTask(
           minMaintainabilityRank = fileMetrics.mi.rank;
         }
       }
+      diagnostics.push(
+        ...createPythonMetricsDiagnostics(cachedMetrics.metrics.files, mode, "radon"),
+      );
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -491,7 +497,7 @@ async function runPythonMetricsTask(
       files[0] ?? runtime.cwd,
       error,
       totalDurationMs,
-      [],
+      diagnostics,
       toolRuns,
     );
   }
@@ -522,11 +528,16 @@ async function runPythonMetricsTask(
   }
 
   return {
-    diagnostics: [],
+    diagnostics,
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status: unsupportedFiles.length > 0 ? "not_implemented" : "passed",
+    status:
+      diagnostics.length > 0
+        ? "failed"
+        : unsupportedFiles.length > 0
+          ? "not_implemented"
+          : "passed",
     toolRuns,
   };
 }

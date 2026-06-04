@@ -4,6 +4,12 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  createFileMetricDiagnostics,
+  createLizardMetricsDiagnostics,
+  createPythonMetricsDiagnostics,
+  readMetricsThresholds,
+} from "../src/metrics-thresholds.js";
 import { parseDotNetTrxReport } from "../src/parsers/dotnet.js";
 import { parseGoVetDiagnostics } from "../src/parsers/go.js";
 import { parseLizardMetrics } from "../src/parsers/lizard.js";
@@ -269,24 +275,182 @@ describe("extracted helper regressions", () => {
     );
   });
 
-  it("preserves the previous lizard maintainability thresholds", async () => {
+  it("ranks lizard maintainability from parsed function metrics", async () => {
     const project = await createTempSourceFile(["a", "b", "c", "d"].join("\n"));
 
-    const metrics = await parseLizardMetrics("0,7,0,0,0,0,fixture.ts", project.root, [
+    const metrics = await parseLizardMetrics("0,7,0,0,0,0,fixture.ts,work,1,1,2", project.root, [
       project.file,
     ]);
 
     expect(metrics[project.file]?.maintainability.rank).toBe("C");
   });
 
-  it("preserves the previous lizard complexity thresholds", async () => {
+  it("ranks lizard complexity from parsed function metrics", async () => {
     const project = await createTempSourceFile("single\n");
 
-    const metrics = await parseLizardMetrics("0,31,0,0,0,0,fixture.ts", project.root, [
+    const metrics = await parseLizardMetrics("0,31,0,0,0,0,fixture.ts,work,1,1,2", project.root, [
       project.file,
     ]);
 
     expect(metrics[project.file]?.maxComplexity.rank).toBe("E");
+  });
+
+  it("keeps lizard function metrics needed for default threshold enforcement", async () => {
+    const project = await createTempSourceFile("single\n");
+
+    const metrics = await parseLizardMetrics(
+      "201,11,0,7,0,0,fixture.ts,work,1,23,24",
+      project.root,
+      [project.file],
+    );
+
+    expect(metrics[project.file]?.blocks).toEqual([
+      {
+        complexity: 11,
+        file: project.file,
+        name: "work",
+        nloc: 201,
+        parameterCount: 7,
+        startLine: 23,
+      },
+    ]);
+  });
+
+  it("fails lizard-backed SLOC, complexity, and maintainability defaults", async () => {
+    const project = await createTempSourceFile(
+      `${Array.from({ length: 350 }, () => "line").join("\n")}\n`,
+    );
+    const metrics = await parseLizardMetrics(
+      "350,13,0,7,0,0,fixture.ts,work,1,23,24",
+      project.root,
+      [project.file],
+    );
+
+    expect(createLizardMetricsDiagnostics(metrics, "sloc", "lizard")).toEqual([
+      expect.objectContaining({
+        file: project.file,
+        message: "SLOC 350 is greater than or equal to 350.",
+        source: "lizard",
+      }),
+    ]);
+    expect(createLizardMetricsDiagnostics(metrics, "complexity", "lizard")).toEqual([
+      expect.objectContaining({
+        file: project.file,
+        message: "work complexity 13 is greater than 12.",
+        source: "lizard",
+      }),
+    ]);
+    expect(createLizardMetricsDiagnostics(metrics, "maintainability", "lizard")).toEqual([
+      expect.objectContaining({
+        file: project.file,
+        message: "work maintainability complexity 13 is greater than 10.",
+      }),
+      expect.objectContaining({
+        file: project.file,
+        message: "work function NLOC 350 is greater than 200.",
+      }),
+      expect.objectContaining({
+        file: project.file,
+        message: "work parameter count 7 is greater than 6.",
+      }),
+    ]);
+  });
+
+  it("honors metrics threshold environment overrides", () => {
+    expect(
+      readMetricsThresholds({
+        AIQ_SLOC_LIMIT: "500",
+        LIZARD_CCN_LIMIT: "20",
+        LIZARD_CCN_STRICT: "18",
+        LIZARD_FN_NLOC_LIMIT: "400",
+        LIZARD_PARAM_LIMIT: "9",
+      }).slocLimit,
+    ).toBe(500);
+    expect(
+      readMetricsThresholds({
+        AIQ_SLOC_LIMIT: "500",
+        LIZARD_CCN_LIMIT: "20",
+        LIZARD_CCN_STRICT: "18",
+        LIZARD_FN_NLOC_LIMIT: "400",
+        LIZARD_PARAM_LIMIT: "9",
+      }),
+    ).toMatchObject({
+      lizardComplexityLimit: 20,
+      lizardMaintainabilityComplexityLimit: 18,
+      lizardMaintainabilityFunctionNlocLimit: 400,
+      lizardMaintainabilityParameterLimit: 9,
+      slocLimit: 500,
+    });
+  });
+
+  it("fails Python SLOC, complexity, maintainability, and readability defaults", () => {
+    const file = path.resolve("fixture.py");
+    const metrics = {
+      [file]: {
+        cc: [
+          {
+            complexity: 11,
+            endline: 12,
+            lineno: 4,
+            name: "work",
+            rank: "C",
+            type: "Function",
+          },
+        ],
+        mi: {
+          rank: "C",
+          score: 39,
+        },
+        raw: {
+          blank: 0,
+          comments: 0,
+          lloc: 0,
+          loc: 350,
+          multi: 0,
+          singleComments: 0,
+          sloc: 350,
+        },
+        readability: {
+          score: 84,
+        },
+      },
+    };
+
+    expect(createPythonMetricsDiagnostics(metrics, "sloc", "radon")).toHaveLength(1);
+    expect(createPythonMetricsDiagnostics(metrics, "complexity", "radon")).toEqual([
+      expect.objectContaining({
+        file,
+        message: "work complexity rank C is not allowed; only A/B complexity ranks pass.",
+      }),
+    ]);
+    expect(createPythonMetricsDiagnostics(metrics, "maintainability", "radon")).toEqual([
+      expect.objectContaining({
+        file,
+        message: "Maintainability index 39.0 is less than 40.",
+      }),
+      expect.objectContaining({
+        file,
+        message: "Readability index 84.0 is less than 85.",
+      }),
+    ]);
+  });
+
+  it("uses lizard-style complexity defaults for file-level metric fallbacks", () => {
+    const file = path.resolve("fixture.cs");
+    const metrics = {
+      [file]: {
+        maintainability: { score: 100 },
+        maxComplexity: { score: 11 },
+        raw: { sloc: 10 },
+      },
+    };
+
+    expect(createFileMetricDiagnostics(metrics, "maintainability", "aiq-csharp-metrics")).toEqual([
+      expect.objectContaining({
+        file,
+        message: "Maintainability complexity 11 is greater than 10.",
+      }),
+    ]);
   });
 
   it("parses multi-object go vet json-lines output", async () => {

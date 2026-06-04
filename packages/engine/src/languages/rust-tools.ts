@@ -4,17 +4,13 @@ import path from "node:path";
 
 import type { Diagnostic } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
+import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { RustRunnerRuntime } from "./contracts.js";
 import type { RustProject } from "./rust.js";
 
-export type RustMetricsFileMetrics = {
-  blockCount: number;
-  maintainability: { rank: string; score: number };
-  maxComplexity: { rank: string; score: number };
-  raw: { sloc: number };
-};
+export type RustMetricsFileMetrics = LizardMetricsFileMetrics;
 
 export type RustMetricsProjectMetrics = {
   args: string[];

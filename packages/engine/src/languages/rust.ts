@@ -12,6 +12,7 @@ import type {
   StageResult,
   ToolRunResult,
 } from "../contracts.js";
+import { createLizardMetricsDiagnostics } from "../metrics-thresholds.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import * as commands from "../tools/command-builders.js";
 import { findNearestConfig, pathExists } from "../utils/path-utils.js";
@@ -565,6 +566,7 @@ export async function runRustMetricsTask(
     );
   }
 
+  const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
@@ -620,6 +622,9 @@ export async function runRustMetricsTask(
           minMaintainabilityRank = fileMetrics.maintainability.rank;
         }
       }
+      diagnostics.push(
+        ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
+      );
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -629,7 +634,7 @@ export async function runRustMetricsTask(
       files[0] ?? runtime.cwd,
       error,
       totalDurationMs,
-      [],
+      diagnostics,
       toolRuns,
     );
   }
@@ -660,11 +665,16 @@ export async function runRustMetricsTask(
   }
 
   return {
-    diagnostics: [],
+    diagnostics,
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status: unsupportedFiles.length > 0 ? "not_implemented" : "passed",
+    status:
+      diagnostics.length > 0
+        ? "failed"
+        : unsupportedFiles.length > 0
+          ? "not_implemented"
+          : "passed",
     toolRuns,
   };
 }

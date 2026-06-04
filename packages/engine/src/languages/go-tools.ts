@@ -3,16 +3,12 @@ import path from "node:path";
 
 import type { Diagnostic } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
+import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import type { GoRunnerRuntime } from "./contracts.js";
 import type { GoProject } from "./go.js";
 
-export type GoMetricsFileMetrics = {
-  blockCount: number;
-  maintainability: { rank: string; score: number };
-  maxComplexity: { rank: string; score: number };
-  raw: { sloc: number };
-};
+export type GoMetricsFileMetrics = LizardMetricsFileMetrics;
 
 export type GoMetricsProjectMetrics = {
   args: string[];

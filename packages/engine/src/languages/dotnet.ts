@@ -10,6 +10,7 @@ import type {
   StageResult,
   ToolRunResult,
 } from "../contracts.js";
+import { createFileMetricDiagnostics } from "../metrics-thresholds.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { DotNetRunnerRuntime, SharedMetricsMode } from "./contracts.js";
@@ -429,6 +430,7 @@ export async function runDotNetMetricsTask(
     );
   }
 
+  const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
@@ -484,6 +486,9 @@ export async function runDotNetMetricsTask(
           minMaintainabilityRank = fileMetrics.maintainability.rank;
         }
       }
+      diagnostics.push(
+        ...createFileMetricDiagnostics(cachedMetrics.metrics.files, mode, "aiq-csharp-metrics"),
+      );
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -493,7 +498,7 @@ export async function runDotNetMetricsTask(
       files[0] ?? runtime.cwd,
       error,
       totalDurationMs,
-      [],
+      diagnostics,
       toolRuns,
     );
   }
@@ -524,11 +529,16 @@ export async function runDotNetMetricsTask(
   }
 
   return {
-    diagnostics: [],
+    diagnostics,
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status: unsupportedFiles.length > 0 ? "not_implemented" : "passed",
+    status:
+      diagnostics.length > 0
+        ? "failed"
+        : unsupportedFiles.length > 0
+          ? "not_implemented"
+          : "passed",
     toolRuns,
   };
 }

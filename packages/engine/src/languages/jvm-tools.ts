@@ -4,6 +4,7 @@ import path from "node:path";
 
 import type { Diagnostic } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
+import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import type { JvmRunnerRuntime } from "./contracts.js";
 import { type JvmBuildSystem, type JvmProject, jvmSourceExtensions } from "./jvm.js";
@@ -22,12 +23,7 @@ export type JvmExecutable = {
   env: NodeJS.ProcessEnv | undefined;
 };
 
-export type JvmMetricsFileMetrics = {
-  blockCount: number;
-  maintainability: { rank: string; score: number };
-  maxComplexity: { rank: string; score: number };
-  raw: { sloc: number };
-};
+export type JvmMetricsFileMetrics = LizardMetricsFileMetrics;
 
 export type JvmMetricsProjectMetrics = {
   args: string[];

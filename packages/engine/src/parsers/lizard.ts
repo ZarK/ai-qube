@@ -4,6 +4,14 @@ import path from "node:path";
 import { readIntegerString } from "./utils.js";
 
 export interface LizardMetricsFileMetrics {
+  blocks: Array<{
+    complexity: number;
+    file: string;
+    name: string;
+    nloc: number;
+    parameterCount: number;
+    startLine: number;
+  }>;
   blockCount: number;
   maintainability: {
     rank: string;
@@ -28,21 +36,33 @@ export async function parseLizardMetrics(
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .map((line) => parseCsvLine(line));
-  const rowMetrics = new Map<string, Array<{ complexity: number; file: string }>>();
+  const rowMetrics = new Map<string, LizardMetricsFileMetrics["blocks"]>();
 
   for (const row of rows) {
+    const nloc = readIntegerString(row[0]);
     const complexity = readIntegerString(row[1]);
+    const parameterCount = readIntegerString(row[3]);
     const file = row[6] === undefined ? undefined : path.resolve(cwd, row[6]);
-    if (complexity === undefined || file === undefined) {
+    const name = row[7];
+    const startLine = readIntegerString(row[9]);
+    if (
+      complexity === undefined ||
+      file === undefined ||
+      name === undefined ||
+      nloc === undefined ||
+      parameterCount === undefined ||
+      startLine === undefined
+    ) {
       continue;
     }
 
+    const block = { complexity, file, name, nloc, parameterCount, startLine };
     const existingRows = rowMetrics.get(file);
     if (existingRows === undefined) {
-      rowMetrics.set(file, [{ complexity, file }]);
+      rowMetrics.set(file, [block]);
       continue;
     }
-    existingRows.push({ complexity, file });
+    existingRows.push(block);
   }
 
   const files = await Promise.all(
@@ -67,6 +87,7 @@ export async function parseLizardMetrics(
         file,
         {
           blockCount: blocks.length,
+          blocks,
           maintainability: {
             rank: rankMaintainabilityScore(maintainabilityScore),
             score: maintainabilityScore,

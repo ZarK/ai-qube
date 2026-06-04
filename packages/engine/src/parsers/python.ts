@@ -360,6 +360,10 @@ export function parsePythonMetrics(output: string): Record<string, PythonMetrics
       typeof record.mi === "object" && record.mi !== null
         ? (record.mi as Record<string, unknown>)
         : {};
+    const readabilityRecord =
+      typeof record.readability === "object" && record.readability !== null
+        ? (record.readability as Record<string, unknown>)
+        : undefined;
 
     results[file] = {
       cc: ccEntries,
@@ -376,6 +380,13 @@ export function parsePythonMetrics(output: string): Record<string, PythonMetrics
         singleComments: readNumber(rawRecord.singleComments) ?? 0,
         sloc: readNumber(rawRecord.sloc) ?? 0,
       },
+      ...(readabilityRecord === undefined
+        ? {}
+        : {
+            readability: {
+              score: readNumber(readabilityRecord.score) ?? 0,
+            },
+          }),
     };
   }
 
@@ -492,5 +503,8 @@ export interface PythonMetricsFileMetrics {
     multi: number;
     singleComments: number;
     sloc: number;
+  };
+  readability?: {
+    score: number;
   };
 }
