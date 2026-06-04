@@ -101,6 +101,28 @@ export interface SetupGuidanceOutput {
   summary: string;
 }
 
+export interface SetupCommandOutput {
+  actions: Array<{
+    detail: string;
+    install?: string;
+    name: string;
+    required: boolean;
+    source: "bundled" | "external" | "project";
+    status: "available" | "missing" | "provided";
+  }>;
+  configPath?: string;
+  cwd: string;
+  detectedTech: string[];
+  missingPrerequisites: DoctorCheckOutput[];
+  nextCommands: string[];
+  ok: boolean;
+  progressPath: string;
+  progressSource: "defaults" | "file";
+  profile: string;
+  stages: string[];
+  summary: string;
+}
+
 export interface StatusCommandOutput {
   artifactPaths: {
     plan: string;
@@ -248,6 +270,44 @@ export function formatDoctorOutput(format: OutputFormat, output: DoctorCommandOu
   ].join("\n");
 }
 
+export function formatSetupOutput(format: OutputFormat, output: SetupCommandOutput): string {
+  if (format === "json") {
+    return `${JSON.stringify(output, null, 2)}\n`;
+  }
+
+  const missing = output.missingPrerequisites;
+  return [
+    "AIQ setup",
+    output.summary,
+    `Config: ${output.configPath ?? "defaults"}`,
+    `Progress: ${output.progressPath} (${output.progressSource})`,
+    `Profile: ${output.profile}`,
+    `Stages: ${output.stages.join(", ")}`,
+    `Technologies: ${output.detectedTech.length === 0 ? "none detected" : output.detectedTech.join(", ")}`,
+    missing.length === 0 ? "Required setup: none missing" : "Required setup:",
+    ...missing.map(
+      (check) =>
+        `  - ${check.name}: ${check.install ?? check.detail ?? "install through the normal project toolchain"}`,
+    ),
+    "Tool sources:",
+    ...output.actions.map((action) => {
+      const label =
+        action.status === "missing"
+          ? "missing"
+          : action.source === "bundled"
+            ? "bundled"
+            : action.source === "project"
+              ? "project"
+              : "available";
+      return `  - ${action.name}: ${label} - ${action.detail}`;
+    }),
+    "Next:",
+    ...output.nextCommands.map((command) => `  - ${command}`),
+    "AIQ reports setup needs; it does not install tools or mutate the host environment.",
+    "",
+  ].join("\n");
+}
+
 export function formatStatusOutput(format: OutputFormat, output: StatusCommandOutput): string {
   if (format === "json") {
     return `${JSON.stringify(output, null, 2)}\n`;
@@ -296,7 +356,7 @@ export function formatFirstRunDetectionOutput(
       : []),
     ...output.warnings.map((warning) => `Warning: ${warning}`),
     "Change stage: aiq config --set-stage <0-9>",
-    "Check missing tools/config: aiq doctor",
+    "Prepare missing tools/config: aiq setup",
     "Run a specific path: aiq run <files...>",
     "",
   ].join("\n");

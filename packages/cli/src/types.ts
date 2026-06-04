@@ -16,15 +16,15 @@ export type CommandName =
   | "first-run"
   | "hook"
   | "ignore"
-  | "install-tools"
   | "plan"
   | "run"
   | "schema"
   | "serve"
+  | "setup"
   | "status"
   | "watch";
 export type OutputFormat = "json" | "text";
-export type SetupGuidanceCommand = "ci" | "hook" | "ignore" | "install-tools";
+export type SetupGuidanceCommand = "ci" | "hook" | "ignore";
 
 export const defaultServeHost = "127.0.0.1";
 export const defaultServePort = 3000;
@@ -95,8 +95,8 @@ Usage:
   aiq doctor [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq evidence [--format json]
   aiq status [--format <json|text>]
+  aiq setup [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>] [--verbose]
   aiq schema [--format json]
-  aiq install-tools
   aiq hook install
   aiq ci setup
   aiq ignore write
@@ -119,6 +119,7 @@ Examples:
   aiq run src --stage typecheck
   aiq evidence --format json
   aiq status
+  aiq setup
   aiq schema --format json
 
 Options:
@@ -162,9 +163,10 @@ Operational checks:
   --dry-run prints the run plan without executing tools or writing artifacts.
   --verbose adds command/tool details to text run output.
   aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
+  aiq setup gives agent-facing setup steps for the same selected stages and detected technologies. AIQ reports setup needs; it does not install tools or mutate the host environment.
   aiq evidence emits structured AIQ quality evidence that AIE can record and AIU can parse as trusted quality state.
   aiq status shows the current stage, default cumulative run range, latest artifact paths, last run status, and next suggested command.
-  install-tools, hook install, ci setup, and ignore write provide explicit agent guidance; use aiq doctor for diagnostics and aiq config for canonical project state.
+  hook install, ci setup, and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
 
 Package surface:
   @tjalve/aiq exports the CLI; @tjalve/aiq/api exports the model, config, engine, reporter, and benchmark APIs used by adapters.

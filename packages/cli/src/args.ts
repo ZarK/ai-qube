@@ -29,11 +29,11 @@ const knownCommandNames = [
   "evidence",
   "hook",
   "ignore",
-  "install-tools",
   "plan",
   "run",
   "schema",
   "serve",
+  "setup",
   "status",
   "watch",
 ] as const satisfies readonly PublicCommandName[];
@@ -209,10 +209,13 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     parsed.command !== "check" &&
     (parsed.diffOnly ||
       (parsed.dryRun && parsed.command !== "first-run") ||
-      (parsed.verbose && parsed.command !== "doctor" && parsed.command !== "first-run"))
+      (parsed.verbose &&
+        parsed.command !== "doctor" &&
+        parsed.command !== "first-run" &&
+        parsed.command !== "setup"))
   ) {
     throw new Error(
-      "--diff-only is only supported by run/check; --dry-run is supported by aiq and run/check; --verbose is supported by aiq, run/check, and doctor.",
+      "--diff-only is only supported by run/check; --dry-run is supported by aiq and run/check; --verbose is supported by aiq, run/check, doctor, and setup.",
     );
   }
 
@@ -292,6 +295,27 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     ) {
       throw new Error(
         "The doctor command accepts --format, --verbose, --up-to, --only, --stage, and --profile.",
+      );
+    }
+  }
+
+  if (parsed.command === "setup") {
+    if (
+      parsed.files.length > 0 ||
+      parsed.filesFrom !== undefined ||
+      parsed.setupSubcommand !== undefined ||
+      parsed.stdinFileList ||
+      parsed.outDir !== undefined ||
+      parsed.benchmarkCorpusRoot !== undefined ||
+      parsed.benchmarkScenarioIds.length > 0 ||
+      parsed.benchmarkTags.length > 0 ||
+      parsed.benchmarkKinds.length > 0 ||
+      parsed.debounceMs !== defaultWatchDebounceMs ||
+      parsed.host !== defaultServeHost ||
+      parsed.port !== defaultServePort
+    ) {
+      throw new Error(
+        "The setup command accepts --format, --verbose, --up-to, --only, --stage, and --profile.",
       );
     }
   }
@@ -382,12 +406,8 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
   return parsed;
 }
 
-function isSetupGuidanceCommand(
-  command: CommandName,
-): command is "ci" | "hook" | "ignore" | "install-tools" {
-  return (
-    command === "ci" || command === "hook" || command === "ignore" || command === "install-tools"
-  );
+function isSetupGuidanceCommand(command: CommandName): command is "ci" | "hook" | "ignore" {
+  return command === "ci" || command === "hook" || command === "ignore";
 }
 
 function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
@@ -409,13 +429,6 @@ function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
     throw new Error(
       "Setup guidance commands only accept their documented subcommand and --format.",
     );
-  }
-
-  if (parsed.command === "install-tools") {
-    if (parsed.setupSubcommand !== undefined) {
-      throw new Error("Use aiq install-tools without a subcommand.");
-    }
-    return;
   }
 
   const expectedSubcommand =

@@ -18,7 +18,15 @@ import { writeServeListeningOutput } from "../src/output.js";
 import { createRunWorkflowOutput } from "../src/workflow.js";
 
 const repoRoot = path.resolve(".");
-const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCommand =
+  process.platform === "win32"
+    ? {
+        argsPrefix: [
+          path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js"),
+        ],
+        executable: process.execPath,
+      }
+    : { argsPrefix: [], executable: "npm" };
 const builtCliPath = path.join(repoRoot, "packages", "cli", "dist", "bin", "aiq.js");
 const fixtureFile = path.resolve("test-projects/typescript/src/index.ts");
 const lintFailureFixtureFile = path.resolve("test-projects/typescript/src/lint-failure.ts");
@@ -183,7 +191,7 @@ function runCommand(
 }
 
 function runNpmCommand(args: string[], options: CommandOptions = {}): Promise<CommandResult> {
-  return runCommand(npmExecutable, args, options);
+  return runCommand(npmCommand.executable, [...npmCommand.argsPrefix, ...args], options);
 }
 
 async function ensurePackageSmokeBuild(): Promise<void> {
@@ -487,8 +495,8 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq doctor");
     expect(stdout.value).toContain("aiq evidence [--format json]");
     expect(stdout.value).toContain("aiq status [--format <json|text>]");
+    expect(stdout.value).toContain("aiq setup");
     expect(stdout.value).toContain("aiq schema [--format json]");
-    expect(stdout.value).toContain("aiq install-tools");
     expect(stdout.value).toContain("aiq hook install");
     expect(stdout.value).toContain("aiq ci setup");
     expect(stdout.value).toContain("aiq ignore write");
@@ -516,6 +524,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--verbose, -v");
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
+    expect(stdout.value).toContain("aiq setup gives agent-facing setup steps");
     expect(stdout.value).toContain("aiq evidence emits structured AIQ quality evidence");
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
@@ -596,6 +605,7 @@ describe("CLI foundation", () => {
       "plan",
       "run",
       "schema",
+      "setup",
       "status",
     ]);
     expect(commands.get("run")?.extensions?.aiq?.capability).toBe("quality-control");
@@ -606,6 +616,7 @@ describe("CLI foundation", () => {
       kinds: ["dependency", "package-manager"],
       sensitive: true,
     });
+    expect(commands.get("setup")?.extensions?.aiq?.capability).toBe("quality-setup");
     expect(commands.get("schema")?.output).toEqual({
       defaultFormat: "json",
       formats: ["json"],
@@ -652,7 +663,7 @@ describe("CLI foundation", () => {
   });
 
   it("shows help for operational guidance commands without requiring subcommands", async () => {
-    for (const command of ["doctor", "install-tools", "hook", "ci", "ignore"]) {
+    for (const command of ["doctor", "setup", "hook", "ci", "ignore"]) {
       const stdout = new MemoryOutput();
       const stderr = new MemoryOutput();
 
@@ -726,7 +737,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Target: .");
     expect(stdout.value).toContain("Stages: lint");
     expect(stdout.value).toContain("Change stage: aiq config --set-stage <0-9>");
-    expect(stdout.value).toContain("Check missing tools/config: aiq doctor");
+    expect(stdout.value).toContain("Prepare missing tools/config: aiq setup");
     expect(stdout.value).toContain("AIQ run");
     expect(stdout.value).toContain("- lint: passed");
 
@@ -1596,7 +1607,7 @@ describe("CLI foundation", () => {
     expect(stderr.value).toContain("--diff-only full-run stages require Git workspace enumeration");
   });
 
-  it("reports doctor checks and missing optional prerequisites in human-readable form", async () => {
+  it("reports doctor checks and universal optional prerequisites in human-readable form", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-doctor-"));
     tempDirs.push(tempDir);
     const stdout = new MemoryOutput();
@@ -1620,7 +1631,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).not.toContain("OK Git - not detected");
   });
 
-  it("reports optional missing doctor prerequisites without failing the command", async () => {
+  it("reports optional universal doctor prerequisites without failing the command", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-doctor-missing-"));
     tempDirs.push(tempDir);
     const stdout = new MemoryOutput();
@@ -1656,7 +1667,6 @@ describe("CLI foundation", () => {
           expect.objectContaining({ name: "Node.js runtime", ok: true }),
           expect.objectContaining({ name: "npm package manager", ok: true }),
           expect.objectContaining({ name: "Git", ok: true }),
-          expect.objectContaining({ name: "Go toolchain", ok: true }),
         ]),
       );
       expect(output.checks.find((check) => check.name === "Git")).toMatchObject({
@@ -1772,6 +1782,94 @@ describe("CLI foundation", () => {
     }
   });
 
+  it("reports agent setup guidance for missing required host tools", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-setup-python-missing-"));
+    tempDirs.push(tempDir);
+    await writeFile(path.join(tempDir, "pyproject.toml"), "[project]\nname = 'fixture'\n", "utf8");
+    await writeFile(path.join(tempDir, "main.py"), "print('hello')\n", "utf8");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(
+        [
+          "node",
+          "aiq",
+          "setup",
+          "--stage",
+          "typecheck",
+          "--profile",
+          "standard",
+          "--format",
+          "json",
+        ],
+        {
+          cwd: tempDir,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stderr.value).toBe("");
+      const output = JSON.parse(stdout.value) as {
+        actions: Array<{ name: string; status: string }>;
+        detectedTech: string[];
+        missingPrerequisites: Array<{ install: string; name: string }>;
+        nextCommands: string[];
+        ok: boolean;
+      };
+      expect(output.ok).toBe(false);
+      expect(output.detectedTech).toEqual(["Python"]);
+      expect(output.missingPrerequisites).toEqual([
+        expect.objectContaining({
+          install: expect.stringContaining("Install Python 3"),
+          name: "Python runtime",
+        }),
+      ]);
+      expect(output.actions.find((action) => action.name === "Python runtime")).toMatchObject({
+        status: "missing",
+      });
+      expect(output.nextCommands).toContain("aiq doctor --stage typecheck");
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("reports agent setup guidance in text output", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-setup-text-"));
+    tempDirs.push(tempDir);
+    await writeFile(path.join(tempDir, "pyproject.toml"), "[project]\nname = 'fixture'\n", "utf8");
+    await writeFile(path.join(tempDir, "main.py"), "print('hello')\n", "utf8");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(["node", "aiq", "setup", "--stage", "typecheck"], {
+        cwd: tempDir,
+        stderr,
+        stdin: new MemoryInput(),
+        stdout,
+      });
+
+      expect(exitCode).toBe(1);
+      expect(stderr.value).toBe("");
+      expect(stdout.value).toContain("AIQ setup");
+      expect(stdout.value).toContain("Required setup:");
+      expect(stdout.value).toContain("Python runtime");
+      expect(stdout.value).toContain("Install Python 3");
+      expect(stdout.value).toContain("aiq doctor --stage typecheck");
+      expect(stdout.value).toContain("AIQ reports setup needs; it does not install tools");
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
   it("ignores reference-only directories when detecting doctor setup requirements", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-doctor-reference-files-");
     await mkdir(path.join(project.root, "docs"), { recursive: true });
@@ -1805,9 +1903,32 @@ describe("CLI foundation", () => {
       };
       expect(output.ok).toBe(true);
       expect(output.detectedTech).toEqual(["TypeScript"]);
-      expect(output.checks.find((check) => check.name === "Python runtime")).toMatchObject({
-        required: false,
-      });
+      expect(output.checks.find((check) => check.name === "Python runtime")).toBeUndefined();
+
+      const setupStdout = new MemoryOutput();
+      const setupStderr = new MemoryOutput();
+      const setupExitCode = await runCli(
+        ["node", "aiq", "setup", "--stage", "typecheck", "--format", "json"],
+        {
+          cwd: project.root,
+          stderr: setupStderr,
+          stdin: new MemoryInput(),
+          stdout: setupStdout,
+        },
+      );
+
+      expect(setupExitCode).toBe(0);
+      expect(setupStderr.value).toBe("");
+      const setupOutput = JSON.parse(setupStdout.value) as {
+        actions: Array<{ name: string }>;
+        detectedTech: string[];
+        ok: boolean;
+      };
+      expect(setupOutput.ok).toBe(true);
+      expect(setupOutput.detectedTech).toEqual(["TypeScript"]);
+      expect(
+        setupOutput.actions.find((action) => action.name === "Python runtime"),
+      ).toBeUndefined();
     } finally {
       process.env.PATH = originalPath;
     }
@@ -1815,7 +1936,6 @@ describe("CLI foundation", () => {
 
   it("returns explicit setup guidance for operational commands", async () => {
     const commands: Array<[string[], string]> = [
-      [["node", "aiq", "install-tools"], "Global tool installation is intentionally not part"],
       [["node", "aiq", "hook", "install"], "Hook setup uses the dedicated AIQ hook adapter"],
       [["node", "aiq", "ci", "setup"], "CI setup uses explicit workflow configuration"],
       [["node", "aiq", "ignore", "write"], "Ignored inputs are configured"],
@@ -4874,7 +4994,7 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedSchemaImport.exitCode).toBe(0);
       expect(packedSchemaImport.stderr).toBe("");
       expect(JSON.parse(packedSchemaImport.stdout) as Record<string, unknown>).toEqual({
-        commands: 7,
+        commands: 8,
         json: "function",
         render: "function",
       });

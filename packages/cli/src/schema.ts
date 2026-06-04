@@ -224,6 +224,32 @@ export const aiqCommandMetadata = [
   },
   {
     kind: "command",
+    name: "setup",
+    description:
+      "Render agent-facing setup guidance for selected AIQ stages without installing tools.",
+    flags: [
+      ...stageSelectionFlags,
+      ...outputFlags,
+      {
+        name: "verbose",
+        short: "v",
+        description: "Include resolved binary paths and versions.",
+        type: "boolean",
+      },
+    ],
+    examples: [
+      {
+        command: "aiq setup --format json",
+        description: "Render machine-readable missing prerequisites and recommended actions.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-setup", contexts: ["cli", "qube"] } },
+  },
+  {
+    kind: "command",
     name: "status",
     description: "Show current AIQ stage, default run range, last run status, and next command.",
     flags: outputFlags,
@@ -364,6 +390,7 @@ const aiqSchemaOptions = {
       "quality-control",
       "quality-plan",
       "quality-diagnostics",
+      "quality-setup",
       "quality-status",
       "quality-evidence",
     ],

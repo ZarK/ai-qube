@@ -14,6 +14,7 @@ import {
   runFirstRunCommand,
   runPlanCommand,
   runSchemaCommand,
+  runSetupCommand,
   runSetupGuidanceCommand,
   runStatusCommand,
 } from "./commands.js";
@@ -63,12 +64,13 @@ export async function runCli(
       return runStatusCommand(parsed, io);
     case "schema":
       return runSchemaCommand(parsed, io);
+    case "setup":
+      return runSetupCommand(parsed, io);
     case "first-run":
       return runFirstRunCommand(parsed, io);
     case "ci":
     case "hook":
     case "ignore":
-    case "install-tools":
       return runSetupGuidanceCommand(parsed, io);
     case "plan":
       return runPlanCommand(parsed, io);

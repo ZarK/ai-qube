@@ -6,6 +6,7 @@ AIQ is a staged code quality runner for AI-assisted repositories. It gives human
 
 ```bash
 npx @tjalve/aiq
+npx @tjalve/aiq setup
 npx @tjalve/aiq doctor
 npx @tjalve/aiq config --set-stage 3
 npx @tjalve/aiq --format json
@@ -70,20 +71,27 @@ Full-run stages stay selected and use workspace context because they cannot be m
 ## Doctor
 
 ```bash
+npx @tjalve/aiq setup
+npx @tjalve/aiq setup --up-to 3
+npx @tjalve/aiq setup --only 1
+npx @tjalve/aiq setup --format json
 npx @tjalve/aiq doctor
 npx @tjalve/aiq doctor --up-to 3
 npx @tjalve/aiq doctor --only 1
 npx @tjalve/aiq doctor --verbose
 ```
 
+`setup` gives agents the setup actions for the selected stages and detected project technologies. It reports bundled, project-managed, and external host tools, lists missing required prerequisites, and returns structured recommended actions in JSON. AIQ does not install tools or mutate the host environment.
+
 `doctor` checks config/progress state, detects project technologies, reports the stages that would run, and separates npm-bundled tools from external host tools. It exits non-zero when selected stages need missing required setup. Use `--verbose` to show exact binary paths and versions.
 
 ## Common Remediation
 
 ```bash
+npx @tjalve/aiq setup
 npx @tjalve/aiq doctor
 npx @tjalve/aiq config --print-config
 npx @tjalve/aiq config --set-stage <0-9>
 ```
 
-If a tool is missing, install it through the normal toolchain for that language or project. AIQ intentionally reports setup needs instead of mutating your system or installing global tools for you.
+If a tool is missing, run `setup` for the exact agent actions, then install the missing prerequisite through the normal toolchain for that language or project.
