@@ -44,7 +44,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
   while (args[0] === "--") {
     args.shift();
   }
-  const isFirstRun = args.length === 0;
+  const isFirstRun = isImplicitFirstRun(args, cwd);
   const commandToken = isFirstRun ? undefined : resolveCommandToken(args[0], cwd);
   const command: CommandName = isFirstRun ? "first-run" : parseCommand(commandToken);
   const startIndex = commandToken === undefined ? 0 : 1;
@@ -207,10 +207,12 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
   if (
     parsed.command !== "run" &&
     parsed.command !== "check" &&
-    (parsed.diffOnly || parsed.dryRun || (parsed.verbose && parsed.command !== "doctor"))
+    (parsed.diffOnly ||
+      (parsed.dryRun && parsed.command !== "first-run") ||
+      (parsed.verbose && parsed.command !== "doctor" && parsed.command !== "first-run"))
   ) {
     throw new Error(
-      "--diff-only and --dry-run are only supported by run/check; --verbose is supported by run/check/doctor.",
+      "--diff-only is only supported by run/check; --dry-run is supported by aiq and run/check; --verbose is supported by aiq, run/check, and doctor.",
     );
   }
 
@@ -449,6 +451,117 @@ function resolveCommandToken(token: string | undefined, cwd: string): string | u
   }
 
   return token;
+}
+
+function isImplicitFirstRun(args: readonly string[], cwd: string): boolean {
+  if (args.length === 0) {
+    return true;
+  }
+
+  const first = args[0];
+  if (first === undefined || first === "--help" || first === "-h") {
+    return false;
+  }
+
+  if (isCommandName(first) || looksLikePath(first, cwd)) {
+    return false;
+  }
+
+  if (hasExplicitManifestInput(args)) {
+    return false;
+  }
+
+  if (hasPositionalPathInput(args, cwd)) {
+    return false;
+  }
+
+  return first.startsWith("-") && argsAreOnlyImplicitFirstRunOptions(args);
+}
+
+function hasExplicitManifestInput(args: readonly string[]): boolean {
+  return args.some(
+    (argument) =>
+      argument === "--files" || argument === "--files-from" || argument === "--stdin-file-list",
+  );
+}
+
+function hasPositionalPathInput(args: readonly string[], cwd: string): boolean {
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === undefined || argument.length === 0) {
+      continue;
+    }
+
+    if (argument.startsWith("-")) {
+      if (flagConsumesNextValue(argument)) {
+        index += 1;
+      }
+      continue;
+    }
+
+    if (looksLikePath(argument, cwd)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function flagConsumesNextValue(flag: string): boolean {
+  return (
+    !flag.includes("=") &&
+    [
+      "--config",
+      "--corpus-root",
+      "--files",
+      "--files-from",
+      "--format",
+      "--host",
+      "--only",
+      "--out-dir",
+      "--port",
+      "--profile",
+      "--scenario",
+      "--stage",
+      "--tag",
+      "--up-to",
+    ].includes(flag)
+  );
+}
+
+function argsAreOnlyImplicitFirstRunOptions(args: readonly string[]): boolean {
+  const allowedValueFlags = new Set([
+    "--format",
+    "--only",
+    "--out-dir",
+    "--profile",
+    "--stage",
+    "--up-to",
+  ]);
+  const allowedBooleanFlags = new Set(["--dry-run", "--verbose", "-v"]);
+
+  for (let index = 0; index < args.length; index += 1) {
+    const argument = args[index];
+    if (argument === undefined) {
+      continue;
+    }
+
+    if (allowedBooleanFlags.has(argument)) {
+      continue;
+    }
+
+    if (allowedValueFlags.has(argument)) {
+      if (args[index + 1] === undefined) {
+        return false;
+      }
+      index += 1;
+      continue;
+    }
+
+    return false;
+  }
+
+  return true;
 }
 
 function isCommandName(token?: string): token is PublicCommandName {

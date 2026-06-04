@@ -129,6 +129,7 @@ const biomeExtensions = new Set([
   ".ts",
   ".tsx",
 ]);
+const sharedBiomeExtensions = new Set([".json", ".jsonc"]);
 const javaScriptExtensions = new Set([".cjs", ".js", ".jsx", ".mjs"]);
 const typeScriptExtensions = new Set([".cts", ".mts", ".ts", ".tsx"]);
 const javaScriptMetricsSourceExtensions = new Set([
@@ -1245,7 +1246,7 @@ export function resolveStageHandlersFromModules(
 
     return [
       {
-        files: filterFilesForConfiguredLanguages(task.files, languageIds),
+        files: filterFilesForConfiguredToolLanguages(task.files, languageIds, toolId),
         handler,
       },
     ];
@@ -1294,6 +1295,44 @@ function filterFilesForConfiguredLanguages(
   return files.filter((file) =>
     languageIds.some((languageId) => fileMatchesLanguage(file, languageId)),
   );
+}
+
+function filterFilesForConfiguredToolLanguages(
+  files: readonly string[],
+  languageIds: readonly LanguageId[],
+  toolId: string,
+): string[] {
+  if (
+    toolId === "biome" &&
+    (languageIds.includes("javascript") || languageIds.includes("typescript"))
+  ) {
+    return files.filter((file) => {
+      const extension = path.extname(path.resolve(file)).toLowerCase();
+      return (
+        sharedBiomeExtensions.has(extension) ||
+        languageIds.some((languageId) => fileMatchesConfiguredBiomeLanguage(file, languageId))
+      );
+    });
+  }
+
+  return filterFilesForConfiguredLanguages(files, languageIds);
+}
+
+function fileMatchesConfiguredBiomeLanguage(file: string, languageId: LanguageId): boolean {
+  const normalizedPath = path.resolve(file);
+  const extension = path.extname(normalizedPath).toLowerCase();
+  const lowerBaseName = path.basename(normalizedPath).toLowerCase();
+
+  switch (languageId) {
+    case "javascript":
+      return (
+        javaScriptExtensions.has(extension) || javaScriptProjectConfigNames.includes(lowerBaseName)
+      );
+    case "typescript":
+      return typeScriptExtensions.has(extension) || lowerBaseName === "tsconfig.json";
+    default:
+      return fileMatchesLanguage(file, languageId);
+  }
 }
 
 function fileMatchesLanguage(file: string, languageId: LanguageId): boolean {

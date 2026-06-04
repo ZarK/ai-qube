@@ -5,6 +5,14 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import {
+  hasDotNet10Toolchain,
+  hasGoToolchain,
+  hasGradleToolchain,
+  hasMavenToolchain,
+  hasPythonQualityToolchain,
+  hasRustToolchain,
+} from "../../engine/test/toolchain-capabilities.js";
+import {
   createDefaultBenchmarkCorpus,
   filterBenchmarkScenarios,
   formatBenchmarkReportAsJson,
@@ -42,6 +50,14 @@ const issue96ScenarioIds = [
   "kotlin-unit-multi-file-warm",
 ] as const;
 const tempDirs: string[] = [];
+const hasFullBenchmarkToolchain =
+  hasPythonQualityToolchain &&
+  hasGoToolchain &&
+  hasRustToolchain &&
+  hasDotNet10Toolchain &&
+  hasMavenToolchain &&
+  hasGradleToolchain;
+const hasTaggedCiBenchmarkToolchain = hasPythonQualityToolchain && hasGoToolchain;
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
@@ -135,56 +151,61 @@ describe("benchmark harness", () => {
     );
   });
 
-  it("runs the issue 96 benchmark scenarios successfully", async () => {
-    const outDir = await mkdtemp(path.join(os.tmpdir(), "aiq-benchmark-"));
-    tempDirs.push(outDir);
+  it.skipIf(!hasFullBenchmarkToolchain)(
+    "runs the issue 96 benchmark scenarios successfully",
+    async () => {
+      const outDir = await mkdtemp(path.join(os.tmpdir(), "aiq-benchmark-"));
+      tempDirs.push(outDir);
 
-    const { report } = await runBenchmarkSuite({
-      cwd: process.cwd(),
-      outDir,
-      scenarioIds: issue96ScenarioIds,
-      scenarios: createDefaultBenchmarkCorpus(path.resolve(process.cwd())),
-    });
+      const { report } = await runBenchmarkSuite({
+        cwd: process.cwd(),
+        outDir,
+        scenarioIds: issue96ScenarioIds,
+        scenarios: createDefaultBenchmarkCorpus(path.resolve(process.cwd())),
+      });
 
-    expect(report.summary.failedBudgetCount).toBe(0);
-    expect(report.summary.scenarioCount).toBe(issue96ScenarioIds.length);
-    expect(report.scenarios.every((scenario) => scenario.status === "passed")).toBe(true);
-    expect(report.scenarios.every((scenario) => scenario.withinBudget)).toBe(true);
-    expect(new Set(report.scenarios.map((scenario) => scenario.id))).toEqual(
-      new Set(issue96ScenarioIds),
-    );
-    expect(
-      new Set(
-        report.scenarios.find((scenario) => scenario.id === "python-unit-sub-folder-warm")?.manifest
-          .files,
-      ),
-    ).toEqual(new Set(["tests/test_main.py"]));
-    expect(
-      report.scenarios.find((scenario) => scenario.id === "javascript-coverage-sub-folder-warm")
-        ?.manifest,
-    ).toMatchObject({
-      inputs: ["src"],
-      shape: "sub-folder",
-    });
-    expect(
-      new Set(
+      expect(report.summary.failedBudgetCount).toBe(0);
+      expect(report.summary.scenarioCount).toBe(issue96ScenarioIds.length);
+      expect(report.scenarios.every((scenario) => scenario.status === "passed")).toBe(true);
+      expect(report.scenarios.every((scenario) => scenario.withinBudget)).toBe(true);
+      expect(new Set(report.scenarios.map((scenario) => scenario.id))).toEqual(
+        new Set(issue96ScenarioIds),
+      );
+      expect(
+        new Set(
+          report.scenarios.find((scenario) => scenario.id === "python-unit-sub-folder-warm")
+            ?.manifest.files,
+        ),
+      ).toEqual(new Set(["tests/test_main.py"]));
+      expect(
         report.scenarios.find((scenario) => scenario.id === "javascript-coverage-sub-folder-warm")
-          ?.manifest.files,
-      ),
-    ).toEqual(new Set(["src/subfolder.js", "src/subfolder.test.js"]));
-    expect(
-      report.scenarios.find((scenario) => scenario.id === "go-coverage-sub-folder-warm")?.manifest,
-    ).toMatchObject({
-      inputs: ["pkg"],
-      shape: "sub-folder",
-    });
-    expect(
-      new Set(
-        report.scenarios.find((scenario) => scenario.id === "go-coverage-sub-folder-warm")?.manifest
-          .files,
-      ),
-    ).toEqual(new Set(["pkg/fixture/greeter.go", "pkg/fixture/greeter_test.go"]));
-  }, 180_000);
+          ?.manifest,
+      ).toMatchObject({
+        inputs: ["src"],
+        shape: "sub-folder",
+      });
+      expect(
+        new Set(
+          report.scenarios.find((scenario) => scenario.id === "javascript-coverage-sub-folder-warm")
+            ?.manifest.files,
+        ),
+      ).toEqual(new Set(["src/subfolder.js", "src/subfolder.test.js"]));
+      expect(
+        report.scenarios.find((scenario) => scenario.id === "go-coverage-sub-folder-warm")
+          ?.manifest,
+      ).toMatchObject({
+        inputs: ["pkg"],
+        shape: "sub-folder",
+      });
+      expect(
+        new Set(
+          report.scenarios.find((scenario) => scenario.id === "go-coverage-sub-folder-warm")
+            ?.manifest.files,
+        ),
+      ).toEqual(new Set(["pkg/fixture/greeter.go", "pkg/fixture/greeter_test.go"]));
+    },
+    180_000,
+  );
 
   it("filters benchmark scenarios by id, kind, and tag", () => {
     const corpus = createDefaultBenchmarkCorpus(path.resolve(process.cwd()));
@@ -292,40 +313,44 @@ describe("benchmark harness", () => {
     );
   });
 
-  it("runs the tagged CI benchmark scenarios successfully", async () => {
-    const outDir = await mkdtemp(path.join(os.tmpdir(), "aiq-benchmark-"));
-    tempDirs.push(outDir);
+  it.skipIf(!hasTaggedCiBenchmarkToolchain)(
+    "runs the tagged CI benchmark scenarios successfully",
+    async () => {
+      const outDir = await mkdtemp(path.join(os.tmpdir(), "aiq-benchmark-"));
+      tempDirs.push(outDir);
 
-    const { report } = await runBenchmarkSuite({
-      cwd: process.cwd(),
-      outDir,
-      tags: ["ci"],
-      scenarios: createDefaultBenchmarkCorpus(path.resolve(process.cwd())),
-    });
+      const { report } = await runBenchmarkSuite({
+        cwd: process.cwd(),
+        outDir,
+        tags: ["ci"],
+        scenarios: createDefaultBenchmarkCorpus(path.resolve(process.cwd())),
+      });
 
-    expect(report.summary.failedBudgetCount).toBe(0);
-    expect(report.scenarios.map((scenario) => scenario.id)).toEqual([
-      "javascript-lint-single-file-cold",
-      "typescript-metrics-multi-file-warm",
-      "typescript-unit-coverage-full-repo-warm",
-      "typescript-format-full-repo-diff",
-      "python-quality-full-repo-cold",
-      "python-lint-full-repo-warm",
-      "go-lint-full-repo-cold",
-    ]);
-    expect(report.scenarios.every((scenario) => scenario.status === "passed")).toBe(true);
-    expect(report.selection.tags).toEqual(["ci"]);
-    expect(
-      report.scenarios.find((scenario) => scenario.id === "python-quality-full-repo-cold")?.manifest
-        .inputs,
-    ).toEqual(["main.py", "tests/test_main.py", "tests"]);
-    expect(
-      new Set(
+      expect(report.summary.failedBudgetCount).toBe(0);
+      expect(report.scenarios.map((scenario) => scenario.id)).toEqual([
+        "javascript-lint-single-file-cold",
+        "typescript-metrics-multi-file-warm",
+        "typescript-unit-coverage-full-repo-warm",
+        "typescript-format-full-repo-diff",
+        "python-quality-full-repo-cold",
+        "python-lint-full-repo-warm",
+        "go-lint-full-repo-cold",
+      ]);
+      expect(report.scenarios.every((scenario) => scenario.status === "passed")).toBe(true);
+      expect(report.selection.tags).toEqual(["ci"]);
+      expect(
         report.scenarios.find((scenario) => scenario.id === "python-quality-full-repo-cold")
-          ?.manifest.files,
-      ),
-    ).toEqual(new Set(["main.py", "tests/test_main.py"]));
-  }, 20_000);
+          ?.manifest.inputs,
+      ).toEqual(["main.py", "tests/test_main.py", "tests"]);
+      expect(
+        new Set(
+          report.scenarios.find((scenario) => scenario.id === "python-quality-full-repo-cold")
+            ?.manifest.files,
+        ),
+      ).toEqual(new Set(["main.py", "tests/test_main.py"]));
+    },
+    20_000,
+  );
 
   it("fails the CI benchmark gate when a scenario exceeds its budget", async () => {
     const outDir = await mkdtemp(path.join(os.tmpdir(), "aiq-benchmark-"));
@@ -366,8 +391,8 @@ describe("benchmark harness", () => {
     tempDirs.push(fixtureRoot, outDir);
 
     await writeFile(
-      path.join(fixtureRoot, "main.py"),
-      "def greet() -> str:\n    return 'hi'\n",
+      path.join(fixtureRoot, "index.js"),
+      "export const greet = () => 'hi';\n",
       "utf8",
     );
     await mkdir(path.join(fixtureRoot, ".mypy_cache", "nested"), { recursive: true });
@@ -388,14 +413,14 @@ describe("benchmark harness", () => {
           },
           description: "Ignore copied cache directories in benchmark workspaces.",
           fixturePath: fixtureRoot,
-          id: "python-cache-isolation",
+          id: "javascript-cache-isolation",
           inputs: ["."],
           kind: "cold",
           metadata: {
-            languages: ["python"],
+            languages: ["javascript"],
             scale: "small",
             shape: "full-repo",
-            tags: ["isolation", "python"],
+            tags: ["isolation", "javascript"],
           },
           profile: "fast",
           stages: ["lint"],
@@ -403,7 +428,7 @@ describe("benchmark harness", () => {
       ],
     });
 
-    expect(report.scenarios[0]?.manifest.files).toEqual(["main.py"]);
+    expect(report.scenarios[0]?.manifest.files).toEqual(["index.js"]);
   });
 
   it("does not copy prebuilt dist directories into benchmark workspaces", async () => {
@@ -412,8 +437,8 @@ describe("benchmark harness", () => {
     tempDirs.push(fixtureRoot, outDir);
 
     await writeFile(
-      path.join(fixtureRoot, "main.py"),
-      "def greet() -> str:\n    return 'hi'\n",
+      path.join(fixtureRoot, "index.js"),
+      "export const greet = () => 'hi';\n",
       "utf8",
     );
     await mkdir(path.join(fixtureRoot, "dist", "nested"), { recursive: true });
@@ -434,14 +459,14 @@ describe("benchmark harness", () => {
           },
           description: "Ignore prebuilt dist directories in benchmark workspaces.",
           fixturePath: fixtureRoot,
-          id: "python-dist-isolation",
+          id: "javascript-dist-isolation",
           inputs: ["."],
           kind: "cold",
           metadata: {
-            languages: ["python"],
+            languages: ["javascript"],
             scale: "small",
             shape: "full-repo",
-            tags: ["dist", "isolation", "python"],
+            tags: ["dist", "isolation", "javascript"],
           },
           profile: "fast",
           stages: ["lint"],
@@ -449,7 +474,7 @@ describe("benchmark harness", () => {
       ],
     });
 
-    expect(report.scenarios[0]?.manifest.files).toEqual(["main.py"]);
+    expect(report.scenarios[0]?.manifest.files).toEqual(["index.js"]);
   });
 
   it("cleans up temporary benchmark workspaces after a run", async () => {
@@ -460,8 +485,8 @@ describe("benchmark harness", () => {
 
     await mkdir(fixtureRoot, { recursive: true });
     await writeFile(
-      path.join(fixtureRoot, "main.py"),
-      "def greet() -> str:\n    return 'hi'\n",
+      path.join(fixtureRoot, "index.js"),
+      "export const greet = () => 'hi';\n",
       "utf8",
     );
 
@@ -476,14 +501,14 @@ describe("benchmark harness", () => {
           },
           description: "Clean up temporary benchmark workspaces after execution.",
           fixturePath: fixtureRoot,
-          id: "python-temp-cleanup",
+          id: "javascript-temp-cleanup",
           inputs: ["."],
           kind: "cold",
           metadata: {
-            languages: ["python"],
+            languages: ["javascript"],
             scale: "small",
             shape: "full-repo",
-            tags: ["cleanup", "python"],
+            tags: ["cleanup", "javascript"],
           },
           profile: "fast",
           stages: ["lint"],

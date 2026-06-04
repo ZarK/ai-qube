@@ -8,14 +8,15 @@ AIQ is a staged code quality runner for AI-assisted repositories. It gives human
 npx @tjalve/aiq
 npx @tjalve/aiq doctor
 npx @tjalve/aiq config --set-stage 3
-npx @tjalve/aiq run .
+npx @tjalve/aiq --format json
 ```
 
-On first use, `aiq` looks for a supported project and initializes `.aiq/aiq.config.json` and `.aiq/progress.json` when it can safely infer inputs. After that, `aiq run <paths...>` uses `.aiq/progress.json` and runs every stage from `0` through the persisted `current_stage`.
+`aiq` is the configured project gate. It looks for a supported project in the current directory, initializes `.aiq/aiq.config.json` and `.aiq/progress.json` when it can safely infer inputs, and runs every stage from `0` through the persisted `current_stage`.
 
-## Returning Runs
+## Commands
 
 ```bash
+npx @tjalve/aiq
 npx @tjalve/aiq run src
 npx @tjalve/aiq plan src
 npx @tjalve/aiq run src --dry-run
@@ -23,7 +24,7 @@ npx @tjalve/aiq run src --format json
 npx @tjalve/aiq evidence --format json
 ```
 
-`run` is the primary command. `plan` shows what would run. `--dry-run` prints the resolved plan without executing tools or writing artifacts. `check` remains available as a compatibility alias for older automation.
+Use `aiq` for the full configured project gate. Use `run <paths...>` for explicit files and subtrees. Use `plan <paths...>` to see what would run for explicit targets. `--dry-run` prints the resolved run plan without executing tools or writing artifacts.
 `evidence` reads the latest AIQ report and emits structured JSON that orchestration tools can store as gate evidence or parse as trusted quality state.
 
 ## Package Surface
@@ -51,13 +52,14 @@ QUBE orchestration can discover the implemented AIQ command surface with `npx @t
 
 ```bash
 npx @tjalve/aiq config --set-stage 6
+npx @tjalve/aiq
 npx @tjalve/aiq run src
 npx @tjalve/aiq run src --up-to 3
 npx @tjalve/aiq run src --only 1
 npx @tjalve/aiq run src --stage typecheck
 ```
 
-- Default `run`, `plan`, and `doctor`: use cumulative stages `0..current_stage` when `.aiq/progress.json` exists.
+- Default `aiq`, `run`, `plan`, and `doctor`: use cumulative stages `0..current_stage` when `.aiq/progress.json` exists.
 - `--up-to N`: ignore persisted progress and run every stage from `0` through `N`.
 - `--only N`: run one numeric stage.
 - `--stage <name>`: advanced named-stage selection for scripts or focused diagnostics.

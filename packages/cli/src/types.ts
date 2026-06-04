@@ -86,7 +86,7 @@ export interface VerboseToolRunDetail
 export const cliHelp = `AIQ CLI
 
 Usage:
-  aiq
+  aiq [--up-to <0-9> | --only <0-9> | --stage <stage>] [--format <json|text>]
   aiq <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq run <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq bench [--corpus-root <path>] [--scenario <id>] [--tag <tag>] [--kind <cold|warm|diff-only>]
@@ -104,11 +104,13 @@ Usage:
   aiq watch <files...> [--files <files...>] [--files-from path] [--stdin-file-list]
   aiq serve [--host <host>] [--port <port>]
 
-Run is the primary command. With no arguments, aiq looks for a supported project in the current directory and runs cumulative stages up to the current stage when it is safe to infer one.
-A leading file path is treated as aiq run.
-Check is kept as a compatibility alias for existing automation.
+The bare aiq command is the configured project gate. It looks for a supported project in the current directory and runs cumulative stages up to the current stage when it is safe to infer one.
+Run is the explicit target command for files and subtrees. A leading file path is treated as aiq run.
+Check accepts the same explicit target inputs as run.
 
 Examples:
+  aiq
+  aiq --format json
   aiq config --set-stage 3
   aiq run src
   aiq plan src
@@ -147,8 +149,9 @@ Stage ladder:
   0=e2e 1=lint 2=format 3=typecheck 4=unit 5=sloc 6=complexity 7=maintainability 8=coverage 9=security
 
 Stage selection:
-  By default aiq run and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
-  Set the current stage once with aiq config --set-stage N, then run aiq run <paths...> for the normal cumulative workflow.
+  By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
+  Set the current stage once with aiq config --set-stage N, then run aiq for the normal cumulative project workflow.
+  Use aiq run <paths...> for explicit file and subtree checks.
   --only N runs one stage from the ladder.
   --up-to N runs every ladder stage from 0 through N.
   --stage <name> is the advanced named-stage form for scripts or focused diagnostics.
@@ -161,7 +164,7 @@ Operational checks:
   aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
   aiq evidence emits structured AIQ quality evidence that AIE can record and AIU can parse as trusted quality state.
   aiq status shows the current stage, default cumulative run range, latest artifact paths, last run status, and next suggested command.
-  install-tools, hook install, ci setup, and ignore write are replaced by explicit guidance; use aiq doctor for diagnostics and aiq config for canonical project state.
+  install-tools, hook install, ci setup, and ignore write provide explicit agent guidance; use aiq doctor for diagnostics and aiq config for canonical project state.
 
 Package surface:
   @tjalve/aiq exports the CLI; @tjalve/aiq/api exports the model, config, engine, reporter, and benchmark APIs used by adapters.

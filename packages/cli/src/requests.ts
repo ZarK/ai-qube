@@ -76,13 +76,40 @@ export async function createManifestInput(
   }
 
   if (manifestFiles.length === 0) {
-    throw new Error("At least one input file is required.");
+    throw new Error(createMissingManifestMessage(parsed.command));
+  }
+
+  if (
+    (parsed.command === "run" || parsed.command === "check") &&
+    manifestFiles.some((file) => resolvesToProjectRoot(file, io.cwd))
+  ) {
+    throw new Error(
+      `Use aiq for the configured project gate. Use aiq ${parsed.command} <paths...> only when you want explicit file or subtree targets.`,
+    );
   }
 
   return {
     files: manifestFiles,
     source: resolveManifestSource(sources),
   };
+}
+
+function resolvesToProjectRoot(file: string, cwd: string): boolean {
+  const resolvedFile = path.resolve(cwd, file);
+  const resolvedCwd = path.resolve(cwd);
+  return resolvedFile === resolvedCwd;
+}
+
+function createMissingManifestMessage(command: ParsedArgs["command"]): string {
+  if (command === "run") {
+    return "aiq run requires explicit files or paths. Use aiq for the configured project gate, or pass targets such as aiq run src/index.ts.";
+  }
+
+  if (command === "check") {
+    return "aiq check requires explicit files or paths. Use aiq for the configured project gate, or pass targets such as aiq check src/index.ts.";
+  }
+
+  return "At least one input file is required.";
 }
 
 export async function resolveCliConfig(

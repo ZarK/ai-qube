@@ -25,6 +25,15 @@ import {
   resolveStageHandlersFromModules,
   runnerExecutionContextStorage,
 } from "../src/runners.js";
+import {
+  commandAvailable,
+  hasDotNet10Toolchain,
+  hasGoToolchain,
+  hasMavenToolchain,
+  hasPowerShellPesterToolchain,
+  hasPythonQualityToolchain,
+  hasRustToolchain,
+} from "./toolchain-capabilities.js";
 
 const tempDirs: string[] = [];
 const fixtureBashFile = path.resolve("test-projects/bash/example.sh");
@@ -37,36 +46,6 @@ const fixturePowerShellFile = path.resolve("test-projects/powershell/example.ps1
 const fixturePythonConfigFile = path.resolve("test-projects/python/pyproject.toml");
 const fixtureRustFile = path.resolve("test-projects/rust/src/lib.rs");
 const fixtureTerraformFile = path.resolve("test-projects/terraform/main.tf");
-
-function commandAvailable(command: string): boolean {
-  try {
-    execFileSync(process.platform === "win32" ? "where" : "which", [command], {
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function resolvePowerShellModuleAvailable(moduleName: string): Promise<boolean> {
-  try {
-    execFileSync(
-      process.platform === "win32" ? "powershell.exe" : "pwsh",
-      [
-        "-NoLogo",
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        `if (Get-Module -ListAvailable -Name '${moduleName.replace(/'/gu, "''")}') { exit 0 } else { exit 1 }`,
-      ],
-      { stdio: "ignore" },
-    );
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
@@ -235,51 +214,55 @@ describe("engine modular authoring path", () => {
     expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "vitest" });
   }, 20_000);
 
-  it("runs a real Python fixture through an injected runner registry path", async () => {
-    const context = await buildEngineContext({
-      context: "cli",
-      manifest: {
-        files: [fixturePythonConfigFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(process.cwd(), ".aiq", "out"),
-      stages: ["lint"],
-      writeArtifacts: false,
-    });
-    const stageDefinition = createCombinedStageDefinition("lint", ["python"]);
-    const pythonModule = defaultRunnerLanguageModules.byId.get("python");
-    if (pythonModule === undefined) {
-      throw new Error("Expected the default Python runner module to exist.");
-    }
-
-    const modules = createRunnerLanguageModuleRegistry([pythonModule]);
-    const task: PlannedTask = {
-      fileCount: 1,
-      files: [fixturePythonConfigFile],
-      id: "run-1:1:lint",
-      stageId: "lint",
-    };
-    const runnerContext = createRunnerExecutionContext(context);
-
-    const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
-      const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
-      expect(handlers).toHaveLength(1);
-
-      const [handler] = handlers;
-      if (handler === undefined) {
-        throw new Error("Expected a Python lint handler.");
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs a real Python fixture through an injected runner registry path",
+    async () => {
+      const context = await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [fixturePythonConfigFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(process.cwd(), ".aiq", "out"),
+        stages: ["lint"],
+        writeArtifacts: false,
+      });
+      const stageDefinition = createCombinedStageDefinition("lint", ["python"]);
+      const pythonModule = defaultRunnerLanguageModules.byId.get("python");
+      if (pythonModule === undefined) {
+        throw new Error("Expected the default Python runner module to exist.");
       }
 
-      return handler.handler(
-        { ...task, files: handler.files },
-        { cwd: runnerContext.cwd, signal: runnerContext.signal },
-      );
-    });
+      const modules = createRunnerLanguageModuleRegistry([pythonModule]);
+      const task: PlannedTask = {
+        fileCount: 1,
+        files: [fixturePythonConfigFile],
+        id: "run-1:1:lint",
+        stageId: "lint",
+      };
+      const runnerContext = createRunnerExecutionContext(context);
 
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "ruff" });
-  }, 20_000);
+      const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
+        const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
+        expect(handlers).toHaveLength(1);
+
+        const [handler] = handlers;
+        if (handler === undefined) {
+          throw new Error("Expected a Python lint handler.");
+        }
+
+        return handler.handler(
+          { ...task, files: handler.files },
+          { cwd: runnerContext.cwd, signal: runnerContext.signal },
+        );
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "ruff" });
+    },
+    20_000,
+  );
 
   it("runs a real Terraform fixture through an injected runner registry path", async () => {
     const hasTerraform = commandAvailable("terraform");
@@ -391,57 +374,55 @@ describe("engine modular authoring path", () => {
     expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "go-test" });
   }, 30_000);
 
-  it("runs a real Rust fixture through an injected runner registry path", async () => {
-    const hasCargo = commandAvailable("cargo");
-    const context = await buildEngineContext({
-      context: "cli",
-      manifest: {
-        files: [fixtureRustFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(process.cwd(), ".aiq", "out"),
-      stages: ["unit"],
-      writeArtifacts: false,
-    });
-    const stageDefinition = createCombinedStageDefinition("unit", ["rust"]);
-    const rustModule = defaultRunnerLanguageModules.byId.get("rust");
-    if (rustModule === undefined) {
-      throw new Error("Expected the default Rust runner module to exist.");
-    }
-
-    const modules = createRunnerLanguageModuleRegistry([rustModule]);
-    const task: PlannedTask = {
-      fileCount: 1,
-      files: [fixtureRustFile],
-      id: "run-1:1:rust-unit",
-      stageId: "unit",
-    };
-    const runnerContext = createRunnerExecutionContext(context);
-
-    const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
-      const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
-      expect(handlers).toHaveLength(1);
-
-      const [handler] = handlers;
-      if (handler === undefined) {
-        throw new Error("Expected a Rust unit handler.");
+  it.skipIf(!hasRustToolchain)(
+    "runs a real Rust fixture through an injected runner registry path",
+    async () => {
+      const context = await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [fixtureRustFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(process.cwd(), ".aiq", "out"),
+        stages: ["unit"],
+        writeArtifacts: false,
+      });
+      const stageDefinition = createCombinedStageDefinition("unit", ["rust"]);
+      const rustModule = defaultRunnerLanguageModules.byId.get("rust");
+      if (rustModule === undefined) {
+        throw new Error("Expected the default Rust runner module to exist.");
       }
 
-      return handler.handler(
-        { ...task, files: handler.files },
-        { cwd: runnerContext.cwd, signal: runnerContext.signal },
-      );
-    });
+      const modules = createRunnerLanguageModuleRegistry([rustModule]);
+      const task: PlannedTask = {
+        fileCount: 1,
+        files: [fixtureRustFile],
+        id: "run-1:1:rust-unit",
+        stageId: "unit",
+      };
+      const runnerContext = createRunnerExecutionContext(context);
 
-    if (!hasCargo) {
-      expect(result.status).toBe("failed");
-      return;
-    }
+      const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
+        const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
+        expect(handlers).toHaveLength(1);
 
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "cargo-test" });
-  }, 60_000);
+        const [handler] = handlers;
+        if (handler === undefined) {
+          throw new Error("Expected a Rust unit handler.");
+        }
+
+        return handler.handler(
+          { ...task, files: handler.files },
+          { cwd: runnerContext.cwd, signal: runnerContext.signal },
+        );
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "cargo-test" });
+    },
+    60_000,
+  );
 
   it("runs a real Bash fixture through an injected runner registry path", async () => {
     const hasBats = commandAvailable("bats");
@@ -495,161 +476,155 @@ describe("engine modular authoring path", () => {
     expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "bats" });
   }, 30_000);
 
-  it("runs a real PowerShell fixture through an injected runner registry path", async () => {
-    const hasPester = await resolvePowerShellModuleAvailable("Pester");
-    const context = await buildEngineContext({
-      context: "cli",
-      manifest: {
+  it.skipIf(!hasPowerShellPesterToolchain)(
+    "runs a real PowerShell fixture through an injected runner registry path",
+    async () => {
+      const context = await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [fixturePowerShellFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(process.cwd(), ".aiq", "out"),
+        stages: ["unit"],
+        writeArtifacts: false,
+      });
+      const stageDefinition = createCombinedStageDefinition("unit", ["powershell"]);
+      const powerShellModule = defaultRunnerLanguageModules.byId.get("powershell");
+      if (powerShellModule === undefined) {
+        throw new Error("Expected the default PowerShell runner module to exist.");
+      }
+
+      const modules = createRunnerLanguageModuleRegistry([powerShellModule]);
+      const task: PlannedTask = {
+        fileCount: 1,
         files: [fixturePowerShellFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(process.cwd(), ".aiq", "out"),
-      stages: ["unit"],
-      writeArtifacts: false,
-    });
-    const stageDefinition = createCombinedStageDefinition("unit", ["powershell"]);
-    const powerShellModule = defaultRunnerLanguageModules.byId.get("powershell");
-    if (powerShellModule === undefined) {
-      throw new Error("Expected the default PowerShell runner module to exist.");
-    }
+        id: "run-1:1:powershell-unit",
+        stageId: "unit",
+      };
+      const runnerContext = createRunnerExecutionContext(context);
 
-    const modules = createRunnerLanguageModuleRegistry([powerShellModule]);
-    const task: PlannedTask = {
-      fileCount: 1,
-      files: [fixturePowerShellFile],
-      id: "run-1:1:powershell-unit",
-      stageId: "unit",
-    };
-    const runnerContext = createRunnerExecutionContext(context);
+      const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
+        const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
+        expect(handlers).toHaveLength(1);
 
-    const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
-      const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
-      expect(handlers).toHaveLength(1);
+        const [handler] = handlers;
+        if (handler === undefined) {
+          throw new Error("Expected a PowerShell unit handler.");
+        }
 
-      const [handler] = handlers;
-      if (handler === undefined) {
-        throw new Error("Expected a PowerShell unit handler.");
+        return handler.handler(
+          { ...task, files: handler.files },
+          { cwd: runnerContext.cwd, signal: runnerContext.signal },
+        );
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasMavenToolchain)(
+    "runs a real JVM fixture through an injected runner registry path",
+    async () => {
+      const context = await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [fixtureJavaMavenFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(process.cwd(), ".aiq", "out"),
+        stages: ["unit"],
+        writeArtifacts: false,
+      });
+      const stageDefinition = createCombinedStageDefinition("unit", ["jvm"]);
+      const jvmModule = defaultRunnerLanguageModules.byId.get("jvm");
+      if (jvmModule === undefined) {
+        throw new Error("Expected the default JVM runner module to exist.");
       }
 
-      return handler.handler(
-        { ...task, files: handler.files },
-        { cwd: runnerContext.cwd, signal: runnerContext.signal },
-      );
-    });
-
-    if (!hasPester) {
-      expect(result.status).toBe("not_implemented");
-      return;
-    }
-
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
-  }, 60_000);
-
-  it("runs a real JVM fixture through an injected runner registry path", async () => {
-    const hasMaven = commandAvailable("mvn");
-    const context = await buildEngineContext({
-      context: "cli",
-      manifest: {
+      const modules = createRunnerLanguageModuleRegistry([jvmModule]);
+      const task: PlannedTask = {
+        fileCount: 1,
         files: [fixtureJavaMavenFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(process.cwd(), ".aiq", "out"),
-      stages: ["unit"],
-      writeArtifacts: false,
-    });
-    const stageDefinition = createCombinedStageDefinition("unit", ["jvm"]);
-    const jvmModule = defaultRunnerLanguageModules.byId.get("jvm");
-    if (jvmModule === undefined) {
-      throw new Error("Expected the default JVM runner module to exist.");
-    }
+        id: "run-1:1:jvm-unit",
+        stageId: "unit",
+      };
+      const runnerContext = createRunnerExecutionContext(context);
 
-    const modules = createRunnerLanguageModuleRegistry([jvmModule]);
-    const task: PlannedTask = {
-      fileCount: 1,
-      files: [fixtureJavaMavenFile],
-      id: "run-1:1:jvm-unit",
-      stageId: "unit",
-    };
-    const runnerContext = createRunnerExecutionContext(context);
+      const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
+        const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
+        expect(handlers).toHaveLength(1);
 
-    const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
-      const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
-      expect(handlers).toHaveLength(1);
+        const [handler] = handlers;
+        if (handler === undefined) {
+          throw new Error("Expected a JVM unit handler.");
+        }
 
-      const [handler] = handlers;
-      if (handler === undefined) {
-        throw new Error("Expected a JVM unit handler.");
+        return handler.handler(
+          { ...task, files: handler.files },
+          { cwd: runnerContext.cwd, signal: runnerContext.signal },
+        );
+      });
+
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "maven-test" });
+    },
+    120_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs a real dotnet fixture through an injected runner registry path",
+    async () => {
+      const context = await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [fixtureDotNetFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(process.cwd(), ".aiq", "out"),
+        stages: ["unit"],
+        writeArtifacts: false,
+      });
+      const stageDefinition = createCombinedStageDefinition("unit", ["dotnet"]);
+      const dotNetModule = defaultRunnerLanguageModules.byId.get("dotnet");
+      if (dotNetModule === undefined) {
+        throw new Error("Expected the default dotnet runner module to exist.");
       }
 
-      return handler.handler(
-        { ...task, files: handler.files },
-        { cwd: runnerContext.cwd, signal: runnerContext.signal },
-      );
-    });
-
-    if (!hasMaven) {
-      expect(result.status).toBe("failed");
-      return;
-    }
-
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "maven-test" });
-  }, 120_000);
-
-  it("runs a real dotnet fixture through an injected runner registry path", async () => {
-    const hasDotNet = commandAvailable("dotnet");
-    const context = await buildEngineContext({
-      context: "cli",
-      manifest: {
+      const modules = createRunnerLanguageModuleRegistry([dotNetModule]);
+      const task: PlannedTask = {
+        fileCount: 1,
         files: [fixtureDotNetFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(process.cwd(), ".aiq", "out"),
-      stages: ["unit"],
-      writeArtifacts: false,
-    });
-    const stageDefinition = createCombinedStageDefinition("unit", ["dotnet"]);
-    const dotNetModule = defaultRunnerLanguageModules.byId.get("dotnet");
-    if (dotNetModule === undefined) {
-      throw new Error("Expected the default dotnet runner module to exist.");
-    }
+        id: "run-1:1:dotnet-unit",
+        stageId: "unit",
+      };
+      const runnerContext = createRunnerExecutionContext(context);
 
-    const modules = createRunnerLanguageModuleRegistry([dotNetModule]);
-    const task: PlannedTask = {
-      fileCount: 1,
-      files: [fixtureDotNetFile],
-      id: "run-1:1:dotnet-unit",
-      stageId: "unit",
-    };
-    const runnerContext = createRunnerExecutionContext(context);
+      const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
+        const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
+        expect(handlers).toHaveLength(1);
 
-    const result = await runnerExecutionContextStorage.run(runnerContext, async () => {
-      const handlers = resolveStageHandlersFromModules(stageDefinition, task, modules);
-      expect(handlers).toHaveLength(1);
+        const [handler] = handlers;
+        if (handler === undefined) {
+          throw new Error("Expected a dotnet unit handler.");
+        }
 
-      const [handler] = handlers;
-      if (handler === undefined) {
-        throw new Error("Expected a dotnet unit handler.");
-      }
+        return handler.handler(
+          { ...task, files: handler.files },
+          { cwd: runnerContext.cwd, signal: runnerContext.signal },
+        );
+      });
 
-      return handler.handler(
-        { ...task, files: handler.files },
-        { cwd: runnerContext.cwd, signal: runnerContext.signal },
-      );
-    });
-
-    if (!hasDotNet) {
-      expect(result.status).toBe("failed");
-      return;
-    }
-
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "dotnet-test" });
-  }, 120_000);
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "dotnet-test" });
+    },
+    120_000,
+  );
 
   it("keeps default stage definitions aligned with the registered runner modules", () => {
     expect(defaultStageDefinitions.entries).not.toHaveLength(0);

@@ -45,6 +45,7 @@ export class ToolRunner {
         env?: NodeJS.ProcessEnv;
         maxBuffer: number;
         signal?: AbortSignal;
+        windowsVerbatimArguments?: boolean;
       } = {
         cwd: options.cwd,
         encoding: "utf8",
@@ -62,7 +63,11 @@ export class ToolRunner {
         execOptions.signal = options.signal;
       }
 
-      const result = await execFileAsync(command, args, execOptions);
+      const invocation = this.createExecFileInvocation(command, args);
+      if (invocation.windowsVerbatimArguments) {
+        execOptions.windowsVerbatimArguments = true;
+      }
+      const result = await execFileAsync(invocation.command, invocation.args, execOptions);
       const finishedAt = new Date();
 
       return {
@@ -124,10 +129,7 @@ export class ToolRunner {
         cwd: process.cwd(),
       });
       if (outcome.exitCode === 0) {
-        const resolved = outcome.stdout
-          .split(/\r?\n/u)
-          .map((value) => value.trim())
-          .find((value) => value.length > 0);
+        const resolved = this.selectResolvedCommandPath(outcome.stdout, commandName);
         if (resolved !== undefined) {
           return resolved;
         }
@@ -157,9 +159,22 @@ export class ToolRunner {
     const cached = await this.cache.getOrCreate(cacheKey, async () => {
       const asdfCommand = process.platform === "win32" ? "asdf.cmd" : "asdf";
 
-      const result = await this.run(asdfCommand, ["which", commandName], {
-        cwd: process.cwd(),
-      });
+      let result: ToolRunOutcome;
+      try {
+        result = await this.run(asdfCommand, ["which", commandName], {
+          cwd: process.cwd(),
+        });
+      } catch (error) {
+        if (this.isAbortError(error)) {
+          throw error;
+        }
+
+        if (this.isLookupCommandFailure(error)) {
+          return undefined;
+        }
+
+        throw error;
+      }
       if (result.exitCode !== 0) {
         return undefined;
       }
@@ -357,7 +372,73 @@ export class ToolRunner {
   }
 
   private isExpectedExecFileFailure(error: ExecFileError): boolean {
-    return typeof error.code === "number" || error.code === "ENOENT";
+    return typeof error.code === "number" || error.code === "ENOENT" || error.code === "EFTYPE";
+  }
+
+  private isLookupCommandFailure(error: unknown): boolean {
+    if (!this.isExecFileError(error) || this.hasExecFileSignal(error)) {
+      return false;
+    }
+
+    return error.code === "ENOENT" || error.code === "EINVAL";
+  }
+
+  private requiresWindowsCommandShell(command: string): boolean {
+    return process.platform === "win32" && /\.(?:bat|cmd)$/iu.test(command);
+  }
+
+  private selectResolvedCommandPath(stdout: string, commandName: string): string | undefined {
+    const resolved = stdout
+      .split(/\r?\n/u)
+      .map((value) => value.trim())
+      .filter((value) => value.length > 0);
+
+    if (process.platform !== "win32") {
+      return resolved[0];
+    }
+
+    return (
+      resolved.find((value) => this.hasWindowsExecutableExtension(value)) ??
+      resolved.find((value) => path.basename(value).toLowerCase() === commandName.toLowerCase()) ??
+      resolved[0]
+    );
+  }
+
+  private hasWindowsExecutableExtension(command: string): boolean {
+    return /\.(?:bat|cmd|com|exe)$/iu.test(command);
+  }
+
+  private createExecFileInvocation(
+    command: string,
+    args: string[],
+  ): { args: string[]; command: string; windowsVerbatimArguments?: boolean } {
+    if (!this.requiresWindowsCommandShell(command)) {
+      return { args, command };
+    }
+
+    return {
+      args: [
+        "/d",
+        "/s",
+        "/c",
+        [
+          "call",
+          this.quoteWindowsCommandArgument(command),
+          ...args.map((arg) => this.quoteWindowsCommandArgument(arg)),
+        ].join(" "),
+      ],
+      command: process.env.ComSpec ?? "cmd.exe",
+      windowsVerbatimArguments: true,
+    };
+  }
+
+  private quoteWindowsCommandArgument(value: string): string {
+    const escaped = value
+      .replaceAll("%", "^%")
+      .replaceAll('"', '""')
+      .replaceAll("\r", "")
+      .replaceAll("\n", "");
+    return `"${escaped}"`;
   }
 }
 

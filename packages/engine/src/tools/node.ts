@@ -24,9 +24,10 @@ export function createJavaScriptTestCommand(options: {
   command: string;
 } {
   if (options.executionMode === "direct") {
+    const runnerBinary = resolveJavaScriptRunnerBinary(options.runner);
     return {
-      args: commands.createDirectJavaScriptTestArgs(options),
-      command: resolveJavaScriptRunnerBinary(options.runner),
+      args: [runnerBinary, ...commands.createDirectJavaScriptTestArgs(options)],
+      command: process.execPath,
     };
   }
 

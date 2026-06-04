@@ -785,7 +785,8 @@ function getProjectsForKind(
     .filter(
       (project): project is JavaScriptPackageProjectDescriptor =>
         project !== undefined && project.metadata.kind === kind,
-    );
+    )
+    .sort((left, right) => right.root.length - left.root.length);
 }
 
 function selectSingleKindProjects(

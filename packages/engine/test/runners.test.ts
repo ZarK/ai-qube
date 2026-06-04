@@ -8,7 +8,18 @@ import { runEngine } from "../src/index.js";
 import { buildEngineContext } from "../src/request.js";
 import { runPlannedTask } from "../src/runners.js";
 import { ToolRunner } from "../src/tool-runner.js";
+import * as binaries from "../src/tools/binary-resolver.js";
 import { withExclusiveToolLock } from "./exclusive-tool-lock.js";
+import {
+  hasDotNet10Toolchain,
+  hasGoToolchain,
+  hasGradleToolchain,
+  hasMavenToolchain,
+  hasPowerShellPesterToolchain,
+  hasPythonQualityToolchain,
+  hasRustCoverageToolchain,
+  hasRustToolchain,
+} from "./toolchain-capabilities.js";
 
 const fixtureFile = path.resolve("test-projects/typescript/src/index.ts");
 const lintFailureFixtureFile = path.resolve("test-projects/typescript/src/lint-failure.ts");
@@ -411,10 +422,21 @@ async function createCustomPythonRunnerProject(options: {
   await writeFile(sourceFile, "def main() -> int:\n    return 1\n", "utf8");
   await writeFile(path.join(root, "python3.cjs"), options.runnerScript, "utf8");
 
-  const shimPath = path.join(shimDir, "python3");
-  await writeFile(shimPath, '#!/bin/sh\nexec node "$0.cjs" "$@"\n', "utf8");
-  await chmod(shimPath, 0o755);
-  await writeFile(`${shimPath}.cjs`, options.runnerScript, "utf8");
+  if (process.platform === "win32") {
+    const shimPath = path.join(shimDir, "python.cmd");
+    await writeFile(shimPath, '@echo off\r\n"%~dp0node.cmd" "%~dp0python.cjs" %*\r\n', "utf8");
+    await writeFile(path.join(shimDir, "python.cjs"), options.runnerScript, "utf8");
+    await writeFile(
+      path.join(shimDir, "node.cmd"),
+      `@echo off\r\n"${process.execPath}" %*\r\n`,
+      "utf8",
+    );
+  } else {
+    const shimPath = path.join(shimDir, "python3");
+    await writeFile(shimPath, '#!/bin/sh\nexec node "$0.cjs" "$@"\n', "utf8");
+    await chmod(shimPath, 0o755);
+    await writeFile(`${shimPath}.cjs`, options.runnerScript, "utf8");
+  }
 
   return {
     root,
@@ -425,11 +447,17 @@ async function createCustomPythonRunnerProject(options: {
 
 async function withPathedPythonShim<T>(shimDir: string, run: () => Promise<T>): Promise<T> {
   const previousPath = process.env.PATH ?? "";
+  const pythonShimPath = path.join(
+    shimDir,
+    process.platform === "win32" ? "python.cmd" : "python3",
+  );
+  const resolverSpy = vi.spyOn(binaries, "resolvePythonCommand").mockReturnValue(pythonShimPath);
   process.env.PATH = `${shimDir}${path.delimiter}${previousPath}`;
 
   try {
     return await run();
   } finally {
+    resolverSpy.mockRestore();
     process.env.PATH = previousPath;
   }
 }
@@ -863,101 +891,110 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs Ruff lint and returns structured diagnostics for Python files", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-lint-runner-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Ruff lint and returns structured diagnostics for Python files",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-lint-runner-"));
+      tempDirs.push(tempDir);
 
-    const badPythonFile = path.join(tempDir, "bad.py");
-    await writeFile(badPythonFile, "import os\n", "utf8");
+      const badPythonFile = path.join(tempDir, "bad.py");
+      await writeFile(badPythonFile, "import os\n", "utf8");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [badPythonFile],
-        id: "test:1:lint-python",
-        stageId: "lint",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [badPythonFile],
+          id: "test:1:lint-python",
+          stageId: "lint",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      code: "F401",
-      file: badPythonFile,
-      severity: "error",
-      source: "ruff",
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 1,
-      status: "failed",
-      tool: "ruff",
-    });
-  });
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        code: "F401",
+        file: badPythonFile,
+        severity: "error",
+        source: "ruff",
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 1,
+        status: "failed",
+        tool: "ruff",
+      });
+    },
+  );
 
-  it("runs Ruff format on Python files and reports formatting diagnostics", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-format-runner-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Ruff format on Python files and reports formatting diagnostics",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-format-runner-"));
+      tempDirs.push(tempDir);
 
-    const badPythonFile = path.join(tempDir, "bad.py");
-    await writeFile(badPythonFile, "x=1\n", "utf8");
+      const badPythonFile = path.join(tempDir, "bad.py");
+      await writeFile(badPythonFile, "x=1\n", "utf8");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [badPythonFile],
-        id: "test:1:format-python",
-        stageId: "format",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [badPythonFile],
+          id: "test:1:format-python",
+          stageId: "format",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: badPythonFile,
-      severity: "error",
-      source: "ruff",
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 1,
-      status: "failed",
-      tool: "ruff",
-    });
-  });
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: badPythonFile,
+        severity: "error",
+        source: "ruff",
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 1,
+        status: "failed",
+        tool: "ruff",
+      });
+    },
+  );
 
-  it("runs Python typecheck and parses ty GitLab diagnostics", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-typecheck-runner-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Python typecheck and parses ty GitLab diagnostics",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-typecheck-runner-"));
+      tempDirs.push(tempDir);
 
-    const badPythonFile = path.join(tempDir, "bad.py");
-    await writeFile(badPythonFile, "value: str = 42\n", "utf8");
+      const badPythonFile = path.join(tempDir, "bad.py");
+      await writeFile(badPythonFile, "value: str = 42\n", "utf8");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [badPythonFile],
-        id: "test:1:typecheck-python",
-        stageId: "typecheck",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [badPythonFile],
+          id: "test:1:typecheck-python",
+          stageId: "typecheck",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: badPythonFile,
-      message: expect.stringContaining("Object of type `Literal[42]` is not assignable to `str`"),
-      severity: "error",
-      source: "ty",
-    });
-    expect(result.diagnostics[0]?.range).toMatchObject({
-      startColumn: 14,
-      startLine: 1,
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 1,
-      status: "failed",
-      tool: "ty",
-    });
-  });
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: badPythonFile,
+        message: expect.stringContaining("Object of type `Literal[42]` is not assignable to `str`"),
+        severity: "error",
+        source: "ty",
+      });
+      expect(result.diagnostics[0]?.range).toMatchObject({
+        startColumn: 14,
+        startLine: 1,
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 1,
+        status: "failed",
+        tool: "ty",
+      });
+    },
+  );
 
   it("passes the resolved Python interpreter to ty", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-typecheck-command-"));
@@ -976,12 +1013,15 @@ describe("engine runners", () => {
       stdout: "[]",
     });
 
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    const tyCommand = process.platform === "win32" ? "ty.exe" : "ty";
+
     vi.spyOn(toolRunner, "resolveInstalledBinary").mockImplementation(async (commandName) => {
-      if (commandName === "python3") {
-        return "/tmp/fake-python3";
+      if (commandName === pythonCommand) {
+        return "/tmp/fake-python";
       }
 
-      if (commandName === "ty") {
+      if (commandName === tyCommand) {
         return "/tmp/fake-ty";
       }
 
@@ -1018,7 +1058,7 @@ describe("engine runners", () => {
       [
         "check",
         "--python",
-        "/tmp/fake-python3",
+        "/tmp/fake-python",
         "--output-format",
         "gitlab",
         "--no-progress",
@@ -1038,8 +1078,10 @@ describe("engine runners", () => {
     await writeFile(pythonFile, "value: str = 'ok'\n", "utf8");
 
     const toolRunner = new ToolRunner();
+    const pythonCommand = process.platform === "win32" ? "python" : "python3";
+    const tyCommand = process.platform === "win32" ? "ty.exe" : "ty";
     const runSpy = vi.spyOn(toolRunner, "run").mockImplementation(async (command, args) => {
-      if (command === (process.platform === "win32" ? "where" : "which") && args[0] === "ty") {
+      if (command === (process.platform === "win32" ? "where" : "which") && args[0] === tyCommand) {
         return {
           durationMs: 5,
           exitCode: 1,
@@ -1061,8 +1103,8 @@ describe("engine runners", () => {
     });
 
     vi.spyOn(toolRunner, "resolveInstalledBinary").mockImplementation(async (commandName) => {
-      if (commandName === "python3") {
-        return "/tmp/fake-python3";
+      if (commandName === pythonCommand) {
+        return "/tmp/fake-python";
       }
 
       if (commandName === (process.platform === "win32" ? "uv.exe" : "uv")) {
@@ -1110,7 +1152,7 @@ describe("engine runners", () => {
         "ty",
         "check",
         "--python",
-        "/tmp/fake-python3",
+        "/tmp/fake-python",
         "--output-format",
         "gitlab",
         "--no-progress",
@@ -2168,7 +2210,7 @@ describe("engine runners", () => {
     ).toHaveLength(1);
   });
 
-  it("runs Pytest unit tests for Python projects", async () => {
+  it.skipIf(!hasPythonQualityToolchain)("runs Pytest unit tests for Python projects", async () => {
     const result = await runPlannedTask(
       {
         fileCount: 1,
@@ -2189,7 +2231,7 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs Pytest coverage for Python projects", async () => {
+  it.skipIf(!hasPythonQualityToolchain)("runs Pytest coverage for Python projects", async () => {
     const result = await runPlannedTask(
       {
         fileCount: 1,
@@ -2210,7 +2252,7 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs Python lint for config-only selections", async () => {
+  it.skipIf(!hasPythonQualityToolchain)("runs Python lint for config-only selections", async () => {
     const result = await runPlannedTask(
       {
         fileCount: 1,
@@ -2231,47 +2273,53 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs Pytest unit tests for config-only Python selections", async () => {
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [fixturePythonConfigFile],
-        id: "test:1:unit-python-config-only",
-        stageId: "unit",
-      },
-      process.cwd(),
-    );
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Pytest unit tests for config-only Python selections",
+    async () => {
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [fixturePythonConfigFile],
+          id: "test:1:unit-python-config-only",
+          stageId: "unit",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toBe("Pytest ran 3 tests: 3 passed, 0 failed.");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "pytest",
-    });
-  });
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toBe("Pytest ran 3 tests: 3 passed, 0 failed.");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "pytest",
+      });
+    },
+  );
 
-  it("runs Python metrics for config-only selections", async () => {
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [fixturePythonConfigFile],
-        id: "test:1:complexity-python-config-only",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Python metrics for config-only selections",
+    async () => {
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [fixturePythonConfigFile],
+          id: "test:1:complexity-python-config-only",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("Python complexity max:");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-  });
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("Python complexity max:");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+    },
+  );
   it("reuses Python coverage execution across unit and coverage in one engine run", async () => {
     const project = await createCustomPythonRunnerProject({
       prefix: "aiq-python-coverage-reuse-",
@@ -2492,244 +2540,268 @@ describe("engine runners", () => {
     expect(await readFile(path.join(project.root, "invocations.txt"), "utf8")).toBe("2");
   });
 
-  it("runs Go lint and returns structured diagnostics", async () => {
-    const project = await createGoFixtureProject("aiq-go-lint-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "runs Go lint and returns structured diagnostics",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-lint-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "package fixture",
-        "",
-        'import "fmt"',
-        "",
-        "func Greet(name string) string {",
-        '    fmt.Printf("%d", name)',
-        '    return "Hello, " + name + "!"',
-        "}",
-        "",
-        "func Sum(values []int) int {",
-        "    total := 0",
-        "    for _, value := range values {",
-        "        total += value",
-        "    }",
-        "",
-        "    return total",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package fixture",
+          "",
+          'import "fmt"',
+          "",
+          "func Greet(name string) string {",
+          '    fmt.Printf("%d", name)',
+          '    return "Hello, " + name + "!"',
+          "}",
+          "",
+          "func Sum(values []int) int {",
+          "    total := 0",
+          "    for _, value := range values {",
+          "        total += value",
+          "    }",
+          "",
+          "    return total",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:lint-go",
-        stageId: "lint",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:lint-go",
+          stageId: "lint",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      code: "printf",
-      file: project.sourceFile,
-      severity: "error",
-      source: "go-vet",
-    });
-    expect(result.diagnostics[0]?.message).toContain("fmt.Printf format %d has arg name");
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "go-vet",
-    });
-  }, 20_000);
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        code: "printf",
+        file: project.sourceFile,
+        severity: "error",
+        source: "go-vet",
+      });
+      expect(result.diagnostics[0]?.message).toContain("fmt.Printf format %d has arg name");
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "go-vet",
+      });
+    },
+    20_000,
+  );
 
-  it("marks Go lint as failed when go vet exits non-zero without parseable diagnostics", async () => {
-    const project = await createGoFixtureProject("aiq-go-lint-fallback-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "marks Go lint as failed when go vet exits non-zero without parseable diagnostics",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-lint-fallback-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "package fixture",
-        "",
-        "func Greet(name string) string {",
-        '    return "Hello, " + name + "!"',
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package fixture",
+          "",
+          "func Greet(name string) string {",
+          '    return "Hello, " + name + "!"',
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:lint-go-fallback-diagnostic",
-        stageId: "lint",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:lint-go-fallback-diagnostic",
+          stageId: "lint",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics).toHaveLength(1);
-    expect(result.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "go-vet",
-    });
-    expect(result.notes[0]).toContain("reported 1 diagnostic");
-    expect(result.notes[0]).not.toContain("passed for");
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "go-vet",
-    });
-  }, 20_000);
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics).toHaveLength(1);
+      expect(result.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "go-vet",
+      });
+      expect(result.notes[0]).toContain("reported 1 diagnostic");
+      expect(result.notes[0]).not.toContain("passed for");
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "go-vet",
+      });
+    },
+    20_000,
+  );
 
-  it("runs Go format and reports formatting diagnostics", async () => {
-    const project = await createGoFixtureProject("aiq-go-format-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "runs Go format and reports formatting diagnostics",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-format-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "package fixture",
-        "",
-        'import "strings"',
-        "",
-        "func Greet(name string) string{",
-        "trimmedName := strings.TrimSpace(name)",
-        'return "Hello, " + trimmedName + "!"',
-        "}",
-        "",
-        "func Sum(values []int) int {",
-        "total := 0",
-        "for _, value := range values {",
-        "total += value",
-        "}",
-        "return total",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package fixture",
+          "",
+          'import "strings"',
+          "",
+          "func Greet(name string) string{",
+          "trimmedName := strings.TrimSpace(name)",
+          'return "Hello, " + trimmedName + "!"',
+          "}",
+          "",
+          "func Sum(values []int) int {",
+          "total := 0",
+          "for _, value := range values {",
+          "total += value",
+          "}",
+          "return total",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:format-go",
-        stageId: "format",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:format-go",
+          stageId: "format",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "gofmt",
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "failed",
-      tool: "gofmt",
-    });
-  }, 20_000);
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "gofmt",
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "failed",
+        tool: "gofmt",
+      });
+    },
+    20_000,
+  );
 
-  it("runs Go typecheck and parses compiler diagnostics", async () => {
-    const project = await createGoFixtureProject("aiq-go-typecheck-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "runs Go typecheck and parses compiler diagnostics",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-typecheck-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "package fixture",
-        "",
-        'import "strings"',
-        "",
-        "func Greet(name string) string {",
-        "    trimmedName := strings.TrimSpace(name)",
-        "    return 42 + len(trimmedName)",
-        "}",
-        "",
-        "func Sum(values []int) int {",
-        "    total := 0",
-        "    for _, value := range values {",
-        "        total += value",
-        "    }",
-        "",
-        "    return total",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package fixture",
+          "",
+          'import "strings"',
+          "",
+          "func Greet(name string) string {",
+          "    trimmedName := strings.TrimSpace(name)",
+          "    return 42 + len(trimmedName)",
+          "}",
+          "",
+          "func Sum(values []int) int {",
+          "    total := 0",
+          "    for _, value := range values {",
+          "        total += value",
+          "    }",
+          "",
+          "    return total",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:typecheck-go",
-        stageId: "typecheck",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:typecheck-go",
+          stageId: "typecheck",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "go-build",
-    });
-    expect(result.diagnostics[0]?.message).toContain("cannot use 42");
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "go-build",
-    });
-  }, 20_000);
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "go-build",
+      });
+      expect(result.diagnostics[0]?.message).toContain("cannot use 42");
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "go-build",
+      });
+    },
+    20_000,
+  );
 
-  it("runs Go unit tests for Go projects", async () => {
-    const project = await createGoFixtureProject("aiq-go-unit-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "runs Go unit tests for Go projects",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-unit-runner-");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:unit-go",
-        stageId: "unit",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:unit-go",
+          stageId: "unit",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("go test ran");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "go-test",
-    });
-  }, 20_000);
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("go test ran");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "go-test",
+      });
+    },
+    20_000,
+  );
 
-  it("runs Go coverage for Go projects", async () => {
-    const project = await createGoFixtureProject("aiq-go-coverage-runner-");
+  it.skipIf(!hasGoToolchain)(
+    "runs Go coverage for Go projects",
+    async () => {
+      const project = await createGoFixtureProject("aiq-go-coverage-runner-");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:coverage-go",
-        stageId: "coverage",
-      },
-      process.cwd(),
-    );
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:coverage-go",
+          stageId: "coverage",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("go test coverage lines:");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "go-test-coverage",
-    });
-  }, 20_000);
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("go test coverage lines:");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "go-test-coverage",
+      });
+    },
+    20_000,
+  );
 
   it("reuses cached Go metrics between sloc, complexity, and maintainability", async () => {
     const project = await createGoFixtureProject("aiq-go-metrics-runner-");
@@ -2823,459 +2895,499 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs Rust lint and returns structured diagnostics", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-lint-runner-");
+  it.skipIf(!hasRustToolchain)(
+    "runs Rust lint and returns structured diagnostics",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-lint-runner-");
 
-      await writeFile(
-        project.sourceFile,
-        [
-          "pub fn greet(name: &str) -> String {",
-          "    let unused_value = 42;",
-          "    let trimmed_name = name.trim();",
-          '    format!("Hello, {trimmed_name}!")',
-          "}",
-          "",
-          "pub fn sum(values: &[i32]) -> i32 {",
-          "    values.iter().sum()",
-          "}",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
+        await writeFile(
+          project.sourceFile,
+          [
+            "pub fn greet(name: &str) -> String {",
+            "    let unused_value = 42;",
+            "    let trimmed_name = name.trim();",
+            '    format!("Hello, {trimmed_name}!")',
+            "}",
+            "",
+            "pub fn sum(values: &[i32]) -> i32 {",
+            "    values.iter().sum()",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
 
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:lint-rust",
-          stageId: "lint",
-        },
-        process.cwd(),
-      );
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:lint-rust",
+            stageId: "lint",
+          },
+          process.cwd(),
+        );
 
-      expect(result.status).toBe("failed");
-      expect(result.diagnostics[0]).toMatchObject({
-        file: project.sourceFile,
-        severity: "error",
-        source: "cargo-clippy",
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics[0]).toMatchObject({
+          file: project.sourceFile,
+          severity: "error",
+          source: "cargo-clippy",
+        });
+        expect(result.diagnostics[0]?.message).toContain("unused variable");
+        expect(result.toolRuns[0]).toMatchObject({
+          status: "failed",
+          tool: "cargo-clippy",
+        });
       });
-      expect(result.diagnostics[0]?.message).toContain("unused variable");
-      expect(result.toolRuns[0]).toMatchObject({
-        status: "failed",
-        tool: "cargo-clippy",
+    },
+    20_000,
+  );
+
+  it.skipIf(!hasRustToolchain)(
+    "runs Rust format and reports formatting diagnostics",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-format-runner-");
+
+        await writeFile(
+          project.sourceFile,
+          [
+            "pub fn greet(name: &str) -> String{",
+            "let trimmed_name = name.trim();",
+            'format!("Hello, {trimmed_name}!")',
+            "}",
+            "",
+            "pub fn sum(values: &[i32]) -> i32 {",
+            "values.iter().sum()",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:format-rust",
+            stageId: "format",
+          },
+          process.cwd(),
+        );
+
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics[0]).toMatchObject({
+          file: project.sourceFile,
+          severity: "error",
+          source: "cargo-fmt",
+        });
+        expect(result.toolRuns[0]).toMatchObject({
+          exitCode: 1,
+          status: "failed",
+          tool: "cargo-fmt",
+        });
       });
-    });
-  }, 20_000);
+    },
+    20_000,
+  );
 
-  it("runs Rust format and reports formatting diagnostics", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-format-runner-");
+  it.skipIf(!hasRustToolchain)(
+    "runs Rust typecheck and parses compiler diagnostics",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-typecheck-runner-");
 
-      await writeFile(
-        project.sourceFile,
-        [
-          "pub fn greet(name: &str) -> String{",
-          "let trimmed_name = name.trim();",
-          'format!("Hello, {trimmed_name}!")',
-          "}",
-          "",
-          "pub fn sum(values: &[i32]) -> i32 {",
-          "values.iter().sum()",
-          "}",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
+        await writeFile(
+          project.sourceFile,
+          [
+            "pub fn greet(name: &str) -> String {",
+            "    let trimmed_name = name.trim();",
+            "    42 + trimmed_name.len()",
+            "}",
+            "",
+            "pub fn sum(values: &[i32]) -> i32 {",
+            "    values.iter().sum()",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
 
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:format-rust",
-          stageId: "format",
-        },
-        process.cwd(),
-      );
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:typecheck-rust",
+            stageId: "typecheck",
+          },
+          process.cwd(),
+        );
 
-      expect(result.status).toBe("failed");
-      expect(result.diagnostics[0]).toMatchObject({
-        file: project.sourceFile,
-        severity: "error",
-        source: "cargo-fmt",
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics[0]).toMatchObject({
+          file: project.sourceFile,
+          severity: "error",
+          source: "cargo-check",
+        });
+        expect(result.diagnostics[0]?.message).toContain("mismatched types");
+        expect(result.toolRuns[0]).toMatchObject({
+          status: "failed",
+          tool: "cargo-check",
+        });
       });
-      expect(result.toolRuns[0]).toMatchObject({
-        exitCode: 1,
-        status: "failed",
-        tool: "cargo-fmt",
+    },
+    20_000,
+  );
+
+  it.skipIf(!hasRustToolchain)(
+    "runs Rust unit tests for Rust projects",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-unit-runner-");
+
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:unit-rust",
+            stageId: "unit",
+          },
+          process.cwd(),
+        );
+
+        expect(result.status).toBe("passed");
+        expect(result.diagnostics).toEqual([]);
+        expect(result.notes[0]).toContain("cargo test ran");
+        expect(result.toolRuns[0]).toMatchObject({
+          exitCode: 0,
+          status: "passed",
+          tool: "cargo-test",
+        });
       });
-    });
-  }, 20_000);
+    },
+    20_000,
+  );
 
-  it("runs Rust typecheck and parses compiler diagnostics", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-typecheck-runner-");
+  it.skipIf(!hasRustToolchain)(
+    "reports Rust unit test failures",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-unit-fail-runner-");
 
-      await writeFile(
-        project.sourceFile,
-        [
-          "pub fn greet(name: &str) -> String {",
-          "    let trimmed_name = name.trim();",
-          "    42 + trimmed_name.len()",
-          "}",
-          "",
-          "pub fn sum(values: &[i32]) -> i32 {",
-          "    values.iter().sum()",
-          "}",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
+        await writeFile(
+          project.testFile,
+          [
+            "use aiq_rust_fixture::{greet, sum};",
+            "",
+            "#[test]",
+            "fn greets_from_integration_tests() {",
+            '    assert_eq!(greet("Rust"), "Hello, Rust!");',
+            "}",
+            "",
+            "#[test]",
+            "fn sums_from_integration_tests() {",
+            "    assert_eq!(sum(&[4, 5]), 10);",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
 
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:typecheck-rust",
-          stageId: "typecheck",
-        },
-        process.cwd(),
-      );
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:unit-rust-fail",
+            stageId: "unit",
+          },
+          process.cwd(),
+        );
 
-      expect(result.status).toBe("failed");
-      expect(result.diagnostics[0]).toMatchObject({
-        file: project.sourceFile,
-        severity: "error",
-        source: "cargo-check",
-      });
-      expect(result.diagnostics[0]?.message).toContain("mismatched types");
-      expect(result.toolRuns[0]).toMatchObject({
-        status: "failed",
-        tool: "cargo-check",
-      });
-    });
-  }, 20_000);
-
-  it("runs Rust unit tests for Rust projects", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-unit-runner-");
-
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:unit-rust",
-          stageId: "unit",
-        },
-        process.cwd(),
-      );
-
-      expect(result.status).toBe("passed");
-      expect(result.diagnostics).toEqual([]);
-      expect(result.notes[0]).toContain("cargo test ran");
-      expect(result.toolRuns[0]).toMatchObject({
-        exitCode: 0,
-        status: "passed",
-        tool: "cargo-test",
-      });
-    });
-  }, 20_000);
-
-  it("reports Rust unit test failures", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-unit-fail-runner-");
-
-      await writeFile(
-        project.testFile,
-        [
-          "use aiq_rust_fixture::{greet, sum};",
-          "",
-          "#[test]",
-          "fn greets_from_integration_tests() {",
-          '    assert_eq!(greet("Rust"), "Hello, Rust!");',
-          "}",
-          "",
-          "#[test]",
-          "fn sums_from_integration_tests() {",
-          "    assert_eq!(sum(&[4, 5]), 10);",
-          "}",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:unit-rust-fail",
-          stageId: "unit",
-        },
-        process.cwd(),
-      );
-
-      expect(result.status).toBe("failed");
-      expect(result.diagnostics[0]).toMatchObject({
-        file: project.testFile,
-        range: {
-          startColumn: 5,
-          startLine: 10,
-        },
-        severity: "error",
-        source: "cargo-test",
-      });
-      expect(result.diagnostics[0]?.message).toContain("sums_from_integration_tests");
-      expect(result.notes[0]).toBe("cargo test ran 4 tests: 3 passed, 1 failed.");
-      expect(result.toolRuns[0]).toMatchObject({
-        status: "failed",
-        tool: "cargo-test",
-      });
-    });
-  }, 20_000);
-
-  it("parses Rust compiler diagnostics from cargo test JSON output", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-unit-compile-fail-runner-");
-
-      await writeFile(
-        project.testFile,
-        [
-          "use aiq_rust_fixture::greet;",
-          "",
-          "#[test]",
-          "fn integration_compile_failure() {",
-          '    let message: i32 = greet("Rust");',
-          "    assert_eq!(message, 1);",
-          "}",
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-
-      const result = await runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:unit-rust-compile-fail",
-          stageId: "unit",
-        },
-        process.cwd(),
-      );
-
-      expect(result.status).toBe("failed");
-      expect(result.diagnostics).toContainEqual(
-        expect.objectContaining({
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics[0]).toMatchObject({
           file: project.testFile,
+          range: {
+            startColumn: 5,
+            startLine: 10,
+          },
           severity: "error",
           source: "cargo-test",
-        }),
-      );
-      expect(
-        result.diagnostics.some((diagnostic) => diagnostic.message.includes("mismatched types")),
-      ).toBe(true);
-      expect(result.toolRuns[0]).toMatchObject({
-        status: "failed",
-        tool: "cargo-test",
+        });
+        expect(result.diagnostics[0]?.message).toContain("sums_from_integration_tests");
+        expect(result.notes[0]).toBe("cargo test ran 4 tests: 3 passed, 1 failed.");
+        expect(result.toolRuns[0]).toMatchObject({
+          status: "failed",
+          tool: "cargo-test",
+        });
       });
-    });
-  }, 20_000);
+    },
+    20_000,
+  );
 
-  it("runs Rust coverage for Rust projects", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-coverage-runner-");
+  it.skipIf(!hasRustToolchain)(
+    "parses Rust compiler diagnostics from cargo test JSON output",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-unit-compile-fail-runner-");
 
-      const result = await runPlannedTask(
+        await writeFile(
+          project.testFile,
+          [
+            "use aiq_rust_fixture::greet;",
+            "",
+            "#[test]",
+            "fn integration_compile_failure() {",
+            '    let message: i32 = greet("Rust");',
+            "    assert_eq!(message, 1);",
+            "}",
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:unit-rust-compile-fail",
+            stageId: "unit",
+          },
+          process.cwd(),
+        );
+
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics).toContainEqual(
+          expect.objectContaining({
+            file: project.testFile,
+            severity: "error",
+            source: "cargo-test",
+          }),
+        );
+        expect(
+          result.diagnostics.some((diagnostic) => diagnostic.message.includes("mismatched types")),
+        ).toBe(true);
+        expect(result.toolRuns[0]).toMatchObject({
+          status: "failed",
+          tool: "cargo-test",
+        });
+      });
+    },
+    20_000,
+  );
+
+  it.skipIf(!hasRustCoverageToolchain)(
+    "runs Rust coverage for Rust projects",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-coverage-runner-");
+
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:coverage-rust",
+            stageId: "coverage",
+          },
+          process.cwd(),
+        );
+
+        expect(result.status).toBe("passed");
+        expect(result.diagnostics).toEqual([]);
+        expect(result.notes[0]).toContain("cargo llvm-cov lines:");
+        expect(result.toolRuns[0]).toMatchObject({
+          exitCode: 0,
+          status: "passed",
+          tool: "cargo-llvm-cov",
+        });
+      });
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasRustToolchain)(
+    "reports Rust coverage as not implemented when cargo llvm-cov is unavailable",
+    async () => {
+      await withExclusiveRust(async () => {
+        const project = await createRustFixtureProject("aiq-rust-coverage-missing-tool-runner-");
+        const shimRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-rust-coverage-shim-"));
+        tempDirs.push(shimRoot);
+
+        const shimBin = path.join(shimRoot, "bin");
+        await mkdir(shimBin, { recursive: true });
+
+        const cargoShim = path.join(shimBin, "cargo");
+        const cargoDir = path.dirname(resolveCommandPath("cargo"));
+        const rustcDir = path.dirname(resolveCommandPath("rustc"));
+        await writeFile(
+          cargoShim,
+          [
+            "#!/bin/sh",
+            'if [ "$1" = "llvm-cov" ]; then',
+            "  printf '%s\\n' 'error: no such command: `llvm-cov`' >&2",
+            "  exit 101",
+            "fi",
+            `exec "${path.join(cargoDir, "cargo")}" "$@"`,
+            "",
+          ].join("\n"),
+          "utf8",
+        );
+        await chmod(cargoShim, 0o755);
+
+        const toolRunner = new ToolRunner();
+        const rustEnv = {
+          PATH: [shimBin, cargoDir, rustcDir].join(path.delimiter),
+        };
+
+        vi.spyOn(toolRunner, "createRustProcessEnv").mockResolvedValue(rustEnv);
+        vi.spyOn(toolRunner, "resolveInstalledBinary").mockImplementation(async (commandName) => {
+          if (commandName === "cargo") {
+            return cargoShim;
+          }
+
+          if (commandName === "rustc") {
+            return path.join(rustcDir, "rustc");
+          }
+
+          return undefined;
+        });
+
+        const engineContext = withToolRunnerOverride(
+          await buildEngineContext({
+            context: "cli",
+            manifest: {
+              files: [project.sourceFile],
+              source: "direct",
+            },
+            mode: "check",
+            outDir: project.root,
+            stages: ["coverage"],
+          }),
+          toolRunner,
+        );
+
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:coverage-rust-missing-tool",
+            stageId: "coverage",
+          },
+          engineContext,
+        );
+
+        expect(result.status).toBe("not_implemented");
+        expect(result.diagnostics).toEqual([]);
+        expect(result.notes[0]).toContain("cargo-llvm-cov");
+        expect(result.toolRuns[0]).toMatchObject({
+          exitCode: 101,
+          status: "not_implemented",
+          tool: "cargo-llvm-cov",
+        });
+      });
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasRustToolchain)(
+    "reuses cached Rust metrics between sloc, complexity, and maintainability",
+    async () => {
+      const project = await createRustFixtureProject("aiq-rust-metrics-runner-");
+
+      const sloc = await runPlannedTask(
         {
           fileCount: 1,
           files: [project.sourceFile],
-          id: "test:1:coverage-rust",
-          stageId: "coverage",
+          id: "test:1:sloc-rust",
+          stageId: "sloc",
+        },
+        process.cwd(),
+      );
+      const complexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:complexity-rust",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:maintainability-rust",
+          stageId: "maintainability",
         },
         process.cwd(),
       );
 
-      expect(result.status).toBe("passed");
-      expect(result.diagnostics).toEqual([]);
-      expect(result.notes[0]).toContain("cargo llvm-cov lines:");
-      expect(result.toolRuns[0]).toMatchObject({
+      expect(sloc.status).toBe("passed");
+      expect(sloc.notes[0]).toContain("Rust SLOC:");
+      expect(sloc.toolRuns[0]).toMatchObject({
+        cacheHit: false,
         exitCode: 0,
         status: "passed",
-        tool: "cargo-llvm-cov",
+        tool: "lizard",
       });
-    });
-  }, 60_000);
-
-  it("reports Rust coverage as not implemented when cargo llvm-cov is unavailable", async () => {
-    await withExclusiveRust(async () => {
-      const project = await createRustFixtureProject("aiq-rust-coverage-missing-tool-runner-");
-      const shimRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-rust-coverage-shim-"));
-      tempDirs.push(shimRoot);
-
-      const shimBin = path.join(shimRoot, "bin");
-      await mkdir(shimBin, { recursive: true });
-
-      const cargoShim = path.join(shimBin, "cargo");
-      const cargoDir = path.dirname(resolveCommandPath("cargo"));
-      const rustcDir = path.dirname(resolveCommandPath("rustc"));
-      await writeFile(
-        cargoShim,
-        [
-          "#!/bin/sh",
-          'if [ "$1" = "llvm-cov" ]; then',
-          "  printf '%s\\n' 'error: no such command: `llvm-cov`' >&2",
-          "  exit 101",
-          "fi",
-          `exec "${path.join(cargoDir, "cargo")}" "$@"`,
-          "",
-        ].join("\n"),
-        "utf8",
-      );
-      await chmod(cargoShim, 0o755);
-
-      const toolRunner = new ToolRunner();
-      const rustEnv = {
-        PATH: [shimBin, cargoDir, rustcDir].join(path.delimiter),
-      };
-
-      vi.spyOn(toolRunner, "createRustProcessEnv").mockResolvedValue(rustEnv);
-      vi.spyOn(toolRunner, "resolveInstalledBinary").mockImplementation(async (commandName) => {
-        if (commandName === "cargo") {
-          return cargoShim;
-        }
-
-        if (commandName === "rustc") {
-          return path.join(rustcDir, "rustc");
-        }
-
-        return undefined;
+      expect(complexity.status).toBe("passed");
+      expect(complexity.notes[0]).toContain("Shared metrics observed");
+      expect(complexity.notes.join(" ")).toContain("Reused cached Rust metrics");
+      expect(complexity.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
       });
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.notes.join(" ")).toContain("Reused cached Rust metrics");
+      expect(maintainability.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+    },
+    20_000,
+  );
 
-      const engineContext = withToolRunnerOverride(
-        await buildEngineContext({
-          context: "cli",
-          manifest: {
-            files: [project.sourceFile],
-            source: "direct",
-          },
-          mode: "check",
-          outDir: project.root,
-          stages: ["coverage"],
-        }),
-        toolRunner,
-      );
+  it.skipIf(!hasRustToolchain)(
+    "combines Go and Rust metrics without downgrading supported mixed selections",
+    async () => {
+      const goProject = await createGoFixtureProject("aiq-mixed-go-rust-metrics-runner-");
+      const rustProject = await createRustFixtureProject("aiq-mixed-go-rust-metrics-runner-");
 
-      const result = await runPlannedTask(
+      const complexity = await runPlannedTask(
         {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:coverage-rust-missing-tool",
-          stageId: "coverage",
+          fileCount: 2,
+          files: [goProject.sourceFile, rustProject.sourceFile],
+          id: "test:1:complexity-mixed-go-rust",
+          stageId: "complexity",
         },
-        engineContext,
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 2,
+          files: [goProject.sourceFile, rustProject.sourceFile],
+          id: "test:1:maintainability-mixed-go-rust",
+          stageId: "maintainability",
+        },
+        process.cwd(),
       );
 
-      expect(result.status).toBe("not_implemented");
-      expect(result.diagnostics).toEqual([]);
-      expect(result.notes[0]).toContain("cargo-llvm-cov");
-      expect(result.toolRuns[0]).toMatchObject({
-        exitCode: 101,
-        status: "not_implemented",
-        tool: "cargo-llvm-cov",
-      });
-    });
-  }, 60_000);
-
-  it("reuses cached Rust metrics between sloc, complexity, and maintainability", async () => {
-    const project = await createRustFixtureProject("aiq-rust-metrics-runner-");
-
-    const sloc = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:sloc-rust",
-        stageId: "sloc",
-      },
-      process.cwd(),
-    );
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:complexity-rust",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:maintainability-rust",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
-
-    expect(sloc.status).toBe("passed");
-    expect(sloc.notes[0]).toContain("Rust SLOC:");
-    expect(sloc.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(complexity.status).toBe("passed");
-    expect(complexity.notes[0]).toContain("Shared metrics observed");
-    expect(complexity.notes.join(" ")).toContain("Reused cached Rust metrics");
-    expect(complexity.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.notes.join(" ")).toContain("Reused cached Rust metrics");
-    expect(maintainability.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-  }, 20_000);
-
-  it("combines Go and Rust metrics without downgrading supported mixed selections", async () => {
-    const goProject = await createGoFixtureProject("aiq-mixed-go-rust-metrics-runner-");
-    const rustProject = await createRustFixtureProject("aiq-mixed-go-rust-metrics-runner-");
-
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [goProject.sourceFile, rustProject.sourceFile],
-        id: "test:1:complexity-mixed-go-rust",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [goProject.sourceFile, rustProject.sourceFile],
-        id: "test:1:maintainability-mixed-go-rust",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
-
-    expect(complexity.status).toBe("passed");
-    expect(complexity.toolRuns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
-        expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
-      ]),
-    );
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.notes.join(" ")).toContain("Reused cached");
-  }, 20_000);
+      expect(complexity.status).toBe("passed");
+      expect(complexity.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
+          expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
+        ]),
+      );
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.notes.join(" ")).toContain("Reused cached");
+    },
+    20_000,
+  );
 
   it("runs the shared security scan for Rust inputs", async () => {
     const project = await createRustFixtureProject("aiq-rust-security-runner-");
@@ -3309,483 +3421,535 @@ describe("engine runners", () => {
     });
   });
 
-  it("runs dotnet style lint and returns structured diagnostics for C# files", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-lint-runner-");
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs dotnet style lint and returns structured diagnostics for C# files",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-lint-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "namespace DotNetFixture;",
-        "",
-        "public static class Greeter",
-        "{",
-        "    public static string CreateGreeting(string name)",
-        "    {",
-        "        string trimmedName = name.Trim();",
-        '        return $"Hello, {trimmedName}!";',
-        "    }",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "namespace DotNetFixture;",
+          "",
+          "public static class Greeter",
+          "{",
+          "    public static string CreateGreeting(string name)",
+          "    {",
+          "        string trimmedName = name.Trim();",
+          '        return $"Hello, {trimmedName}!";',
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:lint-dotnet",
+            stageId: "lint",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        code: "IDE0007",
+        file: project.sourceFile,
+        severity: "error",
+        source: "dotnet-format",
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "dotnet-format-style",
+      });
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs dotnet whitespace format and reports formatting diagnostics",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-format-runner-");
+
+      await writeFile(
+        project.sourceFile,
+        [
+          "namespace DotNetFixture;",
+          "",
+          "public static class Greeter",
+          "{",
+          "public static string CreateGreeting(string name){",
+          "    var trimmedName = name.Trim();",
+          '    return $"Hello, {trimmedName}!";    ',
+          "}",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:format-dotnet",
+            stageId: "format",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        code: "WHITESPACE",
+        file: project.sourceFile,
+        severity: "error",
+        source: "dotnet-format",
+      });
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "dotnet-format-whitespace",
+      });
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs dotnet build typecheck and parses compiler diagnostics",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-typecheck-runner-");
+
+      await writeFile(
+        project.sourceFile,
+        [
+          "namespace DotNetFixture;",
+          "",
+          "public static class Greeter",
+          "{",
+          "    public static string CreateGreeting(string name)",
+          "    {",
+          "        return 42;",
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:typecheck-dotnet",
+            stageId: "typecheck",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "dotnet-build",
+      });
+      expect(result.diagnostics[0]?.message).toContain("Cannot implicitly convert type");
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "dotnet-build",
+      });
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs dotnet unit tests for C# projects",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-unit-runner-");
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:unit-dotnet",
+            stageId: "unit",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("dotnet test ran");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-test",
+      });
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs dotnet coverage for C# projects",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-coverage-runner-");
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:coverage-dotnet",
+            stageId: "coverage",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("dotnet test coverage lines:");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-test-coverage",
+      });
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasMavenToolchain)(
+    "runs Maven lint for Java projects",
+    async () => {
+      const project = await createJavaMavenFixtureProject("aiq-java-maven-lint-runner-");
+
+      const result = await runPlannedTask(
         {
           fileCount: 1,
           files: [project.sourceFile],
-          id: "test:1:lint-dotnet",
+          id: "test:1:lint-java-maven",
           stageId: "lint",
         },
         process.cwd(),
-      ),
-    );
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      code: "IDE0007",
-      file: project.sourceFile,
-      severity: "error",
-      source: "dotnet-format",
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "dotnet-format-style",
-    });
-  }, 90_000);
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.notes[0]).toContain("Maven Spotless");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "maven-spotless",
+      });
+    },
+    120_000,
+  );
 
-  it("runs dotnet whitespace format and reports formatting diagnostics", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-format-runner-");
+  it.skipIf(!hasMavenToolchain)(
+    "runs Maven typecheck and parses compiler diagnostics for Java projects",
+    async () => {
+      const project = await createJavaMavenFixtureProject("aiq-java-maven-typecheck-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "namespace DotNetFixture;",
-        "",
-        "public static class Greeter",
-        "{",
-        "public static string CreateGreeting(string name){",
-        "    var trimmedName = name.Trim();",
-        '    return $"Hello, {trimmedName}!";    ',
-        "}",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package dev.aiq.fixture;",
+          "",
+          "public final class Greeting {",
+          "  private Greeting() {}",
+          "",
+          "  public static String message(String name) {",
+          "    return 42;",
+          "  }",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
+      const result = await runPlannedTask(
         {
           fileCount: 1,
           files: [project.sourceFile],
-          id: "test:1:format-dotnet",
-          stageId: "format",
-        },
-        process.cwd(),
-      ),
-    );
-
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      code: "WHITESPACE",
-      file: project.sourceFile,
-      severity: "error",
-      source: "dotnet-format",
-    });
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "dotnet-format-whitespace",
-    });
-  }, 90_000);
-
-  it("runs dotnet build typecheck and parses compiler diagnostics", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-typecheck-runner-");
-
-    await writeFile(
-      project.sourceFile,
-      [
-        "namespace DotNetFixture;",
-        "",
-        "public static class Greeter",
-        "{",
-        "    public static string CreateGreeting(string name)",
-        "    {",
-        "        return 42;",
-        "    }",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:typecheck-dotnet",
+          id: "test:1:typecheck-java-maven",
           stageId: "typecheck",
         },
         process.cwd(),
-      ),
-    );
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "dotnet-build",
-    });
-    expect(result.diagnostics[0]?.message).toContain("Cannot implicitly convert type");
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "dotnet-build",
-    });
-  }, 90_000);
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "maven-build",
+      });
+      expect(result.diagnostics[0]?.message).toContain("incompatible types");
+      expect(result.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "maven-build",
+      });
+    },
+    120_000,
+  );
 
-  it("runs dotnet unit tests for C# projects", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-unit-runner-");
+  it.skipIf(!hasMavenToolchain)(
+    "runs Maven unit tests and coverage for Java projects",
+    async () => {
+      const project = await createJavaMavenFixtureProject("aiq-java-maven-test-runner-");
 
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
+      const unit = await runPlannedTask(
         {
           fileCount: 1,
           files: [project.sourceFile],
-          id: "test:1:unit-dotnet",
+          id: "test:1:unit-java-maven",
           stageId: "unit",
         },
         process.cwd(),
-      ),
-    );
-
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("dotnet test ran");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-test",
-    });
-  }, 90_000);
-
-  it("runs dotnet coverage for C# projects", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-coverage-runner-");
-
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
+      );
+      const coverage = await runPlannedTask(
         {
           fileCount: 1,
           files: [project.sourceFile],
-          id: "test:1:coverage-dotnet",
+          id: "test:1:coverage-java-maven",
           stageId: "coverage",
         },
         process.cwd(),
-      ),
-    );
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("dotnet test coverage lines:");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-test-coverage",
-    });
-  }, 90_000);
+      expect(unit.status).toBe("passed");
+      expect(unit.notes[0]).toContain("Maven test ran");
+      expect(unit.toolRuns[0]).toMatchObject({ exitCode: 0, status: "passed", tool: "maven-test" });
+      expect(coverage.status).toBe("passed");
+      expect(coverage.notes[0]).toContain("Maven coverage lines:");
+      expect(coverage.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "maven-test-coverage",
+      });
+    },
+    120_000,
+  );
 
-  it("runs Maven lint for Java projects", async () => {
-    const project = await createJavaMavenFixtureProject("aiq-java-maven-lint-runner-");
+  it.skipIf(!hasMavenToolchain)(
+    "reuses cached JVM metrics between sloc, complexity, and maintainability",
+    async () => {
+      const project = await createJavaMavenFixtureProject("aiq-java-maven-metrics-runner-");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:lint-java-maven",
-        stageId: "lint",
-      },
-      process.cwd(),
-    );
+      const sloc = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:sloc-java-maven",
+          stageId: "sloc",
+        },
+        process.cwd(),
+      );
+      const complexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:complexity-java-maven",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:maintainability-java-maven",
+          stageId: "maintainability",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes[0]).toContain("Maven Spotless");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "maven-spotless",
-    });
-  }, 120_000);
+      expect(sloc.status).toBe("passed");
+      expect(sloc.notes[0]).toContain("JVM SLOC:");
+      expect(sloc.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(complexity.status).toBe("passed");
+      expect(complexity.notes[0]).toContain("Shared metrics observed");
+      expect(complexity.notes.join(" ")).toContain("Reused cached JVM metrics");
+      expect(complexity.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.notes.join(" ")).toContain("Reused cached JVM metrics");
+      expect(maintainability.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+    },
+    120_000,
+  );
 
-  it("runs Maven typecheck and parses compiler diagnostics for Java projects", async () => {
-    const project = await createJavaMavenFixtureProject("aiq-java-maven-typecheck-runner-");
+  it.skipIf(!hasGradleToolchain)(
+    "runs Gradle format and unit stages for Kotlin projects",
+    async () => {
+      const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-runner-");
 
-    await writeFile(
-      project.sourceFile,
-      [
-        "package dev.aiq.fixture;",
-        "",
-        "public final class Greeting {",
-        "  private Greeting() {}",
-        "",
-        "  public static String message(String name) {",
-        "    return 42;",
-        "  }",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      const unit = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:unit-kotlin-gradle",
+          stageId: "unit",
+        },
+        process.cwd(),
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:typecheck-java-maven",
-        stageId: "typecheck",
-      },
-      process.cwd(),
-    );
+      await writeFile(
+        project.sourceFile,
+        [
+          "package dev.aiq.fixture",
+          "",
+          "object Greeting{",
+          "    fun message(name: String): String{",
+          "        val trimmedName=name.trim()",
+          '        return "Hello, $trimmedName!"',
+          "    }",
+          "}",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    expect(result.status).toBe("failed");
-    expect(result.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "maven-build",
-    });
-    expect(result.diagnostics[0]?.message).toContain("incompatible types");
-    expect(result.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "maven-build",
-    });
-  }, 120_000);
+      const format = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:format-kotlin-gradle",
+          stageId: "format",
+        },
+        process.cwd(),
+      );
 
-  it("runs Maven unit tests and coverage for Java projects", async () => {
-    const project = await createJavaMavenFixtureProject("aiq-java-maven-test-runner-");
+      expect(unit.status).toBe("passed");
+      expect(unit.notes[0]).toContain("Gradle test ran");
+      expect(unit.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "gradle-test",
+      });
+      expect(format.status).toBe("failed");
+      expect(format.diagnostics[0]).toMatchObject({
+        file: project.sourceFile,
+        severity: "error",
+        source: "gradle-spotless",
+      });
+      expect(format.toolRuns[0]).toMatchObject({
+        status: "failed",
+        tool: "gradle-spotless",
+      });
+    },
+    120_000,
+  );
 
-    const unit = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:unit-java-maven",
-        stageId: "unit",
-      },
-      process.cwd(),
-    );
-    const coverage = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:coverage-java-maven",
-        stageId: "coverage",
-      },
-      process.cwd(),
-    );
+  it.skipIf(!hasGradleToolchain)(
+    "runs Gradle coverage for Kotlin projects",
+    async () => {
+      const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-coverage-runner-");
 
-    expect(unit.status).toBe("passed");
-    expect(unit.notes[0]).toContain("Maven test ran");
-    expect(unit.toolRuns[0]).toMatchObject({ exitCode: 0, status: "passed", tool: "maven-test" });
-    expect(coverage.status).toBe("passed");
-    expect(coverage.notes[0]).toContain("Maven coverage lines:");
-    expect(coverage.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "maven-test-coverage",
-    });
-  }, 120_000);
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:coverage-kotlin-gradle",
+          stageId: "coverage",
+        },
+        process.cwd(),
+      );
 
-  it("reuses cached JVM metrics between sloc, complexity, and maintainability", async () => {
-    const project = await createJavaMavenFixtureProject("aiq-java-maven-metrics-runner-");
+      expect(result.status).toBe("passed");
+      expect(result.notes[0]).toContain("Gradle coverage lines:");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "gradle-test-coverage",
+      });
+    },
+    120_000,
+  );
 
-    const sloc = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:sloc-java-maven",
-        stageId: "sloc",
-      },
-      process.cwd(),
-    );
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:complexity-java-maven",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:maintainability-java-maven",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
+  it.skipIf(!hasGradleToolchain)(
+    "reuses cached JVM metrics for Kotlin between sloc, complexity, and maintainability",
+    async () => {
+      const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-metrics-runner-");
 
-    expect(sloc.status).toBe("passed");
-    expect(sloc.notes[0]).toContain("JVM SLOC:");
-    expect(sloc.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(complexity.status).toBe("passed");
-    expect(complexity.notes[0]).toContain("Shared metrics observed");
-    expect(complexity.notes.join(" ")).toContain("Reused cached JVM metrics");
-    expect(complexity.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.notes.join(" ")).toContain("Reused cached JVM metrics");
-    expect(maintainability.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-  }, 120_000);
+      const sloc = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:sloc-kotlin-gradle",
+          stageId: "sloc",
+        },
+        process.cwd(),
+      );
+      const complexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:complexity-kotlin-gradle",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:maintainability-kotlin-gradle",
+          stageId: "maintainability",
+        },
+        process.cwd(),
+      );
 
-  it("runs Gradle format and unit stages for Kotlin projects", async () => {
-    const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-runner-");
-
-    const unit = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:unit-kotlin-gradle",
-        stageId: "unit",
-      },
-      process.cwd(),
-    );
-
-    await writeFile(
-      project.sourceFile,
-      [
-        "package dev.aiq.fixture",
-        "",
-        "object Greeting{",
-        "    fun message(name: String): String{",
-        "        val trimmedName=name.trim()",
-        '        return "Hello, $trimmedName!"',
-        "    }",
-        "}",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
-
-    const format = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:format-kotlin-gradle",
-        stageId: "format",
-      },
-      process.cwd(),
-    );
-
-    expect(unit.status).toBe("passed");
-    expect(unit.notes[0]).toContain("Gradle test ran");
-    expect(unit.toolRuns[0]).toMatchObject({ exitCode: 0, status: "passed", tool: "gradle-test" });
-    expect(format.status).toBe("failed");
-    expect(format.diagnostics[0]).toMatchObject({
-      file: project.sourceFile,
-      severity: "error",
-      source: "gradle-spotless",
-    });
-    expect(format.toolRuns[0]).toMatchObject({
-      status: "failed",
-      tool: "gradle-spotless",
-    });
-  }, 120_000);
-
-  it("runs Gradle coverage for Kotlin projects", async () => {
-    const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-coverage-runner-");
-
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:coverage-kotlin-gradle",
-        stageId: "coverage",
-      },
-      process.cwd(),
-    );
-
-    expect(result.status).toBe("passed");
-    expect(result.notes[0]).toContain("Gradle coverage lines:");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "gradle-test-coverage",
-    });
-  }, 120_000);
-
-  it("reuses cached JVM metrics for Kotlin between sloc, complexity, and maintainability", async () => {
-    const project = await createKotlinGradleFixtureProject("aiq-kotlin-gradle-metrics-runner-");
-
-    const sloc = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:sloc-kotlin-gradle",
-        stageId: "sloc",
-      },
-      process.cwd(),
-    );
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:complexity-kotlin-gradle",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:maintainability-kotlin-gradle",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
-
-    expect(sloc.status).toBe("passed");
-    expect(sloc.notes[0]).toContain("JVM SLOC:");
-    expect(sloc.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(complexity.status).toBe("passed");
-    expect(complexity.notes[0]).toContain("Shared metrics observed");
-    expect(complexity.notes.join(" ")).toContain("Reused cached JVM metrics");
-    expect(complexity.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.notes.join(" ")).toContain("Reused cached JVM metrics");
-    expect(maintainability.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-  }, 120_000);
+      expect(sloc.status).toBe("passed");
+      expect(sloc.notes[0]).toContain("JVM SLOC:");
+      expect(sloc.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(complexity.status).toBe("passed");
+      expect(complexity.notes[0]).toContain("Shared metrics observed");
+      expect(complexity.notes.join(" ")).toContain("Reused cached JVM metrics");
+      expect(complexity.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.notes.join(" ")).toContain("Reused cached JVM metrics");
+      expect(maintainability.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+    },
+    120_000,
+  );
 
   it("reuses cached C# metrics between sloc, complexity, and maintainability", async () => {
     const project = await createDotNetFixtureProject("aiq-dotnet-metrics-runner-");
@@ -4096,186 +4260,209 @@ describe("engine runners", () => {
     });
   });
 
-  it("combines C# and Python metrics without downgrading supported mixed selections", async () => {
-    const project = await createDotNetFixtureProject("aiq-mixed-metrics-runner-");
+  it.skipIf(!hasDotNet10Toolchain || !hasPythonQualityToolchain)(
+    "combines C# and Python metrics without downgrading supported mixed selections",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-mixed-metrics-runner-");
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [project.sourceFile, fixturePythonFile],
-        id: "test:1:complexity-mixed-dotnet-python",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ status: "passed", tool: "aiq-csharp-metrics" }),
-        expect.objectContaining({ status: "passed", tool: "radon" }),
-      ]),
-    );
-  });
-
-  it("combines C# and Go metrics without downgrading supported mixed selections", async () => {
-    const dotNetProject = await createDotNetFixtureProject("aiq-mixed-dotnet-go-metrics-runner-");
-    const goProject = await createGoFixtureProject("aiq-mixed-dotnet-go-metrics-runner-");
-
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [dotNetProject.sourceFile, goProject.sourceFile],
-        id: "test:1:complexity-mixed-dotnet-go",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [dotNetProject.sourceFile, goProject.sourceFile],
-        id: "test:1:maintainability-mixed-dotnet-go",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
-
-    expect(complexity.status).toBe("passed");
-    expect(complexity.toolRuns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ cacheHit: false, status: "passed", tool: "aiq-csharp-metrics" }),
-        expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
-      ]),
-    );
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.toolRuns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ cacheHit: true, status: "passed", tool: "aiq-csharp-metrics" }),
-        expect.objectContaining({ cacheHit: true, status: "passed", tool: "lizard" }),
-      ]),
-    );
-  }, 20_000);
-
-  it("prefers the owning solution when multiple ancestor solutions exist", async () => {
-    const project = await createDotNetCompetingSolutionProject(
-      "aiq-dotnet-owning-solution-runner-",
-    );
-
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
+      const result = await runPlannedTask(
         {
           fileCount: 2,
-          files: [project.sourceFile, project.testFile],
-          id: "test:1:unit-dotnet-owning-solution",
-          stageId: "unit",
-        },
-        process.cwd(),
-      ),
-    );
-
-    expect(result.status).toBe("passed");
-    expect(result.toolRuns).toHaveLength(1);
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-test",
-    });
-    expect(result.notes[0]).toContain("1 passed, 0 failed");
-  }, 90_000);
-
-  it("uses graph-backed owning solution selection when a dotnet project file is selected directly", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-project-file-context-runner-");
-    const projectFile = path.join(project.root, "src", "DotNetFixture", "DotNetFixture.csproj");
-    const engineContext = await buildEngineContext({
-      context: "cli",
-      cwd: project.root,
-      manifest: {
-        files: [projectFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: path.join(project.root, ".aiq", "out"),
-      profile: "fast",
-      stages: ["unit"],
-      writeArtifacts: false,
-    });
-
-    const result = await withExclusiveDotNet(async () =>
-      runPlannedTask(
-        {
-          fileCount: 1,
-          files: [projectFile],
-          id: "test:1:unit-dotnet-project-file-context",
-          stageId: "unit",
-        },
-        engineContext,
-      ),
-    );
-
-    expect(result.status).toBe("passed");
-    expect(result.notes[0]).toContain("1 passed, 0 failed");
-    expect(result.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-test",
-    });
-    expect(result.toolRuns[0]?.args).toContain(project.solutionFile);
-  }, 90_000);
-
-  it("keeps fallback dotnet resolution passing when solution traversal cannot read an ancestor", async () => {
-    const project = await createDotNetFixtureProject("aiq-dotnet-resolution-read-fallback-");
-    const blockedDirectory = project.root;
-
-    vi.resetModules();
-    vi.doMock("node:fs/promises", async () => {
-      const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
-      type ReadDirectory = typeof actual.readdir;
-      const actualReadDirectory = actual.readdir as ReadDirectory;
-
-      return {
-        ...actual,
-        readdir: (async (...args: Parameters<ReadDirectory>) => {
-          const [directoryPath] = args;
-          if (
-            typeof directoryPath === "string" &&
-            path.resolve(directoryPath) === blockedDirectory
-          ) {
-            const error = new Error("simulated missing directory") as NodeJS.ErrnoException;
-            error.code = "ENOENT";
-            throw error;
-          }
-
-          return actualReadDirectory(...args);
-        }) as ReadDirectory,
-      };
-    });
-
-    try {
-      const { runPlannedTask: runPlannedTaskWithMock } = await import("../src/runners.js");
-      const result = await runPlannedTaskWithMock(
-        {
-          fileCount: 1,
-          files: [project.sourceFile],
-          id: "test:1:complexity-dotnet-resolution-read-fallback",
+          files: [project.sourceFile, fixturePythonFile],
+          id: "test:1:complexity-mixed-dotnet-python",
           stageId: "complexity",
         },
         process.cwd(),
       );
 
       expect(result.status).toBe("passed");
-      expect(result.diagnostics).toEqual([]);
+      expect(result.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: "passed", tool: "aiq-csharp-metrics" }),
+          expect.objectContaining({ status: "passed", tool: "radon" }),
+        ]),
+      );
+    },
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "combines C# and Go metrics without downgrading supported mixed selections",
+    async () => {
+      const dotNetProject = await createDotNetFixtureProject("aiq-mixed-dotnet-go-metrics-runner-");
+      const goProject = await createGoFixtureProject("aiq-mixed-dotnet-go-metrics-runner-");
+
+      const complexity = await runPlannedTask(
+        {
+          fileCount: 2,
+          files: [dotNetProject.sourceFile, goProject.sourceFile],
+          id: "test:1:complexity-mixed-dotnet-go",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 2,
+          files: [dotNetProject.sourceFile, goProject.sourceFile],
+          id: "test:1:maintainability-mixed-dotnet-go",
+          stageId: "maintainability",
+        },
+        process.cwd(),
+      );
+
+      expect(complexity.status).toBe("passed");
+      expect(complexity.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: false,
+            status: "passed",
+            tool: "aiq-csharp-metrics",
+          }),
+          expect.objectContaining({ cacheHit: false, status: "passed", tool: "lizard" }),
+        ]),
+      );
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ cacheHit: true, status: "passed", tool: "aiq-csharp-metrics" }),
+          expect.objectContaining({ cacheHit: true, status: "passed", tool: "lizard" }),
+        ]),
+      );
+    },
+    20_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "prefers the owning solution when multiple ancestor solutions exist",
+    async () => {
+      const project = await createDotNetCompetingSolutionProject(
+        "aiq-dotnet-owning-solution-runner-",
+      );
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 2,
+            files: [project.sourceFile, project.testFile],
+            id: "test:1:unit-dotnet-owning-solution",
+            stageId: "unit",
+          },
+          process.cwd(),
+        ),
+      );
+
+      expect(result.status).toBe("passed");
+      expect(result.toolRuns).toHaveLength(1);
       expect(result.toolRuns[0]).toMatchObject({
-        cacheHit: false,
         exitCode: 0,
         status: "passed",
-        tool: "aiq-csharp-metrics",
+        tool: "dotnet-test",
       });
-    } finally {
-      vi.doUnmock("node:fs/promises");
+      expect(result.notes[0]).toContain("1 passed, 0 failed");
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "uses graph-backed owning solution selection when a dotnet project file is selected directly",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-project-file-context-runner-");
+      const projectFile = path.join(project.root, "src", "DotNetFixture", "DotNetFixture.csproj");
+      const engineContext = await buildEngineContext({
+        context: "cli",
+        cwd: project.root,
+        manifest: {
+          files: [projectFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: path.join(project.root, ".aiq", "out"),
+        profile: "fast",
+        stages: ["unit"],
+        writeArtifacts: false,
+      });
+
+      const result = await withExclusiveDotNet(async () =>
+        runPlannedTask(
+          {
+            fileCount: 1,
+            files: [projectFile],
+            id: "test:1:unit-dotnet-project-file-context",
+            stageId: "unit",
+          },
+          engineContext,
+        ),
+      );
+
+      expect(result.status).toBe("passed");
+      expect(result.notes[0]).toContain("1 passed, 0 failed");
+      expect(result.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-test",
+      });
+      expect(result.toolRuns[0]?.args).toContain(project.solutionFile);
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasDotNet10Toolchain)(
+    "keeps fallback dotnet resolution passing when solution traversal cannot read an ancestor",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-dotnet-resolution-read-fallback-");
+      const blockedDirectory = project.root;
+
       vi.resetModules();
-    }
-  }, 20_000);
+      vi.doMock("node:fs/promises", async () => {
+        const actual = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
+        type ReadDirectory = typeof actual.readdir;
+        const actualReadDirectory = actual.readdir as ReadDirectory;
+
+        return {
+          ...actual,
+          readdir: (async (...args: Parameters<ReadDirectory>) => {
+            const [directoryPath] = args;
+            if (
+              typeof directoryPath === "string" &&
+              path.resolve(directoryPath) === blockedDirectory
+            ) {
+              const error = new Error("simulated missing directory") as NodeJS.ErrnoException;
+              error.code = "ENOENT";
+              throw error;
+            }
+
+            return actualReadDirectory(...args);
+          }) as ReadDirectory,
+        };
+      });
+
+      try {
+        const { runPlannedTask: runPlannedTaskWithMock } = await import("../src/runners.js");
+        const result = await runPlannedTaskWithMock(
+          {
+            fileCount: 1,
+            files: [project.sourceFile],
+            id: "test:1:complexity-dotnet-resolution-read-fallback",
+            stageId: "complexity",
+          },
+          process.cwd(),
+        );
+
+        expect(result.status).toBe("passed");
+        expect(result.diagnostics).toEqual([]);
+        expect(result.toolRuns[0]).toMatchObject({
+          cacheHit: false,
+          exitCode: 0,
+          status: "passed",
+          tool: "aiq-csharp-metrics",
+        });
+      } finally {
+        vi.doUnmock("node:fs/promises");
+        vi.resetModules();
+      }
+    },
+    20_000,
+  );
 
   it("limits solution metrics to projects declared in the selected solution", async () => {
     const project = await createDotNetCompetingSolutionProject(
@@ -4336,155 +4523,164 @@ describe("engine runners", () => {
     });
   });
 
-  it("reuses cached Python metrics between sloc, complexity, and maintainability", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-metrics-runner-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "reuses cached Python metrics between sloc, complexity, and maintainability",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-metrics-runner-"));
+      tempDirs.push(tempDir);
 
-    const metricsFile = path.join(tempDir, "metrics.py");
-    await writeFile(
-      metricsFile,
-      [
-        "def alpha(value: int) -> int:",
-        "    if value > 1:",
-        "        return value",
-        "    return value + 1",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      const metricsFile = path.join(tempDir, "metrics.py");
+      await writeFile(
+        metricsFile,
+        [
+          "def alpha(value: int) -> int:",
+          "    if value > 1:",
+          "        return value",
+          "    return value + 1",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const sloc = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [metricsFile],
-        id: "test:1:sloc-python",
-        stageId: "sloc",
-      },
-      process.cwd(),
-    );
-    const complexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [metricsFile],
-        id: "test:1:complexity-python",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
-    const maintainability = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [metricsFile],
-        id: "test:1:maintainability-python",
-        stageId: "maintainability",
-      },
-      process.cwd(),
-    );
+      const sloc = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:sloc-python",
+          stageId: "sloc",
+        },
+        process.cwd(),
+      );
+      const complexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:complexity-python",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+      const maintainability = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:maintainability-python",
+          stageId: "maintainability",
+        },
+        process.cwd(),
+      );
 
-    expect(sloc.status).toBe("passed");
-    expect(sloc.notes[0]).toContain("Python SLOC:");
-    expect(sloc.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-    expect(complexity.status).toBe("passed");
-    expect(complexity.notes[0]).toContain("Shared metrics observed");
-    expect(complexity.notes.join(" ")).toContain("Reused cached Python metrics");
-    expect(complexity.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-    expect(maintainability.status).toBe("passed");
-    expect(maintainability.notes.join(" ")).toContain("Reused cached Python metrics");
-    expect(maintainability.toolRuns[0]).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-  });
+      expect(sloc.status).toBe("passed");
+      expect(sloc.notes[0]).toContain("Python SLOC:");
+      expect(sloc.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+      expect(complexity.status).toBe("passed");
+      expect(complexity.notes[0]).toContain("Shared metrics observed");
+      expect(complexity.notes.join(" ")).toContain("Reused cached Python metrics");
+      expect(complexity.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+      expect(maintainability.status).toBe("passed");
+      expect(maintainability.notes.join(" ")).toContain("Reused cached Python metrics");
+      expect(maintainability.toolRuns[0]).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+    },
+  );
 
-  it("invalidates cached Python metrics when the file contents change", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-metrics-refresh-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "invalidates cached Python metrics when the file contents change",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-metrics-refresh-"));
+      tempDirs.push(tempDir);
 
-    const metricsFile = path.join(tempDir, "metrics.py");
-    await writeFile(metricsFile, "value = 1\n", "utf8");
+      const metricsFile = path.join(tempDir, "metrics.py");
+      await writeFile(metricsFile, "value = 1\n", "utf8");
 
-    const firstComplexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [metricsFile],
-        id: "test:1:complexity-python-invalidate:first",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
+      const firstComplexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:complexity-python-invalidate:first",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
 
-    await writeFile(
-      metricsFile,
-      [
-        "def beta(value: int) -> int:",
-        "    if value > 2:",
-        "        return value",
-        "    return value + 2",
-        "",
-      ].join("\n"),
-      "utf8",
-    );
+      await writeFile(
+        metricsFile,
+        [
+          "def beta(value: int) -> int:",
+          "    if value > 2:",
+          "        return value",
+          "    return value + 2",
+          "",
+        ].join("\n"),
+        "utf8",
+      );
 
-    const secondComplexity = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [metricsFile],
-        id: "test:1:complexity-python-invalidate:second",
-        stageId: "complexity",
-      },
-      process.cwd(),
-    );
+      const secondComplexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:complexity-python-invalidate:second",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
 
-    expect(firstComplexity.status).toBe("passed");
-    expect(firstComplexity.notes[0]).toContain("no functions or classes were detected");
-    expect(firstComplexity.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-    expect(secondComplexity.status).toBe("passed");
-    expect(secondComplexity.notes[0]).toContain("Python complexity max:");
-    expect(secondComplexity.toolRuns[0]).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-  });
+      expect(firstComplexity.status).toBe("passed");
+      expect(firstComplexity.notes[0]).toContain("no functions or classes were detected");
+      expect(firstComplexity.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+      expect(secondComplexity.status).toBe("passed");
+      expect(secondComplexity.notes[0]).toContain("Python complexity max:");
+      expect(secondComplexity.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+    },
+  );
 
-  it("combines TypeScript and Python typecheck results in one stage", async () => {
-    const result = await runPlannedTask(
-      {
-        fileCount: 2,
-        files: [fixtureFile, fixturePythonFile],
-        id: "test:1:typecheck-mixed",
-        stageId: "typecheck",
-      },
-      process.cwd(),
-    );
+  it.skipIf(!hasPythonQualityToolchain)(
+    "combines TypeScript and Python typecheck results in one stage",
+    async () => {
+      const result = await runPlannedTask(
+        {
+          fileCount: 2,
+          files: [fixtureFile, fixturePythonFile],
+          id: "test:1:typecheck-mixed",
+          stageId: "typecheck",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.toolRuns).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ exitCode: 0, status: "passed", tool: "tsc" }),
-        expect.objectContaining({ exitCode: 0, status: "passed", tool: "ty" }),
-      ]),
-    );
-  });
+      expect(result.status).toBe("passed");
+      expect(result.diagnostics).toEqual([]);
+      expect(result.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ exitCode: 0, status: "passed", tool: "tsc" }),
+          expect.objectContaining({ exitCode: 0, status: "passed", tool: "ty" }),
+        ]),
+      );
+    },
+  );
 
   it("detects Vitest projects through common config file variants", async () => {
     const variants = [
@@ -4955,55 +5151,47 @@ describe("engine runners", () => {
     expect(result.toolRuns).toEqual([]);
   });
 
-  it("runs PowerShell unit tests for script projects when Pester is available", async () => {
-    const project = await createPowerShellFixtureProject("aiq-powershell-unit-");
-    const hasPester = await resolvePowerShellModuleAvailable("Pester");
+  it.skipIf(!hasPowerShellPesterToolchain)(
+    "runs PowerShell unit tests for script projects when Pester is available",
+    async () => {
+      const project = await createPowerShellFixtureProject("aiq-powershell-unit-");
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:unit-powershell",
+          stageId: "unit",
+        },
+        process.cwd(),
+      );
 
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:unit-powershell",
-        stageId: "unit",
-      },
-      process.cwd(),
-    );
+      expect(result.status).toBe("passed");
+      expect(result.notes[0]).toContain("Pester ran");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
+    },
+    60_000,
+  );
 
-    if (!hasPester) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Pester is required for PowerShell unit");
-      return;
-    }
+  it.skipIf(!hasPowerShellPesterToolchain)(
+    "runs PowerShell coverage for script projects when Pester is available",
+    async () => {
+      const project = await createPowerShellFixtureProject("aiq-powershell-coverage-");
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: "test:1:coverage-powershell",
+          stageId: "coverage",
+        },
+        process.cwd(),
+      );
 
-    expect(result.status).toBe("passed");
-    expect(result.notes[0]).toContain("Pester ran");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
-  }, 60_000);
-
-  it("runs PowerShell coverage for script projects when Pester is available", async () => {
-    const project = await createPowerShellFixtureProject("aiq-powershell-coverage-");
-    const hasPester = await resolvePowerShellModuleAvailable("Pester");
-
-    const result = await runPlannedTask(
-      {
-        fileCount: 1,
-        files: [project.sourceFile],
-        id: "test:1:coverage-powershell",
-        stageId: "coverage",
-      },
-      process.cwd(),
-    );
-
-    if (!hasPester) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Pester is required for PowerShell coverage");
-      return;
-    }
-
-    expect(result.status).toBe("passed");
-    expect(result.notes[0]).toContain("PowerShell coverage lines:");
-    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
-  }, 60_000);
+      expect(result.status).toBe("passed");
+      expect(result.notes[0]).toContain("PowerShell coverage lines:");
+      expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
+    },
+    60_000,
+  );
 
   it("serializes a summarized Pester unit result instead of the raw object", async () => {
     const project = await createPowerShellFixtureProject("aiq-powershell-unit-summary-");

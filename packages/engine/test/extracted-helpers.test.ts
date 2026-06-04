@@ -203,10 +203,9 @@ describe("extracted helper regressions", () => {
       runner: "jest",
     });
 
-    expect(directVitest.command).toContain(
-      `${path.sep}node_modules${path.sep}vitest${path.sep}vitest.mjs`,
-    );
+    expect(directVitest.command).toBe(process.execPath);
     expect(directVitest.args).toEqual([
+      expect.stringContaining(`${path.sep}node_modules${path.sep}vitest${path.sep}vitest.mjs`),
       "--passWithNoTests",
       "--reporter=json",
       "--outputFile=/tmp/report.json",

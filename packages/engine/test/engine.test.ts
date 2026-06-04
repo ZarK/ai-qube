@@ -15,6 +15,17 @@ import {
 import { ToolRunner } from "../src/tool-runner.js";
 import { resolvePythonCommand } from "../src/tools/binary-resolver.js";
 import { withExclusiveToolLock } from "./exclusive-tool-lock.js";
+import {
+  commandAvailable,
+  hasDotNet10Toolchain,
+  hasGoToolchain,
+  hasGradleToolchain,
+  hasMavenToolchain,
+  hasPowerShellPesterToolchain,
+  hasPythonPytestToolchain,
+  hasPythonQualityToolchain,
+  hasRustCoverageToolchain,
+} from "./toolchain-capabilities.js";
 
 const fixtureFile = path.resolve("test-projects/typescript/src/index.ts");
 const lintFailureFixtureFile = path.resolve("test-projects/typescript/src/lint-failure.ts");
@@ -35,17 +46,6 @@ const fixtureSqlFile = path.resolve("test-projects/sql/query.sql");
 const fixtureTerraformRoot = path.resolve("test-projects/terraform");
 const fixtureTypeScriptRoot = path.resolve("test-projects/typescript");
 const fixtureYamlFile = path.resolve("test-projects/yaml/config.yaml");
-
-function commandAvailable(command: string): boolean {
-  try {
-    execFileSync(process.platform === "win32" ? "where" : "which", [command], {
-      stdio: "ignore",
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 async function withExclusiveRust<T>(run: () => Promise<T>): Promise<T> {
   return withExclusiveToolLock("rust", run);
@@ -263,19 +263,26 @@ afterEach(async () => {
 });
 
 describe("engine foundation", () => {
-  it("keeps marker-only Python e2e placeholders out of default pytest collection", () => {
-    const output = execFileSync(resolvePythonCommand(), ["-m", "pytest", "--collect-only", "-q"], {
-      cwd: path.resolve("test-projects/python"),
-      encoding: "utf8",
-      env: { ...process.env, PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1" },
-    });
+  it.skipIf(!hasPythonPytestToolchain)(
+    "keeps marker-only Python e2e placeholders out of default pytest collection",
+    () => {
+      const output = execFileSync(
+        resolvePythonCommand(),
+        ["-m", "pytest", "--collect-only", "-q"],
+        {
+          cwd: path.resolve("test-projects/python"),
+          encoding: "utf8",
+          env: { ...process.env, PYTEST_DISABLE_PLUGIN_AUTOLOAD: "1" },
+        },
+      );
 
-    expect(output).not.toContain("tests/e2e");
-    expect(output).toContain("tests/test_main.py::test_greet");
-    expect(output).toContain("tests/test_main.py::test_calculate_sum");
-    expect(output).toContain("tests/test_main.py::test_main_execution");
-    expect(output).toContain("3 tests collected");
-  });
+      expect(output).not.toContain("tests/e2e");
+      expect(output).toContain("tests/test_main.py::test_greet");
+      expect(output).toContain("tests/test_main.py::test_calculate_sum");
+      expect(output).toContain("tests/test_main.py::test_main_execution");
+      expect(output).toContain("3 tests collected");
+    },
+  );
 
   it("normalizes and de-duplicates manifest paths", async () => {
     const manifest = await normalizeFileManifest(
@@ -685,6 +692,46 @@ describe("engine foundation", () => {
     expect(unitStage?.notes.join(" ")).not.toContain("Jest ran");
   });
 
+  it("keeps configured Biome language selections while including shared JSON inputs", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-biome-configured-"));
+    tempDirs.push(tempDir);
+    const javaScriptFile = path.join(tempDir, "bad.js");
+    const jsoncFile = path.join(tempDir, "config.jsonc");
+    await writeFile(javaScriptFile, "var value = 1;\n", "utf8");
+    await writeFile(jsoncFile, '{"name":"typescript-fixture"}\n', "utf8");
+
+    const result = await runEngine({
+      context: "cli",
+      manifest: {
+        files: [fixtureFile, fixtureJavaScriptFile, javaScriptFile, jsoncFile],
+        source: "mixed",
+      },
+      mode: "check",
+      stages: ["lint"],
+      stageConfigurations: {
+        lint: {
+          languages: {
+            typescript: {
+              toolId: "biome",
+            },
+          },
+        },
+      },
+      writeArtifacts: false,
+    });
+
+    const lintStage = result.stages.find((stage) => stage.stageId === "lint");
+
+    expect(lintStage).toMatchObject({ stageId: "lint" });
+    expect(lintStage?.diagnostics.map((diagnostic) => diagnostic.file)).not.toContain(
+      javaScriptFile,
+    );
+    expect(lintStage?.toolRuns[0]?.args).toContain(fixtureFile);
+    expect(lintStage?.toolRuns[0]?.args).toContain(jsoncFile);
+    expect(lintStage?.toolRuns[0]?.args).not.toContain(fixtureJavaScriptFile);
+    expect(lintStage?.toolRuns[0]?.args).not.toContain(javaScriptFile);
+  });
+
   it("treats configured stages with no enabled languages as a noop instead of not implemented", async () => {
     const result = await runEngine({
       context: "cli",
@@ -748,39 +795,45 @@ describe("engine foundation", () => {
     expect(unitStage?.notes.join(" ")).toContain("Vitest ran");
   });
 
-  it("preserves JVM settings files for configured Kotlin runners", async () => {
-    const project = await createKotlinGradleFixtureProject("aiq-engine-kotlin-settings-selection-");
+  it.skipIf(!hasGradleToolchain)(
+    "preserves JVM settings files for configured Kotlin runners",
+    async () => {
+      const project = await createKotlinGradleFixtureProject(
+        "aiq-engine-kotlin-settings-selection-",
+      );
 
-    const result = await runEngine({
-      context: "cli",
-      cwd: project.root,
-      manifest: {
-        files: [path.join(project.root, "settings.gradle.kts")],
-        source: "direct",
-      },
-      mode: "check",
-      stages: ["unit"],
-      stageConfigurations: {
-        unit: {
-          languages: {
-            kotlin: {
-              toolId: "jvm",
+      const result = await runEngine({
+        context: "cli",
+        cwd: project.root,
+        manifest: {
+          files: [path.join(project.root, "settings.gradle.kts")],
+          source: "direct",
+        },
+        mode: "check",
+        stages: ["unit"],
+        stageConfigurations: {
+          unit: {
+            languages: {
+              kotlin: {
+                toolId: "jvm",
+              },
             },
           },
         },
-      },
-      writeArtifacts: false,
-    });
+        writeArtifacts: false,
+      });
 
-    const unitStage = result.stages.find((stage) => stage.stageId === "unit");
+      const unitStage = result.stages.find((stage) => stage.stageId === "unit");
 
-    expect(result.ok).toBe(true);
-    expect(unitStage).toMatchObject({ stageId: "unit", status: "passed" });
-    expect(unitStage?.toolRuns).toEqual([
-      expect.objectContaining({ exitCode: 0, status: "passed", tool: "gradle-test" }),
-    ]);
-    expect(unitStage?.notes.join(" ")).toContain("Gradle test ran");
-  }, 120_000);
+      expect(result.ok).toBe(true);
+      expect(unitStage).toMatchObject({ stageId: "unit", status: "passed" });
+      expect(unitStage?.toolRuns).toEqual([
+        expect.objectContaining({ exitCode: 0, status: "passed", tool: "gradle-test" }),
+      ]);
+      expect(unitStage?.notes.join(" ")).toContain("Gradle test ran");
+    },
+    120_000,
+  );
 
   it("runs document stages against fixture projects and writes canonical artifacts", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-documents-"));
@@ -1167,306 +1220,123 @@ describe("engine foundation", () => {
     }
   }, 20_000);
 
-  it("runs Python stages against the fixture project and writes canonical artifacts", async () => {
-    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-python-"));
-    tempDirs.push(tempDir);
+  it.skipIf(!hasPythonQualityToolchain)(
+    "runs Python stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-python-"));
+      tempDirs.push(tempDir);
 
-    const result = await runEngine({
-      context: "cli",
-      manifest: {
-        files: [fixturePythonFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: tempDir,
-      stages: [
-        "lint",
-        "format",
-        "typecheck",
-        "unit",
-        "coverage",
-        "complexity",
-        "maintainability",
-        "security",
-      ],
-    });
+      const result = await runEngine({
+        context: "cli",
+        manifest: {
+          files: [fixturePythonFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: tempDir,
+        stages: [
+          "lint",
+          "format",
+          "typecheck",
+          "unit",
+          "coverage",
+          "complexity",
+          "maintainability",
+          "security",
+        ],
+      });
 
-    expect(result.ok).toBe(true);
-    expect(result.artifacts.metricsPath).toBeDefined();
-    expect(result.artifacts.planPath).toBeDefined();
-    expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages).toHaveLength(8);
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "ruff",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "ruff",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+      expect(result.ok).toBe(true);
+      expect(result.artifacts.metricsPath).toBeDefined();
+      expect(result.artifacts.planPath).toBeDefined();
+      expect(result.artifacts.reportPath).toBeDefined();
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages).toHaveLength(8);
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "ruff",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "ruff",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
         exitCode: 0,
         status: "passed",
         tool: "ty",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toBe(
-      "Pytest ran 3 tests: 3 passed, 0 failed.",
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toMatch(
-      /^Pytest coverage lines: \d+\.\d% across 3 tests\.$/u,
-    );
-    expect(
-      result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "radon",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Python metrics");
-    expect(result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-security",
-    });
-
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
-
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        status: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; status: string };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
-          },
+      });
+      expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toBe(
+        "Pytest ran 3 tests: 3 passed, 0 failed.",
       );
-
-    expect(planJson.input.files).toEqual([fixturePythonFile]);
-    expect(planJson.stages).toEqual([
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "coverage",
-      "complexity",
-      "maintainability",
-      "security",
-    ]);
-    expect(reportJson.summary.diagnosticCount).toBe(0);
-    expect(reportJson.summary.status).toBe("passed");
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
-    ).toMatchObject({
-      tool: "pytest-cov",
-    });
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Python metrics");
-    expect(metricsEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          cacheHit: true,
-          event: "cache.hit",
-          stageId: "maintainability",
-          tool: "radon",
-        }),
-      ]),
-    );
-  });
-
-  it("runs .NET stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createDotNetFixtureProject("aiq-engine-dotnet-");
-
-    const result = await withExclusiveToolLock("dotnet", async () =>
-      runEngine({
-        context: "cli",
-        manifest: {
-          files: [project.sourceFile],
-          source: "direct",
-        },
-        mode: "check",
-        outDir: project.root,
-        stages: [
-          "lint",
-          "format",
-          "typecheck",
-          "unit",
-          "coverage",
-          "complexity",
-          "maintainability",
-          "security",
-        ],
-      }),
-    );
-
-    expect(result.ok).toBe(true);
-    expect(result.artifacts.metricsPath).toBeDefined();
-    expect(result.artifacts.planPath).toBeDefined();
-    expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages).toHaveLength(8);
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-format-style",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-format-whitespace",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+      expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toMatch(
+        /^Pytest coverage lines: \d+\.\d% across 3 tests\.$/u,
+      );
+      expect(
+        result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: false,
         exitCode: 0,
         status: "passed",
-        tool: "dotnet-build",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
-      "dotnet test ran",
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
-      "dotnet test coverage lines:",
-    );
-    expect(
-      result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-csharp-metrics",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-csharp-metrics",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached C# metrics");
-    expect(result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-security",
-    });
+        tool: "radon",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Python metrics");
+      expect(
+        result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-security",
+      });
 
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
+      const { metricsPath, planPath, reportPath } = result.artifacts;
+      if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+        throw new Error("Expected plan, report, and metrics artifacts to be written.");
+      }
 
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; status: string };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
-          },
-      );
+      const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
+        input: { files: string[] };
+        stages: string[];
+      };
+      const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          status: string;
+          toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; status: string };
+      };
+      const metricsEvents = (await readFile(metricsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              cacheHit?: boolean;
+              event: string;
+              stageId?: string;
+              tool?: string;
+            },
+        );
 
-    expect(planJson.input.files).toEqual([project.sourceFile]);
-    expect(planJson.stages).toEqual([
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "coverage",
-      "complexity",
-      "maintainability",
-      "security",
-    ]);
-    expect(reportJson.summary.diagnosticCount).toBe(0);
-    expect(reportJson.summary.status).toBe("passed");
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
-    ).toMatchObject({
-      tool: "dotnet-test-coverage",
-    });
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached C# metrics");
-    expect(metricsEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          cacheHit: true,
-          event: "cache.hit",
-          stageId: "maintainability",
-          tool: "aiq-csharp-metrics",
-        }),
-      ]),
-    );
-  }, 90_000);
-
-  it("runs Go stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createGoFixtureProject("aiq-engine-go-");
-
-    const result = await runEngine({
-      context: "cli",
-      manifest: {
-        files: [project.sourceFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: project.root,
-      stages: [
+      expect(planJson.input.files).toEqual([fixturePythonFile]);
+      expect(planJson.stages).toEqual([
         "lint",
         "format",
         "typecheck",
@@ -1475,133 +1345,186 @@ describe("engine foundation", () => {
         "complexity",
         "maintainability",
         "security",
-      ],
-    });
+      ]);
+      expect(reportJson.summary.diagnosticCount).toBe(0);
+      expect(reportJson.summary.status).toBe("passed");
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        tool: "pytest-cov",
+      });
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Python metrics");
+      expect(metricsEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: true,
+            event: "cache.hit",
+            stageId: "maintainability",
+            tool: "radon",
+          }),
+        ]),
+      );
+    },
+  );
 
-    expect(result.ok).toBe(true);
-    expect(result.artifacts.metricsPath).toBeDefined();
-    expect(result.artifacts.planPath).toBeDefined();
-    expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages).toHaveLength(8);
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "go-vet",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "gofmt",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
-        exitCode: 0,
-        status: "passed",
-        tool: "go-build",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
-      "go test ran",
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
-      "go test coverage lines:",
-    );
-    expect(
-      result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Go metrics");
-    expect(result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-security",
-    });
+  it.skipIf(!hasDotNet10Toolchain)(
+    "runs .NET stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-engine-dotnet-");
 
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
-
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; status: string };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
+      const result = await withExclusiveToolLock("dotnet", async () =>
+        runEngine({
+          context: "cli",
+          manifest: {
+            files: [project.sourceFile],
+            source: "direct",
           },
+          mode: "check",
+          outDir: project.root,
+          stages: [
+            "lint",
+            "format",
+            "typecheck",
+            "unit",
+            "coverage",
+            "complexity",
+            "maintainability",
+            "security",
+          ],
+        }),
       );
 
-    expect(planJson.input.files).toEqual([project.sourceFile]);
-    expect(planJson.stages).toEqual([
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "coverage",
-      "complexity",
-      "maintainability",
-      "security",
-    ]);
-    expect(reportJson.summary.diagnosticCount).toBe(0);
-    expect(reportJson.summary.status).toBe("passed");
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
-    ).toMatchObject({
-      tool: "go-test-coverage",
-    });
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Go metrics");
-    expect(metricsEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          cacheHit: true,
-          event: "cache.hit",
-          stageId: "maintainability",
-          tool: "lizard",
-        }),
-      ]),
-    );
-  }, 20_000);
+      expect(result.ok).toBe(true);
+      expect(result.artifacts.metricsPath).toBeDefined();
+      expect(result.artifacts.planPath).toBeDefined();
+      expect(result.artifacts.reportPath).toBeDefined();
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages).toHaveLength(8);
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-format-style",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-format-whitespace",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-build",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
+        "dotnet test ran",
+      );
+      expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
+        "dotnet test coverage lines:",
+      );
+      expect(
+        result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-csharp-metrics",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-csharp-metrics",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached C# metrics");
+      expect(
+        result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-security",
+      });
 
-  it("runs Rust stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createRustFixtureProject("aiq-engine-rust-");
+      const { metricsPath, planPath, reportPath } = result.artifacts;
+      if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+        throw new Error("Expected plan, report, and metrics artifacts to be written.");
+      }
 
-    const result = await withExclusiveRust(async () =>
-      runEngine({
+      const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
+        input: { files: string[] };
+        stages: string[];
+      };
+      const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; status: string };
+      };
+      const metricsEvents = (await readFile(metricsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              cacheHit?: boolean;
+              event: string;
+              stageId?: string;
+              tool?: string;
+            },
+        );
+
+      expect(planJson.input.files).toEqual([project.sourceFile]);
+      expect(planJson.stages).toEqual([
+        "lint",
+        "format",
+        "typecheck",
+        "unit",
+        "coverage",
+        "complexity",
+        "maintainability",
+        "security",
+      ]);
+      expect(reportJson.summary.diagnosticCount).toBe(0);
+      expect(reportJson.summary.status).toBe("passed");
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        tool: "dotnet-test-coverage",
+      });
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached C# metrics");
+      expect(metricsEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: true,
+            event: "cache.hit",
+            stageId: "maintainability",
+            tool: "aiq-csharp-metrics",
+          }),
+        ]),
+      );
+    },
+    90_000,
+  );
+
+  it.skipIf(!hasGoToolchain)(
+    "runs Go stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createGoFixtureProject("aiq-engine-go-");
+
+      const result = await runEngine({
         context: "cli",
         manifest: {
           files: [project.sourceFile],
@@ -1619,127 +1542,280 @@ describe("engine foundation", () => {
           "maintainability",
           "security",
         ],
-      }),
-    );
+      });
 
-    expect(result.ok).toBe(true);
-    expect(result.artifacts.metricsPath).toBeDefined();
-    expect(result.artifacts.planPath).toBeDefined();
-    expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages).toHaveLength(8);
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "cargo-clippy",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "cargo-fmt",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+      expect(result.ok).toBe(true);
+      expect(result.artifacts.metricsPath).toBeDefined();
+      expect(result.artifacts.planPath).toBeDefined();
+      expect(result.artifacts.reportPath).toBeDefined();
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages).toHaveLength(8);
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "go-vet",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "gofmt",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "go-build",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
+        "go test ran",
+      );
+      expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
+        "go test coverage lines:",
+      );
+      expect(
+        result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Go metrics");
+      expect(
+        result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-security",
+      });
+
+      const { metricsPath, planPath, reportPath } = result.artifacts;
+      if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+        throw new Error("Expected plan, report, and metrics artifacts to be written.");
+      }
+
+      const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
+        input: { files: string[] };
+        stages: string[];
+      };
+      const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; status: string };
+      };
+      const metricsEvents = (await readFile(metricsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              cacheHit?: boolean;
+              event: string;
+              stageId?: string;
+              tool?: string;
+            },
+        );
+
+      expect(planJson.input.files).toEqual([project.sourceFile]);
+      expect(planJson.stages).toEqual([
+        "lint",
+        "format",
+        "typecheck",
+        "unit",
+        "coverage",
+        "complexity",
+        "maintainability",
+        "security",
+      ]);
+      expect(reportJson.summary.diagnosticCount).toBe(0);
+      expect(reportJson.summary.status).toBe("passed");
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        tool: "go-test-coverage",
+      });
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Go metrics");
+      expect(metricsEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: true,
+            event: "cache.hit",
+            stageId: "maintainability",
+            tool: "lizard",
+          }),
+        ]),
+      );
+    },
+    20_000,
+  );
+
+  it.skipIf(!hasRustCoverageToolchain)(
+    "runs Rust stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createRustFixtureProject("aiq-engine-rust-");
+
+      const result = await withExclusiveRust(async () =>
+        runEngine({
+          context: "cli",
+          manifest: {
+            files: [project.sourceFile],
+            source: "direct",
+          },
+          mode: "check",
+          outDir: project.root,
+          stages: [
+            "lint",
+            "format",
+            "typecheck",
+            "unit",
+            "coverage",
+            "complexity",
+            "maintainability",
+            "security",
+          ],
+        }),
+      );
+
+      expect(result.ok).toBe(true);
+      expect(result.artifacts.metricsPath).toBeDefined();
+      expect(result.artifacts.planPath).toBeDefined();
+      expect(result.artifacts.reportPath).toBeDefined();
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages).toHaveLength(8);
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "cargo-clippy",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "cargo-fmt",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
         exitCode: 0,
         status: "passed",
         tool: "cargo-check",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
-      "cargo test ran",
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
-      "cargo llvm-cov lines:",
-    );
-    expect(
-      result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: false,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "lizard",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Rust metrics");
-    expect(result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-security",
-    });
-
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
-
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; status: string };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
-          },
+      });
+      expect(result.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
+        "cargo test ran",
       );
+      expect(result.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
+        "cargo llvm-cov lines:",
+      );
+      expect(
+        result.stages.find((stage) => stage.stageId === "complexity")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "lizard",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Rust metrics");
+      expect(
+        result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-security",
+      });
 
-    expect(planJson.input.files).toEqual([project.sourceFile]);
-    expect(planJson.stages).toEqual([
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "coverage",
-      "complexity",
-      "maintainability",
-      "security",
-    ]);
-    expect(reportJson.summary.diagnosticCount).toBe(0);
-    expect(reportJson.summary.status).toBe("passed");
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
-    ).toMatchObject({
-      tool: "cargo-llvm-cov",
-    });
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached Rust metrics");
-    expect(metricsEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          cacheHit: true,
-          event: "cache.hit",
-          stageId: "maintainability",
-          tool: "lizard",
-        }),
-      ]),
-    );
-  }, 60_000);
+      const { metricsPath, planPath, reportPath } = result.artifacts;
+      if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+        throw new Error("Expected plan, report, and metrics artifacts to be written.");
+      }
+
+      const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
+        input: { files: string[] };
+        stages: string[];
+      };
+      const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; status: string };
+      };
+      const metricsEvents = (await readFile(metricsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              cacheHit?: boolean;
+              event: string;
+              stageId?: string;
+              tool?: string;
+            },
+        );
+
+      expect(planJson.input.files).toEqual([project.sourceFile]);
+      expect(planJson.stages).toEqual([
+        "lint",
+        "format",
+        "typecheck",
+        "unit",
+        "coverage",
+        "complexity",
+        "maintainability",
+        "security",
+      ]);
+      expect(reportJson.summary.diagnosticCount).toBe(0);
+      expect(reportJson.summary.status).toBe("passed");
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        tool: "cargo-llvm-cov",
+      });
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached Rust metrics");
+      expect(metricsEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: true,
+            event: "cache.hit",
+            stageId: "maintainability",
+            tool: "lizard",
+          }),
+        ]),
+      );
+    },
+    60_000,
+  );
 
   it("runs Bash stages against the fixture project and writes canonical artifacts", async () => {
     const project = await createBashFixtureProject("aiq-engine-bash-");
@@ -1805,192 +1881,162 @@ describe("engine foundation", () => {
     }
   }, 60_000);
 
-  it("runs PowerShell stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createPowerShellFixtureProject("aiq-engine-powershell-");
-    const hasPester = await resolvePowerShellModuleAvailable("Pester");
-    const hasAnalyzer = await resolvePowerShellModuleAvailable("PSScriptAnalyzer");
+  it.skipIf(!hasPowerShellPesterToolchain)(
+    "runs PowerShell stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createPowerShellFixtureProject("aiq-engine-powershell-");
+      const hasPester = await resolvePowerShellModuleAvailable("Pester");
+      const hasAnalyzer = await resolvePowerShellModuleAvailable("PSScriptAnalyzer");
 
-    const result = await runEngine({
-      context: "cli",
-      manifest: {
-        files: [project.sourceFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: project.root,
-      stages: ["lint", "format", "unit", "coverage", "security"],
-    });
-
-    expect(result.artifacts.metricsPath).toBeDefined();
-    expect(result.artifacts.planPath).toBeDefined();
-    expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.stages).toHaveLength(5);
-    expect(result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-security",
-    });
-
-    const lintStage = result.stages.find((stage) => stage.stageId === "lint");
-    const formatStage = result.stages.find((stage) => stage.stageId === "format");
-    const unitStage = result.stages.find((stage) => stage.stageId === "unit");
-    const coverageStage = result.stages.find((stage) => stage.stageId === "coverage");
-
-    if (hasAnalyzer) {
-      expect(lintStage?.status).toBe("passed");
-      expect(lintStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "psscriptanalyzer" });
-      expect(formatStage?.status).toBe("passed");
-      expect(formatStage?.toolRuns[0]).toMatchObject({
-        status: "passed",
-        tool: "invoke-formatter",
+      const result = await runEngine({
+        context: "cli",
+        manifest: {
+          files: [project.sourceFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: project.root,
+        stages: ["lint", "format", "unit", "coverage", "security"],
       });
-    } else {
-      expect(lintStage?.status).toBe("failed");
-      expect(formatStage?.status).toBe("failed");
-    }
 
-    if (hasPester) {
-      expect(unitStage?.status).toBe("passed");
-      expect(unitStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
-      expect(unitStage?.notes[0]).toContain("Pester ran");
+      expect(result.artifacts.metricsPath).toBeDefined();
+      expect(result.artifacts.planPath).toBeDefined();
+      expect(result.artifacts.reportPath).toBeDefined();
+      expect(result.stages).toHaveLength(5);
+      expect(
+        result.stages.find((stage) => stage.stageId === "security")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-security",
+      });
 
-      expect(coverageStage?.status).toBe("passed");
-      expect(coverageStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
-      expect(coverageStage?.notes[0]).toContain("PowerShell coverage lines:");
-    } else {
-      expect(unitStage?.status).toBe("not_implemented");
-      expect(coverageStage?.status).toBe("not_implemented");
-    }
-  }, 60_000);
+      const lintStage = result.stages.find((stage) => stage.stageId === "lint");
+      const formatStage = result.stages.find((stage) => stage.stageId === "format");
+      const unitStage = result.stages.find((stage) => stage.stageId === "unit");
+      const coverageStage = result.stages.find((stage) => stage.stageId === "coverage");
 
-  it("runs Java Maven stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createJavaMavenFixtureProject("aiq-engine-java-maven-");
+      if (hasAnalyzer) {
+        expect(lintStage?.status).toBe("passed");
+        expect(lintStage?.toolRuns[0]).toMatchObject({
+          status: "passed",
+          tool: "psscriptanalyzer",
+        });
+        expect(formatStage?.status).toBe("passed");
+        expect(formatStage?.toolRuns[0]).toMatchObject({
+          status: "passed",
+          tool: "invoke-formatter",
+        });
+      } else {
+        expect(lintStage?.status).toBe("failed");
+        expect(formatStage?.status).toBe("failed");
+      }
 
-    const result = await runEngine({
-      context: "cli",
-      manifest: {
-        files: [project.sourceFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: project.root,
-      stages: [
-        "lint",
-        "format",
-        "typecheck",
-        "unit",
-        "coverage",
-        "complexity",
-        "maintainability",
-        "security",
-      ],
-    });
+      if (hasPester) {
+        expect(unitStage?.status).toBe("passed");
+        expect(unitStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
+        expect(unitStage?.notes[0]).toContain("Pester ran");
 
-    expect(result.ok).toBe(true);
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "maven-spotless",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "maven-spotless",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+        expect(coverageStage?.status).toBe("passed");
+        expect(coverageStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
+        expect(coverageStage?.notes[0]).toContain("PowerShell coverage lines:");
+      } else {
+        expect(unitStage?.status).toBe("not_implemented");
+        expect(coverageStage?.status).toBe("not_implemented");
+      }
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasMavenToolchain)(
+    "runs Java Maven stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createJavaMavenFixtureProject("aiq-engine-java-maven-");
+
+      const result = await runEngine({
+        context: "cli",
+        manifest: {
+          files: [project.sourceFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: project.root,
+        stages: [
+          "lint",
+          "format",
+          "typecheck",
+          "unit",
+          "coverage",
+          "complexity",
+          "maintainability",
+          "security",
+        ],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "maven-spotless",
+      });
+      expect(result.stages.find((stage) => stage.stageId === "format")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "maven-spotless",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
         exitCode: 0,
         status: "passed",
         tool: "maven-build",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "maven-test-coverage",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached JVM metrics");
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "maven-test-coverage",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached JVM metrics");
 
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
+      const { metricsPath, planPath, reportPath } = result.artifacts;
+      if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+        throw new Error("Expected plan, report, and metrics artifacts to be written.");
+      }
 
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; status: string };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
-          },
-      );
+      const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
+        input: { files: string[] };
+        stages: string[];
+      };
+      const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; status: string };
+      };
+      const metricsEvents = (await readFile(metricsPath, "utf8"))
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as {
+              cacheHit?: boolean;
+              event: string;
+              stageId?: string;
+              tool?: string;
+            },
+        );
 
-    expect(planJson.input.files).toEqual([project.sourceFile]);
-    expect(planJson.stages).toEqual([
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "coverage",
-      "complexity",
-      "maintainability",
-      "security",
-    ]);
-    expect(reportJson.summary.diagnosticCount).toBe(0);
-    expect(reportJson.summary.status).toBe("passed");
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
-    ).toMatchObject({
-      tool: "maven-test-coverage",
-    });
-    expect(
-      reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached JVM metrics");
-    expect(metricsEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          cacheHit: true,
-          event: "cache.hit",
-          stageId: "maintainability",
-          tool: "lizard",
-        }),
-      ]),
-    );
-  }, 120_000);
-
-  it("runs Kotlin Gradle stages against the fixture project and writes canonical artifacts", async () => {
-    const project = await createKotlinGradleFixtureProject("aiq-engine-kotlin-gradle-");
-
-    const result = await runEngine({
-      context: "cli",
-      manifest: {
-        files: [project.sourceFile],
-        source: "direct",
-      },
-      mode: "check",
-      outDir: project.root,
-      stages: [
+      expect(planJson.input.files).toEqual([project.sourceFile]);
+      expect(planJson.stages).toEqual([
         "lint",
         "format",
         "typecheck",
@@ -1999,34 +2045,85 @@ describe("engine foundation", () => {
         "complexity",
         "maintainability",
         "security",
-      ],
-    });
+      ]);
+      expect(reportJson.summary.diagnosticCount).toBe(0);
+      expect(reportJson.summary.status).toBe("passed");
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        tool: "maven-test-coverage",
+      });
+      expect(
+        reportJson.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached JVM metrics");
+      expect(metricsEvents).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cacheHit: true,
+            event: "cache.hit",
+            stageId: "maintainability",
+            tool: "lizard",
+          }),
+        ]),
+      );
+    },
+    120_000,
+  );
 
-    expect(result.ok).toBe(true);
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "gradle-spotless",
-    });
-    expect(result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+  it.skipIf(!hasGradleToolchain)(
+    "runs Kotlin Gradle stages against the fixture project and writes canonical artifacts",
+    async () => {
+      const project = await createKotlinGradleFixtureProject("aiq-engine-kotlin-gradle-");
+
+      const result = await runEngine({
+        context: "cli",
+        manifest: {
+          files: [project.sourceFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: project.root,
+        stages: [
+          "lint",
+          "format",
+          "typecheck",
+          "unit",
+          "coverage",
+          "complexity",
+          "maintainability",
+          "security",
+        ],
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.summary.diagnosticCount).toBe(0);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("passed");
+      expect(result.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "gradle-spotless",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
         exitCode: 0,
         status: "passed",
         tool: "gradle-build",
-      },
-    );
-    expect(result.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "gradle-test-coverage",
-    });
-    expect(
-      result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached JVM metrics");
-  }, 120_000);
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "coverage")?.toolRuns[0],
+      ).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "gradle-test-coverage",
+      });
+      expect(
+        result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached JVM metrics");
+    },
+    120_000,
+  );
 
   it("rejects cancelled runs before task execution starts", async () => {
     const controller = new AbortController();

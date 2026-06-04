@@ -1,3 +1,6 @@
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type ToolRunOutcome, ToolRunner } from "../src/tool-runner.js";
@@ -45,6 +48,131 @@ describe("ToolRunner binary lookup", () => {
     expect(outcome.stdout).toBe("");
   });
 
+  it.skipIf(process.platform !== "win32")(
+    "normalizes unspawnable Windows shims into outcomes",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-shim-"));
+      const shimPath = path.join(tempDir, "npm");
+
+      try {
+        await writeFile(shimPath, "not a Windows executable\n", "utf8");
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(shimPath, [], { cwd: tempDir });
+
+        expect(outcome.exitCode).toBeUndefined();
+        expect(outcome.stderr).toBe("");
+        expect(outcome.stdout).toBe("");
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "runs Windows command scripts through the platform shell",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-"));
+      const scriptPath = path.join(tempDir, "echo.cmd");
+
+      try {
+        await writeFile(scriptPath, "@echo off\r\necho %~1\r\n", "utf8");
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(scriptPath, ["script-ok"], { cwd: tempDir });
+
+        expect(outcome.exitCode).toBe(0);
+        expect(outcome.stdout.trim()).toBe("script-ok");
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "passes Windows command script metacharacters as arguments",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-metachar-"));
+      const scriptPath = path.join(tempDir, "echo.cmd");
+
+      try {
+        await writeFile(scriptPath, '@echo off\r\necho "%~1"\r\n', "utf8");
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(scriptPath, ["safe&echo injected"], { cwd: tempDir });
+
+        expect(outcome.exitCode).toBe(0);
+        expect(outcome.stdout.trim()).toBe('"safe&echo injected"');
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "does not expand Windows command script percent variables in arguments",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-percent-"));
+      const scriptPath = path.join(tempDir, "echo.cmd");
+
+      try {
+        await writeFile(scriptPath, '@echo off\r\necho "%~1"\r\n', "utf8");
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(scriptPath, ["%AIQ_TOOL_RUNNER_TEST_VALUE%"], {
+          cwd: tempDir,
+          env: { AIQ_TOOL_RUNNER_TEST_VALUE: "expanded" },
+        });
+
+        expect(outcome.exitCode).toBe(0);
+        expect(outcome.stdout).not.toContain("expanded");
+        expect(outcome.stdout).toContain("AIQ_TOOL_RUNNER_TEST_VALUE");
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "preserves Windows command script failure exit codes",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tool-runner-fail-"));
+      const scriptPath = path.join(tempDir, "fail with spaces.cmd");
+
+      try {
+        await writeFile(
+          scriptPath,
+          "@echo off\r\necho failed-script 1>&2\r\nexit /b 7\r\n",
+          "utf8",
+        );
+
+        const runner = new ToolRunner();
+        const outcome = await runner.run(scriptPath, ["quoted arg"], { cwd: tempDir });
+
+        expect(outcome.exitCode).toBe(7);
+        expect(outcome.stderr.trim()).toBe("failed-script");
+      } finally {
+        await rm(tempDir, { force: true, recursive: true });
+      }
+    },
+  );
+
+  it.skipIf(process.platform !== "win32")(
+    "prefers Windows executable command paths over extensionless shims",
+    async () => {
+      const runner = new ToolRunner();
+      const extensionlessPath = path.join("C:\\tools", "npm");
+      const commandScriptPath = `${extensionlessPath}.cmd`;
+
+      vi.spyOn(runner, "resolveInstalledBinary").mockResolvedValue(undefined);
+      vi.spyOn(runner, "run").mockResolvedValue(
+        createOutcome({ stdout: `${extensionlessPath}\r\n${commandScriptPath}\r\n` }),
+      );
+
+      await expect(runner.resolveBinaryIfAvailable(["npm"])).resolves.toBe(commandScriptPath);
+    },
+  );
+
   it("rethrows unexpected exec-file string-code failures", async () => {
     const runner = new ToolRunner();
 
@@ -73,6 +201,15 @@ describe("ToolRunner binary lookup", () => {
     vi.spyOn(runner, "run").mockRejectedValue(lookupError);
 
     await expect(runner.resolveInstalledBinary("node")).rejects.toBe(lookupError);
+  });
+
+  it("treats unspawnable asdf lookup as unavailable instead of crashing", async () => {
+    const runner = new ToolRunner();
+    const lookupError = Object.assign(new Error("spawn EINVAL"), { code: "EINVAL" });
+
+    vi.spyOn(runner, "run").mockRejectedValue(lookupError);
+
+    await expect(runner.resolveInstalledBinary("node")).resolves.toBeUndefined();
   });
 
   it("propagates aborts from which/where fallback", async () => {

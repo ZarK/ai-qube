@@ -8,6 +8,10 @@ import path from "node:path";
 import { parseAiuTrustedStateJson } from "@tjalve/aiu";
 import { afterEach, describe, expect, it } from "vitest";
 import { withExclusiveToolLock } from "../../engine/test/exclusive-tool-lock.js";
+import {
+  hasDotNet10Toolchain,
+  hasPythonQualityToolchain,
+} from "../../engine/test/toolchain-capabilities.js";
 import type { RunRequest, RunResult } from "../../model/src/index.js";
 import { runCli } from "../src/index.js";
 import { writeServeListeningOutput } from "../src/output.js";
@@ -472,7 +476,7 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("Usage:");
-    expect(stdout.value).toContain("aiq\n");
+    expect(stdout.value).toContain("aiq [--up-to <0-9>");
     expect(stdout.value).toContain("aiq <files...>");
     expect(stdout.value).toContain("aiq run <files...>");
     expect(stdout.value).toContain(
@@ -488,18 +492,21 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq hook install");
     expect(stdout.value).toContain("aiq ci setup");
     expect(stdout.value).toContain("aiq ignore write");
-    expect(stdout.value).toContain("Run is the primary command.");
-    expect(stdout.value).toContain("Check is kept as a compatibility alias");
+    expect(stdout.value).toContain("The bare aiq command is the configured project gate.");
+    expect(stdout.value).toContain("Run is the explicit target command");
+    expect(stdout.value).toContain("Check accepts the same explicit target inputs as run.");
     expect(stdout.value).toContain("Examples:");
+    expect(stdout.value).toContain("aiq --format json");
     expect(stdout.value).toContain("aiq config --set-stage 3");
     expect(stdout.value).toContain("aiq run src --up-to 3");
     expect(stdout.value).toContain("aiq evidence --format json");
     expect(stdout.value).toContain("aiq schema --format json");
     expect(stdout.value).toContain("0=e2e 1=lint 2=format 3=typecheck");
     expect(stdout.value).toContain(
-      "By default aiq run and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present",
+      "By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present",
     );
-    expect(stdout.value).toContain("Set the current stage once with aiq config --set-stage N");
+    expect(stdout.value).toContain("then run aiq for the normal cumulative project workflow");
+    expect(stdout.value).toContain("Use aiq run <paths...> for explicit file and subtree checks");
     expect(stdout.value).toContain("--only <0-9>");
     expect(stdout.value).toContain("--diff-only");
     expect(stdout.value).toContain("--dry-run");
@@ -517,7 +524,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq serve [--host <host>] [--port <port>]");
   });
 
-  it("shows the same run-first help from aiq run --help", async () => {
+  it("shows the same command contract from aiq run --help", async () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
@@ -555,11 +562,14 @@ describe("CLI foundation", () => {
       commands: Array<{
         name: string;
         dryRun: { supported: boolean };
-        extensions?: { aiq?: { capability?: string; contexts?: string[] } };
+        extensions?: { aiq?: { capability?: string; contexts?: string[]; targetMode?: string } };
         output: { defaultFormat?: string; formats: string[] };
         supplyChain: { kinds: string[]; sensitive: boolean };
       }>;
-      extensions?: { qube?: { discoverable?: boolean } };
+      extensions?: {
+        aiq?: { defaultCommand?: string; explicitTargetCommand?: string };
+        qube?: { discoverable?: boolean };
+      };
       package: { name: string; version: string };
       schemaVersion: number;
       sections?: { discovery?: { command?: string; packageExport?: string } };
@@ -573,6 +583,8 @@ describe("CLI foundation", () => {
     expect(schema.package).toEqual({ name: packageJson.name, version: packageJson.version });
     expect(schema.bin).toBe("aiq");
     expect(schema.extensions?.qube?.discoverable).toBe(true);
+    expect(schema.extensions?.aiq?.defaultCommand).toBe("aiq");
+    expect(schema.extensions?.aiq?.explicitTargetCommand).toBe("aiq run <paths...>");
     expect(schema.sections?.discovery).toEqual({
       command: "aiq schema --format json",
       packageExport: "@tjalve/aiq/schema",
@@ -588,6 +600,7 @@ describe("CLI foundation", () => {
     ]);
     expect(commands.get("run")?.extensions?.aiq?.capability).toBe("quality-control");
     expect(commands.get("run")?.extensions?.aiq?.contexts).toContain("qube");
+    expect(commands.get("run")?.extensions?.aiq?.targetMode).toBe("explicit-paths");
     expect(commands.get("run")?.dryRun.supported).toBe(true);
     expect(commands.get("run")?.supplyChain).toMatchObject({
       kinds: ["dependency", "package-manager"],
@@ -761,6 +774,94 @@ describe("CLI foundation", () => {
     );
   });
 
+  it("keeps option-only aiq invocations on the configured project gate", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-first-run-json-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(stdout.value).toContain('"firstRun"');
+    expect(stdout.value).toContain('"target": "."');
+    expect(stdout.value).toContain('"mode": "check"');
+    expect(stdout.value).toContain('"source": "direct"');
+  });
+
+  it("prints a first-run dry-run plan for the configured project gate", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-first-run-dry-run-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "--dry-run", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(stdout.value).toContain('"firstRun"');
+    expect(stdout.value).toContain('"target": "."');
+    expect(stdout.value).toContain('"dryRun": true');
+    expect(stdout.value).toContain('"input"');
+  });
+
+  it("does not treat command-specific flag-first invocations as the configured project gate", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-flag-first-command-option-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "--corpus-root", "fixtures"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toContain("aiq run requires explicit files or paths.");
+  });
+
+  it("keeps flag-first aiq invocations with path input on explicit targets", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-flag-first-target-"));
+    tempDirs.push(tempDir);
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(
+      ["node", "aiq", "--stage", "lint", fixtureFile, "--format", "json", "--out-dir", tempDir],
+      {
+        cwd: process.cwd(),
+        stderr,
+        stdin: new MemoryInput(),
+        stdout,
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    const output = JSON.parse(stdout.value) as {
+      firstRun?: unknown;
+      mode: string;
+      request: {
+        manifest: { files: string[]; source: string };
+      };
+    };
+    expect(output.firstRun).toBeUndefined();
+    expect(output.mode).toBe("check");
+    expect(output.request.manifest.files).toEqual([fixtureFile]);
+    expect(output.request.manifest.source).toBe("direct");
+  });
+
   it("keeps explicit check without files as a usage error", async () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
@@ -774,10 +875,45 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(2);
     expect(stdout.value).toBe("");
-    expect(stderr.value).toContain("At least one input file is required.");
+    expect(stderr.value).toContain("aiq check requires explicit files or paths.");
+    expect(stderr.value).toContain("Use aiq for the configured project gate");
   });
 
-  it("keeps explicit run without files as a usage error", async () => {
+  it("rejects aiq check dot with guidance to use the configured project gate", async () => {
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "check", "."], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toContain("Use aiq for the configured project gate.");
+    expect(stderr.value).toContain("aiq check <paths...>");
+  });
+
+  it("rejects aiq check project-root aliases with guidance to use the configured project gate", async () => {
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "check", path.resolve(process.cwd())], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toContain("Use aiq for the configured project gate.");
+    expect(stderr.value).toContain("aiq check <paths...>");
+  });
+
+  it("keeps explicit run focused on file and path targets", async () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
@@ -790,7 +926,42 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(2);
     expect(stdout.value).toBe("");
-    expect(stderr.value).toContain("At least one input file is required.");
+    expect(stderr.value).toContain("aiq run requires explicit files or paths.");
+    expect(stderr.value).toContain("Use aiq for the configured project gate");
+  });
+
+  it("rejects aiq run dot with guidance to use the configured project gate", async () => {
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "run", "."], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toContain("Use aiq for the configured project gate.");
+    expect(stderr.value).toContain("aiq run <paths...>");
+  });
+
+  it("rejects aiq run project-root aliases with guidance to use the configured project gate", async () => {
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "run", "./"], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(2);
+    expect(stdout.value).toBe("");
+    expect(stderr.value).toContain("Use aiq for the configured project gate.");
+    expect(stderr.value).toContain("aiq run <paths...>");
   });
 
   it("returns quality failure code and diagnostic remediation for first-run code diagnostics", async () => {
@@ -845,7 +1016,7 @@ describe("CLI foundation", () => {
     tempDirs.push(tempDir);
     await writeFile(path.join(tempDir, "package.json"), '{"name":"truncated"}\n', "utf8");
     for (let index = 0; index < 505; index += 1) {
-      await writeFile(path.join(tempDir, `file-${index}.json`), "{}\n", "utf8");
+      await writeFile(path.join(tempDir, `file-${index}.sql`), "select 1;\n", "utf8");
     }
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
@@ -955,7 +1126,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("- typecheck: passed");
   });
 
-  it("runs explicit run output with the primary run label", async () => {
+  it("runs explicit target output with the run label", async () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
@@ -973,7 +1144,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("- typecheck: passed");
   });
 
-  it("keeps check as a compatibility command with the check output label", async () => {
+  it("runs explicit check output with the check label", async () => {
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
@@ -1562,12 +1733,12 @@ describe("CLI foundation", () => {
     }
   });
 
-  it("returns explicit setup guidance for replaced published commands", async () => {
+  it("returns explicit setup guidance for operational commands", async () => {
     const commands: Array<[string[], string]> = [
       [["node", "aiq", "install-tools"], "Global tool installation is intentionally not part"],
-      [["node", "aiq", "hook", "install"], "Hook installation is handled"],
-      [["node", "aiq", "ci", "setup"], "CI setup generation is replaced"],
-      [["node", "aiq", "ignore", "write"], "Ignore-file mutation is replaced"],
+      [["node", "aiq", "hook", "install"], "Hook setup uses the dedicated AIQ hook adapter"],
+      [["node", "aiq", "ci", "setup"], "CI setup uses explicit workflow configuration"],
+      [["node", "aiq", "ignore", "write"], "Ignored inputs are configured"],
     ];
     for (const [commandArgs, expected] of commands) {
       const argv = [...commandArgs];
@@ -2843,7 +3014,7 @@ describe("CLI foundation", () => {
     );
   });
 
-  it("renders passing Python output as JSON", async () => {
+  it.skipIf(!hasPythonQualityToolchain)("renders passing Python output as JSON", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-check-python-"));
     tempDirs.push(tempDir);
 
@@ -2924,100 +3095,105 @@ describe("CLI foundation", () => {
     });
   });
 
-  it("renders passing .NET output as JSON", async () => {
-    const project = await createDotNetFixtureProject("aiq-cli-check-dotnet-");
+  it.skipIf(!hasDotNet10Toolchain)(
+    "renders passing .NET output as JSON",
+    async () => {
+      const project = await createDotNetFixtureProject("aiq-cli-check-dotnet-");
 
-    const stdout = new MemoryOutput();
-    const stderr = new MemoryOutput();
-    const exitCode = await withExclusiveToolLock("dotnet", async () =>
-      runCli(
-        [
-          "node",
-          "aiq",
-          "check",
-          project.filePath,
-          "--stage",
-          "lint",
-          "--stage",
-          "format",
-          "--stage",
-          "typecheck",
-          "--stage",
-          "unit",
-          "--stage",
-          "coverage",
-          "--stage",
-          "complexity",
-          "--stage",
-          "maintainability",
-          "--stage",
-          "security",
-          "--format",
-          "json",
-          "--out-dir",
-          project.root,
-        ],
-        {
-          cwd: project.root,
-          stderr,
-          stdin: new MemoryInput(),
-          stdout,
-        },
-      ),
-    );
+      const stdout = new MemoryOutput();
+      const stderr = new MemoryOutput();
+      const exitCode = await withExclusiveToolLock("dotnet", async () =>
+        runCli(
+          [
+            "node",
+            "aiq",
+            "check",
+            project.filePath,
+            "--stage",
+            "lint",
+            "--stage",
+            "format",
+            "--stage",
+            "typecheck",
+            "--stage",
+            "unit",
+            "--stage",
+            "coverage",
+            "--stage",
+            "complexity",
+            "--stage",
+            "maintainability",
+            "--stage",
+            "security",
+            "--format",
+            "json",
+            "--out-dir",
+            project.root,
+          ],
+          {
+            cwd: project.root,
+            stderr,
+            stdin: new MemoryInput(),
+            stdout,
+          },
+        ),
+      );
 
-    expect(exitCode).toBe(0);
-    expect(stderr.value).toBe("");
+      expect(exitCode).toBe(0);
+      expect(stderr.value).toBe("");
 
-    const output = JSON.parse(stdout.value) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        status: string;
-        toolRuns: Array<{ cacheHit?: boolean; exitCode?: number; status: string; tool: string }>;
-      }>;
-      summary: { diagnosticCount: number; notImplementedStageCount: number; status: string };
-    };
-    expect(output.summary.diagnosticCount).toBe(0);
-    expect(output.summary.notImplementedStageCount).toBe(0);
-    expect(output.summary.status).toBe("passed");
-    expect(output.stages).toHaveLength(8);
-    expect(output.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
-      exitCode: 0,
-      status: "passed",
-      tool: "dotnet-format-style",
-    });
-    expect(output.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0]).toMatchObject(
-      {
+      const output = JSON.parse(stdout.value) as {
+        stages: Array<{
+          notes: string[];
+          stageId: string;
+          status: string;
+          toolRuns: Array<{ cacheHit?: boolean; exitCode?: number; status: string; tool: string }>;
+        }>;
+        summary: { diagnosticCount: number; notImplementedStageCount: number; status: string };
+      };
+      expect(output.summary.diagnosticCount).toBe(0);
+      expect(output.summary.notImplementedStageCount).toBe(0);
+      expect(output.summary.status).toBe("passed");
+      expect(output.stages).toHaveLength(8);
+      expect(output.stages.find((stage) => stage.stageId === "lint")?.toolRuns[0]).toMatchObject({
+        exitCode: 0,
+        status: "passed",
+        tool: "dotnet-format-style",
+      });
+      expect(
+        output.stages.find((stage) => stage.stageId === "typecheck")?.toolRuns[0],
+      ).toMatchObject({
         exitCode: 0,
         status: "passed",
         tool: "dotnet-build",
-      },
-    );
-    expect(output.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
-      "dotnet test ran",
-    );
-    expect(output.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
-      "dotnet test coverage lines:",
-    );
-    expect(
-      output.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
-    ).toContain("Reused cached C# metrics");
-    expect(
-      output.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
-    ).toMatchObject({
-      cacheHit: true,
-      exitCode: 0,
-      status: "passed",
-      tool: "aiq-csharp-metrics",
-    });
-  }, 90_000);
+      });
+      expect(output.stages.find((stage) => stage.stageId === "unit")?.notes[0]).toContain(
+        "dotnet test ran",
+      );
+      expect(output.stages.find((stage) => stage.stageId === "coverage")?.notes[0]).toContain(
+        "dotnet test coverage lines:",
+      );
+      expect(
+        output.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
+      ).toContain("Reused cached C# metrics");
+      expect(
+        output.stages.find((stage) => stage.stageId === "maintainability")?.toolRuns[0],
+      ).toMatchObject({
+        cacheHit: true,
+        exitCode: 0,
+        status: "passed",
+        tool: "aiq-csharp-metrics",
+      });
+    },
+    // Real .NET SDK restore/build/test/coverage/security can exceed 20s on cold local agents.
+    90_000,
+  );
 
   it("renders format diagnostics as JSON for JSONC inputs", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-check-format-"));
     tempDirs.push(tempDir);
     const jsoncFile = path.join(tempDir, "config.jsonc");
-    await writeFile(jsoncFile, '{"name" :"typescript-fixture" ,"enabled" :true}\n', "utf8");
+    await writeFile(jsoncFile, '{"name" :"typescript-fixture" ,"items" :[1,2,3]}\n', "utf8");
 
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
@@ -4523,7 +4699,9 @@ describePackageSmoke("CLI package smoke", () => {
       });
       expect(packedRemovedCommand.exitCode).toBe(0);
       expect(packedRemovedCommand.stderr).not.toContain("ReferenceError");
-      expect(packedRemovedCommand.stdout).toContain("CI setup generation is replaced");
+      expect(packedRemovedCommand.stdout).toContain(
+        "CI setup uses explicit workflow configuration",
+      );
 
       const packedBench = await runNpmCommand(
         [

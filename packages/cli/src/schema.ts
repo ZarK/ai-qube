@@ -159,7 +159,7 @@ export const aiqCommandMetadata = [
       aiq: {
         capability: "quality-control",
         contexts: ["cli", "qube"],
-        primary: true,
+        targetMode: "explicit-paths",
       },
     },
   },
@@ -374,6 +374,8 @@ const aiqSchemaOptions = {
   },
   extensions: {
     aiq: {
+      defaultCommand: "aiq",
+      explicitTargetCommand: "aiq run <paths...>",
       schemaVersion: aiqSchemaVersion,
       packageExport: "@tjalve/aiq/schema",
     },
