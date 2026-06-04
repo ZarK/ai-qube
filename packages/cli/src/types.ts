@@ -168,6 +168,12 @@ Operational checks:
   aiq status shows the current stage, default cumulative run range, latest artifact paths, last run status, and next suggested command.
   hook install, ci setup, and ignore write provide adapter guidance; use aiq setup for prerequisite steps, aiq doctor for diagnostics, and aiq config for canonical project state.
 
+Metric remediation:
+  Stages 5-7 enforce SLOC, complexity, maintainability, and readability defaults for source and test code.
+  Do not start broad refactors until stage 0 e2e passes.
+  Keep refactors small and behavior-preserving; preserve public APIs and repository conventions.
+  Use direct purpose-revealing names: active verbs for functions, direct nouns for values, plural nouns for collections, short scoped file/module names, and no vague helper/manager/processor names unless local convention requires them.
+
 Package surface:
   @tjalve/aiq exports the CLI; @tjalve/aiq/api exports the model, config, engine, reporter, and benchmark APIs used by adapters.
   @tjalve/aiq/schema and aiq schema --format json expose QUBE-compatible command metadata.

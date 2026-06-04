@@ -95,3 +95,5 @@ npx @tjalve/aiq config --set-stage <0-9>
 ```
 
 If a tool is missing, run `setup` for the exact agent actions, then install the missing prerequisite through the normal toolchain for that language or project.
+
+Metric stages enforce SLOC, complexity, maintainability, and readability defaults for source and test code. Before broad refactoring, make stage `0` e2e pass. Keep remediation small and behavior-preserving, preserve public APIs and repository conventions, split oversized files/functions into cohesive units, reduce branching in reported functions, and use direct purpose-revealing names: active verbs for functions, direct nouns for values, plural nouns for collections, short scoped file/module names, and no vague helper/manager/processor names unless local convention requires them.

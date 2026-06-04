@@ -8,6 +8,7 @@ import {
   createFileMetricDiagnostics,
   createLizardMetricsDiagnostics,
   createPythonMetricsDiagnostics,
+  metricsDiagnosticCodes,
   readMetricsThresholds,
 } from "../src/metrics-thresholds.js";
 import { parseDotNetTrxReport } from "../src/parsers/dotnet.js";
@@ -328,6 +329,7 @@ describe("extracted helper regressions", () => {
 
     expect(createLizardMetricsDiagnostics(metrics, "sloc", "lizard")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.sloc,
         file: project.file,
         message: "SLOC 350 is greater than or equal to 350.",
         source: "lizard",
@@ -335,6 +337,7 @@ describe("extracted helper regressions", () => {
     ]);
     expect(createLizardMetricsDiagnostics(metrics, "complexity", "lizard")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.lizardComplexity,
         file: project.file,
         message: "work complexity 13 is greater than 12.",
         source: "lizard",
@@ -342,14 +345,17 @@ describe("extracted helper regressions", () => {
     ]);
     expect(createLizardMetricsDiagnostics(metrics, "maintainability", "lizard")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.lizardMaintainabilityComplexity,
         file: project.file,
         message: "work maintainability complexity 13 is greater than 10.",
       }),
       expect.objectContaining({
+        code: metricsDiagnosticCodes.lizardMaintainabilityFunctionNloc,
         file: project.file,
         message: "work function NLOC 350 is greater than 200.",
       }),
       expect.objectContaining({
+        code: metricsDiagnosticCodes.lizardMaintainabilityParameterCount,
         file: project.file,
         message: "work parameter count 7 is greater than 6.",
       }),
@@ -416,19 +422,28 @@ describe("extracted helper regressions", () => {
       },
     };
 
-    expect(createPythonMetricsDiagnostics(metrics, "sloc", "radon")).toHaveLength(1);
+    expect(createPythonMetricsDiagnostics(metrics, "sloc", "radon")).toEqual([
+      expect.objectContaining({
+        code: metricsDiagnosticCodes.sloc,
+        file,
+        message: "SLOC 350 is greater than or equal to 350.",
+      }),
+    ]);
     expect(createPythonMetricsDiagnostics(metrics, "complexity", "radon")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.pythonComplexity,
         file,
         message: "work complexity rank C is not allowed; only A/B complexity ranks pass.",
       }),
     ]);
     expect(createPythonMetricsDiagnostics(metrics, "maintainability", "radon")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.pythonMaintainability,
         file,
         message: "Maintainability index 39.0 is less than 40.",
       }),
       expect.objectContaining({
+        code: metricsDiagnosticCodes.pythonReadability,
         file,
         message: "Readability index 84.0 is less than 85.",
       }),
@@ -447,6 +462,7 @@ describe("extracted helper regressions", () => {
 
     expect(createFileMetricDiagnostics(metrics, "maintainability", "aiq-csharp-metrics")).toEqual([
       expect.objectContaining({
+        code: metricsDiagnosticCodes.lizardMaintainabilityComplexity,
         file,
         message: "Maintainability complexity 11 is greater than 10.",
       }),

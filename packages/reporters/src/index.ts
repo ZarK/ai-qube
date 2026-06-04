@@ -265,6 +265,15 @@ function summarizeStageProblems(stage: StageResult): ProblemSummary[] {
     ];
   }
 
+  if (isMetricRemediationStage(stage)) {
+    return [
+      {
+        category: "Quality failures",
+        item: formatMetricRemediationSummary(stage, firstMessage),
+      },
+    ];
+  }
+
   if (stage.diagnostics.length > 0) {
     return [
       {
@@ -300,6 +309,40 @@ function formatDiagnosticSources(diagnostics: readonly Diagnostic[]): string {
   return [...new Set(diagnostics.map((diagnostic) => diagnostic.source))]
     .sort((left, right) => left.localeCompare(right))
     .join(", ");
+}
+
+function isMetricRemediationStage(stage: StageResult): boolean {
+  if (
+    stage.stageId !== "sloc" &&
+    stage.stageId !== "complexity" &&
+    stage.stageId !== "maintainability"
+  ) {
+    return false;
+  }
+
+  return stage.diagnostics.some((diagnostic) => diagnostic.code?.startsWith("metrics/"));
+}
+
+function formatMetricRemediationSummary(stage: StageResult, firstMessage: string): string {
+  return `${formatStageLabel(stage.stageId)} ${stage.diagnostics.length} metric diagnostic${stage.diagnostics.length === 1 ? "" : "s"} from ${formatDiagnosticSources(stage.diagnostics)}. First: ${firstMessage} Fix: ${formatMetricRemediationGuidance(stage.stageId)}`;
+}
+
+function formatMetricRemediationGuidance(stageId: StageId): string {
+  const common =
+    "Do not start broad refactors until stage 0 e2e passes; preserve public APIs and repository conventions.";
+  const naming =
+    "Use direct purpose-revealing names: active verbs for functions, direct nouns for values, plural nouns for collections, short scoped file/module names, and no vague helper/manager/processor names unless local convention requires them.";
+
+  switch (stageId) {
+    case "sloc":
+      return `${common} Split oversized source and test files into cohesive modules or focused specs, keeping each slice behavior-preserving.`;
+    case "complexity":
+      return `${common} Reduce branching in the reported function, extract named decisions, prefer clear guard clauses or tables where they fit, and keep behavior covered by existing tests. ${naming}`;
+    case "maintainability":
+      return `${common} Shorten large functions, reduce parameter lists, separate unrelated decisions, and improve readability without changing behavior. ${naming}`;
+    default:
+      return `${common} Make small behavior-preserving refactors and rerun the failing metric stage. ${naming}`;
+  }
 }
 
 function readToolFromMessage(message: string): string | undefined {

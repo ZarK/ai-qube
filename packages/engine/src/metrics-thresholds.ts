@@ -4,6 +4,17 @@ import type { PythonMetricsFileMetrics } from "./parsers/python.js";
 
 export type SharedMetricsMode = "sloc" | "complexity" | "maintainability";
 
+export const metricsDiagnosticCodes = {
+  lizardComplexity: "metrics/complexity-limit",
+  lizardMaintainabilityComplexity: "metrics/maintainability-complexity-limit",
+  lizardMaintainabilityFunctionNloc: "metrics/function-nloc-limit",
+  lizardMaintainabilityParameterCount: "metrics/parameter-count-limit",
+  pythonComplexity: "metrics/python-complexity-rank",
+  pythonMaintainability: "metrics/python-maintainability-limit",
+  pythonReadability: "metrics/python-readability-limit",
+  sloc: "metrics/sloc-limit",
+} as const;
+
 export interface MetricsThresholds {
   lizardComplexityLimit: number;
   lizardMaintainabilityComplexityLimit: number;
@@ -72,6 +83,7 @@ export function createLizardMetricsDiagnostics(
           file,
           source,
           `SLOC ${fileMetrics.raw.sloc} is greater than or equal to ${thresholds.slocLimit}.`,
+          metricsDiagnosticCodes.sloc,
         ),
       );
       continue;
@@ -84,6 +96,7 @@ export function createLizardMetricsDiagnostics(
             file,
             source,
             `${block.name} complexity ${block.complexity} is greater than ${thresholds.lizardComplexityLimit}.`,
+            metricsDiagnosticCodes.lizardComplexity,
             block.startLine,
           ),
         );
@@ -99,6 +112,7 @@ export function createLizardMetricsDiagnostics(
             file,
             source,
             `${block.name} maintainability complexity ${block.complexity} is greater than ${thresholds.lizardMaintainabilityComplexityLimit}.`,
+            metricsDiagnosticCodes.lizardMaintainabilityComplexity,
             block.startLine,
           ),
         );
@@ -110,6 +124,7 @@ export function createLizardMetricsDiagnostics(
             file,
             source,
             `${block.name} function NLOC ${block.nloc} is greater than ${thresholds.lizardMaintainabilityFunctionNlocLimit}.`,
+            metricsDiagnosticCodes.lizardMaintainabilityFunctionNloc,
             block.startLine,
           ),
         );
@@ -121,6 +136,7 @@ export function createLizardMetricsDiagnostics(
             file,
             source,
             `${block.name} parameter count ${block.parameterCount} is greater than ${thresholds.lizardMaintainabilityParameterLimit}.`,
+            metricsDiagnosticCodes.lizardMaintainabilityParameterCount,
             block.startLine,
           ),
         );
@@ -146,6 +162,7 @@ export function createPythonMetricsDiagnostics(
           file,
           source,
           `SLOC ${fileMetrics.raw.sloc} is greater than or equal to ${thresholds.slocLimit}.`,
+          metricsDiagnosticCodes.sloc,
         ),
       );
       continue;
@@ -159,6 +176,7 @@ export function createPythonMetricsDiagnostics(
               file,
               source,
               `${block.name} complexity rank ${block.rank} is not allowed; only A/B complexity ranks pass.`,
+              metricsDiagnosticCodes.pythonComplexity,
               block.lineno,
             ),
           );
@@ -176,6 +194,7 @@ export function createPythonMetricsDiagnostics(
           file,
           source,
           `Maintainability index ${fileMetrics.mi.score.toFixed(1)} is less than ${thresholds.pythonMaintainabilityLimit}.`,
+          metricsDiagnosticCodes.pythonMaintainability,
         ),
       );
     }
@@ -190,6 +209,7 @@ export function createPythonMetricsDiagnostics(
           file,
           source,
           `Readability index ${fileMetrics.readability.score.toFixed(1)} is less than ${thresholds.pythonReadabilityLimit}.`,
+          metricsDiagnosticCodes.pythonReadability,
         ),
       );
     }
@@ -216,6 +236,7 @@ export function createFileMetricDiagnostics(
           file,
           source,
           `SLOC ${fileMetrics.raw.sloc} is greater than or equal to ${thresholds.slocLimit}.`,
+          metricsDiagnosticCodes.sloc,
         ),
       );
     }
@@ -229,6 +250,7 @@ export function createFileMetricDiagnostics(
           file,
           source,
           `Complexity ${fileMetrics.maxComplexity.score} is greater than ${thresholds.lizardComplexityLimit}.`,
+          metricsDiagnosticCodes.lizardComplexity,
         ),
       );
     }
@@ -242,6 +264,7 @@ export function createFileMetricDiagnostics(
           file,
           source,
           `Maintainability complexity ${fileMetrics.maxComplexity.score} is greater than ${thresholds.lizardMaintainabilityComplexityLimit}.`,
+          metricsDiagnosticCodes.lizardMaintainabilityComplexity,
         ),
       );
     }
@@ -254,9 +277,11 @@ function createMetricDiagnostic(
   file: string,
   source: string,
   message: string,
+  code: string,
   startLine = 1,
 ): Diagnostic {
   return {
+    code,
     file,
     message,
     range: {

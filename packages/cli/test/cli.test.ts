@@ -384,6 +384,7 @@ describe("CLI foundation", () => {
       ) as {
         bin?: Record<string, string>;
         dependencies?: Record<string, string>;
+        description?: string;
         files: string[];
         name: string;
         publishConfig: { access: string; provenance: boolean };
@@ -392,6 +393,7 @@ describe("CLI foundation", () => {
       };
 
       expect(packageJson.name).toBe("@tjalve/aiq");
+      expect(packageJson.description).toContain("remediation guidance");
       expect(packageJson.publishConfig).toEqual({ access: "public", provenance: true });
       expect(packageJson.repository).toEqual({
         directory: workspace,
@@ -412,6 +414,15 @@ describe("CLI foundation", () => {
         }
       }
     }
+
+    const packageReadme = await readFile(path.join(repoRoot, "packages", "cli", "README.md"), {
+      encoding: "utf8",
+    });
+    expect(packageReadme).toContain(
+      "Metric stages enforce SLOC, complexity, maintainability, and readability defaults for source and test code.",
+    );
+    expect(packageReadme).toContain("Before broad refactoring, make stage `0` e2e pass.");
+    expect(packageReadme).toContain("direct purpose-revealing names");
   });
 
   it("keeps former split packages private to the workspace", async () => {
@@ -527,6 +538,11 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq setup gives agent-facing setup steps");
     expect(stdout.value).toContain("aiq evidence emits structured AIQ quality evidence");
     expect(stdout.value).toContain("aiq status shows the current stage");
+    expect(stdout.value).toContain("Metric remediation:");
+    expect(stdout.value).toContain("Stages 5-7 enforce SLOC, complexity, maintainability");
+    expect(stdout.value).toContain("Do not start broad refactors until stage 0 e2e passes");
+    expect(stdout.value).toContain("Use direct purpose-revealing names");
+    expect(stdout.value).toContain("no vague helper/manager/processor names");
     expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
     expect(stdout.value).toContain("aiq schema --format json expose QUBE-compatible");
     expect(stdout.value).toContain("aiq watch <files...>");

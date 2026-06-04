@@ -18,6 +18,12 @@ export {
   defaultGraphLanguageModules,
 } from "./graph.js";
 export type { GraphLanguageModule } from "./graph.js";
+export {
+  defaultMetricsThresholds,
+  metricsDiagnosticCodes,
+  readMetricsThresholds,
+} from "./metrics-thresholds.js";
+export type { MetricsThresholds, SharedMetricsMode } from "./metrics-thresholds.js";
 export { buildRunPlan, createRunPlan } from "./planner.js";
 export {
   computeDefaultProjectConcurrencyLimit,

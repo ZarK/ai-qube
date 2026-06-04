@@ -100,6 +100,20 @@ describe("reporters", () => {
       stageId: "lint",
       status: "failed",
     });
+    const metricFailure = createRunResult({
+      cwd: workspaceRoot,
+      diagnostics: [
+        {
+          code: "metrics/complexity-limit",
+          file: path.join(workspaceRoot, "src", "workflow.ts"),
+          message: "runWorkflow complexity 13 is greater than 12.",
+          severity: "error",
+          source: "lizard",
+        },
+      ],
+      stageId: "complexity",
+      status: "failed",
+    });
     const setupFailure = createRunResult({
       cwd: workspaceRoot,
       diagnostics: [
@@ -128,6 +142,14 @@ describe("reporters", () => {
     expect(formatRunResultAsText(qualityFailure)).toContain("Quality failures:");
     expect(formatRunResultAsText(qualityFailure)).toContain("Suggested next commands:");
     expect(formatRunResultAsText(qualityFailure)).not.toContain("aiq setup");
+    expect(formatRunResultAsText(metricFailure)).toContain("metric diagnostic from lizard");
+    expect(formatRunResultAsText(metricFailure)).toContain(
+      "Do not start broad refactors until stage 0 e2e passes",
+    );
+    expect(formatRunResultAsText(metricFailure)).toContain("Use direct purpose-revealing names");
+    expect(formatRunResultAsText(metricFailure)).toContain(
+      "no vague helper/manager/processor names",
+    );
     expect(formatRunResultAsText(setupFailure)).toContain("Setup issues:");
     expect(formatRunResultAsText(setupFailure)).toContain("aiq setup");
     expect(formatRunResultAsText(multiWordTool)).toContain("Go/go test");
