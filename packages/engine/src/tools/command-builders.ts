@@ -5,8 +5,12 @@ export interface JavaScriptTestArgsOptions {
   runner: "jest" | "vitest";
 }
 
-export function createPlaywrightTestArgs(): string[] {
-  return ["test", "--reporter=json"];
+export function createPlaywrightTestArgs(options: { configPath?: string } = {}): string[] {
+  return [
+    "test",
+    ...(options.configPath === undefined ? [] : ["--config", options.configPath]),
+    "--reporter=json",
+  ];
 }
 
 export function createDirectJavaScriptTestArgs(options: JavaScriptTestArgsOptions): string[] {
@@ -68,19 +72,31 @@ export function createPythonTestArgs(options: PythonTestArgsOptions): string[] {
 }
 
 export interface BiomeLintCommandOptions {
+  configPath?: string;
   files: string[];
 }
 
 export function createBiomeLintArgs(options: BiomeLintCommandOptions): string[] {
-  return ["lint", "--reporter=json", ...options.files];
+  return [
+    "lint",
+    ...(options.configPath === undefined ? [] : [`--config-path=${options.configPath}`]),
+    "--reporter=json",
+    ...options.files,
+  ];
 }
 
 export interface BiomeFormatCommandOptions {
+  configPath?: string;
   files: string[];
 }
 
 export function createBiomeFormatArgs(options: BiomeFormatCommandOptions): string[] {
-  return ["format", "--reporter=json", ...options.files];
+  return [
+    "format",
+    ...(options.configPath === undefined ? [] : [`--config-path=${options.configPath}`]),
+    "--reporter=json",
+    ...options.files,
+  ];
 }
 
 export interface ShellcheckCommandOptions {

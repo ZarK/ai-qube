@@ -19,8 +19,10 @@ import { capitalize, resolveDiagnosticFile } from "../src/parsers/utils.js";
 import { parseXmlAttributes } from "../src/parsers/xml.js";
 import { createRegistry } from "../src/registries.js";
 import {
+  createBiomeLintArgs,
   createDirectJavaScriptTestArgs,
   createJavaScriptTestArgs,
+  createPlaywrightTestArgs,
   createPythonTestArgs,
   createTerraformInitArgs,
   createTyCheckArgs,
@@ -81,6 +83,18 @@ describe("extracted helper regressions", () => {
       "-backend=false",
       "-input=false",
       "-no-color",
+    ]);
+  });
+
+  it("builds native config args for tools that accept explicit config paths", () => {
+    expect(
+      createBiomeLintArgs({ configPath: "/repo/biome.json", files: ["src/index.ts"] }),
+    ).toEqual(["lint", "--config-path=/repo/biome.json", "--reporter=json", "src/index.ts"]);
+    expect(createPlaywrightTestArgs({ configPath: "/repo/playwright.config.ts" })).toEqual([
+      "test",
+      "--config",
+      "/repo/playwright.config.ts",
+      "--reporter=json",
     ]);
   });
 

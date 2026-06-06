@@ -116,6 +116,7 @@ import { resolveProjectConcurrencyLimit } from "./runtime-tunables.js";
 import { ToolRunner } from "./tool-runner.js";
 import * as binaries from "./tools/binary-resolver.js";
 import * as commands from "./tools/command-builders.js";
+import { findNearestBiomeConfig } from "./tools/native-config.js";
 import { findNearestAnyConfig, pathExists } from "./utils/path-utils.js";
 
 const biomeExtensions = new Set([
@@ -1415,7 +1416,11 @@ async function runBiomeLintTask(
     return createNoopStageResult(task.stageId, "No Biome-supported files were selected for lint.");
   }
 
-  const args = commands.createBiomeLintArgs({ files });
+  const configPath = await findSharedNativeConfig(files, findNearestBiomeConfig);
+  const args = commands.createBiomeLintArgs({
+    ...(configPath === undefined ? {} : { configPath }),
+    files,
+  });
 
   try {
     const outcome = await runNodeTool(
@@ -1442,7 +1447,11 @@ async function runBiomeLintTask(
       durationMs: outcome.durationMs,
       notes:
         status === "passed"
-          ? ["Biome lint passed."]
+          ? [
+              configPath === undefined
+                ? "Biome lint passed."
+                : `Biome lint passed using ${configPath}.`,
+            ]
           : [
               `Biome reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
             ],
@@ -1482,7 +1491,11 @@ async function runBiomeFormatTask(
     );
   }
 
-  const args = commands.createBiomeFormatArgs({ files });
+  const configPath = await findSharedNativeConfig(files, findNearestBiomeConfig);
+  const args = commands.createBiomeFormatArgs({
+    ...(configPath === undefined ? {} : { configPath }),
+    files,
+  });
 
   try {
     const outcome = await runNodeTool(
@@ -1514,7 +1527,11 @@ async function runBiomeFormatTask(
       durationMs: outcome.durationMs,
       notes:
         status === "passed"
-          ? ["Biome format passed."]
+          ? [
+              configPath === undefined
+                ? "Biome format passed."
+                : `Biome format passed using ${configPath}.`,
+            ]
           : [
               `Biome reported ${diagnostics.length} formatting diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
             ],
@@ -3268,6 +3285,23 @@ function createProcessFailureDiagnostic(file: string, source: string, message: s
 
 function filterFiles(files: readonly string[], supportedExtensions: ReadonlySet<string>): string[] {
   return files.filter((file) => supportedExtensions.has(path.extname(file).toLowerCase()));
+}
+
+async function findSharedNativeConfig(
+  files: readonly string[],
+  findConfig: (file: string) => Promise<string | undefined>,
+): Promise<string | undefined> {
+  const configPaths = new Set<string>();
+
+  for (const file of files) {
+    const configPath = await findConfig(file);
+    if (configPath === undefined) {
+      return undefined;
+    }
+    configPaths.add(configPath);
+  }
+
+  return configPaths.size === 1 ? [...configPaths][0] : undefined;
 }
 
 function readProcessFailureMessage(

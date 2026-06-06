@@ -35,13 +35,22 @@ export async function findNearestAnyConfig(
   filePath: string,
   fileNames: readonly string[],
 ): Promise<string | undefined> {
+  const configPath = await findNearestAnyConfigPath(filePath, fileNames);
+  return configPath === undefined ? undefined : path.dirname(configPath);
+}
+
+export async function findNearestAnyConfigPath(
+  filePath: string,
+  fileNames: readonly string[],
+): Promise<string | undefined> {
   let currentDir = path.resolve(path.dirname(filePath));
   const root = path.parse(currentDir).root;
 
   while (true) {
     for (const fileName of fileNames) {
-      if (await pathExists(path.join(currentDir, fileName))) {
-        return currentDir;
+      const configPath = path.join(currentDir, fileName);
+      if (await pathExists(configPath)) {
+        return configPath;
       }
     }
 

@@ -17,6 +17,12 @@ import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import * as binaries from "../tools/binary-resolver.js";
 import * as commands from "../tools/command-builders.js";
+import {
+  findNearestLizardConfig,
+  findNearestPlaywrightConfig,
+  playwrightConfigNames,
+  readConfigFingerprint,
+} from "../tools/native-config.js";
 import { createJavaScriptTestCommand } from "../tools/node.js";
 import {
   type JavaScriptTestExecutionMode,
@@ -102,15 +108,6 @@ type JavaScriptProjectExecution = {
   };
   toolRun: ToolRunResult;
 };
-
-const playwrightConfigNames = [
-  "playwright.config.cjs",
-  "playwright.config.cts",
-  "playwright.config.js",
-  "playwright.config.mjs",
-  "playwright.config.mts",
-  "playwright.config.ts",
-];
 
 export async function discoverJavaScriptProjects(file: string): Promise<ProjectDescriptor[]> {
   const project = await createJavaScriptPackageProject(file);
@@ -862,8 +859,9 @@ async function resolveJavaScriptE2eRunner(
     };
   }
 
+  const configPath = await findNearestPlaywrightConfig(project.packageJsonPath);
   return {
-    args: commands.createPlaywrightTestArgs(),
+    args: commands.createPlaywrightTestArgs(configPath === undefined ? {} : { configPath }),
     command: playwrightBinary,
     kind: "playwright",
     name: "playwright",
@@ -1171,16 +1169,32 @@ async function createJavaScriptMetricsCacheKey(
   project: { files: string[]; packageJsonPath: string },
   manifestKey = createJavaScriptMetricsManifestKey(project),
 ): Promise<string> {
-  const fileEntries = await Promise.all(
-    [...project.files]
+  const [configFingerprint, fileEntries] = await Promise.all([
+    readJavaScriptMetricsConfigFingerprint(project.files),
+    Promise.all(
+      [...project.files]
+        .sort((left, right) => left.localeCompare(right))
+        .map(async (file) => {
+          const fileStats = await stat(file);
+          return `${file}@${fileStats.size}:${fileStats.mtimeMs}`;
+        }),
+    ),
+  ]);
+
+  return `${manifestKey}:${configFingerprint}:${fileEntries.join("|")}`;
+}
+
+async function readJavaScriptMetricsConfigFingerprint(files: readonly string[]): Promise<string> {
+  const fingerprints = await Promise.all(
+    [...files]
       .sort((left, right) => left.localeCompare(right))
       .map(async (file) => {
-        const fileStats = await stat(file);
-        return `${file}@${fileStats.size}:${fileStats.mtimeMs}`;
+        const configPath = await findNearestLizardConfig(file);
+        return readConfigFingerprint(configPath);
       }),
   );
 
-  return `${manifestKey}:${fileEntries.join("|")}`;
+  return [...new Set(fingerprints)].join("|");
 }
 
 async function runJavaScriptMetricsProjectTask(

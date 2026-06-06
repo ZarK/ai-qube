@@ -531,6 +531,65 @@ describe("engine runners", () => {
     });
   });
 
+  it("respects repository Biome config before linting", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-biome-native-config-"));
+    tempDirs.push(tempDir);
+
+    const sourceFile = path.join(tempDir, "index.ts");
+    await writeFile(
+      path.join(tempDir, "biome.json"),
+      `${JSON.stringify({ linter: { rules: { style: { noVar: "off" } } } }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(sourceFile, "var value = 1;\nexport { value };\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [sourceFile],
+        id: "test:1:lint-biome-native-config",
+        stageId: "lint",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.notes[0]).toContain(path.join(tempDir, "biome.json"));
+    expect(result.toolRuns[0]?.args).toContain(`--config-path=${path.join(tempDir, "biome.json")}`);
+  });
+
+  it("does not pass a Biome config when selected files do not share one", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-biome-partial-native-config-"));
+    tempDirs.push(tempDir);
+
+    const configuredDir = path.join(tempDir, "configured");
+    await mkdir(configuredDir, { recursive: true });
+    const configuredFile = path.join(configuredDir, "index.ts");
+    const defaultFile = path.join(tempDir, "index.ts");
+    await writeFile(
+      path.join(configuredDir, "biome.json"),
+      `${JSON.stringify({ linter: { rules: { style: { noVar: "off" } } } }, null, 2)}\n`,
+      "utf8",
+    );
+    await writeFile(configuredFile, "export const configured = 1;\n", "utf8");
+    await writeFile(defaultFile, "export const fallback = 1;\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 2,
+        files: [configuredFile, defaultFile],
+        id: "test:1:lint-biome-partial-native-config",
+        stageId: "lint",
+      },
+      process.cwd(),
+    );
+
+    expect(result.status).toBe("passed");
+    expect(result.diagnostics).toEqual([]);
+    expect(result.toolRuns[0]?.args.some((arg) => arg.startsWith("--config-path="))).toBe(false);
+  });
+
   it("runs TypeScript typecheck and parses real compiler diagnostics", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-tsc-runner-"));
     tempDirs.push(tempDir);
@@ -2361,6 +2420,52 @@ describe("engine runners", () => {
       "Reused cached JavaScript/TypeScript metrics",
     );
     expect(maintainabilityLizardRuns).toHaveLength(2);
+  });
+
+  it("invalidates cached JavaScript and TypeScript metrics when lizard config changes", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-js-ts-lizard-config-refresh-"));
+    tempDirs.push(tempDir);
+
+    const sourceFile = path.join(tempDir, "index.ts");
+    await writeFile(path.join(tempDir, "package.json"), '{"type":"module"}\n', "utf8");
+    await writeFile(sourceFile, "export const value = 1;\n", "utf8");
+
+    const firstComplexity = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [sourceFile],
+        id: "test:1:complexity-js-ts-lizard-config:first",
+        stageId: "complexity",
+      },
+      process.cwd(),
+    );
+
+    await writeFile(path.join(tempDir, ".lizard"), "", "utf8");
+
+    const secondComplexity = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [sourceFile],
+        id: "test:1:complexity-js-ts-lizard-config:second",
+        stageId: "complexity",
+      },
+      process.cwd(),
+    );
+
+    expect(firstComplexity.status).toBe("passed");
+    expect(firstComplexity.toolRuns[0]).toMatchObject({
+      cacheHit: false,
+      exitCode: 0,
+      status: "passed",
+      tool: "lizard",
+    });
+    expect(secondComplexity.status).toBe("passed");
+    expect(secondComplexity.toolRuns[0]).toMatchObject({
+      cacheHit: false,
+      exitCode: 0,
+      status: "passed",
+      tool: "lizard",
+    });
   });
 
   it("expands package.json selections to the actual JavaScript and TypeScript source count", async () => {
@@ -4836,6 +4941,54 @@ describe("engine runners", () => {
       });
       expect(secondComplexity.status).toBe("passed");
       expect(secondComplexity.notes[0]).toContain("Python complexity max:");
+      expect(secondComplexity.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+    },
+  );
+
+  it.skipIf(!hasPythonQualityToolchain)(
+    "invalidates cached Python metrics when Radon-compatible config changes",
+    async () => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-python-radon-config-refresh-"));
+      tempDirs.push(tempDir);
+
+      const metricsFile = path.join(tempDir, "metrics.py");
+      await writeFile(metricsFile, "value = 1\n", "utf8");
+
+      const firstComplexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:complexity-python-radon-config:first",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+
+      await writeFile(path.join(tempDir, "pyproject.toml"), "[tool.radon]\n", "utf8");
+
+      const secondComplexity = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [metricsFile],
+          id: "test:1:complexity-python-radon-config:second",
+          stageId: "complexity",
+        },
+        process.cwd(),
+      );
+
+      expect(firstComplexity.status).toBe("passed");
+      expect(firstComplexity.toolRuns[0]).toMatchObject({
+        cacheHit: false,
+        exitCode: 0,
+        status: "passed",
+        tool: "radon",
+      });
+      expect(secondComplexity.status).toBe("passed");
       expect(secondComplexity.toolRuns[0]).toMatchObject({
         cacheHit: false,
         exitCode: 0,

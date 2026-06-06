@@ -85,6 +85,8 @@ npx @tjalve/aiq doctor --verbose
 
 `doctor` checks config/progress state, detects project technologies, reports the stages that would run, and separates npm-bundled tools from external host tools. It exits non-zero when selected stages need missing required setup. Use `--verbose` to show exact binary paths and versions.
 
+AIQ uses repository-native tool configs by default. Existing Biome config, `tsconfig.json`, Vitest/Jest config or package test scripts, Playwright config or e2e/audit scripts, Ruff/Radon-compatible Python config, and metrics config files remain authoritative for their tools unless AIQ stage/tool selection explicitly narrows what runs.
+
 ## Common Remediation
 
 ```bash

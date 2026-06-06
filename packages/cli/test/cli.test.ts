@@ -421,6 +421,8 @@ describe("CLI foundation", () => {
     expect(packageReadme).toContain(
       "Metric stages enforce SLOC, complexity, maintainability, and readability defaults for source and test code.",
     );
+    expect(packageReadme).toContain("AIQ uses repository-native tool configs by default.");
+    expect(packageReadme).toContain("Existing Biome config, `tsconfig.json`, Vitest/Jest config");
     expect(packageReadme).toContain("Before broad refactoring, make stage `0` e2e pass.");
     expect(packageReadme).toContain("direct purpose-revealing names");
   });
@@ -536,6 +538,8 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
     expect(stdout.value).toContain("aiq setup gives agent-facing setup steps");
+    expect(stdout.value).toContain("AIQ uses repository-native tool configs by default");
+    expect(stdout.value).toContain("Vitest/Jest, Playwright, Ruff/Radon-compatible Python config");
     expect(stdout.value).toContain("aiq evidence emits structured AIQ quality evidence");
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("Metric remediation:");
@@ -1717,17 +1721,38 @@ describe("CLI foundation", () => {
       stdout,
     });
 
-    expect(exitCode).toBe(0);
+    expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
     const output = JSON.parse(stdout.value) as {
-      checks: Array<{ name: string; ok: boolean; source?: string }>;
+      checks: Array<{
+        detail?: string;
+        name: string;
+        ok: boolean;
+        required?: boolean;
+        source?: string;
+      }>;
       detectedTech: string[];
+      ok: boolean;
       stages: string[];
     };
+    expect(output.ok).toBe(false);
     expect(output.stages).toEqual(["e2e", "lint", "format", "typecheck"]);
     expect(output.detectedTech).toEqual(["TypeScript"]);
     expect(output.checks).toEqual(
       expect.arrayContaining([
+        expect.objectContaining({ name: "Biome native config", ok: true, source: "project" }),
+        expect.objectContaining({
+          name: "JS/TS e2e config",
+          ok: false,
+          required: true,
+          source: "project",
+        }),
+        expect.objectContaining({
+          name: "TypeScript project config",
+          ok: true,
+          required: true,
+          source: "project",
+        }),
         expect.objectContaining({ name: "Biome JS/TS lint/format tool", source: "bundled" }),
         expect.objectContaining({ name: "TypeScript compiler", source: "bundled" }),
       ]),
@@ -1737,11 +1762,11 @@ describe("CLI foundation", () => {
   it("accepts explicit doctor stage targeting flags", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-doctor-stage-targets-");
 
-    const cases: Array<{ args: string[]; stages: string[] }> = [
-      { args: ["--up-to", "3"], stages: ["e2e", "lint", "format", "typecheck"] },
-      { args: ["--only", "1"], stages: ["lint"] },
-      { args: ["--stage", "typecheck"], stages: ["typecheck"] },
-      { args: ["--profile", "standard"], stages: ["lint", "typecheck", "unit"] },
+    const cases: Array<{ args: string[]; exitCode: number; stages: string[] }> = [
+      { args: ["--up-to", "3"], exitCode: 1, stages: ["e2e", "lint", "format", "typecheck"] },
+      { args: ["--only", "1"], exitCode: 0, stages: ["lint"] },
+      { args: ["--stage", "typecheck"], exitCode: 0, stages: ["typecheck"] },
+      { args: ["--profile", "standard"], exitCode: 1, stages: ["lint", "typecheck", "unit"] },
     ];
 
     for (const testCase of cases) {
@@ -1757,7 +1782,7 @@ describe("CLI foundation", () => {
         },
       );
 
-      expect(exitCode).toBe(0);
+      expect(exitCode).toBe(testCase.exitCode);
       expect(stderr.value).toBe("");
       const output = JSON.parse(stdout.value) as { stages: string[] };
       expect(output.stages).toEqual(testCase.stages);
@@ -1889,6 +1914,38 @@ describe("CLI foundation", () => {
     } finally {
       process.env.PATH = originalPath;
     }
+  });
+
+  it("reports missing required native test config for selected JS/TS unit stages", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-setup-js-test-config-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "setup", "--stage", "unit", "--format", "json"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(1);
+    expect(stderr.value).toBe("");
+    const output = JSON.parse(stdout.value) as {
+      actions: Array<{ detail: string; name: string; required: boolean; status: string }>;
+      missingPrerequisites: Array<{ detail: string; name: string }>;
+      ok: boolean;
+    };
+    expect(output.ok).toBe(false);
+    expect(output.missingPrerequisites).toEqual([
+      expect.objectContaining({
+        detail: expect.stringContaining("Vitest/Jest config"),
+        name: "JS/TS test config",
+      }),
+    ]);
+    expect(output.actions.find((action) => action.name === "JS/TS test config")).toMatchObject({
+      required: true,
+      status: "missing",
+    });
   });
 
   it("ignores reference-only directories when detecting doctor setup requirements", async () => {

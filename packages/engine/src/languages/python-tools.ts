@@ -6,6 +6,7 @@ import * as parsers from "../parsers/index.js";
 import type { PythonMetricsFileMetrics } from "../parsers/python.js";
 import * as binaries from "../tools/binary-resolver.js";
 import * as commands from "../tools/command-builders.js";
+import { findNearestPythonQualityConfig, readConfigFingerprint } from "../tools/native-config.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { PythonRunnerRuntime } from "./contracts.js";
 
@@ -302,16 +303,32 @@ async function createPythonMetricsCacheKey(
   project: PythonProject,
   manifestKey = createPythonMetricsManifestKey(project),
 ): Promise<string> {
-  const fileEntries = await Promise.all(
-    [...project.files]
+  const [configFingerprint, fileEntries] = await Promise.all([
+    readPythonMetricsConfigFingerprint(project.files),
+    Promise.all(
+      [...project.files]
+        .sort((left, right) => left.localeCompare(right))
+        .map(async (file) => {
+          const fileStats = await stat(file);
+          return `${file}@${fileStats.size}:${fileStats.mtimeMs}`;
+        }),
+    ),
+  ]);
+
+  return `${manifestKey}:${configFingerprint}:${fileEntries.join("|")}`;
+}
+
+async function readPythonMetricsConfigFingerprint(files: readonly string[]): Promise<string> {
+  const fingerprints = await Promise.all(
+    [...files]
       .sort((left, right) => left.localeCompare(right))
       .map(async (file) => {
-        const fileStats = await stat(file);
-        return `${file}@${fileStats.size}:${fileStats.mtimeMs}`;
+        const configPath = await findNearestPythonQualityConfig(file);
+        return readConfigFingerprint(configPath);
       }),
   );
 
-  return `${manifestKey}:${fileEntries.join("|")}`;
+  return [...new Set(fingerprints)].join("|");
 }
 
 async function runPythonMetricsProjectTask(

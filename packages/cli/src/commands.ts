@@ -28,6 +28,7 @@ import {
   inferFirstRunProjects,
   writeFirstRunJsonPrelude,
 } from "./first-run.js";
+import { detectNativeConfigs, resolveDoctorNativeConfigChecks } from "./native-config.js";
 import {
   type DoctorCheckOutput,
   type DoctorCommandOutput,
@@ -620,13 +621,14 @@ async function createDoctorCommandOutput(
   parsed: ParsedArgs,
   io: CliIo,
 ): Promise<DoctorCommandOutput> {
-  const [resolvedConfig, loadedProgress, detectedLanguages] = await Promise.all([
+  const [resolvedConfig, loadedProgress, detectedLanguages, nativeConfigs] = await Promise.all([
     resolveCliConfig(parsed, io, {
       includeProgressStage: true,
       surface: "cli",
     }),
     loadAiqProgress(io.cwd),
     detectProjectLanguages(io.cwd),
+    detectNativeConfigs(io.cwd),
   ]);
   const externalRequirements = resolveDoctorToolRequirements(
     detectedLanguages,
@@ -675,6 +677,7 @@ async function createDoctorCommandOutput(
       name: "Progress state is valid",
       ok: true,
     },
+    ...resolveDoctorNativeConfigChecks(detectedLanguages, resolvedConfig.stages, nativeConfigs),
     ...prerequisiteChecks,
     ...bundledChecks,
   ];
@@ -744,6 +747,10 @@ function isToolSetupCheck(
 function resolveSetupActionStatus(
   check: DoctorCheckOutput & { source: "bundled" | "external" | "project" },
 ): SetupCommandOutput["actions"][number]["status"] {
+  if (!check.ok && check.required === true) {
+    return "missing";
+  }
+
   if (check.source === "bundled" || check.source === "project") {
     return "provided";
   }
