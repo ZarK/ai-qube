@@ -113,6 +113,10 @@ class MemoryInput {
   }
 }
 
+function countOccurrences(text: string, needle: string): number {
+  return text.split(needle).length - 1;
+}
+
 async function waitFor<T>(
   getValue: () => T | undefined,
   options: { intervalMs?: number; timeoutMs?: number } = {},
@@ -423,6 +427,9 @@ describe("CLI foundation", () => {
     );
     expect(packageReadme).toContain("AIQ uses repository-native tool configs by default.");
     expect(packageReadme).toContain("Existing Biome config, `tsconfig.json`, Vitest/Jest config");
+    expect(packageReadme).toContain("Default text output is compact");
+    expect(packageReadme).toContain("Use `--verbose` for run metadata");
+    expect(packageReadme).toContain("Use `--format json` for the complete machine-readable report");
     expect(packageReadme).toContain("Before broad refactoring, make stage `0` e2e pass.");
     expect(packageReadme).toContain("direct purpose-revealing names");
   });
@@ -536,6 +543,9 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--up-to <0-9>");
     expect(stdout.value).toContain("--verbose, -v");
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
+    expect(stdout.value).toContain("Default text output is compact");
+    expect(stdout.value).toContain("--verbose adds run metadata");
+    expect(stdout.value).toContain("--format json keeps the complete machine-readable report");
     expect(stdout.value).toContain("aiq doctor validates config/progress state");
     expect(stdout.value).toContain("aiq setup gives agent-facing setup steps");
     expect(stdout.value).toContain("AIQ uses repository-native tool configs by default");
@@ -759,7 +769,8 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Change stage: aiq config --set-stage <0-9>");
     expect(stdout.value).toContain("Prepare missing tools/config: aiq setup");
     expect(stdout.value).toContain("AIQ run");
-    expect(stdout.value).toContain("- lint: passed");
+    expect(stdout.value).toContain("Stages: 1 lint passed");
+    expect(stdout.value).toContain("Next: no action required.");
 
     const config = JSON.parse(
       await readFile(path.join(project.root, ".aiq", "aiq.config.json"), "utf8"),
@@ -1098,7 +1109,8 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ first run");
     expect(stdout.value).toContain("AIQ run");
-    expect(stdout.value).toContain("- typecheck: failed");
+    expect(stdout.value).toContain("3 typecheck failed");
+    expect(stdout.value).toContain("Next: aiq setup");
     expect(stdout.value).toContain("Quality failures:");
     expect(stdout.value).toContain("First-run diagnostics:");
     expect(stdout.value).toContain("Remediation: fix the listed diagnostics");
@@ -1234,7 +1246,9 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ run");
     expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("- typecheck: passed");
+    expect(stdout.value).toContain("Stages: 3 typecheck passed");
+    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).not.toContain("Artifacts:");
   });
 
   it("runs explicit target output with the run label", async () => {
@@ -1252,7 +1266,9 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ run");
     expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("- typecheck: passed");
+    expect(stdout.value).toContain("Stages: 3 typecheck passed");
+    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).not.toContain("Artifacts:");
   });
 
   it("runs explicit check output with the check label", async () => {
@@ -1270,7 +1286,9 @@ describe("CLI foundation", () => {
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ check");
     expect(stdout.value).toContain("Status: passed");
-    expect(stdout.value).toContain("- typecheck: passed");
+    expect(stdout.value).toContain("Stages: 3 typecheck passed");
+    expect(stdout.value).toContain("Next: no action required.");
+    expect(stdout.value).not.toContain("Artifacts:");
   });
 
   it("supports run --up-to stage shortcuts using the published stage ladder", async () => {
@@ -1430,6 +1448,8 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ run");
+    expect(stdout.value).toContain("Run:");
+    expect(stdout.value).toContain("Artifacts:");
     expect(stdout.value).toContain("Verbose tool details:");
     expect(stdout.value).toContain("- typecheck: tsc");
     expect(stdout.value).toContain("status=passed");
@@ -3550,15 +3570,14 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(1);
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ check");
-    expect(stdout.value).toContain("Not implemented: 0");
     expect(stdout.value).toContain("Status: failed");
-    expect(stdout.value).toContain(
-      `Artifacts: plan=${path.join(tempDir, "aiq.plan.json")}, report=${path.join(tempDir, "aiq.report.json")}`,
-    );
-    expect(stdout.value).toContain("- lint: failed");
-    expect(stdout.value).toContain("Biome reported");
-    expect(stdout.value).toContain("Quality failures:");
-    expect(stdout.value).toContain("Suggested next commands:");
+    expect(stdout.value).toContain("Stages: 1 lint failed");
+    expect(stdout.value).toContain("Files: 1; diagnostics:");
+    expect(stdout.value).toContain("Problems:");
+    expect(stdout.value).toContain("- Quality failures:");
+    expect(stdout.value).toContain("Next: aiq run <paths...> --only 1 --verbose");
+    expect(stdout.value).not.toContain("Run:");
+    expect(stdout.value).not.toContain("Artifacts:");
   });
 
   it("groups Python missing setup failures in text output", async () => {
@@ -3612,6 +3631,61 @@ describe("CLI foundation", () => {
       expect(stdout.value).toContain("[stage 5 sloc]");
       expect(stdout.value).toContain("lizard");
       expect(stdout.value).toContain("aiq setup");
+    } finally {
+      process.env.PATH = originalPath;
+    }
+  });
+
+  it("deduplicates repeated missing setup guidance in default text output", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-repeated-setup-"));
+    tempDirs.push(tempDir);
+    const projectRoots = [path.join(tempDir, "one"), path.join(tempDir, "two")];
+    for (const projectRoot of projectRoots) {
+      await mkdir(projectRoot, { recursive: true });
+      await writeFile(
+        path.join(projectRoot, "go.mod"),
+        "module example.com/aiq\n\ngo 1.22\n",
+        "utf8",
+      );
+      await writeFile(
+        path.join(projectRoot, "main.go"),
+        "package main\n\nfunc main() {}\n",
+        "utf8",
+      );
+    }
+
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+    const originalPath = process.env.PATH;
+    process.env.PATH = "";
+
+    try {
+      const exitCode = await runCli(
+        [
+          "node",
+          "aiq",
+          "run",
+          path.join("one", "main.go"),
+          path.join("two", "main.go"),
+          "--stage",
+          "sloc",
+        ],
+        {
+          cwd: tempDir,
+          stderr,
+          stdin: new MemoryInput(),
+          stdout,
+        },
+      );
+
+      expect(exitCode).toBe(1);
+      expect(stderr.value).toBe("");
+      expect(stdout.value).toContain("Status: failed");
+      expect(stdout.value).toContain("Problems:");
+      expect(stdout.value).toContain("Next: aiq setup");
+      expect(countOccurrences(stdout.value, "lizard was not detected")).toBeLessThanOrEqual(1);
+      expect(countOccurrences(stdout.value, "aiq setup")).toBeLessThanOrEqual(2);
+      expect(stdout.value).not.toContain("Artifacts:");
     } finally {
       process.env.PATH = originalPath;
     }
@@ -4905,7 +4979,7 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedFirstRun.stdout).toContain("AIQ first run");
       expect(packedFirstRun.stdout).toContain("Detected project: JavaScript/Node (package.json)");
       expect(packedFirstRun.stdout).toContain("AIQ run");
-      expect(packedFirstRun.stdout).toContain("- lint: passed");
+      expect(packedFirstRun.stdout).toContain("Stages: 1 lint passed");
       await access(path.join(packedFixture.root, ".aiq", "aiq.config.json"));
       await access(path.join(packedFixture.root, ".aiq", "progress.json"));
 
@@ -4969,7 +5043,7 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedOnlyRun.exitCode).toBe(0);
       expect(packedOnlyRun.stderr).not.toContain("ReferenceError");
       expect(packedOnlyRun.stdout).toContain("AIQ run");
-      expect(packedOnlyRun.stdout).toContain("- lint: passed");
+      expect(packedOnlyRun.stdout).toContain("Stages: 1 lint passed");
       expect(packedOnlyRun.stdout).not.toContain("AIQ check");
 
       const packedImplicitRun = await runNpmCommand(
@@ -4979,7 +5053,7 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedImplicitRun.exitCode).toBe(0);
       expect(packedImplicitRun.stderr).not.toContain("ReferenceError");
       expect(packedImplicitRun.stdout).toContain("AIQ run");
-      expect(packedImplicitRun.stdout).toContain("- lint: passed");
+      expect(packedImplicitRun.stdout).toContain("Stages: 1 lint passed");
       expect(packedImplicitRun.stdout).not.toContain("AIQ check");
 
       const packedRunJson = await runNpmCommand(

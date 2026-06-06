@@ -189,12 +189,13 @@ export function formatRunResultOutput(
       : `${JSON.stringify({ ...result, workflow: options.workflow }, null, 2)}\n`;
   }
 
+  const detail = options.verbose === true;
   const baseOutput =
     displayMode === undefined || displayMode === result.mode
-      ? formatRunResultAsText(result)
-      : formatRunResultAsText(result).replace(
-          new RegExp(`^AIQ ${escapeRegExp(result.mode)}\\n`, "u"),
-          `AIQ ${displayMode}\n`,
+      ? formatRunResultAsText(result, { detail })
+      : formatRunResultAsText(result, { detail }).replace(
+          new RegExp(`^AIQ ${escapeRegExp(result.mode)}(?=\\n)`, "u"),
+          `AIQ ${displayMode}`,
         );
 
   const parts = [

@@ -28,6 +28,8 @@ npx @tjalve/aiq evidence --format json
 Use `aiq` for the full configured project gate. Use `run <paths...>` for explicit files and subtrees. Use `plan <paths...>` to see what would run for explicit targets. `--dry-run` prints the resolved run plan without executing tools or writing artifacts.
 `evidence` reads the latest AIQ report and emits structured JSON that orchestration tools can store as gate evidence or parse as trusted quality state.
 
+Default text output is compact: status, selected stage results, diagnostics summary, and the next action. Use `--verbose` for run metadata, artifact paths, stage notes, and command/tool details. Use `--format json` for the complete machine-readable report.
+
 ## Package Surface
 
 `@tjalve/aiq` is the canonical package for standalone users and adapters. It ships the `aiq` and `quality` binaries from the top-level export, and `@tjalve/aiq/api` exposes the model, config, engine, reporter, and benchmark APIs used by the hook, MCP, LSP, GitHub Action, and OpenCode packages.

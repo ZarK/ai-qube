@@ -161,7 +161,9 @@ Stage selection:
 
 Operational checks:
   --dry-run prints the run plan without executing tools or writing artifacts.
-  --verbose adds command/tool details to text run output.
+  Default text output is compact: status, selected stage results, diagnostics summary, and the next action.
+  --verbose adds run metadata, artifact paths, stage notes, and command/tool details to text output.
+  --format json keeps the complete machine-readable report for automation.
   aiq doctor validates config/progress state, uses the same stage selection as run, and reports detected tech plus required, installed, optional, bundled, and project-managed tools.
   aiq setup gives agent-facing setup steps for the same selected stages and detected technologies. AIQ reports setup needs; it does not install tools or mutate the host environment.
   AIQ uses repository-native tool configs by default, including Biome, tsconfig, Vitest/Jest, Playwright, Ruff/Radon-compatible Python config, and metrics config files when those tools expose them.

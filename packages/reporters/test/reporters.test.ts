@@ -140,7 +140,10 @@ describe("reporters", () => {
     expect(formatRunResultAsText(missingPython)).toContain("aiq setup");
     expect(formatRunResultAsText(unsupportedJs)).toContain("Unsupported projects:");
     expect(formatRunResultAsText(qualityFailure)).toContain("Quality failures:");
-    expect(formatRunResultAsText(qualityFailure)).toContain("Suggested next commands:");
+    expect(formatRunResultAsText(qualityFailure)).toContain(
+      "Next: aiq run <paths...> --only 1 --verbose",
+    );
+    expect(formatRunResultAsText(qualityFailure)).not.toContain("Artifacts:");
     expect(formatRunResultAsText(qualityFailure)).not.toContain("aiq setup");
     expect(formatRunResultAsText(metricFailure)).toContain("metric diagnostic from lizard");
     expect(formatRunResultAsText(metricFailure)).toContain(
@@ -153,6 +156,23 @@ describe("reporters", () => {
     expect(formatRunResultAsText(setupFailure)).toContain("Setup issues:");
     expect(formatRunResultAsText(setupFailure)).toContain("aiq setup");
     expect(formatRunResultAsText(multiWordTool)).toContain("Go/go test");
+  });
+
+  it("keeps detailed human output available for verbose callers", () => {
+    const workspaceRoot = path.join(path.sep, "repo");
+    const result = createRunResult({
+      cwd: workspaceRoot,
+      diagnostics: [],
+      stageId: "typecheck",
+      status: "passed",
+    });
+
+    const output = formatRunResultAsText(result, { detail: true });
+
+    expect(output).toContain("Run: run_123");
+    expect(output).toContain("Context: github");
+    expect(output).toContain("Artifacts:");
+    expect(output).toContain("- typecheck: passed");
   });
 });
 
