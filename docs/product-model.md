@@ -13,6 +13,14 @@
 
 `aib` is not the execution system. It does not implement the planned project and it does not own review, merge, quality, or continuation loops. Those belong to other QUBE packages.
 
+`aib` is also not primarily a CLI for humans to drive directly. It is a CLI for AI agents working with humans. The normal interaction is:
+
+```text
+Human describes intent -> Agent calls aib -> aib returns next action/questions -> Agent asks the human -> Agent records answers in aib -> aib advances the planning state
+```
+
+Human-readable help and diagnostics still matter, but they support setup, debugging, and transparency. The main product contract is the agent-facing state machine and JSON protocol.
+
 ## QUBE Boundary
 
 | Package | Responsibility |
@@ -24,6 +32,12 @@
 | `qube` | Future top-level composition over product packages, providers, and agent-tool adapters. |
 
 ## Product Principles
+
+### Agent-Mediated UX
+
+The human should not have to learn `aib` commands, phases, schemas, or state files. The agent is the operator of the CLI. `aib` guides the agent so the agent can guide the human.
+
+CLI commands should therefore optimize for deterministic JSON, explicit next actions, durable state updates, and clear handoff instructions. Human-facing output should explain what happened, not become the primary workflow.
 
 ### Progressive Clarification
 
@@ -49,6 +63,7 @@ For `aib` itself, this repository uses regular planning documents. The product m
 
 ## Non-Goals
 
+- `aib` is not designed as a wizard that a human is expected to operate directly from the terminal.
 - `aib` does not execute generated work items.
 - `aib` does not run quality gates.
 - `aib` does not decide that GitHub Issues are the only work item system.
@@ -67,4 +82,3 @@ For `aib` itself, this repository uses regular planning documents. The product m
 | Work item drafts | Work item phase | Provider-neutral executable units. |
 | Provider work items | Work item phase | GitHub Issues, GitLab issues, Jira tickets, Linear issues, markdown exports, or another configured rendering. |
 | Agent assets | Finalization | Host-specific prompts, commands, rules, or instructions that teach agents how to drive `aib` or later `aie`. |
-

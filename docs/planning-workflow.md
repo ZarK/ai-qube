@@ -2,6 +2,14 @@
 
 `aib` should guide projects through phases. Each phase has a different depth of questions and a different output.
 
+The primary operator is an AI agent, not the human. The human should experience the workflow as a conversation with the agent. The agent uses `aib` as a structured planning engine:
+
+1. agent calls `aib next --json`
+2. `aib` returns the next action or question batch
+3. agent asks the human in natural language
+4. agent records the answer with `aib`
+5. `aib` updates planning state and returns the next step
+
 ## Phase 1: Project Clarification
 
 Goal: help the user identify what the project is.
@@ -17,7 +25,7 @@ The first questions should stay high level:
 - Is this a new project, an existing repo, or a non-code effort?
 - Is there a target platform, runtime, organization, or audience constraint?
 
-`aib` should ask in small batches, usually 3-5 questions. It should accept rough answers, partial answers, "default", or "not sure".
+`aib` should return small batches for the agent to ask, usually 3-5 questions. It should accept rough answers, partial answers, "default", or "not sure".
 
 ### Output
 
@@ -176,4 +184,3 @@ This phase teaches agents how to use the planning and execution tools. It should
 - host-specific commands/prompts/rules
 - optional workflow docs
 - clear split between `aib` planning and `aie` execution
-

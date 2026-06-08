@@ -16,5 +16,6 @@ The intent is to keep `aib` clear enough to implement while avoiding confusing r
 
 `aib` turns a vague idea into a clarified project definition, milestone plans, and durable work items that an execution agent can safely act on later.
 
-It should help the user discover what the project is before it asks how the project should be engineered.
+`aib` is not primarily a human-facing interactive CLI. It is an agent-facing planning CLI. The human talks to an AI agent; the agent calls `aib` for structured next actions, asks the human the returned questions, records the answers, and lets `aib` guide the bootstrap process forward.
 
+It should help the user discover what the project is before it asks how the project should be engineered.

@@ -17,6 +17,8 @@ Key clarification:
 
 The package foundation must not expose placeholder runtime commands. Commands should either work, clearly dry-run, or be absent.
 
+The CLI is agent-operated. Human-readable help is required for transparency, but command design should prioritize agent-facing JSON contracts over a human terminal wizard.
+
 ## Bucket 2: Durable Planning State
 
 Existing issue: `#2 M2: Bootstrap state machine and agent JSON protocol`
@@ -30,6 +32,8 @@ Purpose:
 Key clarification:
 
 The state machine should model phases, but it should not force deep technical questions during initial project clarification.
+
+The state machine should return next actions for the agent to perform with the human, not attempt to own the whole conversation itself.
 
 ## Bucket 3: Progressive Discovery
 
@@ -122,7 +126,7 @@ Purpose:
 
 Key clarification:
 
-The agent asks and reads. `aib` tracks state and phase. Execution belongs to `aie`.
+The human talks to the agent. The agent asks and reads. `aib` tracks state and phase. Execution belongs to `aie`.
 
 ## Bucket 9: Release Readiness
 
@@ -138,4 +142,3 @@ Purpose:
 Key clarification:
 
 The first release should prove a narrow GitHub/markdown and Codex/OpenCode path while preserving the provider/tool-agnostic architecture.
-

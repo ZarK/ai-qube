@@ -6,6 +6,8 @@
 
 The agent owns conversation, file reading, and judgment. `aib` owns durable state, phase transitions, artifact paths, validation, and machine-readable next actions.
 
+This makes `aib` an agent-operated CLI, not a human-operated wizard. Humans should be able to inspect and debug it, but the normal UX is mediated through an agent.
+
 ```text
 +--------+       +--------------+       +-------------------+
 | Human  | <-->  | Agent Host   | <-->  | aib CLI / State   |
@@ -69,6 +71,19 @@ The important product rule is that `aib next --json` tells the agent what kind o
 - stop because a human decision is required
 
 Human-readable output can exist, but automation output must be valid JSON without decorative text on stdout.
+
+### Human Interaction Contract
+
+`aib` should never assume it can question the human directly. It returns structured instructions for the agent:
+
+- what to ask
+- why it matters
+- what answer shape is expected
+- which state fields the answer updates
+- whether a recommended default exists
+- when the agent should stop and wait for the human
+
+This keeps the product usable from Codex, OpenCode, Claude Code, Gemini CLI, or a future Umpire loop without binding the core workflow to one terminal UI.
 
 ## Provider Model
 

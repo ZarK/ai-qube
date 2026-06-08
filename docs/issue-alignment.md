@@ -17,6 +17,17 @@ This document maps current GitHub issues to the product direction captured in th
 
 ## Added Issue Coverage
 
+### Agent-Mediated CLI Contract
+
+Covered by issues `#2`, `#7`, and `#13`, but this must remain explicit across implementation:
+
+- `aib` is an agent-operated CLI, not a human-operated terminal wizard
+- the human talks to the agent
+- the agent uses `aib next --json` and related commands to know what to ask, inspect, write, or render
+- `aib` owns durable planning state and phase transitions
+- the agent owns conversation, context gathering, and natural-language interaction with the human
+- human-readable CLI output exists for setup/debugging/transparency, not as the main UX
+
 ### Progressive Question Depth
 
 Created issue: `#9 M3: Progressive question depth and phase-aware discovery`
