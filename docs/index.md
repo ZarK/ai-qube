@@ -10,6 +10,7 @@ The intent is to keep `aib` clear enough to implement while avoiding confusing r
 - [Planning Workflow](planning-workflow.md) - the staged idea-to-work-item process.
 - [Architecture](architecture.md) - package, state, provider, and agent-host boundaries.
 - [Core Contracts](contracts.md) - neutral planning state, work item drafts, capabilities, and render adapter boundaries.
+- [Agent JSON Protocol](protocol.md) - state and next-action envelopes used by agents.
 - [Work Buckets](work-buckets.md) - implementation buckets aligned to the existing GitHub issue queue.
 - [Issue Alignment](issue-alignment.md) - mapping between the current issues and missing work.
 

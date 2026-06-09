@@ -6,7 +6,7 @@ import { loadAibConfig } from "./config.js";
 import { createInitPlan } from "./init.js";
 import { answerCommand, bootstrapRegistry, initCommand, nextCommand, planningTopic, statusCommand } from "./metadata.js";
 import { packageJson } from "./package.js";
-import { applyAnswer, computeNextAction, readBootstrapState, writeBootstrapState } from "./state.js";
+import { AnswerError, applyAnswer, computeNextAction, isAgentHost, readBootstrapState, writeBootstrapState } from "./state.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -19,18 +19,32 @@ export const aibCli = createCli({
   topics: [createTopicCommand(planningTopic)],
   commands: [
     createCommand(initCommand, ({ args, flags }) => {
+      let loadedConfig;
       try {
-        const loadedConfig = loadAibConfig(typeof flags.config === "string" ? flags.config : undefined);
-        const agentHost = typeof flags.agent === "string" && isAgentHost(flags.agent) ? flags.agent : undefined;
-        const config = agentHost
-          ? { ...loadedConfig.config, agent: { ...loadedConfig.config.agent, host: agentHost } }
-          : loadedConfig.config;
-        const plan = createInitPlan({
-          target: typeof args.target === "string" ? args.target : undefined,
-          loadedConfig: { ...loadedConfig, config },
-          idea: typeof flags.idea === "string" ? flags.idea : undefined
+        loadedConfig = loadAibConfig(typeof flags.config === "string" ? flags.config : undefined);
+      } catch (error) {
+        throw createCliError({
+          command: "init",
+          kind: "init-config-invalid",
+          operation: "load bootstrap config",
+          likelyCause: error instanceof Error ? error.message : "The bootstrap config could not be parsed.",
+          suggestedNextAction: "Provide a valid aib.config.json with version 1 or omit --config to use defaults.",
+          category: "validation",
+          exitCode: 3
         });
+      }
 
+      const agentHost = typeof flags.agent === "string" && isAgentHost(flags.agent) ? flags.agent : undefined;
+      const config = agentHost
+        ? { ...loadedConfig.config, agent: { ...loadedConfig.config.agent, host: agentHost } }
+        : loadedConfig.config;
+      const plan = createInitPlan({
+        target: typeof args.target === "string" ? args.target : undefined,
+        loadedConfig: { ...loadedConfig, config },
+        idea: typeof flags.idea === "string" ? flags.idea : undefined
+      });
+
+      try {
         if (flags["dry-run"] !== true) {
           const written = writeBootstrapState(plan.sessionPath, plan.state);
           const nextAction = computeNextAction(written.state);
@@ -65,11 +79,11 @@ export const aibCli = createCli({
       } catch (error) {
         throw createCliError({
           command: "init",
-          kind: "init-config-invalid",
-          operation: "load bootstrap config",
-          likelyCause: error instanceof Error ? error.message : "The bootstrap config could not be parsed.",
-          suggestedNextAction: "Provide a valid aib.config.json with version 1 or omit --config to use defaults.",
-          category: "validation",
+          kind: "init-write-failed",
+          operation: "write bootstrap state",
+          likelyCause: error instanceof Error ? error.message : "The bootstrap state file could not be written.",
+          suggestedNextAction: "Check filesystem permissions and the target path, then rerun aib init --json.",
+          category: "runtime",
           exitCode: 3
         });
       }
@@ -146,6 +160,7 @@ export const aibCli = createCli({
           human: `Recorded answer in ${written.statePath}.\nNext action: ${nextAction.summary}\n`
         };
       } catch (error) {
+        if (error instanceof AnswerError) throw answerError(error);
         throw stateError("answer", error);
       }
     }),
@@ -168,10 +183,6 @@ export async function runAibCli(input: readonly string[]): Promise<number> {
   return result.exitCode;
 }
 
-function isAgentHost(value: string): value is "codex" | "opencode" | "claude-code" | "gemini" | "other" {
-  return value === "codex" || value === "opencode" || value === "claude-code" || value === "gemini" || value === "other";
-}
-
 function stateError(command: string, error: unknown): ReturnType<typeof createCliError> {
   return createCliError({
     command,
@@ -179,6 +190,20 @@ function stateError(command: string, error: unknown): ReturnType<typeof createCl
     operation: `load bootstrap state for ${command}`,
     likelyCause: error instanceof Error ? error.message : "The bootstrap state could not be read or validated.",
     suggestedNextAction: "Run aib init --idea \"...\" --json to create fresh state, or fix the state file path passed with --state.",
+    category: "validation",
+    exitCode: 3
+  });
+}
+
+function answerError(error: AnswerError): ReturnType<typeof createCliError> {
+  return createCliError({
+    command: "answer",
+    kind: error.kind,
+    operation: "record bootstrap answer",
+    likelyCause: error.message,
+    suggestedNextAction: error.kind === "answer-transition-invalid"
+      ? "Run aib status --json and follow the next action for the current phase instead of recording an answer."
+      : "Use a field returned by aib next --json and provide a non-empty answer value.",
     category: "validation",
     exitCode: 3
   });

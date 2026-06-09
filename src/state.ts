@@ -5,6 +5,7 @@ import type { AgentHostKind, AgentNextAction, PlanningState } from "./contracts.
 import { createInitialPlanningState } from "./contracts.js";
 
 export type BootstrapPhase = "discovery" | "spec_drafting" | "spec_acceptance" | "milestone_generation" | "work_item_generation" | "finalized" | "blocked";
+export type AnswerErrorKind = "answer-field-invalid" | "answer-value-invalid" | "answer-transition-invalid";
 
 export interface DiscoveryQuestion {
   readonly id: string;
@@ -45,6 +46,16 @@ export interface ComputedNextAction extends AgentNextAction {
   readonly missingDecisions: readonly string[];
   readonly nextCommand?: string;
   readonly stopCondition?: string;
+}
+
+export class AnswerError extends TypeError {
+  readonly kind: AnswerErrorKind;
+
+  constructor(kind: AnswerErrorKind, message: string) {
+    super(message);
+    this.name = "AnswerError";
+    this.kind = kind;
+  }
 }
 
 const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
@@ -151,8 +162,8 @@ export function parseBootstrapState(value: unknown): BootstrapState {
   if (!isPhase(value.phase)) throw new TypeError("bootstrap state phase is missing or invalid.");
   const project = requireRecord(value.project, "project");
   const agent = requireRecord(value.agent, "agent");
-  const artifacts = requireRecord(value.artifacts, "artifacts") as unknown as BootstrapState["artifacts"];
-  const planning = requireRecord(value.planning, "planning") as unknown as PlanningState;
+  const artifacts = parseArtifacts(value.artifacts);
+  const planning = parsePlanning(value.planning);
   const assumptions = Array.isArray(value.assumptions) ? value.assumptions.filter((item): item is string => typeof item === "string") : [];
   const questionBudget = agent.questionBudget;
   if (typeof questionBudget !== "number" || !Number.isInteger(questionBudget) || questionBudget < 1 || questionBudget > 8) {
@@ -174,8 +185,40 @@ export function parseBootstrapState(value: unknown): BootstrapState {
 
 export function computeNextAction(state: BootstrapState): ComputedNextAction {
   if (state.phase !== "discovery") {
+    if (state.phase === "finalized" || state.phase === "blocked") {
+      return {
+        kind: "stop",
+        actor: "agent",
+        summary: state.phase === "finalized" ? "Bootstrap planning is finalized." : "Bootstrap planning is blocked.",
+        missingDecisions: [],
+        nextCommand: "aib status --json",
+        stopCondition: state.phase === "blocked" ? "Stop until the blocker is resolved in bootstrap state." : "Stop because no further bootstrap action is required."
+      };
+    }
+    if (state.phase === "spec_drafting") {
+      return {
+        kind: "draft_spec",
+        actor: "agent",
+        summary: "Draft the project spec from recorded discovery state.",
+        missingDecisions: [],
+        stateFields: ["artifacts.spec"],
+        nextCommand: "aib status --json",
+        stopCondition: "Stop after drafting or updating the spec artifact, then record the phase change in state."
+      };
+    }
+    if (state.phase === "spec_acceptance") {
+      return {
+        kind: "request_acceptance",
+        actor: "agent",
+        summary: "Ask the human to review and accept the current spec sections.",
+        missingDecisions: [],
+        stateFields: ["artifacts.spec"],
+        nextCommand: "aib status --json",
+        stopCondition: "Stop after requesting spec acceptance and wait for the human's decision."
+      };
+    }
     return {
-      kind: state.phase === "finalized" ? "stop" : "generate_artifacts",
+      kind: "generate_artifacts",
       actor: "agent",
       summary: `Continue ${state.phase}.`,
       missingDecisions: [],
@@ -191,7 +234,8 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
       summary: "Discovery has enough high-level project context. Draft the initial spec next.",
       missingDecisions: [],
       stateFields: ["artifacts.spec"],
-      nextCommand: "aib spec draft --json"
+      nextCommand: "aib status --json",
+      stopCondition: "Stop after drafting the spec artifact, then update bootstrap state before continuing."
     };
   }
 
@@ -210,10 +254,13 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
 }
 
 export function applyAnswer(state: BootstrapState, field: string, value: string, assumption: boolean): BootstrapState {
+  if (state.phase !== "discovery") {
+    throw new AnswerError("answer-transition-invalid", `answer can only update discovery state; current phase is ${state.phase}.`);
+  }
   const normalized = value.trim();
-  if (normalized.length === 0) throw new TypeError("answer value must not be empty.");
+  if (normalized.length === 0) throw new AnswerError("answer-value-invalid", "answer value must not be empty.");
   const question = DISCOVERY_QUESTIONS.find((candidate) => candidate.id === field);
-  if (!question) throw new TypeError(`unsupported answer field: ${field}.`);
+  if (!question) throw new AnswerError("answer-field-invalid", `unsupported answer field: ${field}.`);
   const key = field.slice("project.".length);
   const project = { ...state.project, [key]: normalized };
   const planning = createInitialPlanningState({
@@ -241,6 +288,10 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
   };
 }
 
+export function isAgentHost(value: string): value is AgentHostKind {
+  return value === "codex" || value === "opencode" || value === "claude-code" || value === "gemini" || value === "other";
+}
+
 export function missingDiscoveryFields(state: BootstrapState): readonly DiscoveryQuestion[] {
   return DISCOVERY_QUESTIONS.filter((question) => {
     const key = question.id.slice("project.".length) as keyof BootstrapState["project"];
@@ -261,6 +312,67 @@ function parseProject(value: Readonly<Record<string, unknown>>): BootstrapState[
   };
 }
 
+function parseArtifacts(value: unknown, field = "artifacts"): BootstrapState["artifacts"] {
+  const record = requireRecord(value, field);
+  const spec = parseArtifact(record.spec, `${field}.spec`);
+  const milestones = parseArtifactArray(record.milestones, `${field}.milestones`);
+  const workItems = parseArtifactArray(record.workItems, `${field}.workItems`);
+  return { spec, milestones, workItems };
+}
+
+function parsePlanning(value: unknown): PlanningState {
+  const record = requireRecord(value, "planning");
+  const project = requireRecord(record.project, "planning.project");
+  const artifacts = parseArtifacts(record.artifacts, "planning.artifacts");
+  const nextAction = requireRecord(record.nextAction, "planning.nextAction");
+  if (record.version !== 1) throw new TypeError("bootstrap state planning.version must be 1.");
+  if (typeof nextAction.kind !== "string") throw new TypeError("bootstrap state planning.nextAction.kind must be a string.");
+  if (nextAction.actor !== "agent") throw new TypeError("bootstrap state planning.nextAction.actor must be agent.");
+  if (typeof nextAction.summary !== "string") throw new TypeError("bootstrap state planning.nextAction.summary must be a string.");
+  return {
+    version: 1,
+    project: {
+      ...(typeof project.intent === "string" ? { intent: project.intent } : {}),
+      ...(typeof project.name === "string" ? { name: project.name } : {}),
+      ...(typeof project.type === "string" ? { type: project.type } : {})
+    },
+    artifacts,
+    workItemDrafts: Array.isArray(record.workItemDrafts) ? record.workItemDrafts as PlanningState["workItemDrafts"] : [],
+    providers: Array.isArray(record.providers) ? record.providers as PlanningState["providers"] : [],
+    agentHosts: Array.isArray(record.agentHosts) ? record.agentHosts as PlanningState["agentHosts"] : [],
+    nextAction: {
+      kind: nextAction.kind as PlanningState["nextAction"]["kind"],
+      actor: "agent",
+      summary: nextAction.summary,
+      ...(typeof nextAction.questionBudget === "number" ? { questionBudget: nextAction.questionBudget } : {}),
+      ...(Array.isArray(nextAction.stateFields) ? { stateFields: nextAction.stateFields.filter((item): item is string => typeof item === "string") } : {})
+    }
+  };
+}
+
+function parseArtifact(value: unknown, field: string): BootstrapState["artifacts"]["spec"] {
+  const record = requireRecord(value, field);
+  if (typeof record.path !== "string" || record.path.trim().length === 0) {
+    throw new TypeError(`bootstrap state ${field}.path must be a non-empty string.`);
+  }
+  if (!isArtifactStatus(record.status)) {
+    throw new TypeError(`bootstrap state ${field}.status is missing or invalid.`);
+  }
+  return {
+    path: record.path,
+    status: record.status
+  };
+}
+
+function parseArtifactArray(value: unknown, field: string): BootstrapState["artifacts"]["milestones"] {
+  if (!Array.isArray(value)) throw new TypeError(`bootstrap state ${field} must be an array.`);
+  return value.map((item, index) => parseArtifact(item, `${field}[${index}]`));
+}
+
+function isArtifactStatus(value: unknown): value is BootstrapState["artifacts"]["spec"]["status"] {
+  return value === "missing" || value === "draft" || value === "ready" || value === "accepted" || value === "blocked" || value === "unknown";
+}
+
 function requireRecord(value: unknown, field: string): Readonly<Record<string, unknown>> {
   if (!isRecord(value)) throw new TypeError(`bootstrap state ${field} must be an object.`);
   return value;
@@ -272,8 +384,4 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function isPhase(value: unknown): value is BootstrapPhase {
   return value === "discovery" || value === "spec_drafting" || value === "spec_acceptance" || value === "milestone_generation" || value === "work_item_generation" || value === "finalized" || value === "blocked";
-}
-
-function isAgentHost(value: string): value is AgentHostKind {
-  return value === "codex" || value === "opencode" || value === "claude-code" || value === "gemini" || value === "other";
 }

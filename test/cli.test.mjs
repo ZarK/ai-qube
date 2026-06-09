@@ -38,6 +38,7 @@ test("schema exposes dry-run and mutation metadata", () => {
   assert.equal(init.dryRun.supported, true);
   assert.deepEqual(init.mutation.categories, ["local-config", "local-files"]);
   assert.equal(init.supplyChain.sensitive, false);
+  assert.ok(init.errors.some((error) => error.kind === "init-write-failed"));
 });
 
 test("init dry-run returns agent-facing next action without mutating", () => {
@@ -144,6 +145,130 @@ test("answer records human input and status reports missing decisions", async ()
   assert.equal(status.phase, "discovery");
   assert.ok(!status.missingDecisions.includes("project.audience"));
   assert.ok(status.missingDecisions.includes("project.coreJob"));
+});
+
+test("answer dry-run and assumptions do not mutate persisted state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-answer-dry-run-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const answer = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "project.audience",
+    "--value",
+    "Policy analysts",
+    "--assumption",
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(answer.mutated, false);
+  assert.equal(answer.dryRun, true);
+  assert.deepEqual(answer.state.assumptions, ["project.audience: Policy analysts"]);
+
+  const stateFile = JSON.parse(await readFile(init.statePath, "utf8"));
+  assert.equal(stateFile.project.audience, undefined);
+  assert.deepEqual(stateFile.assumptions, []);
+});
+
+test("answer validation errors are specific and actionable", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-answer-invalid-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+
+  const unknownField = runAib(["answer", "--state", init.statePath, "--field", "project.schema", "--value", "x", "--json"]);
+  assert.notEqual(unknownField.status, 0);
+  assert.equal(JSON.parse(unknownField.stdout).error.kind, "answer-field-invalid");
+
+  const blankValue = runAib(["answer", "--state", init.statePath, "--field", "project.audience", "--value", "   ", "--json"]);
+  assert.notEqual(blankValue.status, 0);
+  assert.equal(JSON.parse(blankValue.stdout).error.kind, "answer-value-invalid");
+});
+
+test("answer rejects terminal and non-discovery phases", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-answer-phase-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.phase = "finalized";
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const result = runAib(["answer", "--state", init.statePath, "--field", "project.audience", "--value", "Policy analysts", "--json"]);
+  assert.notEqual(result.status, 0);
+  assert.equal(JSON.parse(result.stdout).error.kind, "answer-transition-invalid");
+});
+
+test("phase next actions stop or request the correct agent action", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-phase-next-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+
+  state.phase = "blocked";
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const blocked = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(blocked.nextAction.kind, "stop");
+  assert.match(blocked.nextAction.stopCondition, /blocker/i);
+
+  state.phase = "spec_acceptance";
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const acceptance = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(acceptance.nextAction.kind, "request_acceptance");
+
+  state.phase = "discovery";
+  state.project = {
+    intent: "Build a research brief",
+    audience: "Policy analysts",
+    coreJob: "Summarize evidence",
+    successNarrative: "Clear answer",
+    scope: "First brief",
+    nonGoals: "No publication workflow",
+    shape: "document set"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const draft = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(draft.nextAction.kind, "draft_spec");
+  assert.equal(draft.nextAction.nextCommand, "aib status --json");
+});
+
+test("state validation checks question budget bounds and artifact structure", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-state-validation-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+
+  state.agent.questionBudget = 1;
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const one = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(one.nextAction.questions.length, 1);
+
+  state.agent.questionBudget = 8;
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const eight = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.ok(eight.nextAction.questions.length <= 8);
+
+  state.agent.questionBudget = 0;
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const zero = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(zero.status, 0);
+  assert.equal(JSON.parse(zero.stdout).error.kind, "state-invalid");
+
+  state.agent.questionBudget = 9;
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const nine = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(nine.status, 0);
+  assert.equal(JSON.parse(nine.stdout).error.kind, "state-invalid");
+
+  state.agent.questionBudget = 3;
+  delete state.artifacts.spec.path;
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const missingPath = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(missingPath.status, 0);
+  assert.match(JSON.parse(missingPath.stdout).error.likelyCause, /artifacts\.spec\.path/);
+
+  const nestedState = JSON.parse(await readFile(init.statePath, "utf8"));
+  nestedState.artifacts.spec = { path: "docs/spec.md", status: "missing" };
+  delete nestedState.planning.artifacts.spec.path;
+  await writeFile(init.statePath, JSON.stringify(nestedState), "utf8");
+  const missingNestedPath = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(missingNestedPath.status, 0);
+  assert.match(JSON.parse(missingNestedPath.stdout).error.likelyCause, /planning\.artifacts\.spec\.path/);
 });
 
 test("invalid state fails with actionable JSON error", async () => {

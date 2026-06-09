@@ -86,6 +86,11 @@ export const initCommand = defineCommand({
       kind: "init-config-invalid",
       description: "The provided bootstrap config could not be read or validated.",
       exitCode: 3
+    },
+    {
+      kind: "init-write-failed",
+      description: "The bootstrap state file could not be written.",
+      exitCode: 3
     }
   ],
   exitCodes: [
@@ -106,6 +111,27 @@ export const initCommand = defineCommand({
     }
   ]
 });
+
+const stateCommandErrors = [
+  {
+    kind: "state-invalid",
+    description: "The bootstrap state file could not be read or validated.",
+    exitCode: 3
+  }
+];
+
+const stateCommandExitCodes = [
+  {
+    code: 0,
+    category: "success",
+    description: "The command completed successfully."
+  },
+  {
+    code: 3,
+    category: "validation",
+    description: "The state file was missing or invalid."
+  }
+];
 
 export const statusCommand = defineCommand({
   kind: "command",
@@ -141,25 +167,8 @@ export const statusCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: false
   },
-  errors: [
-    {
-      kind: "state-invalid",
-      description: "The bootstrap state file could not be read or validated.",
-      exitCode: 3
-    }
-  ],
-  exitCodes: [
-    {
-      code: 0,
-      category: "success",
-      description: "The command completed successfully."
-    },
-    {
-      code: 3,
-      category: "validation",
-      description: "The state file was missing or invalid."
-    }
-  ]
+  errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
 });
 
 export const nextCommand = defineCommand({
@@ -196,8 +205,8 @@ export const nextCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: false
   },
-  errors: statusCommand.errors,
-  exitCodes: statusCommand.exitCodes
+  errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
 });
 
 export const answerCommand = defineCommand({
@@ -263,8 +272,25 @@ export const answerCommand = defineCommand({
   supplyChain: {
     sensitive: false
   },
-  errors: statusCommand.errors,
-  exitCodes: statusCommand.exitCodes
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "answer-field-invalid",
+      description: "The answer field is not a supported discovery field.",
+      exitCode: 3
+    },
+    {
+      kind: "answer-value-invalid",
+      description: "The answer value was empty or invalid.",
+      exitCode: 3
+    },
+    {
+      kind: "answer-transition-invalid",
+      description: "The current bootstrap phase does not allow answer mutations.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: stateCommandExitCodes
 });
 
 export const bootstrapRegistry = createCommandRegistry({

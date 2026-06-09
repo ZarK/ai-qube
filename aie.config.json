@@ -78,9 +78,11 @@
       "mergeStrategy": "squash"
     },
     "reviews": {
-      "agents": [],
+      "agents": [
+        "coderabbitai"
+      ],
       "waitMinutes": 10,
-      "requestText": ""
+      "requestText": "Review for correctness, test coverage, security, maintainability, and missed Executor issue requirements. Treat repository policy as authoritative."
     },
     "gates": {
       "definitions": [],
