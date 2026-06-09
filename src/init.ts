@@ -4,6 +4,7 @@ import { createDryRunPlan, type DryRunPlan } from "@tjalve/qube-cli/mutation";
 
 import type { AibConfig, LoadedAibConfig } from "./config.js";
 import { createInitialSession, type BootstrapSession } from "./session.js";
+import { createBootstrapState, type BootstrapState } from "./state.js";
 
 export interface InitPlan {
   readonly target: string;
@@ -11,6 +12,7 @@ export interface InitPlan {
   readonly config: AibConfig;
   readonly sessionPath: string;
   readonly session: BootstrapSession;
+  readonly state: BootstrapState;
   readonly plannedDocuments: readonly string[];
   readonly dryRunPlan: DryRunPlan;
 }
@@ -28,6 +30,12 @@ export function createInitPlan(input: {
   const milestonesDir = config.paths?.milestonesDir ?? `${docsDir}/milestones`;
   const issuesDir = config.paths?.issuesDir ?? `${docsDir}/issues`;
   const sessionPath = `${target}/${stateDir}/session.json`;
+  const state = createBootstrapState({
+    intent: input.idea,
+    agentHost: config.agent?.host,
+    questionBudget: config.agent?.questionBudget,
+    specPath
+  });
   const session = createInitialSession(config, input.idea);
   const plannedDocuments = [
     `${target}/${stateDir}/session.json`,
@@ -42,6 +50,7 @@ export function createInitPlan(input: {
     config,
     sessionPath,
     session,
+    state,
     plannedDocuments,
     dryRunPlan: createDryRunPlan({
       command: "aib init",

@@ -28,3 +28,14 @@ export type { GitHubIssueDraft, MarkdownWorkItem } from "./renderers.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
+export {
+  applyAnswer,
+  computeNextAction,
+  createBootstrapState,
+  defaultStatePath,
+  missingDiscoveryFields,
+  parseBootstrapState,
+  readBootstrapState,
+  writeBootstrapState
+} from "./state.js";
+export type { BootstrapPhase, BootstrapState, ComputedNextAction, DiscoveryQuestion, StateEnvelope } from "./state.js";

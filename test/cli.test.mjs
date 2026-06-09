@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -47,17 +47,16 @@ test("init dry-run returns agent-facing next action without mutating", () => {
   assert.equal(result.mutated, false);
   assert.equal(result.dryRun, true);
   assert.equal(result.nextAction.actor, "agent");
-  assert.match(result.nextAction.prompt, /product intent/i);
+  assert.match(result.nextAction.summary, /human/i);
   assert.ok(result.sessionPath.endsWith("/.bootstrap/session.json") || result.sessionPath.endsWith("\\.bootstrap\\session.json"));
   assert.equal(result.session.project.intent, "Local photo archive");
 });
 
-test("init requires dry-run before file mutation", () => {
-  const result = runAib(["init", "--json"]);
-  assert.notEqual(result.status, 0);
-  const body = JSON.parse(result.stdout);
-  assert.equal(body.ok, false);
-  assert.equal(body.error.kind, "init-dry-run-required");
+test("init dry-run does not write state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-dry-run-"));
+  const body = parseJsonStdout(runAib(["init", dir, "--dry-run", "--json"]));
+  assert.equal(body.mutated, false);
+  await assert.rejects(readFile(body.sessionPath, "utf8"));
 });
 
 test("invalid config fails as validation error", async () => {
@@ -105,4 +104,57 @@ test("valid config shapes providers paths surfaces and safety policy", async () 
   assert.equal(body.config.agent.surfaces.length, 2);
   assert.equal(body.session.safety.allowNetwork, false);
   assert.ok(body.plannedDocuments.some((item) => item.endsWith("/planning/spec.md") || item.endsWith("\\planning\\spec.md")));
+});
+
+test("init writes resumable state and next returns a small question batch", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-state-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a local photo catalog", "--agent", "codex", "--json"]));
+  assert.equal(init.mutated, true);
+  assert.equal(init.phase, "discovery");
+  assert.equal(init.state.project.intent, "Build a local photo catalog");
+  assert.equal(init.nextAction.kind, "ask_human");
+  assert.ok(init.nextAction.questions.length >= 3);
+  assert.ok(init.nextAction.questions.length <= 5);
+
+  const stateFile = JSON.parse(await readFile(init.statePath, "utf8"));
+  assert.equal(stateFile.agent.host, "codex");
+
+  const next = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(next.nextAction.kind, "ask_human");
+  assert.equal(next.nextAction.stopCondition, "Stop after asking this batch and wait for the human's answers.");
+});
+
+test("answer records human input and status reports missing decisions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-answer-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const answer = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "project.audience",
+    "--value",
+    "Policy analysts",
+    "--json"
+  ]));
+  assert.equal(answer.mutated, true);
+  assert.equal(answer.state.project.audience, "Policy analysts");
+
+  const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
+  assert.equal(status.phase, "discovery");
+  assert.ok(!status.missingDecisions.includes("project.audience"));
+  assert.ok(status.missingDecisions.includes("project.coreJob"));
+});
+
+test("invalid state fails with actionable JSON error", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-invalid-state-"));
+  const statePath = join(dir, "session.json");
+  await writeFile(statePath, JSON.stringify({ version: 99 }), "utf8");
+
+  const result = runAib(["status", "--state", statePath, "--json"]);
+  assert.notEqual(result.status, 0);
+  const body = JSON.parse(result.stdout);
+  assert.equal(body.ok, false);
+  assert.equal(body.error.kind, "state-invalid");
+  assert.match(body.error.suggestedNextAction, /aib init/);
 });

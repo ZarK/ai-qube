@@ -41,6 +41,12 @@ export const initCommand = defineCommand({
       name: "idea",
       description: "Short initial project idea to seed the spec discovery session.",
       type: "string"
+    }),
+    defineFlag({
+      name: "agent",
+      description: "Agent host that will operate aib.",
+      type: "option",
+      options: ["codex", "opencode", "claude-code", "gemini", "other"]
     })
   ],
   examples: [
@@ -73,7 +79,7 @@ export const initCommand = defineCommand({
   errors: [
     {
       kind: "init-dry-run-required",
-      description: "Init currently requires --dry-run so agents preview the bootstrap workspace before any mutation.",
+      description: "Init was blocked by local-file safety policy.",
       exitCode: 5
     },
     {
@@ -101,7 +107,167 @@ export const initCommand = defineCommand({
   ]
 });
 
+export const statusCommand = defineCommand({
+  kind: "command",
+  name: "status",
+  description: "Read bootstrap state and report current phase, missing decisions, artifact paths, and next command.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Inspect current bootstrap status.",
+      command: "aib status --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  errors: [
+    {
+      kind: "state-invalid",
+      description: "The bootstrap state file could not be read or validated.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: [
+    {
+      code: 0,
+      category: "success",
+      description: "The command completed successfully."
+    },
+    {
+      code: 3,
+      category: "validation",
+      description: "The state file was missing or invalid."
+    }
+  ]
+});
+
+export const nextCommand = defineCommand({
+  kind: "command",
+  name: "next",
+  description: "Return the next deterministic agent action for the current bootstrap state.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Get the next agent action.",
+      command: "aib next --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "json"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  errors: statusCommand.errors,
+  exitCodes: statusCommand.exitCodes
+});
+
+export const answerCommand = defineCommand({
+  kind: "command",
+  name: "answer",
+  description: "Record a human answer into bootstrap state so planning can resume without transcript memory.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview the state update without writing the session file.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "field",
+      description: "State field answered by the human, such as project.audience.",
+      type: "string",
+      required: true
+    }),
+    defineFlag({
+      name: "value",
+      description: "Answer text to record.",
+      type: "string",
+      required: true
+    }),
+    defineFlag({
+      name: "assumption",
+      description: "Record the answer as an explicit assumption.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Record who the project is for.",
+      command: "aib answer --field project.audience --value \"Solo developers\" --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: statusCommand.errors,
+  exitCodes: statusCommand.exitCodes
+});
+
 export const bootstrapRegistry = createCommandRegistry({
   topics: [planningTopic],
-  commands: [initCommand]
+  commands: [initCommand, statusCommand, nextCommand, answerCommand]
 });
