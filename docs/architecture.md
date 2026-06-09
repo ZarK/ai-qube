@@ -150,6 +150,15 @@ Profiles are useful later:
 
 The spec phase may infer candidate profiles. The milestone and work item phases can lock or refine them.
 
+Profile templates provide:
+
+- default spec chapters
+- milestone deliverable vocabulary
+- work item validation methods
+- repository or provider mutation posture
+
+Coding profiles can use tests, builds, APIs, schemas, selectors, package commands, and implementation evidence when those are relevant. Non-code profiles should default to review, evidence, acceptance, publication, or stakeholder signoff. Markdown/export-only profiles should be able to produce useful work item drafts without requiring repository mutation or implementation instructions.
+
 ## Safety Boundaries
 
 `aib` can write planning artifacts and generated instructions. It should not:

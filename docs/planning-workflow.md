@@ -72,6 +72,8 @@ Add these only when the project requires them:
 - Hardware, local runtime, or deployment constraints
 - Documentation/content structure
 
+The project profile should drive these additions. Documentation/content, research, design, operations/process, and export-only profiles should omit coding-only chapters such as command surfaces, package constraints, API contracts, selectors, or harness details unless the human explicitly identifies them as relevant.
+
 ### Output
 
 - draft `docs/spec.md`
@@ -138,6 +140,8 @@ For coding projects, milestone docs may include:
 - test strategy
 
 They should not include production code, detailed API models, or full implementation schemas unless the milestone exists specifically to define a public contract.
+
+For non-code projects, milestone docs should describe reviewable deliverables and the evidence needed to accept them. Examples include document sets, research briefs, evidence tables, design artifacts, operating checklists, publication bundles, stakeholder signoff, or markdown handoff packages. These milestones should not force tests, builds, package commands, selectors, API schemas, or repository mutation when those are irrelevant to the project profile.
 
 ### Sequencing
 

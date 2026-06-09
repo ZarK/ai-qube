@@ -49,6 +49,12 @@ Technical detail appears only when the current phase requires it.
 
 GitHub and OpenCode are useful first renderers, not core assumptions. Core planning state should speak in neutral terms such as `WorkItemDraft`, `PlanningState`, `Provider`, `AgentHost`, and `CapabilityReport`.
 
+### Project Profile Before Project Machinery
+
+`aib` should identify the project shape before applying coding-project assumptions. A documentation set, research brief, design exercise, process workflow, or markdown-only export should not receive default requirements for APIs, schemas, selectors, package commands, builds, or automated tests.
+
+Profiles begin as candidate classifications that the agent can confirm or refine with the human. They influence spec chapters, milestone deliverables, work item validation, and whether provider or repository mutation is appropriate.
+
 ### User Language First
 
 Questions should be concrete and phrased in the user's product language. `aib` may recommend defaults and tradeoffs, but it should not ask the user to understand internal abstractions before the product shape is clear.
@@ -82,3 +88,21 @@ For `aib` itself, this repository uses regular planning documents. The product m
 | Work item drafts | Work item phase | Provider-neutral executable units. |
 | Provider work items | Work item phase | GitHub Issues, GitLab issues, Jira tickets, Linear issues, markdown exports, or another configured rendering. |
 | Agent assets | Finalization | Host-specific prompts, commands, rules, or instructions that teach agents how to drive `aib` or later `aie`. |
+
+## Project Profiles
+
+Project profiles are lightweight planning templates, not permanent labels. They keep early planning useful without forcing every project through a software-delivery shape.
+
+| Profile | Default posture | Validation examples |
+|---------|-----------------|---------------------|
+| Coding project | Repository mutation is allowed when configured. | Tests, build, review, acceptance. |
+| CLI or package project | Coding project with command, configuration, packaging, and release constraints. | Tests, build, review, package contract acceptance. |
+| Local AI project | Coding project with model behavior, privacy, local runtime, and hardware constraints. | Tests, build, privacy evidence, review. |
+| Documentation or content project | Non-code project focused on structure, audience, review, and publication. | Review, acceptance, publication checklist. |
+| Research project | Non-code project focused on evidence, methods, sources, and recommendations. | Evidence table, review, acceptance. |
+| Design project | Non-code project focused on workflows, concepts, artifacts, and critique. | Review, acceptance evidence, stakeholder signoff. |
+| Operations or process project | Non-code project focused on roles, handoffs, checklists, and operating model. | Evidence, review, stakeholder signoff. |
+| Export-only project | Non-code project that produces markdown or handoff artifacts without provider mutation. | Review and acceptance. |
+| Unclassified / fallback | Conservative non-code posture until the agent and human clarify the shape. | Continue discovery, record assumptions, review before acceptance. |
+
+Non-code profiles can still produce milestones and work items. Their work items describe reviewable deliverables and acceptance evidence instead of implementation instructions.

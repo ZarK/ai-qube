@@ -25,6 +25,8 @@ export type { InitPlan } from "./init.js";
 export { bootstrapRegistry, initCommand, planningTopic } from "./metadata.js";
 export { renderGitHubIssueDraft, renderMarkdownWorkItemDraft } from "./renderers.js";
 export type { GitHubIssueDraft, MarkdownWorkItem } from "./renderers.js";
+export { getProfileByKind, selectProjectProfile, specChaptersForProject, workItemValidationForProject } from "./project_profiles.js";
+export type { ProjectProfile, ProjectProfileKind } from "./project_profiles.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
