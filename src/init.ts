@@ -34,6 +34,10 @@ export function createInitPlan(input: {
     intent: input.idea,
     agentHost: config.agent?.host,
     questionBudget: config.agent?.questionBudget,
+    referencePaths: config.discovery?.referencePaths,
+    inspectCurrentRepo: config.discovery?.inspectCurrentRepo,
+    inspectDocs: config.discovery?.inspectDocs,
+    inspectSiblingRepos: config.discovery?.inspectSiblingRepos,
     specPath
   });
   const session = createInitialSession(config, input.idea);

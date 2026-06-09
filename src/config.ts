@@ -20,6 +20,12 @@ export interface AibConfig {
     readonly questionBudget?: number;
     readonly surfaces?: readonly AibAgentHost[];
   };
+  readonly discovery?: {
+    readonly referencePaths?: readonly string[];
+    readonly inspectCurrentRepo?: boolean;
+    readonly inspectDocs?: boolean;
+    readonly inspectSiblingRepos?: boolean;
+  };
   readonly paths?: {
     readonly stateDir?: string;
     readonly docsDir?: string;
@@ -83,6 +89,7 @@ export function parseAibConfig(value: unknown): AibConfig {
   const project = optionalRecord(value.project, "project");
   const providers = optionalRecord(value.providers, "providers");
   const agent = optionalRecord(value.agent, "agent");
+  const discovery = optionalRecord(value.discovery, "discovery");
   const paths = optionalRecord(value.paths, "paths");
   const safety = optionalRecord(value.safety, "safety");
 
@@ -91,6 +98,7 @@ export function parseAibConfig(value: unknown): AibConfig {
     ...(project ? { project: parseProject(project) } : {}),
     ...(providers ? { providers: parseProviders(providers) } : {}),
     ...(agent ? { agent: parseAgent(agent) } : {}),
+    ...(discovery ? { discovery: parseDiscovery(discovery) } : {}),
     ...(paths ? { paths: parsePaths(paths) } : {}),
     ...(safety ? { safety: parseSafety(safety) } : {})
   };
@@ -105,6 +113,7 @@ export function mergeAibConfig(config: AibConfig): AibConfig {
       ...defaultAibConfig.agent,
       ...config.agent
     },
+    discovery: config.discovery,
     paths: {
       ...defaultAibConfig.paths,
       ...config.paths
@@ -147,6 +156,25 @@ function parseAgent(value: Readonly<Record<string, unknown>>): NonNullable<AibCo
     agent.surfaces = value.surfaces.map((item, index) => requireOneOf(item, `agent.surfaces[${index}]`, ["codex", "opencode", "claude-code", "gemini", "other"]));
   }
   return agent;
+}
+
+function parseDiscovery(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["discovery"]> {
+  const discovery: {
+    referencePaths?: readonly string[];
+    inspectCurrentRepo?: boolean;
+    inspectDocs?: boolean;
+    inspectSiblingRepos?: boolean;
+  } = {};
+  if (value.referencePaths !== undefined) {
+    if (!Array.isArray(value.referencePaths)) {
+      throw new TypeError("discovery.referencePaths must be an array when provided.");
+    }
+    discovery.referencePaths = value.referencePaths.map((item, index) => requireString(item, `discovery.referencePaths[${index}]`));
+  }
+  if (value.inspectCurrentRepo !== undefined) discovery.inspectCurrentRepo = requireBoolean(value.inspectCurrentRepo, "discovery.inspectCurrentRepo");
+  if (value.inspectDocs !== undefined) discovery.inspectDocs = requireBoolean(value.inspectDocs, "discovery.inspectDocs");
+  if (value.inspectSiblingRepos !== undefined) discovery.inspectSiblingRepos = requireBoolean(value.inspectSiblingRepos, "discovery.inspectSiblingRepos");
+  return discovery;
 }
 
 function parsePaths(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["paths"]> {

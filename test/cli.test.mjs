@@ -88,6 +88,10 @@ test("valid config shapes providers paths surfaces and safety policy", async () 
       surfaces: ["codex", "opencode"],
       questionBudget: 2
     },
+    discovery: {
+      referencePaths: ["../reference-docs", "../reference-repo"],
+      inspectDocs: true
+    },
     paths: {
       stateDir: ".aib",
       docsDir: "planning",
@@ -105,6 +109,9 @@ test("valid config shapes providers paths surfaces and safety policy", async () 
   const body = parseJsonStdout(runAib(["init", "--dry-run", "--json", "--config", configPath]));
   assert.equal(body.config.providers.work, "github");
   assert.equal(body.config.agent.surfaces.length, 2);
+  assert.deepEqual(body.config.discovery.referencePaths, ["../reference-docs", "../reference-repo"]);
+  assert.equal(body.config.discovery.inspectDocs, true);
+  assert.deepEqual(body.state.discovery.referencePaths, ["../reference-docs", "../reference-repo"]);
   assert.equal(body.session.safety.allowNetwork, false);
   assert.ok(body.plannedDocuments.some((item) => item.endsWith("/planning/spec.md") || item.endsWith("\\planning\\spec.md")));
 });
@@ -148,6 +155,7 @@ test("fresh ideas receive staged high-level discovery questions", async () => {
       assert.ok(question.id);
       assert.ok(question.text);
       assert.ok(question.why);
+      assert.ok(question.recommendedDefault);
       assert.ok(Array.isArray(question.stateFields));
       assert.ok(question.stateFields.length > 0);
       assert.doesNotMatch(`${question.text} ${question.why}`, forbiddenEarlyQuestionTerms);
@@ -277,6 +285,155 @@ test("phase next actions stop or request the correct agent action", async () => 
   const draft = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
   assert.equal(draft.nextAction.kind, "draft_spec");
   assert.equal(draft.nextAction.nextCommand, "aib status --json");
+});
+
+test("configured references request context inspection before human questions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-context-inspection-"));
+  const configPath = join(dir, "aib.config.json");
+  await writeFile(configPath, JSON.stringify({
+    version: 1,
+    discovery: {
+      referencePaths: ["../private-consumer-repo/docs/spec.md"],
+      inspectDocs: true
+    },
+    paths: {
+      docsDir: "planning",
+      specPath: "planning/spec.md"
+    }
+  }), "utf8");
+
+  const init = parseJsonStdout(runAib([
+    "init",
+    dir,
+    "--config",
+    configPath,
+    "--idea",
+    "Create a reusable CLI package from existing reference notes",
+    "--json"
+  ]));
+  assert.equal(init.nextAction.kind, "inspect_context");
+  assert.equal(init.nextAction.actor, "agent");
+  assert.ok(init.nextAction.contextInspection.targets.some((target) => target.kind === "reference"));
+  assert.ok(init.nextAction.contextInspection.targets.some((target) => target.kind === "docs"));
+  assert.ok(init.nextAction.contextInspection.targets.some((target) => target.kind === "docs" && target.path === "planning"));
+  assert.deepEqual(init.nextAction.stateFields, ["discovery.inspectedSources", "discovery.knownDecisions", "discovery.unresolvedQuestions"]);
+  assert.match(init.nextAction.nextCommand, /discovery\.inspectedSources/);
+
+  const answer = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "discovery.inspectedSources",
+    "--value",
+    "Existing docs show a package boundary and unresolved output destination decision.",
+    "--json"
+  ]));
+  assert.equal(answer.nextAction.kind, "ask_human");
+  assert.ok(answer.nextAction.questions.length >= 3);
+  assert.ok(answer.nextAction.questions.length <= 5);
+  assert.ok(answer.nextAction.questions.every((question) => question.recommendedDefault));
+  assert.doesNotMatch(JSON.stringify(answer.nextAction), /private-consumer-repo/);
+
+  const decision = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "discovery.knownDecisions",
+    "--value",
+    "The reusable package should keep reference evidence out of generated docs.",
+    "--json"
+  ]));
+  assert.deepEqual(decision.state.discovery.knownDecisions, [
+    "The reusable package should keep reference evidence out of generated docs."
+  ]);
+  assert.equal(decision.nextAction.kind, "ask_human");
+
+  const unresolved = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "discovery.unresolvedQuestions",
+    "--value",
+    "Confirm whether markdown output or a tracker should be used first.",
+    "--json"
+  ]));
+  assert.deepEqual(unresolved.state.discovery.unresolvedQuestions, [
+    "Confirm whether markdown output or a tracker should be used first."
+  ]);
+});
+
+test("answering initial intent can move to context inspection when references are configured", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-intent-then-inspect-"));
+  const configPath = join(dir, "aib.config.json");
+  await writeFile(configPath, JSON.stringify({
+    version: 1,
+    discovery: {
+      referencePaths: ["../reference-repo"]
+    }
+  }), "utf8");
+
+  const init = parseJsonStdout(runAib(["init", dir, "--config", configPath, "--json"]));
+  assert.equal(init.nextAction.kind, "ask_human");
+
+  const answer = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "project.intent",
+    "--value",
+    "Build a planning package from an existing repository",
+    "--json"
+  ]));
+  assert.equal(answer.nextAction.kind, "inspect_context");
+  assert.equal(answer.state.planning.nextAction.kind, "inspect_context");
+});
+
+test("reusable package discovery asks for reuse boundary without leaking references", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-reuse-boundary-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Create a reusable CLI package for project planning", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Create a reusable CLI package for project planning",
+    audience: "AI agents working with humans",
+    coreJob: "Guide project planning",
+    shape: "CLI package",
+    successNarrative: "Agents can ask the right questions",
+    scope: "First planning flow",
+    nonGoals: "No implementation execution",
+    constraints: "Tool and host agnostic"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const next = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(next.nextAction.kind, "ask_human");
+  assert.ok(next.nextAction.questions.some((question) => question.id === "project.reuseBoundary"));
+  assert.ok(next.nextAction.questions.some((question) => question.id === "project.planningSurface"));
+  assert.doesNotMatch(JSON.stringify(next.nextAction), /consumer repo/i);
+});
+
+test("work-tracker uncertainty becomes a concrete planning-surface question", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-work-tracker-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Plan a document project with issue tracker handoff", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Plan a document project with issue tracker handoff",
+    audience: "Project maintainers",
+    coreJob: "Create a useful planning packet",
+    shape: "document set",
+    successNarrative: "The team can start from accepted docs",
+    scope: "Spec and first milestones",
+    nonGoals: "No implementation work",
+    constraints: "Keep private references out of product docs"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const next = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(next.nextAction.kind, "ask_human");
+  assert.ok(next.nextAction.questions.some((question) => question.id === "project.planningSurface"));
 });
 
 test("state validation checks question budget bounds and artifact structure", async () => {

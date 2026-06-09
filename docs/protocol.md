@@ -33,10 +33,16 @@ The runtime validates the structural fields it reads before returning a next act
 
 Depending on the action it may also include `questions`, `questionBudget`, `stateFields`, `nextCommand`, and `stopCondition`.
 
+For `inspect_context`, `nextAction.contextInspection` includes:
+
+- `targets`: local repository, docs, sibling repository, or reference paths to inspect
+- `instructions`: what the agent should look for
+- `evidencePolicy`: how to keep private reference evidence out of generated product artifacts
+
 ## Action Kinds
 
 - `ask_human`: ask the human a small batch of questions, then record answers with `aib answer --json`.
-- `inspect_context`: reserved for repository-aware discovery. Until implemented, agents should not invent this action.
+- `inspect_context`: inspect repository or reference material, then record a private summary with the returned `nextCommand`.
 - `draft_spec`: draft or update the project spec from recorded state, then update state before continuing.
 - `request_acceptance`: ask the human for section-aware spec acceptance.
 - `generate_artifacts`: generate milestone or work-item artifacts from accepted prior artifacts.

@@ -30,6 +30,20 @@ export interface SourceAnchor {
   readonly section?: string;
 }
 
+export interface ContextInspectionTarget {
+  readonly id: string;
+  readonly kind: "current_repo" | "docs" | "sibling_repo" | "reference";
+  readonly path: string;
+  readonly reason: string;
+  readonly privacy: "local-only" | "shareable-summary";
+}
+
+export interface ContextInspectionPlan {
+  readonly targets: readonly ContextInspectionTarget[];
+  readonly instructions: readonly string[];
+  readonly evidencePolicy: string;
+}
+
 export interface WorkItemBodySection {
   readonly heading: string;
   readonly body: string;
@@ -59,6 +73,7 @@ export interface AgentNextAction {
   readonly summary: string;
   readonly questionBudget?: number;
   readonly stateFields?: readonly string[];
+  readonly contextInspection?: ContextInspectionPlan;
 }
 
 export interface PlanningState {

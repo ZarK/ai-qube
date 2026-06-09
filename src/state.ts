@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
-import type { AgentHostKind, AgentNextAction, PlanningState } from "./contracts.js";
+import type { AgentHostKind, AgentNextAction, ContextInspectionTarget, PlanningState } from "./contracts.js";
 import { createInitialPlanningState } from "./contracts.js";
 
 export type BootstrapPhase = "discovery" | "spec_drafting" | "spec_acceptance" | "milestone_generation" | "work_item_generation" | "finalized" | "blocked";
@@ -13,6 +13,7 @@ export interface DiscoveryQuestion {
   readonly depth: "high" | "spec" | "milestone" | "work_item";
   readonly text: string;
   readonly why: string;
+  readonly recommendedDefault: string;
   readonly answerType: "short-text" | "bullets";
   readonly stateFields: readonly string[];
 }
@@ -29,6 +30,18 @@ export interface BootstrapState {
     readonly scope?: string;
     readonly nonGoals?: string;
     readonly constraints?: string;
+    readonly reuseBoundary?: string;
+    readonly planningSurface?: string;
+  };
+  readonly discovery: {
+    readonly referencePaths: readonly string[];
+    readonly inspectCurrentRepo: boolean;
+    readonly inspectDocs: boolean;
+    readonly inspectSiblingRepos: boolean;
+    // Agent-private discovery bookkeeping. These values preserve context without changing product conclusions by themselves.
+    readonly inspectedSources: readonly string[];
+    readonly knownDecisions: readonly string[];
+    readonly unresolvedQuestions: readonly string[];
   };
   readonly agent: {
     readonly host?: AgentHostKind;
@@ -68,6 +81,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What are you trying to create?",
     why: "This anchors the spec around the project goal before implementation details appear.",
+    recommendedDefault: "A one-sentence project intent is enough for now.",
     answerType: "short-text",
     stateFields: ["project.intent"]
   },
@@ -77,6 +91,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "Who is this for?",
     why: "Audience changes the product shape, UX expectations, language, and validation criteria.",
+    recommendedDefault: "Name the primary user or stakeholder group; use 'not sure' if it is not known yet.",
     answerType: "short-text",
     stateFields: ["project.audience"]
   },
@@ -86,6 +101,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What core job should it do first?",
     why: "A clear first job prevents the initial spec from becoming a feature list without a center.",
+    recommendedDefault: "Describe the first valuable outcome rather than every future feature.",
     answerType: "short-text",
     stateFields: ["project.coreJob"]
   },
@@ -95,6 +111,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What kind of project is this: app, CLI, service, document set, research effort, process, or something else?",
     why: "Project shape controls which spec chapters and milestone templates apply.",
+    recommendedDefault: "If uncertain, say the closest shape and mark it as an assumption.",
     answerType: "short-text",
     stateFields: ["project.shape"]
   },
@@ -104,6 +121,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What should feel successful when the first useful version works?",
     why: "The success narrative gives milestones and work items a concrete target.",
+    recommendedDefault: "List the concrete moment where the target user would say the first version works.",
     answerType: "bullets",
     stateFields: ["project.successNarrative"]
   },
@@ -113,6 +131,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What is in scope for the first version?",
     why: "Scope defines the boundary between spec work and later ideas.",
+    recommendedDefault: "Keep this to the smallest useful release or deliverable.",
     answerType: "bullets",
     stateFields: ["project.scope"]
   },
@@ -122,6 +141,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "What should it intentionally not do yet?",
     why: "Non-goals protect the plan from premature implementation depth.",
+    recommendedDefault: "Call out the tempting but deferred work.",
     answerType: "bullets",
     stateFields: ["project.nonGoals"]
   },
@@ -131,8 +151,29 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
     depth: "high",
     text: "Are there any important platform, runtime, offline, privacy, organization, or audience constraints?",
     why: "High-level constraints shape the spec without forcing technical design too early.",
+    recommendedDefault: "Use 'not sure' if there are no known constraints yet.",
     answerType: "bullets",
     stateFields: ["project.constraints"]
+  },
+  {
+    id: "project.reuseBoundary",
+    phase: "project_clarification",
+    depth: "high",
+    text: "Should this be planned as a reusable package/tool, a one-project solution, or both with a clear boundary?",
+    why: "Reusable work needs requirements separated from reference-project evidence and consumer-specific details.",
+    recommendedDefault: "Default to a reusable core plus project-specific examples only when the user says reuse matters.",
+    answerType: "short-text",
+    stateFields: ["project.reuseBoundary"]
+  },
+  {
+    id: "project.planningSurface",
+    phase: "project_clarification",
+    depth: "high",
+    text: "Should planning outputs stay as local markdown first, use a work tracker later, or both?",
+    why: "This makes repository mutation and work-item rendering explicit instead of hidden assumptions.",
+    recommendedDefault: "Default to local markdown drafts first, then render to a tracker only after review.",
+    answerType: "short-text",
+    stateFields: ["project.planningSurface"]
   }
 ];
 
@@ -144,6 +185,10 @@ export function createBootstrapState(input: {
   readonly intent?: string;
   readonly agentHost?: AgentHostKind;
   readonly questionBudget?: number;
+  readonly referencePaths?: readonly string[];
+  readonly inspectCurrentRepo?: boolean;
+  readonly inspectDocs?: boolean;
+  readonly inspectSiblingRepos?: boolean;
   readonly specPath?: string;
 }): BootstrapState {
   const planning = createInitialPlanningState({
@@ -155,6 +200,15 @@ export function createBootstrapState(input: {
     phase: "discovery",
     project: {
       ...(input.intent ? { intent: input.intent } : {})
+    },
+    discovery: {
+      referencePaths: input.referencePaths ?? [],
+      inspectCurrentRepo: input.inspectCurrentRepo ?? false,
+      inspectDocs: input.inspectDocs ?? false,
+      inspectSiblingRepos: input.inspectSiblingRepos ?? false,
+      inspectedSources: [],
+      knownDecisions: [],
+      unresolvedQuestions: []
     },
     agent: {
       ...(input.agentHost ? { host: input.agentHost } : {}),
@@ -188,6 +242,7 @@ export function parseBootstrapState(value: unknown): BootstrapState {
   if (!isPhase(value.phase)) throw new TypeError("bootstrap state phase is missing or invalid.");
   const project = requireRecord(value.project, "project");
   const agent = requireRecord(value.agent, "agent");
+  const discovery = value.discovery === undefined ? undefined : requireRecord(value.discovery, "discovery");
   const artifacts = parseArtifacts(value.artifacts);
   const planning = parsePlanning(value.planning);
   const assumptions = Array.isArray(value.assumptions) ? value.assumptions.filter((item): item is string => typeof item === "string") : [];
@@ -199,6 +254,7 @@ export function parseBootstrapState(value: unknown): BootstrapState {
     version: 1,
     phase: value.phase,
     project: parseProject(project),
+    discovery: parseDiscovery(discovery),
     agent: {
       ...(typeof agent.host === "string" && isAgentHost(agent.host) ? { host: agent.host } : {}),
       questionBudget
@@ -252,6 +308,28 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
     };
   }
 
+  const inspectionTargets = contextInspectionTargets(state);
+  if (inspectionTargets.length > 0) {
+    return {
+      kind: "inspect_context",
+      actor: "agent",
+      summary: "Inspect repository and reference context before asking the human more questions.",
+      contextInspection: {
+        targets: inspectionTargets,
+        instructions: [
+          "Read only enough context to identify existing docs, specs, project shape, constraints, and reusable boundaries.",
+          "Summarize decisions, assumptions, and unresolved questions in product language.",
+          "Do not copy local paths, private repo names, or reference evidence into generated product artifacts by default."
+        ],
+        evidencePolicy: "Store reference evidence in bootstrap state or issue comments; generated specs should use product conclusions, not private source provenance."
+      },
+      missingDecisions: ["discovery.inspectedSources"],
+      stateFields: ["discovery.inspectedSources", "discovery.knownDecisions", "discovery.unresolvedQuestions"],
+      nextCommand: "aib answer --field discovery.inspectedSources --value <inspection-summary> --json",
+      stopCondition: "Stop after inspecting these sources and record the private summary before asking more human questions."
+    };
+  }
+
   const missing = missingDiscoveryFields(state);
   if (missing.length === 0) {
     return {
@@ -287,10 +365,14 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
   const defaulted = isDefaultAnswer(raw);
   const normalized = defaulted ? `Assume a reasonable default for ${field}.` : raw;
   if (normalized.length === 0) throw new AnswerError("answer-value-invalid", "answer value must not be empty.");
+  if (field.startsWith("discovery.")) {
+    return applyDiscoveryAnswer(state, field, normalized, assumption || defaulted);
+  }
   const question = DISCOVERY_QUESTIONS.find((candidate) => candidate.id === field);
   if (!question) throw new AnswerError("answer-field-invalid", `unsupported answer field: ${field}.`);
   const key = field.slice("project.".length);
   const project = { ...state.project, [key]: normalized };
+  const nextAction = computeNextAction({ ...state, project });
   const planning = createInitialPlanningState({
     intent: project.intent,
     specPath: state.artifacts.spec.path
@@ -307,11 +389,7 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
         type: project.shape
       },
       artifacts: state.artifacts,
-      nextAction: computeNextAction({ ...state, project }).kind === "ask_human" ? planning.nextAction : {
-        kind: "draft_spec",
-        actor: "agent",
-        summary: "Discovery has enough high-level project context. Draft the initial spec next."
-      }
+      nextAction
     }
   };
 }
@@ -322,10 +400,94 @@ export function isAgentHost(value: string): value is AgentHostKind {
 
 export function missingDiscoveryFields(state: BootstrapState): readonly DiscoveryQuestion[] {
   return DISCOVERY_QUESTIONS.filter((question) => {
+    if (question.id === "project.reuseBoundary" && !isReusablePackageState(state)) return false;
+    if (question.id === "project.planningSurface" && !needsPlanningSurfaceDecision(state)) return false;
     const key = question.id.slice("project.".length) as keyof BootstrapState["project"];
     const value = state.project[key];
     return typeof value !== "string" || value.trim().length === 0;
   });
+}
+
+function applyDiscoveryAnswer(state: BootstrapState, field: string, value: string, assumption: boolean): BootstrapState {
+  if (field !== "discovery.inspectedSources" && field !== "discovery.knownDecisions" && field !== "discovery.unresolvedQuestions") {
+    throw new AnswerError("answer-field-invalid", `unsupported answer field: ${field}.`);
+  }
+  const key = field.slice("discovery.".length) as "inspectedSources" | "knownDecisions" | "unresolvedQuestions";
+  const updatedState = {
+    ...state,
+    discovery: {
+      ...state.discovery,
+      [key]: [...state.discovery[key], value]
+    },
+    assumptions: assumption ? [...state.assumptions, `${field}: ${value}`] : state.assumptions
+  };
+  return {
+    ...updatedState,
+    planning: {
+      ...updatedState.planning,
+      nextAction: computeNextAction(updatedState)
+    }
+  };
+}
+
+function contextInspectionTargets(state: BootstrapState): readonly ContextInspectionTarget[] {
+  // Inspection is one-shot per session until a later command records per-target status.
+  if (!state.project.intent || state.discovery.inspectedSources.length > 0) return [];
+  const haystack = `${state.project.intent} ${state.project.shape ?? ""}`.toLowerCase();
+  const inspectCurrentRepo = state.discovery.inspectCurrentRepo || /\b(existing repo|repository|workspace|nearby repo|reference repo)\b/.test(haystack);
+  const targets: ContextInspectionTarget[] = [];
+  if (inspectCurrentRepo) {
+    targets.push({
+      id: "current-repo",
+      kind: "current_repo",
+      path: ".",
+      reason: "The idea or config indicates local repository context may already contain decisions or constraints.",
+      privacy: "local-only"
+    });
+  }
+  if (state.discovery.inspectDocs) {
+    targets.push({
+      id: "docs",
+      kind: "docs",
+      path: dirname(state.artifacts.spec.path),
+      reason: "Existing docs may already contain product intent, specs, milestones, or non-goals.",
+      privacy: "local-only"
+    });
+  }
+  if (state.discovery.inspectSiblingRepos) {
+    targets.push({
+      id: "sibling-repos",
+      kind: "sibling_repo",
+      path: "..",
+      reason: "Sibling repositories may provide reference shape or reusable package boundaries.",
+      privacy: "local-only"
+    });
+  }
+  for (const [index, path] of state.discovery.referencePaths.entries()) {
+    targets.push({
+      id: `reference-${index + 1}`,
+      kind: "reference",
+      path,
+      reason: "Explicitly provided reference material should inform questions without leaking source-specific details.",
+      privacy: "local-only"
+    });
+  }
+  return targets;
+}
+
+function isReusablePackageState(state: BootstrapState): boolean {
+  const haystack = `${state.project.intent ?? ""} ${state.project.shape ?? ""}`.toLowerCase();
+  return /\b(reusable|package|library|sdk|cli|tooling)\b/.test(haystack);
+}
+
+function needsPlanningSurfaceDecision(state: BootstrapState): boolean {
+  const haystack = `${state.project.intent ?? ""} ${state.project.shape ?? ""}`.toLowerCase();
+  return state.discovery.referencePaths.length > 0
+    || state.discovery.inspectCurrentRepo
+    || state.discovery.inspectDocs
+    || state.discovery.inspectSiblingRepos
+    || isReusablePackageState(state)
+    || /\b(repo|repository|work item|issue tracker|work tracker|github|linear|jira)\b/.test(haystack);
 }
 
 function parseProject(value: Readonly<Record<string, unknown>>): BootstrapState["project"] {
@@ -337,8 +499,26 @@ function parseProject(value: Readonly<Record<string, unknown>>): BootstrapState[
     ...(typeof value.successNarrative === "string" ? { successNarrative: value.successNarrative } : {}),
     ...(typeof value.scope === "string" ? { scope: value.scope } : {}),
     ...(typeof value.nonGoals === "string" ? { nonGoals: value.nonGoals } : {}),
-    ...(typeof value.constraints === "string" ? { constraints: value.constraints } : {})
+    ...(typeof value.constraints === "string" ? { constraints: value.constraints } : {}),
+    ...(typeof value.reuseBoundary === "string" ? { reuseBoundary: value.reuseBoundary } : {}),
+    ...(typeof value.planningSurface === "string" ? { planningSurface: value.planningSurface } : {})
   };
+}
+
+function parseDiscovery(value: Readonly<Record<string, unknown>> | undefined): BootstrapState["discovery"] {
+  return {
+    referencePaths: parseStringArray(value?.referencePaths),
+    inspectCurrentRepo: typeof value?.inspectCurrentRepo === "boolean" ? value.inspectCurrentRepo : false,
+    inspectDocs: typeof value?.inspectDocs === "boolean" ? value.inspectDocs : false,
+    inspectSiblingRepos: typeof value?.inspectSiblingRepos === "boolean" ? value.inspectSiblingRepos : false,
+    inspectedSources: parseStringArray(value?.inspectedSources),
+    knownDecisions: parseStringArray(value?.knownDecisions),
+    unresolvedQuestions: parseStringArray(value?.unresolvedQuestions)
+  };
+}
+
+function parseStringArray(value: unknown): readonly string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
 function isDefaultAnswer(value: string): boolean {

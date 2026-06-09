@@ -8,6 +8,8 @@ export type {
   Capability,
   CapabilityReport,
   CapabilityStatus,
+  ContextInspectionPlan,
+  ContextInspectionTarget,
   PlanningArtifact,
   PlanningState,
   ProviderCapabilityReport,
