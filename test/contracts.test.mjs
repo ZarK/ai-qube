@@ -5,10 +5,14 @@ import {
   capability,
   createInitialPlanningState,
   getProfileByKind,
+  REQUIRED_SPEC_CHAPTERS,
   selectProjectProfile,
+  selectSpecChapters,
   renderGitHubIssueDraft,
   renderMarkdownWorkItemDraft,
+  specAcceptanceStatus,
   specChaptersForProject,
+  validateSpecSections,
   workItemValidationForProject
 } from "../dist/index.js";
 
@@ -164,4 +168,82 @@ test("profile accessors do not expose shared mutable profile state", () => {
   const nextProfile = selectProjectProfile("research effort");
   assert.ok(!nextProfile.specChapters.includes("Mutated chapter"));
   assert.equal(getProfileByKind("research").kind, "research");
+});
+
+test("spec chapter selection includes required chapters for every shape", () => {
+  const chapters = selectSpecChapters({ shape: "documentation project" });
+  const required = chapters.filter((chapter) => chapter.required);
+
+  assert.ok(required.some((chapter) => chapter.id === "purpose"));
+  assert.ok(required.some((chapter) => chapter.id === "functional_requirements"));
+  assert.ok(required.some((chapter) => chapter.id === "spec_acceptance_checklist"));
+});
+
+test("dynamic spec chapters are selected only when justified by shape", () => {
+  const coding = selectSpecChapters({ shape: "web app with content data" }).map((chapter) => chapter.id);
+  const research = selectSpecChapters({ shape: "research evidence brief" }).map((chapter) => chapter.id);
+  const localAi = selectSpecChapters({ shape: "local-ai assistant", constraints: "offline privacy local runtime" }).map((chapter) => chapter.id);
+  const reusable = selectSpecChapters({ shape: "CLI package", reuseBoundary: "reusable package core" }).map((chapter) => chapter.id);
+
+  assert.ok(coding.includes("user_experience_workflows"));
+  assert.ok(coding.includes("data_content_model"));
+  assert.ok(!coding.includes("research_evidence_plan"));
+
+  assert.ok(research.includes("research_evidence_plan"));
+  assert.ok(!research.includes("ai_model_behavior"));
+
+  assert.ok(localAi.includes("ai_model_behavior"));
+  assert.ok(localAi.includes("privacy_safety_legal"));
+  assert.ok(localAi.includes("hardware_local_runtime"));
+
+  assert.ok(reusable.includes("package_reuse_boundaries"));
+});
+
+test("spec validation catches missing and placeholder required sections", () => {
+  const chapters = selectSpecChapters({ shape: "documentation project" });
+  const result = validateSpecSections(chapters, [
+    { id: "purpose", title: "Purpose", body: "TBD" },
+    { id: "audience_stakeholders", title: "Audience and stakeholders", body: "Maintainers and users." }
+  ]);
+
+  assert.equal(result.ok, false);
+  assert.ok(result.placeholderSections.includes("Purpose"));
+  assert.ok(result.missingRequiredSections.includes("success_narrative"));
+});
+
+test("spec validation accepts concise completed required sections", () => {
+  const chapters = selectSpecChapters({ shape: "documentation project" });
+  const result = validateSpecSections(
+    chapters,
+    REQUIRED_SPEC_CHAPTERS.map((chapter) => ({
+      id: chapter.id,
+      title: chapter.title,
+      body: "Done."
+    }))
+  );
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.placeholderSections, []);
+  assert.deepEqual(result.missingRequiredSections, []);
+});
+
+test("spec acceptance blocks milestones until required sections are accepted", () => {
+  const chapters = selectSpecChapters({ shape: "process playbook" });
+  const partial = specAcceptanceStatus(chapters, ["purpose", "audience_stakeholders"]);
+  assert.equal(partial.canGenerateMilestones, false);
+  assert.ok(partial.missingRequiredAcceptance.includes("success_narrative"));
+
+  const allRequired = chapters.filter((chapter) => chapter.required).map((chapter) => chapter.id);
+  const accepted = specAcceptanceStatus(chapters, allRequired);
+  assert.equal(accepted.canGenerateMilestones, true);
+  assert.deepEqual(accepted.missingRequiredAcceptance, []);
+});
+
+test("spec acceptance reports accepted dynamic sections separately", () => {
+  const chapters = selectSpecChapters({ shape: "local-ai documentation app" });
+  const accepted = specAcceptanceStatus(chapters, ["purpose", "ai_model_behavior"]);
+
+  assert.deepEqual(accepted.acceptedSectionIds, ["purpose"]);
+  assert.deepEqual(accepted.acceptedDynamicSectionIds, ["ai_model_behavior"]);
+  assert.equal(accepted.canGenerateMilestones, false);
 });

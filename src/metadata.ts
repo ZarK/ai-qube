@@ -233,7 +233,7 @@ export const answerCommand = defineCommand({
     }),
     defineFlag({
       name: "field",
-      description: "State field answered by the human, such as project.audience.",
+      description: "State field answered by the human or recorded by the agent, such as project.audience or spec.acceptedSectionIds.",
       type: "string",
       required: true
     }),

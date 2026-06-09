@@ -29,12 +29,15 @@ export { renderGitHubIssueDraft, renderMarkdownWorkItemDraft } from "./renderers
 export type { GitHubIssueDraft, MarkdownWorkItem } from "./renderers.js";
 export { getProfileByKind, selectProjectProfile, specChaptersForProject, workItemValidationForProject } from "./project_profiles.js";
 export type { ProjectProfile, ProjectProfileKind } from "./project_profiles.js";
+export { DYNAMIC_SPEC_CHAPTERS, REQUIRED_SPEC_CHAPTERS, selectSpecChapters, specAcceptanceStatus, validateSpecSections } from "./spec_chapters.js";
+export type { SelectedSpecChapter, SpecAcceptanceStatus, SpecChapter, SpecChapterId, SpecSectionDraft, SpecValidationResult } from "./spec_chapters.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
 export {
   applyAnswer,
   computeNextAction,
+  computeSpecStatus,
   createBootstrapState,
   defaultStatePath,
   missingDiscoveryFields,

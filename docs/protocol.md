@@ -10,6 +10,7 @@ State files are versioned JSON documents with these required top-level fields:
 - `phase`: one of `discovery`, `spec_drafting`, `spec_acceptance`, `milestone_generation`, `work_item_generation`, `finalized`, or `blocked`
 - `project`: high-level project answers gathered from the human
 - `agent`: host and question budget for the operating agent
+- `spec`: accepted spec section IDs
 - `assumptions`: explicit assumptions accepted during planning
 - `artifacts`: spec, milestone, and work-item artifact paths/statuses
 - `planning`: provider-neutral planning state mirrored for package consumers
@@ -50,6 +51,15 @@ For `inspect_context`, `nextAction.contextInspection` includes:
 
 Runtime next commands only point at implemented commands. Future commands such as spec drafting must be introduced with matching command metadata before agents are directed to call them.
 
+## Spec Status
+
+`aib status --json` includes `spec` with:
+
+- `chapters`: required and selected dynamic spec chapters
+- `acceptedSectionIds`: accepted required section IDs
+- `missingRequiredAcceptance`: required section IDs still awaiting acceptance
+- `canGenerateMilestones`: whether milestone generation is unblocked
+
 ## Answer Errors
 
 `aib answer --json` can fail with:
@@ -59,3 +69,9 @@ Runtime next commands only point at implemented commands. Future commands such a
 - `answer-transition-invalid`: the current phase does not allow answer mutations.
 
 Agents should treat these as recoverable validation errors and call `aib status --json` or `aib next --json` before continuing.
+
+During `spec_acceptance`, agents can record section-aware acceptance with:
+
+```text
+aib answer --field spec.acceptedSectionIds --value <section-id> --json
+```

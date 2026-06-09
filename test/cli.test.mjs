@@ -269,6 +269,7 @@ test("phase next actions stop or request the correct agent action", async () => 
   await writeFile(init.statePath, JSON.stringify(state), "utf8");
   const acceptance = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
   assert.equal(acceptance.nextAction.kind, "request_acceptance");
+  assert.ok(acceptance.nextAction.missingDecisions.some((item) => item.startsWith("spec.acceptedSectionIds.")));
 
   state.phase = "discovery";
   state.project = {
@@ -285,6 +286,101 @@ test("phase next actions stop or request the correct agent action", async () => 
   const draft = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
   assert.equal(draft.nextAction.kind, "draft_spec");
   assert.equal(draft.nextAction.nextCommand, "aib status --json");
+});
+
+test("status reports spec chapter and acceptance state", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-spec-status-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a local AI documentation tool", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Build a local AI documentation tool",
+    audience: "Technical writers",
+    coreJob: "Draft offline docs from local notes",
+    shape: "local AI documentation app",
+    successNarrative: "A writer gets a useful offline draft",
+    scope: "Local draft flow",
+    nonGoals: "No cloud sync",
+    constraints: "offline privacy local runtime"
+  };
+  state.spec.acceptedSectionIds = ["purpose"];
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
+  assert.ok(status.spec.chapters.some((chapter) => chapter.id === "ai_model_behavior"));
+  assert.ok(status.spec.chapters.some((chapter) => chapter.id === "documentation_content_structure"));
+  assert.deepEqual(status.spec.acceptedSectionIds, ["purpose"]);
+  assert.equal(status.spec.canGenerateMilestones, false);
+});
+
+test("spec acceptance records sections and gates milestone generation", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-spec-acceptance-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a process playbook", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.phase = "spec_acceptance";
+  state.project = {
+    intent: "Build a process playbook",
+    audience: "Operations team",
+    coreJob: "Describe handoffs",
+    shape: "process playbook",
+    successNarrative: "The team can run the process",
+    scope: "First operating checklist",
+    nonGoals: "No software implementation",
+    constraints: "Stakeholder signoff required"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const accepted = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "spec.acceptedSectionIds",
+    "--value",
+    "purpose",
+    "--json"
+  ]));
+  assert.deepEqual(accepted.state.spec.acceptedSectionIds, ["purpose"]);
+  assert.equal(accepted.nextAction.kind, "request_acceptance");
+
+  const milestoneState = JSON.parse(await readFile(init.statePath, "utf8"));
+  milestoneState.phase = "milestone_generation";
+  milestoneState.spec.acceptedSectionIds = ["purpose"];
+  await writeFile(init.statePath, JSON.stringify(milestoneState), "utf8");
+  const blocked = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(blocked.nextAction.kind, "request_acceptance");
+  assert.match(blocked.nextAction.summary, /blocked/i);
+  assert.equal(blocked.nextAction.nextCommand, "aib answer --field spec.acceptedSectionIds --value <section-id> --json");
+
+  const invalidSection = runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "spec.acceptedSectionIds",
+    "--value",
+    "not_a_section",
+    "--json"
+  ]);
+  assert.notEqual(invalidSection.status, 0);
+  assert.equal(JSON.parse(invalidSection.stdout).error.kind, "answer-value-invalid");
+
+  for (const missingDecision of blocked.nextAction.missingDecisions) {
+    const sectionId = missingDecision.replace("spec.acceptedSectionIds.", "");
+    const sectionAccepted = parseJsonStdout(runAib([
+      "answer",
+      "--state",
+      init.statePath,
+      "--field",
+      "spec.acceptedSectionIds",
+      "--value",
+      sectionId,
+      "--json"
+    ]));
+    assert.ok(sectionAccepted.state.spec.acceptedSectionIds.includes(sectionId));
+  }
+
+  const ready = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(ready.nextAction.kind, "generate_artifacts");
 });
 
 test("configured references request context inspection before human questions", async () => {

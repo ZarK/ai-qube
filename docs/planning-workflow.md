@@ -71,8 +71,11 @@ Add these only when the project requires them:
 - Research or evidence plan
 - Hardware, local runtime, or deployment constraints
 - Documentation/content structure
+- Package/reuse boundaries
 
 The project profile should drive these additions. Documentation/content, research, design, operations/process, and export-only profiles should omit coding-only chapters such as command surfaces, package constraints, API contracts, selectors, or harness details unless the human explicitly identifies them as relevant.
+
+Spec validation should reject missing required chapters and shallow placeholders such as `TBD`, `TODO`, `N/A`, lorem ipsum, placeholder text, or "to be written". Dynamic chapters should be present only when project shape, constraints, or recorded answers justify them.
 
 ### Output
 
@@ -95,6 +98,8 @@ Acceptance should be section-aware. The user should not be asked "is this good?"
 - risks and unknowns
 
 Milestone generation is blocked until the spec is accepted.
+
+Acceptance is tracked by section ID. Required sections must all be accepted before milestone generation can proceed; dynamic sections can remain draft or deferred when they are not required for the next milestone decision.
 
 ### Output
 

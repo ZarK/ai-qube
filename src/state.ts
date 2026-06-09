@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import type { AgentHostKind, AgentNextAction, ContextInspectionTarget, PlanningState } from "./contracts.js";
 import { createInitialPlanningState } from "./contracts.js";
+import { selectSpecChapters, specAcceptanceStatus, type SelectedSpecChapter, type SpecChapterId } from "./spec_chapters.js";
 
 export type BootstrapPhase = "discovery" | "spec_drafting" | "spec_acceptance" | "milestone_generation" | "work_item_generation" | "finalized" | "blocked";
 export type AnswerErrorKind = "answer-field-invalid" | "answer-value-invalid" | "answer-transition-invalid";
@@ -47,6 +48,9 @@ export interface BootstrapState {
     readonly host?: AgentHostKind;
     readonly questionBudget: number;
   };
+  readonly spec: {
+    readonly acceptedSectionIds: readonly string[];
+  };
   readonly assumptions: readonly string[];
   readonly artifacts: PlanningState["artifacts"];
   readonly planning: PlanningState;
@@ -62,6 +66,14 @@ export interface ComputedNextAction extends AgentNextAction {
   readonly missingDecisions: readonly string[];
   readonly nextCommand?: string;
   readonly stopCondition?: string;
+}
+
+export interface ComputedSpecStatus {
+  readonly chapters: readonly SelectedSpecChapter[];
+  readonly acceptedSectionIds: readonly SpecChapterId[];
+  readonly acceptedDynamicSectionIds: readonly SpecChapterId[];
+  readonly missingRequiredAcceptance: readonly SpecChapterId[];
+  readonly canGenerateMilestones: boolean;
 }
 
 export class AnswerError extends TypeError {
@@ -214,6 +226,9 @@ export function createBootstrapState(input: {
       ...(input.agentHost ? { host: input.agentHost } : {}),
       questionBudget: input.questionBudget ?? 3
     },
+    spec: {
+      acceptedSectionIds: []
+    },
     assumptions: [],
     artifacts: planning.artifacts,
     planning
@@ -242,6 +257,7 @@ export function parseBootstrapState(value: unknown): BootstrapState {
   if (!isPhase(value.phase)) throw new TypeError("bootstrap state phase is missing or invalid.");
   const project = requireRecord(value.project, "project");
   const agent = requireRecord(value.agent, "agent");
+  const spec = value.spec === undefined ? undefined : requireRecord(value.spec, "spec");
   const discovery = value.discovery === undefined ? undefined : requireRecord(value.discovery, "discovery");
   const artifacts = parseArtifacts(value.artifacts);
   const planning = parsePlanning(value.planning);
@@ -259,6 +275,7 @@ export function parseBootstrapState(value: unknown): BootstrapState {
       ...(typeof agent.host === "string" && isAgentHost(agent.host) ? { host: agent.host } : {}),
       questionBudget
     },
+    spec: parseSpec(spec),
     assumptions,
     artifacts,
     planning
@@ -289,15 +306,41 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
       };
     }
     if (state.phase === "spec_acceptance") {
+      const specStatus = computeSpecStatus(state);
+      if (specStatus.canGenerateMilestones) {
+        return {
+          kind: "generate_artifacts",
+          actor: "agent",
+          summary: "Required spec sections are accepted. Generate milestone drafts next.",
+          missingDecisions: [],
+          stateFields: ["artifacts.milestones"],
+          nextCommand: "aib status --json",
+          stopCondition: "Stop after generating milestone drafts and recording them in state."
+        };
+      }
       return {
         kind: "request_acceptance",
         actor: "agent",
         summary: "Ask the human to review and accept the current spec sections.",
-        missingDecisions: [],
-        stateFields: ["artifacts.spec"],
-        nextCommand: "aib status --json",
+        missingDecisions: specStatus.missingRequiredAcceptance.map((id) => `spec.acceptedSectionIds.${id}`),
+        stateFields: ["spec.acceptedSectionIds"],
+        nextCommand: "aib answer --field spec.acceptedSectionIds --value <section-id> --json",
         stopCondition: "Stop after requesting spec acceptance and wait for the human's decision."
       };
+    }
+    if (state.phase === "milestone_generation") {
+      const specStatus = computeSpecStatus(state);
+      if (!specStatus.canGenerateMilestones) {
+        return {
+          kind: "request_acceptance",
+          actor: "agent",
+          summary: "Milestone generation is blocked until all required spec sections are accepted.",
+          missingDecisions: specStatus.missingRequiredAcceptance.map((id) => `spec.acceptedSectionIds.${id}`),
+          stateFields: ["spec.acceptedSectionIds"],
+          nextCommand: "aib answer --field spec.acceptedSectionIds --value <section-id> --json",
+          stopCondition: "Stop and request section-aware spec acceptance before generating milestones."
+        };
+      }
     }
     return {
       kind: "generate_artifacts",
@@ -357,7 +400,28 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
   };
 }
 
+export function computeSpecStatus(state: BootstrapState): ComputedSpecStatus {
+  const chapters = selectSpecChapters({
+    shape: state.project.shape,
+    constraints: state.project.constraints,
+    coreJob: state.project.coreJob,
+    reuseBoundary: state.project.reuseBoundary,
+    planningSurface: state.project.planningSurface
+  });
+  const acceptance = specAcceptanceStatus(chapters, state.spec.acceptedSectionIds);
+  return {
+    chapters,
+    acceptedSectionIds: acceptance.acceptedSectionIds,
+    acceptedDynamicSectionIds: acceptance.acceptedDynamicSectionIds,
+    missingRequiredAcceptance: acceptance.missingRequiredAcceptance,
+    canGenerateMilestones: acceptance.canGenerateMilestones
+  };
+}
+
 export function applyAnswer(state: BootstrapState, field: string, value: string, assumption: boolean): BootstrapState {
+  if ((state.phase === "spec_acceptance" || state.phase === "milestone_generation") && field === "spec.acceptedSectionIds") {
+    return applySpecAnswer(state, value.trim());
+  }
   if (state.phase !== "discovery") {
     throw new AnswerError("answer-transition-invalid", `answer can only update discovery state; current phase is ${state.phase}.`);
   }
@@ -390,6 +454,29 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
       },
       artifacts: state.artifacts,
       nextAction
+    }
+  };
+}
+
+function applySpecAnswer(state: BootstrapState, value: string): BootstrapState {
+  if (value.length === 0) throw new AnswerError("answer-value-invalid", "answer value must not be empty.");
+  const chapterIds = new Set<string>(computeSpecStatus(state).chapters.map((chapter) => chapter.id));
+  if (!chapterIds.has(value)) throw new AnswerError("answer-value-invalid", `unsupported spec section id: ${value}.`);
+  const acceptedSectionIds = state.spec.acceptedSectionIds.includes(value)
+    ? state.spec.acceptedSectionIds
+    : [...state.spec.acceptedSectionIds, value];
+  const updatedState = {
+    ...state,
+    spec: {
+      ...state.spec,
+      acceptedSectionIds
+    }
+  };
+  return {
+    ...updatedState,
+    planning: {
+      ...updatedState.planning,
+      nextAction: computeNextAction(updatedState)
     }
   };
 }
@@ -514,6 +601,12 @@ function parseDiscovery(value: Readonly<Record<string, unknown>> | undefined): B
     inspectedSources: parseStringArray(value?.inspectedSources),
     knownDecisions: parseStringArray(value?.knownDecisions),
     unresolvedQuestions: parseStringArray(value?.unresolvedQuestions)
+  };
+}
+
+function parseSpec(value: Readonly<Record<string, unknown>> | undefined): BootstrapState["spec"] {
+  return {
+    acceptedSectionIds: parseStringArray(value?.acceptedSectionIds)
   };
 }
 

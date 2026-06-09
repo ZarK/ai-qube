@@ -6,7 +6,7 @@ import { loadAibConfig } from "./config.js";
 import { createInitPlan } from "./init.js";
 import { answerCommand, bootstrapRegistry, initCommand, nextCommand, planningTopic, statusCommand } from "./metadata.js";
 import { packageJson } from "./package.js";
-import { AnswerError, applyAnswer, computeNextAction, isAgentHost, readBootstrapState, writeBootstrapState } from "./state.js";
+import { AnswerError, applyAnswer, computeNextAction, computeSpecStatus, isAgentHost, readBootstrapState, writeBootstrapState } from "./state.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -92,12 +92,14 @@ export const aibCli = createCli({
       try {
         const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
         const nextAction = computeNextAction(envelope.state);
+        const spec = computeSpecStatus(envelope.state);
         return {
           json: {
             statePath: envelope.statePath,
             phase: envelope.state.phase,
             missingDecisions: nextAction.missingDecisions,
             artifacts: envelope.state.artifacts,
+            spec,
             nextCommand: nextAction.nextCommand,
             nextAction
           },
