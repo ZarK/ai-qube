@@ -1,0 +1,60 @@
+{
+  "name": "@tjalve/aib",
+  "version": "0.1.0",
+  "description": "AI Bootstrap - agent-operated project discovery and planning CLI.",
+  "keywords": [
+    "cli",
+    "agent",
+    "bootstrap",
+    "planning",
+    "documentation"
+  ],
+  "author": "tjalve",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-bootstrap.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-bootstrap/issues"
+  },
+  "homepage": "https://github.com/ZarK/ai-bootstrap#readme",
+  "packageManager": "pnpm@11.0.4",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
+  "bin": {
+    "aib": "./bin/run"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "bin/",
+    "dist/",
+    "docs/",
+    "README.md"
+  ],
+  "dependencies": {
+    "@tjalve/qube-cli": "0.1.1"
+  },
+  "scripts": {
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "pnpm run typecheck",
+    "test": "pnpm run build && node --test \"test/*.test.mjs\"",
+    "prepack": "pnpm run build",
+    "pack:check": "pnpm run build && pnpm pack --dry-run --json",
+    "verify": "pnpm run lint && pnpm run test && pnpm run pack:check"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  }
+}

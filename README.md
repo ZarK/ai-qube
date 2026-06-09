@@ -4,6 +4,8 @@ Bring an idea, not a design document.
 
 This repo is a discovery-first bootstrap kit for AI coding agents. Its canonical source lives in `.agent/`, and bootstrap scripts project that source into the tool-specific layout your agent expects.
 
+`aib` is an agent-operated CLI, not a human wizard. Humans talk to their agent; the agent calls `aib` to inspect schema, preview state changes, and decide which small set of questions to ask next.
+
 OpenCode is the first-class MVP target. Claude Code, Codex, and Gemini get best-effort projections built from the same source, and those mirrors are intentionally lossy when a tool does not support the same features.
 
 The source repo stays projection-clean. Run bootstrap into a real target project or a disposable `test-harness/` project instead of projecting into this repo root.
@@ -17,6 +19,22 @@ The source repo stays projection-clean. Run bootstrap into a real target project
 5. Answer the discovery questions in small batches.
 6. Review and accept `docs/spec.md`.
 7. Generate milestones, issues, and the final harness.
+
+## Package CLI
+
+The package entrypoint is `aib`. Use exact package versions when installing from a registry, for example `npm install -g @tjalve/aib@0.1.0` after that version is published. Do not install floating `latest` versions into agent workflows.
+
+For local development in this repo:
+
+```bash
+corepack enable
+pnpm install --frozen-lockfile --ignore-scripts
+node bin/run --help
+node bin/run schema --json
+node bin/run init --dry-run --json
+```
+
+`aib init --dry-run --json` is the safe baseline for agents: it returns the planned local bootstrap state and next action without writing files. The legacy `scripts/bootstrap-init.sh` path remains available until later milestones replace it.
 
 ## OpenCode (recommended)
 

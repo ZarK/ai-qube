@@ -1,3 +1,6 @@
 .DS_Store
 __pycache__/
 test-harness/
+dist/
+node_modules/
+.aie/
