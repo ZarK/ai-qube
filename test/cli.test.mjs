@@ -19,6 +19,8 @@ function parseJsonStdout(result) {
   return JSON.parse(result.stdout);
 }
 
+const forbiddenEarlyQuestionTerms = /\b(api|apis|schema|schemas|selector|selectors|ipc|ci|package manager|provider)\b/i;
+
 test("renders help and version", () => {
   const help = runAib(["--help"]);
   assert.equal(help.status, 0, help.stderr);
@@ -125,6 +127,54 @@ test("init writes resumable state and next returns a small question batch", asyn
   assert.equal(next.nextAction.stopCondition, "Stop after asking this batch and wait for the human's answers.");
 });
 
+test("fresh ideas receive staged high-level discovery questions", async () => {
+  const ideas = [
+    "Make an app for planning neighborhood events",
+    "Create a CLI package for organizing project notes",
+    "Bootstrap a research plan for evaluating school lunch programs",
+    "Build a local AI assistant for personal document search"
+  ];
+
+  for (const idea of ideas) {
+    const dir = await mkdtemp(join(tmpdir(), "aib-staged-discovery-"));
+    const init = parseJsonStdout(runAib(["init", dir, "--idea", idea, "--json"]));
+    const questions = init.nextAction.questions;
+    assert.ok(questions.length >= 3);
+    assert.ok(questions.length <= 5);
+    assert.ok(questions.some((question) => question.id === "project.shape"));
+    for (const question of questions) {
+      assert.equal(question.phase, "project_clarification");
+      assert.equal(question.depth, "high");
+      assert.ok(question.id);
+      assert.ok(question.text);
+      assert.ok(question.why);
+      assert.ok(Array.isArray(question.stateFields));
+      assert.ok(question.stateFields.length > 0);
+      assert.doesNotMatch(`${question.text} ${question.why}`, forbiddenEarlyQuestionTerms);
+    }
+  }
+});
+
+test("default answers become explicit assumptions instead of blockers", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-default-answer-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a local AI assistant", "--json"]));
+  const answer = parseJsonStdout(runAib([
+    "answer",
+    "--state",
+    init.statePath,
+    "--field",
+    "project.shape",
+    "--value",
+    "default",
+    "--json"
+  ]));
+
+  assert.equal(answer.state.project.shape, "Assume a reasonable default for project.shape.");
+  assert.deepEqual(answer.state.assumptions, ["project.shape: Assume a reasonable default for project.shape."]);
+  const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
+  assert.ok(!status.missingDecisions.includes("project.shape"));
+});
+
 test("answer records human input and status reports missing decisions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-answer-"));
   const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
@@ -220,7 +270,8 @@ test("phase next actions stop or request the correct agent action", async () => 
     successNarrative: "Clear answer",
     scope: "First brief",
     nonGoals: "No publication workflow",
-    shape: "document set"
+    shape: "document set",
+    constraints: "No sensitive data"
   };
   await writeFile(init.statePath, JSON.stringify(state), "utf8");
   const draft = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));

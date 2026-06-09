@@ -9,10 +9,12 @@ export type AnswerErrorKind = "answer-field-invalid" | "answer-value-invalid" | 
 
 export interface DiscoveryQuestion {
   readonly id: string;
+  readonly phase: "project_clarification" | "spec_completion" | "milestone_boundary" | "work_item_detail";
+  readonly depth: "high" | "spec" | "milestone" | "work_item";
   readonly text: string;
   readonly why: string;
   readonly answerType: "short-text" | "bullets";
-  readonly affects: readonly string[];
+  readonly stateFields: readonly string[];
 }
 
 export interface BootstrapState {
@@ -22,10 +24,11 @@ export interface BootstrapState {
     readonly intent?: string;
     readonly audience?: string;
     readonly coreJob?: string;
+    readonly shape?: string;
     readonly successNarrative?: string;
     readonly scope?: string;
     readonly nonGoals?: string;
-    readonly shape?: string;
+    readonly constraints?: string;
   };
   readonly agent: {
     readonly host?: AgentHostKind;
@@ -61,52 +64,75 @@ export class AnswerError extends TypeError {
 const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
   {
     id: "project.intent",
+    phase: "project_clarification",
+    depth: "high",
     text: "What are you trying to create?",
     why: "This anchors the spec around the project goal before implementation details appear.",
     answerType: "short-text",
-    affects: ["project.intent"]
+    stateFields: ["project.intent"]
   },
   {
     id: "project.audience",
+    phase: "project_clarification",
+    depth: "high",
     text: "Who is this for?",
     why: "Audience changes the product shape, UX expectations, language, and validation criteria.",
     answerType: "short-text",
-    affects: ["project.audience"]
+    stateFields: ["project.audience"]
   },
   {
     id: "project.coreJob",
+    phase: "project_clarification",
+    depth: "high",
     text: "What core job should it do first?",
     why: "A clear first job prevents the initial spec from becoming a feature list without a center.",
     answerType: "short-text",
-    affects: ["project.coreJob"]
-  },
-  {
-    id: "project.successNarrative",
-    text: "What should feel successful when the first useful version works?",
-    why: "The success narrative gives milestones and work items a concrete target.",
-    answerType: "bullets",
-    affects: ["project.successNarrative"]
-  },
-  {
-    id: "project.scope",
-    text: "What is in scope for the first version?",
-    why: "Scope defines the boundary between spec work and later ideas.",
-    answerType: "bullets",
-    affects: ["project.scope"]
-  },
-  {
-    id: "project.nonGoals",
-    text: "What should it intentionally not do yet?",
-    why: "Non-goals protect the plan from premature implementation depth.",
-    answerType: "bullets",
-    affects: ["project.nonGoals"]
+    stateFields: ["project.coreJob"]
   },
   {
     id: "project.shape",
+    phase: "project_clarification",
+    depth: "high",
     text: "What kind of project is this: app, CLI, service, document set, research effort, process, or something else?",
     why: "Project shape controls which spec chapters and milestone templates apply.",
     answerType: "short-text",
-    affects: ["project.shape"]
+    stateFields: ["project.shape"]
+  },
+  {
+    id: "project.successNarrative",
+    phase: "project_clarification",
+    depth: "high",
+    text: "What should feel successful when the first useful version works?",
+    why: "The success narrative gives milestones and work items a concrete target.",
+    answerType: "bullets",
+    stateFields: ["project.successNarrative"]
+  },
+  {
+    id: "project.scope",
+    phase: "project_clarification",
+    depth: "high",
+    text: "What is in scope for the first version?",
+    why: "Scope defines the boundary between spec work and later ideas.",
+    answerType: "bullets",
+    stateFields: ["project.scope"]
+  },
+  {
+    id: "project.nonGoals",
+    phase: "project_clarification",
+    depth: "high",
+    text: "What should it intentionally not do yet?",
+    why: "Non-goals protect the plan from premature implementation depth.",
+    answerType: "bullets",
+    stateFields: ["project.nonGoals"]
+  },
+  {
+    id: "project.constraints",
+    phase: "project_clarification",
+    depth: "high",
+    text: "Are there any important platform, runtime, offline, privacy, organization, or audience constraints?",
+    why: "High-level constraints shape the spec without forcing technical design too early.",
+    answerType: "bullets",
+    stateFields: ["project.constraints"]
   }
 ];
 
@@ -247,7 +273,7 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
     questionBudget: state.agent.questionBudget,
     questions,
     missingDecisions: missing.map((question) => question.id),
-    stateFields: questions.flatMap((question) => question.affects),
+    stateFields: questions.flatMap((question) => question.stateFields),
     nextCommand: `aib answer --field ${questions[0]?.id ?? "project.intent"} --value <answer> --json`,
     stopCondition: "Stop after asking this batch and wait for the human's answers."
   };
@@ -257,7 +283,9 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
   if (state.phase !== "discovery") {
     throw new AnswerError("answer-transition-invalid", `answer can only update discovery state; current phase is ${state.phase}.`);
   }
-  const normalized = value.trim();
+  const raw = value.trim();
+  const defaulted = isDefaultAnswer(raw);
+  const normalized = defaulted ? `Assume a reasonable default for ${field}.` : raw;
   if (normalized.length === 0) throw new AnswerError("answer-value-invalid", "answer value must not be empty.");
   const question = DISCOVERY_QUESTIONS.find((candidate) => candidate.id === field);
   if (!question) throw new AnswerError("answer-field-invalid", `unsupported answer field: ${field}.`);
@@ -270,7 +298,7 @@ export function applyAnswer(state: BootstrapState, field: string, value: string,
   return {
     ...state,
     project,
-    assumptions: assumption ? [...state.assumptions, `${field}: ${normalized}`] : state.assumptions,
+    assumptions: assumption || defaulted ? [...state.assumptions, `${field}: ${normalized}`] : state.assumptions,
     planning: {
       ...planning,
       project: {
@@ -305,11 +333,17 @@ function parseProject(value: Readonly<Record<string, unknown>>): BootstrapState[
     ...(typeof value.intent === "string" ? { intent: value.intent } : {}),
     ...(typeof value.audience === "string" ? { audience: value.audience } : {}),
     ...(typeof value.coreJob === "string" ? { coreJob: value.coreJob } : {}),
+    ...(typeof value.shape === "string" ? { shape: value.shape } : {}),
     ...(typeof value.successNarrative === "string" ? { successNarrative: value.successNarrative } : {}),
     ...(typeof value.scope === "string" ? { scope: value.scope } : {}),
     ...(typeof value.nonGoals === "string" ? { nonGoals: value.nonGoals } : {}),
-    ...(typeof value.shape === "string" ? { shape: value.shape } : {})
+    ...(typeof value.constraints === "string" ? { constraints: value.constraints } : {})
   };
+}
+
+function isDefaultAnswer(value: string): boolean {
+  const normalized = value.toLowerCase();
+  return normalized === "default" || normalized === "not sure" || normalized === "not sure yet" || normalized === "unknown" || normalized === "tbd";
 }
 
 function parseArtifacts(value: unknown, field = "artifacts"): BootstrapState["artifacts"] {
