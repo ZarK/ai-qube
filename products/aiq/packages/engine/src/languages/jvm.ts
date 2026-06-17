@@ -18,7 +18,6 @@ import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { JvmRunnerRuntime, SharedMetricsMode } from "./contracts.js";
 import {
-  createUnsupportedJvmRunnerNote,
   findJvmCoverageReport,
   findJvmJunitReports,
   getJvmMetricsProjectMetrics,
@@ -228,16 +227,17 @@ export async function runJvmTypecheckTask(
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
   let unsupportedFiles: string[] = [];
-  let notImplementedProjectCount = 0;
 
   try {
     const resolvedProjects = await resolveJvmProjects(runtime.graph, files);
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
+      return createJvmSetupFailureStage(
         task.stageId,
-        createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles),
+        files,
+        createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles),
+        runtime,
       );
     }
 
@@ -250,7 +250,6 @@ export async function runJvmTypecheckTask(
       diagnostics.push(...projectResult.diagnostics);
       notes.push(projectResult.note);
       toolRuns.push(projectResult.toolRun);
-      notImplementedProjectCount += projectResult.notImplemented ? 1 : 0;
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -266,7 +265,9 @@ export async function runJvmTypecheckTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles));
+    const message = createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createJvmSetupDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -274,12 +275,7 @@ export async function runJvmTypecheckTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0 || notImplementedProjectCount > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -452,16 +448,17 @@ async function runJvmStageTask(
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
   let unsupportedFiles: string[] = [];
-  let notImplementedProjectCount = 0;
 
   try {
     const resolvedProjects = await resolveJvmProjects(runtime.graph, files);
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
+      return createJvmSetupFailureStage(
         task.stageId,
-        createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles),
+        files,
+        createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles),
+        runtime,
       );
     }
 
@@ -474,7 +471,6 @@ async function runJvmStageTask(
       diagnostics.push(...projectResult.diagnostics);
       notes.push(projectResult.note);
       toolRuns.push(projectResult.toolRun);
-      notImplementedProjectCount += projectResult.notImplemented ? 1 : 0;
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -490,7 +486,9 @@ async function runJvmStageTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles));
+    const message = createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createJvmSetupDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -498,12 +496,7 @@ async function runJvmStageTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0 || notImplementedProjectCount > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -521,12 +514,19 @@ async function runJvmLintOrFormatProjectTask(
 }> {
   const command = await resolveJvmLintOrFormatCommand(project, mode, runtime);
   if (command === undefined) {
+    const message = createUnsupportedJvmCommandMessage(project, mode);
     return {
-      diagnostics: [],
+      diagnostics: [
+        runtime.createProcessFailureDiagnostic(
+          project.files[0] ?? project.buildFilePath,
+          "jvm-unavailable",
+          message,
+        ),
+      ],
       durationMs: 0,
-      notImplemented: true,
-      note: `No supported JVM ${mode} command was detected for ${project.projectRoot}.`,
-      toolRun: runtime.createToolRunResult("jvm-unavailable", [], 0, undefined, "not_implemented"),
+      notImplemented: false,
+      note: message,
+      toolRun: runtime.createToolRunResult("jvm-unavailable", [], 0, undefined, "failed"),
     };
   }
 
@@ -591,16 +591,17 @@ async function runJvmTestStage(
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
   let unsupportedFiles: string[] = [];
-  let notImplementedProjectCount = 0;
 
   try {
     const resolvedProjects = await resolveJvmProjects(runtime.graph, files);
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
+      return createJvmSetupFailureStage(
         task.stageId,
-        createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles),
+        files,
+        createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles),
+        runtime,
       );
     }
 
@@ -615,7 +616,6 @@ async function runJvmTestStage(
       diagnostics.push(...projectResult.diagnostics);
       notes.push(projectResult.note);
       toolRuns.push(projectResult.toolRun);
-      notImplementedProjectCount += projectResult.notImplemented ? 1 : 0;
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -631,7 +631,9 @@ async function runJvmTestStage(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedJvmRunnerNote(task.stageId, unsupportedFiles));
+    const message = createUnsupportedJvmSetupMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createJvmSetupDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -639,12 +641,7 @@ async function runJvmTestStage(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0 || notImplementedProjectCount > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -665,18 +662,19 @@ async function runJvmBuildProjectTask(
   try {
     const command = await resolveJvmExecutionCommand(project, mode, tempDir, runtime);
     if (command === undefined) {
+      const message = createMissingJvmCommandMessage(project, mode);
       return {
-        diagnostics: [],
+        diagnostics: [
+          runtime.createProcessFailureDiagnostic(
+            project.files[0] ?? project.buildFilePath,
+            "jvm-unavailable",
+            message,
+          ),
+        ],
         durationMs: 0,
-        notImplemented: true,
-        note: `No supported JVM ${mode} command was detected for ${project.projectRoot}.`,
-        toolRun: runtime.createToolRunResult(
-          "jvm-unavailable",
-          [],
-          0,
-          undefined,
-          "not_implemented",
-        ),
+        notImplemented: false,
+        note: message,
+        toolRun: runtime.createToolRunResult("jvm-unavailable", [], 0, undefined, "failed"),
       };
     }
 
@@ -687,6 +685,30 @@ async function runJvmBuildProjectTask(
       runtime.signal,
       command.env,
     );
+    if (runtime.isMissingCommandOutcome(outcome.stderr, outcome.stdout, outcome.exitCode)) {
+      const message = createMissingJvmCommandMessage(project, mode);
+      return {
+        diagnostics: [
+          runtime.createProcessFailureDiagnostic(
+            project.files[0] ?? project.buildFilePath,
+            command.tool,
+            message,
+          ),
+        ],
+        durationMs: outcome.durationMs,
+        notImplemented: false,
+        note: message,
+        toolRun: runtime.createToolRunResult(
+          command.tool,
+          command.args,
+          outcome.durationMs,
+          outcome.exitCode,
+          "failed",
+          outcome.finishedAt,
+          outcome.startedAt,
+        ),
+      };
+    }
     const report =
       mode === "typecheck"
         ? undefined
@@ -757,6 +779,55 @@ async function runJvmBuildProjectTask(
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function createJvmSetupFailureStage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+  message: string,
+  runtime: JvmRunnerRuntime,
+): StageResult {
+  return {
+    diagnostics: createJvmSetupDiagnostics(files, message),
+    durationMs: 0,
+    notes: [message],
+    stageId,
+    status: "failed",
+    toolRuns: [runtime.createToolRunResult("jvm-unavailable", [], 0, undefined, "failed")],
+  };
+}
+
+function createJvmSetupDiagnostics(files: readonly string[], message: string): Diagnostic[] {
+  return files.map((file) => ({
+    file,
+    message,
+    severity: "error",
+    source: "jvm-unavailable",
+  }));
+}
+
+function createUnsupportedJvmSetupMessage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): string {
+  const target = files.length === 0 ? `for ${stageId}` : `for ${stageId} in: ${files.join(", ")}`;
+  return `No JVM build target was detected ${target}. Add pom.xml, build.gradle, or build.gradle.kts with Maven/Gradle tooling, or disable JVM ${stageId}.`;
+}
+
+function createMissingJvmCommandMessage(
+  project: JvmProject,
+  mode: "coverage" | "typecheck" | "unit",
+): string {
+  const expected =
+    project.buildSystem === "maven"
+      ? "mvnw or an installed Maven command"
+      : "gradlew or an installed Gradle command";
+  const label = project.buildSystem === "maven" ? "Maven" : "Gradle";
+  return `${label} is required for JVM ${mode} in ${project.projectRoot}. Add ${expected}, install ${label}, or disable JVM ${mode}.`;
+}
+
+function createUnsupportedJvmCommandMessage(project: JvmProject, mode: "format" | "lint"): string {
+  return `No supported JVM ${mode} command was detected for ${project.projectRoot}. Configure a supported Maven or Gradle ${mode} plugin, or disable JVM ${mode}.`;
 }
 
 async function resolveJvmProjects(

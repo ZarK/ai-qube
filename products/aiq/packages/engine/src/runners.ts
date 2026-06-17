@@ -740,6 +740,7 @@ function createJvmRunnerRuntime(cwd: string, signal: AbortSignal | undefined): J
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
+    isMissingCommandOutcome,
     isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
