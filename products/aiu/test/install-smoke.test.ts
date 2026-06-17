@@ -27,6 +27,8 @@ describe("packed tarball install smoke", () => {
     const tarball = await packPackage(packDir);
     await createLockedBlankRepo(target, tarball);
 
+    await runPnpm(["fetch", "--frozen-lockfile", "--ignore-scripts"], target);
+    await rm(path.join(target, "node_modules"), { recursive: true, force: true });
     await runPnpm(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], target);
     const result = await runPnpm(["exec", "aiu", "init", "--dry-run", "--json"], target);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
