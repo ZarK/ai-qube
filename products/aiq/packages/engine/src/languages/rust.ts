@@ -31,6 +31,10 @@ import {
   resolveRustBinary,
   resolveRustProjectSourceFiles,
 } from "./rust-tools.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type RustProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -658,10 +662,25 @@ export async function runRustMetricsTask(
     notes.push("Reused cached Rust metrics for this file batch.");
   }
 
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isRustTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
-    notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-Rust files in this selection: ${unsupportedFiles.join(", ")}.`,
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "Rust",
+        "Rust files or Cargo project files",
+        runtime.createProcessFailureDiagnostic,
+      ),
     );
+    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "Rust"));
   }
 
   return {
@@ -669,12 +688,7 @@ export async function runRustMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }

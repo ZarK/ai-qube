@@ -30,6 +30,10 @@ import {
   resolveGoBinary,
   resolveGoProjectSourceFiles,
 } from "./go-tools.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type GoProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -641,10 +645,25 @@ export async function runGoMetricsTask(
     notes.push("Reused cached Go metrics for this file batch.");
   }
 
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isGoTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
-    notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-Go files in this selection: ${unsupportedFiles.join(", ")}.`,
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "Go",
+        "Go files or Go project files",
+        runtime.createProcessFailureDiagnostic,
+      ),
     );
+    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "Go"));
   }
 
   return {
@@ -652,12 +671,7 @@ export async function runGoMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }

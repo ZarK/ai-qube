@@ -90,6 +90,7 @@ export interface JavaScriptRunnerRuntime extends LanguageRunnerBaseRuntime {
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
   getRunScopedValue: <T>(scope: string, key: string) => T | undefined;
+  isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,
@@ -201,6 +202,7 @@ export interface JvmRunnerRuntime extends LanguageRunnerBaseRuntime {
     cacheKey: string,
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
+  isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,
@@ -234,6 +236,7 @@ export interface DotNetRunnerRuntime extends LanguageRunnerBaseRuntime {
     cacheKey: string,
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
+  isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readFileText: (filePath: string) => Promise<string>;
   readSharedMetricsNote: (
     languageLabel: string,
@@ -270,6 +273,7 @@ export interface GoRunnerRuntime extends LanguageRunnerBaseRuntime {
     cacheKey: string,
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
+  isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,
@@ -307,6 +311,7 @@ export interface RustRunnerRuntime extends LanguageRunnerBaseRuntime {
     cacheKey: string,
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
+  isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readSharedMetricsNote: (
     languageLabel: string,
     mode: SharedMetricsMode,

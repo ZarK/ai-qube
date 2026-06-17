@@ -30,6 +30,10 @@ import {
   resolveJvmLintOrFormatCommand,
   resolveJvmMetricsFiles,
 } from "./jvm-tools.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type JvmProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -399,10 +403,25 @@ export async function runJvmMetricsTask(
     notes.push("Reused cached JVM metrics for this file batch.");
   }
 
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isJvmTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
-    notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-JVM files in this selection: ${unsupportedFiles.join(", ")}.`,
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "JVM",
+        "Java, Kotlin, or JVM project files",
+        runtime.createProcessFailureDiagnostic,
+      ),
     );
+    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "JVM"));
   }
 
   return {
@@ -410,12 +429,7 @@ export async function runJvmMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }

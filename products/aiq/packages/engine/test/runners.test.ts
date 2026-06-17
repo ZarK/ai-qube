@@ -3,6 +3,7 @@ import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "nod
 import os from "node:os";
 import path from "node:path";
 
+import { type LanguageId, type RunStageConfigurations, languageIds } from "@tjalve/aiq/model";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { runEngine } from "../src/index.js";
 import { buildEngineContext } from "../src/request.js";
@@ -36,6 +37,40 @@ const fixtureRustRoot = path.resolve("test-projects/rust");
 const fixtureTypeScriptPackageJson = path.resolve("test-projects/typescript/package.json");
 const fixtureTsconfig = path.resolve("test-projects/typescript/tsconfig.json");
 const vitestCliPath = path.resolve("node_modules/vitest/vitest.mjs");
+const sharedMetricsStages = ["sloc", "complexity", "maintainability"] as const;
+
+const metricsToolByLanguage = {
+  bash: "bash",
+  css: "css",
+  documents: "documents",
+  dotnet: "dotnet",
+  go: "go",
+  hcl: "terraform",
+  html: "html",
+  java: "jvm",
+  javascript: "javascript",
+  kotlin: "jvm",
+  powershell: "powershell",
+  python: "python",
+  rust: "rust",
+  sql: "sql",
+  terraform: "terraform",
+  typescript: "javascript",
+  yaml: "yaml",
+} as const satisfies Record<LanguageId, string>;
+
+function createSingleLanguageStageConfiguration(
+  stageId: (typeof sharedMetricsStages)[number],
+  languageId: LanguageId,
+): RunStageConfigurations {
+  return {
+    [stageId]: {
+      languages: {
+        [languageId]: { toolId: metricsToolByLanguage[languageId] },
+      },
+    },
+  } as RunStageConfigurations;
+}
 
 function commandAvailable(command: string): boolean {
   try {
@@ -2533,6 +2568,163 @@ describe("engine runners", () => {
       status: "passed",
       tool: "lizard",
     });
+  });
+
+  it("keeps configured shared metrics language matrix release-safe", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-shared-metrics-language-matrix-"));
+    tempDirs.push(tempDir);
+
+    const neutralFile = path.join(tempDir, "README.txt");
+    await writeFile(neutralFile, "plain text\n", "utf8");
+
+    for (const languageId of languageIds) {
+      for (const stageId of sharedMetricsStages) {
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [neutralFile],
+            id: `test:1:${stageId}-${languageId}-configured-metrics`,
+            stageId,
+          },
+          await buildEngineContext({
+            context: "cli",
+            cwd: tempDir,
+            manifest: { files: [neutralFile], source: "direct" },
+            mode: "check",
+            stageConfigurations: createSingleLanguageStageConfiguration(stageId, languageId),
+            stages: [stageId],
+            writeArtifacts: false,
+          }),
+        );
+
+        expect(JSON.stringify(result)).not.toContain("not_implemented");
+        expect(result.status).toBe("passed");
+        expect(result.toolRuns).toEqual([]);
+      }
+    }
+  });
+
+  it("no-ops shared metrics for unsupported language file types without placeholders", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-unsupported-metrics-matrix-"));
+    tempDirs.push(tempDir);
+
+    const unsupportedFiles = [
+      {
+        contents: 'resource "null_resource" "example" {}\n',
+        languageId: "terraform",
+        name: "main.tf",
+      },
+      { contents: "locals { value = 1 }\n", languageId: "hcl", name: "main.hcl" },
+      { contents: "echo hi\n", languageId: "bash", name: "script.sh" },
+      { contents: "Write-Host 'hi'\n", languageId: "powershell", name: "script.ps1" },
+      { contents: "<main>Hello</main>\n", languageId: "html", name: "index.html" },
+      { contents: ".button { color: red; }\n", languageId: "css", name: "style.css" },
+      { contents: "name: value\n", languageId: "yaml", name: "config.yaml" },
+      { contents: "select 1;\n", languageId: "sql", name: "query.sql" },
+      { contents: "# Notes\n", languageId: "documents", name: "notes.md" },
+    ] as const satisfies readonly Array<{
+      contents: string;
+      languageId: LanguageId;
+      name: string;
+    }>;
+
+    for (const fixture of unsupportedFiles) {
+      const file = path.join(tempDir, fixture.name);
+      await writeFile(file, fixture.contents, "utf8");
+
+      for (const stageId of sharedMetricsStages) {
+        const result = await runPlannedTask(
+          {
+            fileCount: 1,
+            files: [file],
+            id: `test:1:${stageId}-${fixture.languageId}-unsupported-metrics`,
+            stageId,
+          },
+          await buildEngineContext({
+            context: "cli",
+            cwd: tempDir,
+            manifest: { files: [file], source: "direct" },
+            mode: "check",
+            stageConfigurations: createSingleLanguageStageConfiguration(
+              stageId,
+              fixture.languageId,
+            ),
+            stages: [stageId],
+            writeArtifacts: false,
+          }),
+        );
+
+        expect(JSON.stringify(result)).not.toContain("not_implemented");
+        expect(result.status).toBe("passed");
+        expect(result.diagnostics).toEqual([]);
+        expect(result.toolRuns).toEqual([]);
+      }
+    }
+  });
+
+  it("keeps supported shared metrics runs while reporting mixed unsupported files", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-mixed-shared-metrics-"));
+    tempDirs.push(tempDir);
+
+    const cssFile = path.join(tempDir, "style.css");
+    await writeFile(cssFile, ".button { color: red; }\n", "utf8");
+
+    for (const stageId of sharedMetricsStages) {
+      const result = await runPlannedTask(
+        {
+          fileCount: 2,
+          files: [fixtureFile, cssFile],
+          id: `test:1:${stageId}-mixed-unsupported-metrics`,
+          stageId,
+        },
+        process.cwd(),
+      );
+
+      expect(JSON.stringify(result)).not.toContain("not_implemented");
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics).toEqual([
+        expect.objectContaining({
+          file: cssFile,
+          severity: "error",
+          source: "aiq-shared-metrics",
+        }),
+      ]);
+      expect(result.notes.join(" ")).toContain("Unsupported shared metrics files");
+      expect(result.toolRuns).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ exitCode: 0, status: "passed", tool: "lizard" }),
+        ]),
+      );
+    }
+  });
+
+  it("reports supported-language shared metrics files that cannot resolve a project", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-unresolved-rust-metrics-"));
+    tempDirs.push(tempDir);
+
+    const rustFile = path.join(tempDir, "orphan.rs");
+    await writeFile(rustFile, "fn main() {}\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [rustFile],
+        id: "test:1:complexity-rust-unresolved-project",
+        stageId: "complexity",
+      },
+      process.cwd(),
+    );
+
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(result.status).toBe("failed");
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        file: rustFile,
+        severity: "error",
+        source: "aiq-shared-metrics",
+      }),
+    ]);
+    expect(result.toolRuns).toEqual([]);
   });
 
   it("expands package.json selections to the actual JavaScript and TypeScript source count", async () => {

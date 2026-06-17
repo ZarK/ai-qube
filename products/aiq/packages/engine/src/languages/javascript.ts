@@ -35,6 +35,10 @@ import {
   resolveJavaScriptTestExecutionMode,
 } from "../utils/node-utils.js";
 import type { JavaScriptRunnerRuntime, SharedMetricsMode } from "./contracts.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type JavaScriptPackageProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -351,9 +355,26 @@ export async function runJavaScriptMetricsTask(
     notes.push("Reused cached JavaScript/TypeScript metrics for this file batch.");
   }
 
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isJavaScriptMetricsTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "JavaScript/TypeScript",
+        "JavaScript or TypeScript files",
+        runtime.createProcessFailureDiagnostic,
+      ),
+    );
     notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-JavaScript/TypeScript files in this selection: ${unsupportedFiles.join(", ")}.`,
+      ...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "JavaScript/TypeScript"),
     );
   }
 
@@ -362,12 +383,7 @@ export async function runJavaScriptMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
