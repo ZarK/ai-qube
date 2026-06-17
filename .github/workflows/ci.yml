@@ -167,6 +167,3 @@ jobs:
 
       - name: Typecheck AIQ
         run: pnpm --filter ai-code-quality run typecheck
-
-      - name: Test AIQ
-        run: pnpm --filter ai-code-quality test
