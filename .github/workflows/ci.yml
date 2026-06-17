@@ -156,6 +156,12 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Build AIQ workspace dependencies
+        run: |
+          pnpm --filter @tjalve/qube-cli run build
+          pnpm --filter @tjalve/aie run build
+          pnpm --filter @tjalve/aiu run build
+
       - name: Build AIQ
         run: pnpm --filter ai-code-quality run build
 
