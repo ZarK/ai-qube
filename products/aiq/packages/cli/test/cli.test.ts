@@ -34,6 +34,7 @@ const fixtureJavaScriptFile = path.resolve("test-projects/javascript/index.js");
 const fixtureDotNetRoot = path.resolve("test-projects/dotnet");
 const fixturePythonFile = path.resolve("test-projects/python/main.py");
 const fixtureTsconfig = path.resolve("test-projects/typescript/tsconfig.json");
+const cliPackageJsonPath = path.join(repoRoot, "packages", "cli", "package.json");
 const packageSmokeWorkspaces = ["packages/cli"] as const;
 const approvedPackageSmokeDependencies = [
   {
@@ -381,6 +382,74 @@ afterEach(async () => {
 });
 
 describe("CLI foundation", () => {
+  it("prints the package version without first-run side effects", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-version-"));
+    tempDirs.push(tempDir);
+    const packageJson = JSON.parse(await readFile(cliPackageJsonPath, "utf8")) as {
+      name: string;
+      version: string;
+    };
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "--version"], {
+      cwd: tempDir,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(stdout.value).toBe(`${packageJson.version}\n`);
+    await expect(access(path.join(tempDir, ".aiq"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("prints the package version envelope as JSON", async () => {
+    const packageJson = JSON.parse(await readFile(cliPackageJsonPath, "utf8")) as {
+      name: string;
+      version: string;
+    };
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "quality", "--version", "--json"], {
+      cwd: process.cwd(),
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(JSON.parse(stdout.value)).toEqual({
+      ok: true,
+      command: "version",
+      package: { name: packageJson.name, version: packageJson.version },
+      version: packageJson.version,
+    });
+  });
+
+  it("keeps -v reserved for verbose first-run behavior", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-short-verbose-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    const exitCode = await runCli(["node", "aiq", "-v", "--dry-run"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stderr.value).toBe("");
+    expect(stdout.value).toContain("AIQ first run");
+    expect(stdout.value).toContain("AIQ dry run");
+    expect(stdout.value).toContain("Run:");
+    expect(stdout.value).toContain("Profile:");
+  });
+
   it("keeps published package metadata aligned with the clean repository", async () => {
     for (const workspace of publishedPackageWorkspaces) {
       const packageJson = JSON.parse(
@@ -4903,6 +4972,31 @@ describePackageSmoke("CLI package smoke", () => {
       expect(builtHelp.stderr).toBe("");
       expect(builtHelp.stdout).toContain("Usage:");
 
+      const packageJson = JSON.parse(await readFile(cliPackageJsonPath, "utf8")) as {
+        name: string;
+        version: string;
+      };
+      const builtVersion = await runCommand(process.execPath, [builtCliPath, "--version"], {
+        cwd: repoRoot,
+      });
+      expect(builtVersion.exitCode).toBe(0);
+      expect(builtVersion.stderr).toBe("");
+      expect(builtVersion.stdout).toBe(`${packageJson.version}\n`);
+
+      const builtVersionJson = await runCommand(
+        process.execPath,
+        [builtCliPath, "--version", "--json"],
+        { cwd: repoRoot },
+      );
+      expect(builtVersionJson.exitCode).toBe(0);
+      expect(builtVersionJson.stderr).toBe("");
+      expect(JSON.parse(builtVersionJson.stdout)).toEqual({
+        ok: true,
+        command: "version",
+        package: { name: packageJson.name, version: packageJson.version },
+        version: packageJson.version,
+      });
+
       const builtBench = await runCommand(
         process.execPath,
         [
@@ -4958,6 +5052,16 @@ describePackageSmoke("CLI package smoke", () => {
       expect(packedHelp.stdout).toContain("--up-to <0-9>");
       expect(packedHelp.stdout).toContain("--only <0-9>");
       expect(packedHelp.stderr).not.toContain("ReferenceError");
+
+      const packedQualityVersion = await runNpmCommand(
+        ["exec", "--", "quality", "--", "--version"],
+        {
+          cwd: packedFixture.root,
+        },
+      );
+      expect(packedQualityVersion.exitCode).toBe(0);
+      expect(packedQualityVersion.stderr).toBe("");
+      expect(packedQualityVersion.stdout).toBe(`${packageJson.version}\n`);
 
       const packedSchema = await runNpmCommand(
         ["exec", "--", "aiq", "--", "schema", "--format", "json"],

@@ -9,9 +9,9 @@ import {
   renderSchemaJson,
 } from "@tjalve/qube-cli";
 
+import { aiqPackageName, aiqPackageVersion } from "./version.js";
+
 export const aiqSchemaVersion = 1 as const;
-export const aiqPackageName = "@tjalve/aiq" as const;
-export const aiqPackageVersion = "0.2.0" as const;
 export const aiqSchemaBin = "aiq" as const;
 
 const stageSelectionFlags = [
