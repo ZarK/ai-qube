@@ -83,6 +83,21 @@ function commandAvailable(command: string): boolean {
   }
 }
 
+function expectBashSetupFailure(
+  result: Awaited<ReturnType<typeof runPlannedTask>>,
+  source: "bats" | "kcov",
+  file: string,
+): void {
+  expect(JSON.stringify(result)).not.toContain("not_implemented");
+  expect(result.status).toBe("failed");
+  expect(result.diagnostics[0]).toMatchObject({
+    file,
+    severity: "error",
+    source,
+  });
+  expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: source });
+}
+
 async function createDotNetFixtureProject(
   prefix: string,
 ): Promise<{ root: string; solutionFile: string; sourceFile: string; testFile: string }> {
@@ -5586,6 +5601,31 @@ describe("engine runners", () => {
     }
   });
 
+  it.each(["unit", "coverage"] as const)(
+    "reports missing Bash tests as a setup failure for %s",
+    async (stageId) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-bash-no-tests-"));
+      tempDirs.push(tempDir);
+
+      const bashFile = path.join(tempDir, "example.sh");
+      await writeFile(bashFile, "#!/usr/bin/env bash\necho hello\n", "utf8");
+
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [bashFile],
+          id: `test:1:${stageId}-bash-no-tests`,
+          stageId,
+        },
+        process.cwd(),
+      );
+
+      expectBashSetupFailure(result, "bats", bashFile);
+      expect(result.notes[0]).toContain("No Bash test files were detected");
+      expect(result.notes[0]).toContain(`disable Bash ${stageId}`);
+    },
+  );
+
   it("recognizes mixed-case .BATS files as Bash tests", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-bash-uppercase-bats-"));
     tempDirs.push(tempDir);
@@ -5605,12 +5645,9 @@ describe("engine runners", () => {
       process.cwd(),
     );
 
-    expect(result.status).toBe("not_implemented");
+    expectBashSetupFailure(result, "bats", batsFile);
     expect(result.notes[0]).toContain("Bats is required for Bash unit");
     expect(result.notes[0]).not.toContain("No Bash tests were found");
-    expect(result.toolRuns).toEqual([
-      expect.objectContaining({ status: "not_implemented", tool: "bats" }),
-    ]);
   });
 
   it("returns a failed stage result when Bash binary lookup hits an unexpected error", async () => {
@@ -5659,7 +5696,7 @@ describe("engine runners", () => {
     );
 
     if (!hasBats) {
-      expect(result.status).toBe("not_implemented");
+      expectBashSetupFailure(result, "bats", project.sourceFile);
       expect(result.notes[0]).toContain("Bats is required for Bash unit");
       return;
     }
@@ -5685,7 +5722,7 @@ describe("engine runners", () => {
     );
 
     if (!hasBats || !hasKcov) {
-      expect(result.status).toBe("not_implemented");
+      expectBashSetupFailure(result, hasBats ? "kcov" : "bats", project.sourceFile);
       return;
     }
 
@@ -5693,6 +5730,38 @@ describe("engine runners", () => {
     expect(result.notes[0]).toContain("Bash coverage lines:");
     expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "kcov" });
   }, 30_000);
+
+  it("reports missing kcov as a Bash coverage setup failure", async () => {
+    const project = await createBashFixtureProject("aiq-bash-missing-kcov-");
+
+    vi.spyOn(ToolRunner.prototype, "resolveBinaryIfAvailable").mockImplementation(
+      async (commands) => {
+        if (commands.some((command) => command.includes("bats"))) {
+          return "bats";
+        }
+
+        if (commands.some((command) => command.includes("kcov"))) {
+          return undefined;
+        }
+
+        return undefined;
+      },
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "test:1:coverage-bash-missing-kcov",
+        stageId: "coverage",
+      },
+      process.cwd(),
+    );
+
+    expectBashSetupFailure(result, "kcov", project.sourceFile);
+    expect(result.notes[0]).toContain("kcov is required for Bash coverage");
+    expect(result.notes[0]).toContain("disable Bash coverage");
+  });
 
   it("returns a failed stage result when PSScriptAnalyzer is missing for PowerShell lint", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-missing-module-"));

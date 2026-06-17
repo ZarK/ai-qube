@@ -213,42 +213,24 @@ async function runBashProjectTestTask(
 }> {
   const testFiles = await resolveBashProjectTestFiles(project, runtime.findMatchingFiles);
   if (testFiles.length === 0) {
-    return {
-      diagnostics: [],
-      durationMs: 0,
-      note: createMissingScriptTestsNote("Bash", project.projectRoot),
-      status: "not_implemented",
-      toolRuns: [
-        runtime.createToolRunResult(
-          mode === "coverage" ? "kcov" : "bats",
-          [],
-          0,
-          undefined,
-          "not_implemented",
-        ),
-      ],
-    };
+    return createBashTestSetupFailure(
+      project,
+      "bats",
+      `${createMissingScriptTestsNote("Bash", project.projectRoot)} Add .bats tests or disable Bash ${mode}.`,
+      runtime,
+    );
   }
 
   const batsCommand = await runtime.resolveBinaryIfAvailable(
     process.platform === "win32" ? ["bats.exe", "bats"] : ["bats"],
   );
   if (batsCommand === undefined) {
-    return {
-      diagnostics: [],
-      durationMs: 0,
-      note: `Bats is required for Bash ${mode} and was not detected in ${project.projectRoot}.`,
-      status: "not_implemented",
-      toolRuns: [
-        runtime.createToolRunResult(
-          mode === "coverage" ? "kcov" : "bats",
-          [],
-          0,
-          undefined,
-          "not_implemented",
-        ),
-      ],
-    };
+    return createBashTestSetupFailure(
+      project,
+      "bats",
+      `Bats is required for Bash ${mode} and was not detected in ${project.projectRoot}. Install Bats or disable Bash ${mode}.`,
+      runtime,
+    );
   }
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-bash-runner-"));
@@ -314,13 +296,12 @@ async function runBashProjectTestTask(
       process.platform === "win32" ? ["kcov.exe", "kcov"] : ["kcov"],
     );
     if (kcovCommand === undefined) {
-      return {
-        diagnostics: [],
-        durationMs: 0,
-        note: `kcov is required for Bash coverage and was not detected in ${project.projectRoot}.`,
-        status: "not_implemented",
-        toolRuns: [runtime.createToolRunResult("kcov", [], 0, undefined, "not_implemented")],
-      };
+      return createBashTestSetupFailure(
+        project,
+        "kcov",
+        `kcov is required for Bash coverage and was not detected in ${project.projectRoot}. Install kcov or disable Bash coverage.`,
+        runtime,
+      );
     }
 
     const coverageDirectory = path.join(tempDir, "kcov");
@@ -343,23 +324,19 @@ async function runBashProjectTestTask(
     );
 
     if (runtime.isMissingCommandOutcome(outcome.stderr, outcome.stdout, outcome.exitCode)) {
-      return {
-        diagnostics: [],
-        durationMs: outcome.durationMs,
-        note: `kcov is required for Bash coverage and was not detected in ${project.projectRoot}.`,
-        status: "not_implemented",
-        toolRuns: [
-          runtime.createToolRunResult(
-            "kcov",
-            args,
-            outcome.durationMs,
-            outcome.exitCode,
-            "not_implemented",
-            outcome.finishedAt,
-            outcome.startedAt,
-          ),
-        ],
-      };
+      return createBashTestSetupFailure(
+        project,
+        "kcov",
+        `kcov is required for Bash coverage and could not be executed in ${project.projectRoot}. Install kcov or disable Bash coverage.`,
+        runtime,
+        {
+          args,
+          durationMs: outcome.durationMs,
+          exitCode: outcome.exitCode,
+          finishedAt: outcome.finishedAt,
+          startedAt: outcome.startedAt,
+        },
+      );
     }
 
     const report = await parsers.parseJvmJunitReports(
@@ -416,6 +393,55 @@ async function runBashProjectTestTask(
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function createBashTestSetupFailure(
+  project: ScriptProject,
+  tool: "bats" | "kcov",
+  message: string,
+  runtime: BashRunnerRuntime,
+  toolRun?: {
+    args: string[];
+    durationMs: number;
+    exitCode: number | undefined;
+    finishedAt?: string;
+    startedAt?: string;
+  },
+): {
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  note: string;
+  status: StageResult["status"];
+  toolRuns: ToolRunResult[];
+} {
+  const file = project.files[0] ?? project.projectRoot;
+  const args = toolRun?.args ?? [];
+  const durationMs = toolRun?.durationMs ?? 0;
+
+  return {
+    diagnostics: [
+      {
+        file,
+        message,
+        severity: "error",
+        source: tool,
+      },
+    ],
+    durationMs,
+    note: message,
+    status: "failed",
+    toolRuns: [
+      runtime.createToolRunResult(
+        tool,
+        args,
+        durationMs,
+        toolRun?.exitCode,
+        "failed",
+        toolRun?.finishedAt,
+        toolRun?.startedAt,
+      ),
+    ],
+  };
 }
 
 function summarizeProjectStageStatus(
