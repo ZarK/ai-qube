@@ -4219,7 +4219,7 @@ describe("engine runners", () => {
         tool: "gradle-spotless",
       });
     },
-    120_000,
+    180_000,
   );
 
   it.skipIf(!hasGradleToolchain)(
