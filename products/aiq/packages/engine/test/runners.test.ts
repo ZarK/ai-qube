@@ -112,6 +112,21 @@ function expectPowerShellSetupFailure(
   expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: "pester" });
 }
 
+function expectJvmSetupFailure(
+  result: Awaited<ReturnType<typeof runPlannedTask>>,
+  file: string,
+  tool = "jvm-unavailable",
+): void {
+  expect(JSON.stringify(result)).not.toContain("not_implemented");
+  expect(result.status).toBe("failed");
+  expect(result.diagnostics[0]).toMatchObject({
+    file,
+    severity: "error",
+    source: tool,
+  });
+  expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool });
+}
+
 async function createDotNetFixtureProject(
   prefix: string,
 ): Promise<{ root: string; solutionFile: string; sourceFile: string; testFile: string }> {
@@ -4220,6 +4235,160 @@ describe("engine runners", () => {
     },
     90_000,
   );
+
+  it.each(["unit", "coverage"] as const)(
+    "reports missing JVM build targets as a setup failure for %s",
+    async (stageId) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-jvm-no-build-"));
+      tempDirs.push(tempDir);
+
+      const sourceFile = path.join(tempDir, "Greeting.java");
+      await writeFile(
+        sourceFile,
+        'final class Greeting { static String message() { return "hello"; } }\n',
+        "utf8",
+      );
+
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [sourceFile],
+          id: `test:1:${stageId}-java-no-build`,
+          stageId,
+        },
+        process.cwd(),
+      );
+
+      expectJvmSetupFailure(result, sourceFile);
+      expect(result.notes[0]).toContain("No JVM build target was detected");
+      expect(result.notes[0]).toContain("pom.xml");
+      expect(result.notes[0]).toContain(`disable JVM ${stageId}`);
+    },
+  );
+
+  it.each([
+    {
+      buildSystem: "Maven",
+      createProject: createJavaMavenFixtureProject,
+      expectedTool: "maven-test",
+      prefix: "aiq-java-maven-missing-command-",
+      stageId: "unit" as const,
+    },
+    {
+      buildSystem: "Gradle",
+      createProject: createKotlinGradleFixtureProject,
+      expectedTool: "gradle-test-coverage",
+      prefix: "aiq-kotlin-gradle-missing-command-",
+      stageId: "coverage" as const,
+    },
+  ])(
+    "reports missing $buildSystem execution as a JVM setup failure",
+    async ({ buildSystem, createProject, expectedTool, prefix, stageId }) => {
+      const project = await createProject(prefix);
+      const toolRunner = new ToolRunner();
+      vi.spyOn(toolRunner, "resolveInstalledBinary").mockResolvedValue(undefined);
+      vi.spyOn(toolRunner, "run").mockResolvedValue({
+        durationMs: 5,
+        exitCode: undefined,
+        finishedAt: new Date().toISOString(),
+        startedAt: new Date().toISOString(),
+        stderr: "",
+        stdout: "",
+      });
+
+      const engineContext = withToolRunnerOverride(
+        await buildEngineContext({
+          context: "cli",
+          manifest: {
+            files: [project.sourceFile],
+            source: "direct",
+          },
+          mode: "check",
+          outDir: project.root,
+          stages: [stageId],
+        }),
+        toolRunner,
+      );
+
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.sourceFile],
+          id: `test:1:${stageId}-${buildSystem.toLowerCase()}-missing-command`,
+          stageId,
+        },
+        engineContext,
+      );
+
+      expectJvmSetupFailure(result, project.sourceFile, expectedTool);
+      expect(result.notes[0]).toContain(`${buildSystem} is required for JVM ${stageId}`);
+      expect(result.notes[0]).toContain(`disable JVM ${stageId}`);
+    },
+  );
+
+  it("preserves supported JVM test runs while reporting unsupported selected JVM files", async () => {
+    const project = await createJavaMavenFixtureProject("aiq-java-maven-mixed-unsupported-");
+    const unsupportedRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-jvm-mixed-no-build-"));
+    tempDirs.push(unsupportedRoot);
+    const unsupportedFile = path.join(unsupportedRoot, "Orphan.java");
+    await writeFile(unsupportedFile, "final class Orphan {}\n", "utf8");
+
+    const toolRunner = new ToolRunner();
+    vi.spyOn(toolRunner, "resolveInstalledBinary").mockResolvedValue("mvn");
+    vi.spyOn(toolRunner, "run").mockImplementation(async (_command, _args, options) => {
+      const reportsDir = path.join(options.cwd, "target", "surefire-reports");
+      await mkdir(reportsDir, { recursive: true });
+      await writeFile(
+        path.join(reportsDir, "TEST-GreetingTest.xml"),
+        '<testsuite tests="1" failures="0" errors="0" skipped="0"></testsuite>',
+        "utf8",
+      );
+      const timestamp = new Date().toISOString();
+      return {
+        durationMs: 5,
+        exitCode: 0,
+        finishedAt: timestamp,
+        startedAt: timestamp,
+        stderr: "",
+        stdout: "",
+      };
+    });
+
+    const engineContext = withToolRunnerOverride(
+      await buildEngineContext({
+        context: "cli",
+        manifest: {
+          files: [project.sourceFile, unsupportedFile],
+          source: "direct",
+        },
+        mode: "check",
+        outDir: project.root,
+        stages: ["unit"],
+      }),
+      toolRunner,
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 2,
+        files: [project.sourceFile, unsupportedFile],
+        id: "test:1:unit-java-mixed-unsupported",
+        stageId: "unit",
+      },
+      engineContext,
+    );
+
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(result.status).toBe("failed");
+    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "maven-test" });
+    expect(result.diagnostics[0]).toMatchObject({
+      file: unsupportedFile,
+      severity: "error",
+      source: "jvm-unavailable",
+    });
+    expect(result.notes.join(" ")).toContain("Maven test ran");
+    expect(result.notes.join(" ")).toContain("No JVM build target was detected");
+  });
 
   it.skipIf(!hasMavenToolchain)(
     "runs Maven lint for Java projects",

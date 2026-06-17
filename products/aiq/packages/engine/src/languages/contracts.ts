@@ -202,6 +202,11 @@ export interface JvmRunnerRuntime extends LanguageRunnerBaseRuntime {
     cacheKey: string,
     createValue: () => Promise<T>,
   ) => Promise<{ cacheHit: boolean; value: T }>;
+  isMissingCommandOutcome: (
+    stderr: string,
+    stdout: string,
+    exitCode: number | undefined,
+  ) => boolean;
   isSharedMetricsCompanionFile: (filePath: string) => boolean;
   readSharedMetricsNote: (
     languageLabel: string,
