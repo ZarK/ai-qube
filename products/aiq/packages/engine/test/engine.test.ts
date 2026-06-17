@@ -772,6 +772,52 @@ describe("engine foundation", () => {
     expect(diagnostic?.message).not.toContain("spawn");
   });
 
+  it("converts unsupported JavaScript runner placeholders into failed release artifacts", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-js-unsupported-release-"));
+    tempDirs.push(tempDir);
+
+    await mkdir(path.join(tempDir, "src"), { recursive: true });
+    await writeFile(
+      path.join(tempDir, "package.json"),
+      `${JSON.stringify({ name: "unsupported-release", scripts: { test: "node test.js" } }, null, 2)}\n`,
+      "utf8",
+    );
+    const sourceFile = path.join(tempDir, "src", "index.ts");
+    await writeFile(sourceFile, "export const value = 1;\n", "utf8");
+
+    const result = await runEngine({
+      context: "cli",
+      cwd: tempDir,
+      manifest: {
+        files: [sourceFile],
+        source: "direct",
+      },
+      mode: "check",
+      outDir: tempDir,
+      stages: ["unit"],
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.summary.status).toBe("failed");
+    expect(result.summary.notImplementedStageCount).toBe(0);
+    expect(result.stages[0]).toMatchObject({
+      diagnostics: [expect.objectContaining({ source: "aiq-unsupported" })],
+      stageId: "unit",
+      status: "failed",
+    });
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(JSON.stringify(result)).not.toContain("rewrite foundation slice");
+
+    const reportPath = result.artifacts.reportPath;
+    if (reportPath === undefined) {
+      throw new Error("Expected report artifact to be written.");
+    }
+
+    const reportJson = await readFile(reportPath, "utf8");
+    expect(reportJson).not.toContain("not_implemented");
+    expect(reportJson).not.toContain("rewrite foundation slice");
+  });
+
   it("keeps configured Biome language selections while including shared JSON inputs", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-biome-configured-"));
     tempDirs.push(tempDir);
@@ -1181,7 +1227,6 @@ describe("engine foundation", () => {
     expect(result.artifacts.metricsPath).toBeDefined();
     expect(result.artifacts.planPath).toBeDefined();
     expect(result.artifacts.reportPath).toBeDefined();
-    expect(result.summary.diagnosticCount).toBe(0);
     expect(result.stages).toHaveLength(4);
 
     const lintStage = result.stages.find((stage) => stage.stageId === "lint");
@@ -1191,6 +1236,7 @@ describe("engine foundation", () => {
 
     if (hasTerraform) {
       expect(result.ok).toBe(true);
+      expect(result.summary.diagnosticCount).toBe(0);
       expect(result.summary.notImplementedStageCount).toBe(0);
       expect(result.summary.status).toBe("passed");
       expect(lintStage?.status).toBe("passed");
@@ -1235,11 +1281,16 @@ describe("engine foundation", () => {
       });
     } else {
       expect(result.ok).toBe(false);
-      expect(result.summary.notImplementedStageCount).toBe(3);
-      expect(result.summary.status).toBe("not_implemented");
-      expect(lintStage?.status).toBe("not_implemented");
-      expect(formatStage?.status).toBe("not_implemented");
-      expect(typecheckStage?.status).toBe("not_implemented");
+      expect(result.summary.diagnosticCount).toBe(3);
+      expect(result.summary.notImplementedStageCount).toBe(0);
+      expect(result.summary.status).toBe("failed");
+      expect(lintStage?.status).toBe("failed");
+      expect(lintStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(lintStage?.notes.join(" ")).not.toContain("rewrite foundation slice");
+      expect(formatStage?.status).toBe("failed");
+      expect(formatStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(typecheckStage?.status).toBe("failed");
+      expect(typecheckStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
       expect(securityStage?.status).toBe("passed");
     }
 
@@ -1295,8 +1346,12 @@ describe("engine foundation", () => {
         ]),
       );
     } else {
-      expect(reportJson.summary.notImplementedStageCount).toBe(3);
-      expect(reportJson.summary.status).toBe("not_implemented");
+      expect(reportJson.summary.notImplementedStageCount).toBe(0);
+      expect(reportJson.summary.status).toBe("failed");
+      expect(reportJson.stages.filter((stage) => stage.status === "failed")).toHaveLength(3);
+      expect(
+        reportJson.stages.flatMap((stage) => stage.notes).join(" "),
+      ).not.toContain("rewrite foundation slice");
     }
   }, 20_000);
 
@@ -1949,7 +2004,8 @@ describe("engine foundation", () => {
       expect(unitStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "bats" });
       expect(unitStage?.notes[0]).toContain("Bats ran");
     } else {
-      expect(unitStage?.status).toBe("not_implemented");
+      expect(unitStage?.status).toBe("failed");
+      expect(unitStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
     }
 
     if (hasBats && hasKcov) {
@@ -1957,7 +2013,8 @@ describe("engine foundation", () => {
       expect(coverageStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "kcov" });
       expect(coverageStage?.notes[0]).toContain("Bash coverage lines:");
     } else {
-      expect(coverageStage?.status).toBe("not_implemented");
+      expect(coverageStage?.status).toBe("failed");
+      expect(coverageStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
     }
   }, 60_000);
 
@@ -2021,8 +2078,10 @@ describe("engine foundation", () => {
         expect(coverageStage?.toolRuns[0]).toMatchObject({ status: "passed", tool: "pester" });
         expect(coverageStage?.notes[0]).toContain("PowerShell coverage lines:");
       } else {
-        expect(unitStage?.status).toBe("not_implemented");
-        expect(coverageStage?.status).toBe("not_implemented");
+        expect(unitStage?.status).toBe("failed");
+        expect(unitStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+        expect(coverageStage?.status).toBe("failed");
+        expect(coverageStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
       }
     },
     60_000,

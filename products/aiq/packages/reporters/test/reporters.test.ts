@@ -85,7 +85,7 @@ describe("reporters", () => {
       diagnostics: [],
       notes: ["No supported JavaScript or TypeScript test runner was detected for unit in: ."],
       stageId: "unit",
-      status: "not_implemented",
+      status: "failed",
     });
     const qualityFailure = createRunResult({
       cwd: workspaceRoot,
