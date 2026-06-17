@@ -2008,7 +2008,7 @@ describe("engine foundation", () => {
       expect(unitStage?.notes[0]).toContain("Bats ran");
     } else {
       expect(unitStage?.status).toBe("failed");
-      expect(unitStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(unitStage?.diagnostics[0]).toMatchObject({ source: "bats" });
     }
 
     if (hasBats && hasKcov) {
@@ -2017,7 +2017,7 @@ describe("engine foundation", () => {
       expect(coverageStage?.notes[0]).toContain("Bash coverage lines:");
     } else {
       expect(coverageStage?.status).toBe("failed");
-      expect(coverageStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(coverageStage?.diagnostics[0]).toMatchObject({ source: hasBats ? "kcov" : "bats" });
     }
   }, 60_000);
 

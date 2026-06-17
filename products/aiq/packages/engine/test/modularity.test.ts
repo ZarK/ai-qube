@@ -478,7 +478,14 @@ describe("engine modular authoring path", () => {
     });
 
     if (!hasBats) {
-      expect(result.status).toBe("not_implemented");
+      expect(JSON.stringify(result)).not.toContain("not_implemented");
+      expect(result.status).toBe("failed");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: fixtureBashFile,
+        severity: "error",
+        source: "bats",
+      });
+      expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: "bats" });
       return;
     }
 
