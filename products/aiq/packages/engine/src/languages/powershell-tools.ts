@@ -280,24 +280,20 @@ async function runPowerShellProjectTestTask(
 }> {
   const testFiles = await resolvePowerShellProjectTestFiles(project, runtime.findMatchingFiles);
   if (testFiles.length === 0) {
-    return {
-      diagnostics: [],
-      durationMs: 0,
-      note: createMissingScriptTestsNote("PowerShell", project.projectRoot),
-      status: "not_implemented",
-      toolRuns: [runtime.createToolRunResult("pester", [], 0, undefined, "not_implemented")],
-    };
+    return createPowerShellTestSetupFailure(
+      project,
+      `${createMissingScriptTestsNote("PowerShell", project.projectRoot)} Add Pester tests or disable PowerShell ${mode}.`,
+      runtime,
+    );
   }
 
   const pesterModulePath = await runtime.resolvePowerShellModuleManifest("Pester");
   if (pesterModulePath === undefined) {
-    return {
-      diagnostics: [],
-      durationMs: 0,
-      note: `Pester is required for PowerShell ${mode} and was not detected in ${project.projectRoot}.`,
-      status: "not_implemented",
-      toolRuns: [runtime.createToolRunResult("pester", [], 0, undefined, "not_implemented")],
-    };
+    return createPowerShellTestSetupFailure(
+      project,
+      `Pester is required for PowerShell ${mode} and was not detected in ${project.projectRoot}. Install Pester or disable PowerShell ${mode}.`,
+      runtime,
+    );
   }
 
   const coverageFiles =
@@ -305,13 +301,11 @@ async function runPowerShellProjectTestTask(
       ? await resolvePowerShellProjectCoverageFiles(project, runtime.findMatchingFiles)
       : [];
   if (mode === "coverage" && coverageFiles.length === 0) {
-    return {
-      diagnostics: [],
-      durationMs: 0,
-      note: `No PowerShell source files were detected for coverage in ${project.projectRoot}.`,
-      status: "not_implemented",
-      toolRuns: [runtime.createToolRunResult("pester", [], 0, undefined, "not_implemented")],
-    };
+    return createPowerShellTestSetupFailure(
+      project,
+      `No PowerShell source files were detected for coverage in ${project.projectRoot}. Add non-test .ps1 sources or disable PowerShell coverage.`,
+      runtime,
+    );
   }
 
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-runner-"));
@@ -418,6 +412,35 @@ async function runPowerShellProjectTestTask(
   }
 }
 
+function createPowerShellTestSetupFailure(
+  project: ScriptProject,
+  message: string,
+  runtime: PowerShellRunnerRuntime,
+): {
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  note: string;
+  status: StageResult["status"];
+  toolRuns: ToolRunResult[];
+} {
+  const file = project.files[0] ?? project.projectRoot;
+
+  return {
+    diagnostics: [
+      {
+        file,
+        message,
+        severity: "error",
+        source: "pester",
+      },
+    ],
+    durationMs: 0,
+    note: message,
+    status: "failed",
+    toolRuns: [runtime.createToolRunResult("pester", [], 0, undefined, "failed")],
+  };
+}
+
 function summarizeProjectStageStatus(
   statuses: readonly StageResult["status"][],
 ): StageResult["status"] {
@@ -426,9 +449,6 @@ function summarizeProjectStageStatus(
   }
   if (statuses.includes("failed")) {
     return "failed";
-  }
-  if (statuses.includes("not_implemented")) {
-    return "not_implemented";
   }
   return "passed";
 }
