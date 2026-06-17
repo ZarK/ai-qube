@@ -1285,12 +1285,15 @@ describe("engine foundation", () => {
       expect(result.summary.notImplementedStageCount).toBe(0);
       expect(result.summary.status).toBe("failed");
       expect(lintStage?.status).toBe("failed");
-      expect(lintStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(lintStage?.diagnostics[0]).toMatchObject({ source: "terraform" });
+      expect(lintStage?.notes.join(" ")).toContain("aiq doctor");
       expect(lintStage?.notes.join(" ")).not.toContain("rewrite foundation slice");
       expect(formatStage?.status).toBe("failed");
-      expect(formatStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(formatStage?.diagnostics[0]).toMatchObject({ source: "terraform" });
+      expect(formatStage?.notes.join(" ")).toContain("aiq doctor");
       expect(typecheckStage?.status).toBe("failed");
-      expect(typecheckStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+      expect(typecheckStage?.diagnostics[0]).toMatchObject({ source: "terraform" });
+      expect(typecheckStage?.notes.join(" ")).toContain("aiq doctor");
       expect(securityStage?.status).toBe("passed");
     }
 
