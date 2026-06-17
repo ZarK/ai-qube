@@ -8,6 +8,32 @@ importers:
 
   .: {}
 
+  adapters/github:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  adapters/opencode:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/qube-cli:
     dependencies:
       '@clack/prompts':
@@ -16,6 +42,15 @@ importers:
       '@oclif/core':
         specifier: 4.8.0
         version: 4.8.0
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/qube-core:
     devDependencies:
       '@types/node':
         specifier: 24.12.2

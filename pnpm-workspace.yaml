@@ -1,4 +1,5 @@
 packages:
+  - "adapters/*"
   - "packages/*"
   - "products/aib"
   - "products/aie"
