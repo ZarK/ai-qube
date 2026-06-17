@@ -21,6 +21,10 @@ import {
   runDotNetProjectTestTask,
   runDotNetTypecheckProject,
 } from "./dotnet-tools.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type DotNetProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -522,10 +526,23 @@ export async function runDotNetMetricsTask(
     notes.push("Reused cached C# metrics for this file batch.");
   }
 
-  if (unsupportedFiles.length > 0) {
-    notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-C# files in this selection: ${unsupportedFiles.join(", ")}.`,
+  unsupportedFiles = task.files.filter((file) => {
+    return (
+      !dotNetExtensions.has(path.extname(file).toLowerCase()) &&
+      !runtime.isSharedMetricsCompanionFile(file)
     );
+  });
+  if (unsupportedFiles.length > 0) {
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "C#",
+        "C# project files",
+        runtime.createProcessFailureDiagnostic,
+      ),
+    );
+    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "C#"));
   }
 
   return {
@@ -533,12 +550,7 @@ export async function runDotNetMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }

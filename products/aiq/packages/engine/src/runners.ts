@@ -473,10 +473,6 @@ export type RunnerStageDefinition = {
   scope: "language-modules" | "stage-only";
 };
 
-function hasConfiguredStageSelection(stageId: StageId): boolean {
-  return getRunnerStageConfigurations()?.[stageId] !== undefined;
-}
-
 function shouldSkipScriptProjectDirectory(directoryPath: string): boolean {
   const name = path.basename(directoryPath).toLowerCase();
   return [
@@ -532,6 +528,18 @@ function isRustTaskFile(file: string): boolean {
   return rustProjectConfigNames.includes(path.basename(file));
 }
 
+function isSharedMetricsSupportedFile(filePath: string): boolean {
+  const extension = path.extname(filePath).toLowerCase();
+  return (
+    isJavaScriptMetricsTaskFile(filePath) ||
+    isPythonTaskFile(filePath) ||
+    dotNetExtensions.has(extension) ||
+    isGoTaskFile(filePath) ||
+    isJvmLanguageTaskFile(filePath) ||
+    isRustTaskFile(filePath)
+  );
+}
+
 function createTypeScriptRunnerRuntime(cwd: string, signal: AbortSignal | undefined) {
   return {
     createExecutionFailureStage,
@@ -562,6 +570,7 @@ function createJavaScriptRunnerRuntime(cwd: string, signal: AbortSignal | undefi
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     readUnsupportedRunnerNote: createUnsupportedJavaScriptRunnerNote,
@@ -591,16 +600,7 @@ function createPythonRunnerRuntime(
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: (filePath: string) => {
-      const extension = path.extname(filePath).toLowerCase();
-      return (
-        isJavaScriptMetricsTaskFile(filePath) ||
-        dotNetExtensions.has(extension) ||
-        isGoTaskFile(filePath) ||
-        isJvmLanguageTaskFile(filePath) ||
-        isRustTaskFile(filePath)
-      );
-    },
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveBinaryIfAvailable,
@@ -648,6 +648,7 @@ function createGoRunnerRuntime(cwd: string, signal: AbortSignal | undefined): Go
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
@@ -714,6 +715,7 @@ function createRustRunnerRuntime(cwd: string, signal: AbortSignal | undefined): 
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
@@ -738,6 +740,7 @@ function createJvmRunnerRuntime(cwd: string, signal: AbortSignal | undefined): J
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveGradleCommand,
@@ -764,6 +767,7 @@ function createDotNetRunnerRuntime(
     cwd,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
+    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
     readFileText: (filePath) => readFile(filePath, "utf8"),
     readProcessFailureMessage,
     readSharedMetricsNote,
@@ -1195,11 +1199,7 @@ async function runStageDefinitionTask(
 
   const handlers = resolveStageHandlers(stageDefinition, task);
   if (handlers.length === 0) {
-    if (hasConfiguredStageSelection(task.stageId)) {
-      return combineStageResults(task.stageId, []);
-    }
-
-    return createNotImplementedStageResult(task.stageId, stageDefinition.note);
+    return combineStageResults(task.stageId, []);
   }
 
   return combineStageResults(

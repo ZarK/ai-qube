@@ -24,6 +24,10 @@ import {
   runRuffFormatProject,
   runTyCheckProject,
 } from "./python-tools.js";
+import {
+  createUnsupportedSharedMetricsDiagnostics,
+  readUnsupportedSharedMetricsNotes,
+} from "./shared-metrics-support.js";
 
 type PythonProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -420,20 +424,13 @@ async function runPythonMetricsTask(
 ): Promise<StageResult> {
   const files = filterPythonTaskFiles(task.files);
   if (files.length === 0) {
-    if (task.files.some((file) => runtime.isSharedMetricsCompanionFile(file))) {
-      return runtime.createNoopStageResult(
-        task.stageId,
-        `No Python files were selected for ${task.stageId}.`,
-      );
-    }
-
-    return runtime.createNotImplementedStageResult(
+    return runtime.createNoopStageResult(
       task.stageId,
-      runtime.createSharedMetricsNotImplementedNote(task.stageId),
+      `No Python files were selected for ${task.stageId}.`,
     );
   }
 
-  const unsupportedFiles = task.files.filter((file) => {
+  let unsupportedFiles = task.files.filter((file) => {
     return !isPythonTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file);
   });
   const diagnostics: Diagnostic[] = [];
@@ -521,10 +518,20 @@ async function runPythonMetricsTask(
     notes.push("Reused cached Python metrics for this file batch.");
   }
 
+  unsupportedFiles = task.files.filter((file) => {
+    return !isPythonTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file);
+  });
   if (unsupportedFiles.length > 0) {
-    notes.push(
-      `Stage '${task.stageId}' is not implemented yet for non-Python files in this selection: ${unsupportedFiles.join(", ")}.`,
+    diagnostics.push(
+      ...createUnsupportedSharedMetricsDiagnostics(
+        unsupportedFiles,
+        task.stageId,
+        "Python",
+        "Python files",
+        runtime.createProcessFailureDiagnostic,
+      ),
     );
+    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "Python"));
   }
 
   return {
@@ -532,12 +539,7 @@ async function runPythonMetricsTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
