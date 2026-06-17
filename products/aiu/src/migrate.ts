@@ -1105,7 +1105,7 @@ function relativeToRepo(repoRoot: string, absolutePath: string): string {
 }
 
 function portablePath(filePath: string): string {
-  return filePath.split(path.sep).join("/");
+  return filePath.replace(/\\/g, "/");
 }
 
 function readSchemaVersion(value: unknown): number | string | undefined {

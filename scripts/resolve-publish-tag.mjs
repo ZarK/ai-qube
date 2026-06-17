@@ -11,7 +11,7 @@ const packages = new Map([
 ]);
 
 const tag = process.argv[2] ?? "";
-const match = /^publish-([a-z0-9-]+)-v(\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?)$/.exec(tag);
+const match = /^publish-([a-z0-9-]+)-v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?)$/.exec(tag);
 if (!match) {
   fail(`Invalid publish tag "${tag}". Expected publish-<package>-v<version>.`);
 }

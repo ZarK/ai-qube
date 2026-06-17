@@ -632,14 +632,24 @@ function canAccess(targetPath: string, mode: number): boolean {
 function isExecutableFile(targetPath: string): boolean {
   try {
     const stat = statSync(targetPath);
-    return stat.isFile() && (process.platform === "win32" || canAccess(targetPath, constants.X_OK));
+    if (!stat.isFile()) {
+      return false;
+    }
+    if (process.platform !== "win32") {
+      return canAccess(targetPath, constants.X_OK);
+    }
+    const executableExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+      .split(";")
+      .map((extension) => extension.trim().toUpperCase())
+      .filter((extension) => extension.length > 0);
+    return executableExtensions.includes(path.extname(targetPath).toUpperCase());
   } catch {
     return false;
   }
 }
 
 function portablePath(filePath: string): string {
-  return filePath.split(path.sep).join("/");
+  return filePath.replace(/\\/g, "/");
 }
 
 function normalizeText(value: string): string {

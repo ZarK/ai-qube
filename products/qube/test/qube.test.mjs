@@ -70,6 +70,11 @@ describe("qube composer CLI", () => {
     assert.equal(planned.exitCode, 0);
     assert.equal(planned.dispatch?.component.command, "aib");
     assert.deepEqual(planned.dispatch?.args, ["init", "--dry-run"]);
+
+    const helpDispatch = planQubeCli(["run", "aib", "--help"], { cwd: path.resolve("."), env });
+    assert.equal(helpDispatch.exitCode, 0);
+    assert.equal(helpDispatch.dispatch?.component.command, "aib");
+    assert.deepEqual(helpDispatch.dispatch?.args, ["--help"]);
   });
 
   it("dispatches to resolved component command shims", async () => {

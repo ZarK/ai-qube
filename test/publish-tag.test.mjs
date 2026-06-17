@@ -32,7 +32,7 @@ describe("publish tag resolution", () => {
   });
 
   it("rejects unknown or mismatched package tags before publishing", () => {
-    const unknown = resolveTag("publish-missing-v1.0.0");
+    const unknown = resolveTag("publish-missing-v1.2.3-rc.1+build.7");
     assert.notEqual(unknown.status, 0);
     assert.match(unknown.stderr, /Unknown package key/);
 

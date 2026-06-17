@@ -39,7 +39,7 @@ ${qubeComponents.map(component => `  ${component.command.padEnd(4)} ${component.
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
-  if (args.length === 0 || args.includes("--help") || args[0] === "help") {
+  if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
     return { exitCode: 0, stdout: helpText, stderr: "" };
   }
 

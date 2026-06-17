@@ -46,8 +46,8 @@ Publishing is driven by immutable package-specific tags:
 
 The publish workflow verifies the selected package before `npm publish
 --provenance --access public`. AIQ uses its full build, test, and publish
-readiness path; changes outside `products/aiq/**` do not trigger AIQ's
-cross-language setup in normal CI.
+readiness path; most non-AIQ product changes skip AIQ's cross-language setup,
+while shared CI/workspace files still trigger AIQ checks.
 
 ## Target Layout
 

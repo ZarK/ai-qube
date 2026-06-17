@@ -910,7 +910,8 @@ function validateHost(value: string, fieldPath: string, diagnostics: AiuConfigDi
 }
 
 function isSafeExecutableToken(value: string): boolean {
-  return value.trim().length > 0 && !value.includes("\0");
+  const trimmed = value.trim();
+  return trimmed.length > 0 && trimmed === value && !trimmed.includes("\0");
 }
 
 function isPositiveInteger(value: unknown): value is number {
