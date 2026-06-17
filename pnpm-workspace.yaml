@@ -1,0 +1,20 @@
+packages:
+  - "packages/*"
+  - "products/aib"
+  - "products/aie"
+  - "products/aiu"
+  - "products/qube"
+  - "products/aiq/packages/*"
+  - "plugins/*"
+
+minimumReleaseAge: 10080
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+trustPolicy: no-downgrade
+blockExoticSubdeps: true
+strictDepBuilds: true
+verifyDepsBeforeRun: error
+savePrefix: ""
+linkWorkspacePackages: true
+registries:
+  default: https://registry.npmjs.org/
