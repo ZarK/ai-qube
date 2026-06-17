@@ -1,0 +1,166 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      core: ${{ steps.detect.outputs.core }}
+      aiq: ${{ steps.detect.outputs.aiq }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Detect changed areas
+        id: detect
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="${{ github.event.pull_request.base.sha }}"
+          else
+            base="${{ github.event.before }}"
+          fi
+
+          if [[ -z "$base" || "$base" =~ ^0+$ ]]; then
+            git ls-files > changed.txt
+          else
+            git diff --name-only "$base" "${{ github.sha }}" > changed.txt
+          fi
+
+          if grep -Eq '^(\.github/workflows/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|packages/|products/aib/|products/aie/|products/aiu/|plugins/)' changed.txt; then
+            echo "core=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "core=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          if grep -Eq '^(\.github/workflows/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|products/aiq/)' changed.txt; then
+            echo "aiq=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "aiq=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  core:
+    needs: changes
+    if: needs.changes.outputs.core == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.4 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build core packages
+        run: |
+          pnpm --filter @tjalve/qube-cli run build
+          pnpm --filter @tjalve/aib run build
+          pnpm --filter @tjalve/aie run build
+          pnpm --filter @tjalve/aiu run build
+
+      - name: Typecheck core packages
+        run: |
+          pnpm --filter @tjalve/qube-cli run typecheck
+          pnpm --filter @tjalve/aib run typecheck
+          pnpm --filter @tjalve/aie run typecheck
+          pnpm --filter @tjalve/aiu run typecheck
+
+  aiq:
+    needs: changes
+    if: needs.changes.outputs.aiq == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.12.0
+          package-manager-cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: products/aiq/test-projects/python/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          enable-cache: true
+
+      - name: Set up Java
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
+        with:
+          go-version: 1.26.1
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7 # v5
+        with:
+          dotnet-version: 10.0.x
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.92.0
+          components: llvm-tools-preview, clippy, rustfmt
+
+      - name: Install cargo-llvm-cov
+        run: |
+          cargo install cargo-llvm-cov --version 0.8.7 --locked --root "$RUNNER_TEMP/cargo-llvm-cov"
+          printf '%s\n' "$RUNNER_TEMP/cargo-llvm-cov/bin" >> "$GITHUB_PATH"
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.0.4 --activate
+
+      - name: Install cross-language test tools
+        run: python -m pip install -r products/aiq/test-projects/python/requirements.txt
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Build AIQ
+        run: pnpm --dir products/aiq run build
+
+      - name: Typecheck AIQ
+        run: pnpm --dir products/aiq run typecheck
+
+      - name: Test AIQ
+        run: pnpm --dir products/aiq test

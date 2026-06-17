@@ -4,6 +4,7 @@ packages:
   - "products/aie"
   - "products/aiu"
   - "products/qube"
+  - "products/aiq"
   - "products/aiq/packages/*"
   - "plugins/*"
 
@@ -11,6 +12,9 @@ minimumReleaseAge: 10080
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  # Jest still pulls semver@6.3.1 through AIQ's legacy test stack.
+  - "semver@6.3.1"
 blockExoticSubdeps: true
 strictDepBuilds: true
 verifyDepsBeforeRun: error

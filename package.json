@@ -9,9 +9,13 @@
     "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "build": "pnpm -r --if-present run build",
-    "typecheck": "pnpm -r --if-present run typecheck",
-    "test": "pnpm -r --if-present test",
-    "verify": "pnpm -r --if-present run verify"
+    "build": "pnpm --filter @tjalve/qube-cli run build && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --dir products/aiq run build",
+    "build:aiq": "pnpm --dir products/aiq run build",
+    "bench:aiq": "pnpm --dir products/aiq run bench:ci",
+    "typecheck": "pnpm --filter @tjalve/qube-cli run typecheck && pnpm --filter @tjalve/aib run typecheck && pnpm --filter @tjalve/aie run typecheck && pnpm --filter @tjalve/aiu run typecheck && pnpm --dir products/aiq run typecheck",
+    "test": "pnpm --filter @tjalve/qube-cli test && pnpm --filter @tjalve/aib test && pnpm --filter @tjalve/aie test && pnpm --filter @tjalve/aiu test && pnpm --dir products/aiq test",
+    "test:aiq": "pnpm --dir products/aiq test",
+    "verify": "pnpm --filter @tjalve/qube-cli run verify && pnpm --filter @tjalve/aib run verify && pnpm --filter @tjalve/aie run verify && pnpm --filter @tjalve/aiu run release:check && pnpm --dir products/aiq run build && pnpm --dir products/aiq test && pnpm --dir products/aiq run test:publish-readiness",
+    "verify:aiq": "pnpm --dir products/aiq run build && pnpm --dir products/aiq test && pnpm --dir products/aiq run test:publish-readiness && pnpm --dir products/aiq run bench:ci"
   }
 }
