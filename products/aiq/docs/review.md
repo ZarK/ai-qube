@@ -292,7 +292,7 @@ That belongs elsewhere.
 
 * it can run per project
 * it aggregates diagnostics from handlers
-* if no handler exists for a selected language, it may return `not_implemented`
+* if no handler exists for a selected language, it should fail with an actionable unsupported/setup diagnostic rather than emit release-visible placeholder status
 
 But `lint` does not know Biome or Ruff flags.
 

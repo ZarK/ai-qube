@@ -107,7 +107,11 @@ export async function runResolvedRequest(
           });
         }
 
-        const stage = await runPlannedTask(task, engineContext);
+        const stage = normalizeReleaseStageResult(
+          await runPlannedTask(task, engineContext),
+          task,
+          engineContext.cwd,
+        );
         emitStageTelemetry(engineContext, emitTelemetry, stage);
         return [task.id, stage] as const;
       }),
@@ -252,6 +256,56 @@ export class AiqEngineCancelledError extends Error {
     super(message);
     this.name = "AiqEngineCancelledError";
   }
+}
+
+function normalizeReleaseStageResult(
+  stage: StageResult,
+  task: PlannedTask,
+  cwd: string,
+): StageResult {
+  const hasUnsupportedStage = stage.status === "not_implemented";
+  const hasUnsupportedTool = stage.toolRuns.some((toolRun) => toolRun.status === "not_implemented");
+
+  if (!hasUnsupportedStage && !hasUnsupportedTool) {
+    return stage;
+  }
+
+  const note = createUnsupportedStageNote(stage.stageId);
+  const diagnostics =
+    stage.diagnostics.length === 0
+      ? [
+          {
+            code: "unsupported-stage",
+            file: task.files[0] ?? cwd,
+            message: note,
+            severity: "error" as const,
+            source: "aiq-unsupported",
+          },
+        ]
+      : stage.diagnostics;
+
+  return {
+    ...stage,
+    diagnostics,
+    notes: normalizeUnsupportedNotes(stage.notes, note),
+    status: "failed",
+    toolRuns: stage.toolRuns.map((toolRun) =>
+      toolRun.status === "not_implemented" ? { ...toolRun, status: "failed" } : toolRun,
+    ),
+  };
+}
+
+function normalizeUnsupportedNotes(notes: readonly string[], fallback: string): string[] {
+  const normalized = notes.map((note) => (isPlaceholderUnsupportedNote(note) ? fallback : note));
+  return normalized.length === 0 ? [fallback] : normalized;
+}
+
+function isPlaceholderUnsupportedNote(note: string): boolean {
+  return /not[_ -]implemented|not implemented|rewrite foundation slice/iu.test(note);
+}
+
+function createUnsupportedStageNote(stageId: StageId): string {
+  return `Stage '${stageId}' is unsupported for the selected files or configuration. Select supported files, adjust stage selection, or install and configure a supported toolchain.`;
 }
 
 function summarizeRun(

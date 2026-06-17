@@ -1398,7 +1398,7 @@ export function createNotImplementedStageResult(stageId: StageId, note?: string)
     durationMs: 0,
     notes: [
       note ??
-        `Stage '${stageId}' is planned but no tool runner is implemented in the rewrite foundation slice yet.`,
+        `Stage '${stageId}' is unsupported for the selected files or configuration. Select supported files, adjust stage selection, or install and configure a supported toolchain.`,
     ],
     stageId,
     status: "not_implemented",
@@ -3143,7 +3143,7 @@ function createUnsupportedJavaScriptRunnerNote(
 }
 
 function createSharedMetricsNotImplementedNote(stageId: StageId): string {
-  return `Stage '${stageId}' is currently implemented only for Python, JavaScript, TypeScript, C#, Go, Rust, Java, and Kotlin files in the rewrite foundation slice.`;
+  return `Stage '${stageId}' metrics are unsupported for the selected files. Select Python, JavaScript, TypeScript, C#, Go, Rust, Java, or Kotlin files, or adjust stage selection.`;
 }
 
 function readSharedMetricsNote(
