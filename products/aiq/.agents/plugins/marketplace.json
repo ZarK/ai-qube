@@ -1,0 +1,20 @@
+{
+  "interface": {
+    "displayName": "AI Umpire"
+  },
+  "name": "ai-umpire",
+  "plugins": [
+    {
+      "category": "Coding",
+      "name": "ai-umpire",
+      "policy": {
+        "authentication": "ON_INSTALL",
+        "installation": "AVAILABLE"
+      },
+      "source": {
+        "path": "./plugins/ai-umpire",
+        "source": "local"
+      }
+    }
+  ]
+}

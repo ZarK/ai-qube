@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "useUnknownInCatchVariables": true,
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+    "composite": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@tjalve/aiq/api": ["packages/cli/src/api.ts"],
+      "@tjalve/aiq/schema": ["packages/cli/src/schema.ts"],
+      "@tjalve/aiq": ["packages/cli/src/index.ts"],
+      "@tjalve/aiq/benchmark": ["packages/benchmark/src/index.ts"],
+      "@tjalve/aiq/config": ["packages/config-schema/src/index.ts"],
+      "@tjalve/aiq/model": ["packages/model/src/index.ts"],
+      "@tjalve/aiq/engine": ["packages/engine/src/index.ts"],
+      "@tjalve/aiq/reporters": ["packages/reporters/src/index.ts"]
+    }
+  }
+}

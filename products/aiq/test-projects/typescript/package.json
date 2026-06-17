@@ -1,0 +1,15 @@
+{
+  "name": "test-ts",
+  "version": "1.0.0",
+  "description": "Test TypeScript project",
+  "type": "module",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "vitest": "^3.0.0"
+  }
+}

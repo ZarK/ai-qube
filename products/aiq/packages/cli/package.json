@@ -1,0 +1,72 @@
+{
+  "name": "@tjalve/aiq",
+  "version": "0.2.0",
+  "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aiq": "dist/bin/aiq.js",
+    "quality": "dist/bin/aiq.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./api": {
+      "types": "./dist/api.d.ts",
+      "import": "./dist/api.js"
+    },
+    "./schema": {
+      "types": "./dist/schema.d.ts",
+      "import": "./dist/schema.js"
+    },
+    "./model": {
+      "types": "./dist/model/index.d.ts",
+      "import": "./dist/model/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/index.d.ts",
+      "import": "./dist/config/index.js"
+    },
+    "./engine": {
+      "types": "./dist/engine/index.d.ts",
+      "import": "./dist/engine/index.js"
+    },
+    "./reporters": {
+      "types": "./dist/reporters/index.d.ts",
+      "import": "./dist/reporters/index.js"
+    },
+    "./benchmark": {
+      "types": "./dist/benchmark/index.d.ts",
+      "import": "./dist/benchmark/index.js"
+    }
+  },
+  "homepage": "https://github.com/ZarK/ai-quality/tree/main/packages/cli#readme",
+  "keywords": ["aiq", "code-quality", "quality-gate", "ai-agents"],
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b ../../packages/model ../../packages/config-schema ../../packages/engine ../../packages/reporters ../../packages/benchmark . && node ../../scripts/build-aiq-package.mjs"
+  },
+  "dependencies": {
+    "@biomejs/biome": "1.9.4",
+    "@tjalve/qube-cli": "0.1.1",
+    "htmlhint": "1.9.2",
+    "node-sql-parser": "5.4.0",
+    "prettier": "3.8.1",
+    "sql-formatter": "15.7.2",
+    "stylelint": "17.5.0",
+    "typescript": "5.9.3",
+    "yaml": "2.8.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-quality.git",
+    "directory": "packages/cli"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "command": "pnpm exec aiu hook-stop --tool claude-code",
+            "type": "command"
+          }
+        ]
+      }
+    ]
+  }
+}

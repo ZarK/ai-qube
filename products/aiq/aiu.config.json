@@ -1,0 +1,89 @@
+{
+  "continuation": {
+    "allowBackgroundScheduling": false,
+    "allowProviderMutation": false,
+    "modes": [
+      "continue",
+      "repair",
+      "wait",
+      "stop"
+    ],
+    "stopOnSupplyChainApprovalBlock": true,
+    "stopOnUnknownState": true,
+    "stopOnUnsafeState": true,
+    "trustUnstructuredProse": false
+  },
+  "cooldowns": {
+    "promptMs": 600000
+  },
+  "hosts": {
+    "capabilities": {
+      "claude-code": {
+        "projectTrust": true,
+        "promptDelivery": "stdout",
+        "sessionState": true,
+        "stopHook": true
+      },
+      "codex": {
+        "projectTrust": true,
+        "promptDelivery": "stdout",
+        "sessionState": true,
+        "stopHook": true
+      },
+      "opencode": {
+        "idleEvents": true,
+        "projectTrust": true,
+        "promptDelivery": "host",
+        "selectedSession": true,
+        "sessionState": true,
+        "todoRead": true,
+        "userActivity": true
+      }
+    },
+    "enabled": [
+      "opencode",
+      "codex",
+      "claude-code"
+    ],
+    "modes": {
+      "claude-code": [
+        "stop"
+      ],
+      "codex": [
+        "stop"
+      ],
+      "opencode": [
+        "continue",
+        "repair",
+        "wait",
+        "stop"
+      ]
+    }
+  },
+  "paths": {
+    "lockDir": ".umpire/locks",
+    "logDir": ".umpire/logs",
+    "stateDir": ".umpire/state"
+  },
+  "supplyChain": {
+    "stopOnApprovalRequired": true
+  },
+  "timeouts": {
+    "commandMs": 30000,
+    "hostMs": 5000
+  },
+  "trustedStateCommands": {
+    "quality": {
+      "argv": [
+        "node",
+        "packages/cli/dist/bin/aiq.js",
+        "evidence",
+        "--format",
+        "json"
+      ],
+      "maxOutputBytes": 1048576,
+      "timeoutMs": 30000
+    }
+  },
+  "version": 1
+}

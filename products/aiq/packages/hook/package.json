@@ -1,0 +1,29 @@
+{
+  "name": "aiq-internal-hook",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aiq-hook": "dist/bin/aiq-hook.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@tjalve/aiq": "0.2.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-quality.git",
+    "directory": "packages/hook"
+  },
+  "private": true
+}

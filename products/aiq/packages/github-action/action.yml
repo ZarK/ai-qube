@@ -1,0 +1,62 @@
+name: AIQ
+description: Run AIQ checks, publish GitHub annotations, and upload canonical AIQ artifacts.
+inputs:
+  files:
+    description: Newline-separated files to check. Defaults to tracked files from `git ls-files`.
+    required: false
+  files-from:
+    description: Path to a newline-separated file list, relative to the GitHub workspace.
+    required: false
+  stages:
+    description: Newline-separated AIQ stages to run. Defaults to cumulative stages through `.aiq/progress.json` current_stage when present, otherwise the GitHub surface profile.
+    required: false
+  profile:
+    description: AIQ profile override. When set, this overrides current-stage selection.
+    required: false
+  out-dir:
+    description: Output directory for canonical AIQ artifacts.
+    required: false
+  artifact-name:
+    description: Uploaded artifact name.
+    required: false
+    default: aiq-report
+  annotate:
+    description: Publish GitHub annotations from the canonical AIQ report.
+    required: false
+    default: "true"
+  upload-artifact:
+    description: Upload the canonical AIQ plan and report artifacts.
+    required: false
+    default: "true"
+  max-annotations:
+    description: Maximum number of annotations to emit.
+    required: false
+    default: "50"
+outputs:
+  ok:
+    description: Whether the AIQ run passed.
+  status:
+    description: AIQ summary status.
+  diagnostic-count:
+    description: Total diagnostics in the canonical report.
+  annotation-count:
+    description: Total GitHub annotations emitted.
+  report-path:
+    description: Absolute path to the canonical `aiq.report.json` artifact.
+  plan-path:
+    description: Absolute path to the canonical `aiq.plan.json` artifact.
+  stages:
+    description: Comma-separated AIQ stages selected for this run.
+  current-stage:
+    description: Persisted current-stage index when `.aiq/progress.json` selected the default run.
+  current-stage-name:
+    description: Persisted current-stage name when `.aiq/progress.json` selected the default run.
+  progress-path:
+    description: Absolute path to `.aiq/progress.json` when it selected the default run.
+  artifact-id:
+    description: Uploaded GitHub Actions artifact ID, if artifacts were uploaded.
+  artifact-size:
+    description: Uploaded GitHub Actions artifact size in bytes, if artifacts were uploaded.
+runs:
+  using: node20
+  main: dist/main.mjs

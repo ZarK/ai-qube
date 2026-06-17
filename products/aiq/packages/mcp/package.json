@@ -1,0 +1,31 @@
+{
+  "name": "aiq-internal-mcp",
+  "version": "0.2.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "aiq-mcp": "dist/bin/aiq-mcp.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist"],
+  "scripts": {
+    "build": "tsc -b"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.27.1",
+    "@tjalve/aiq": "0.2.0",
+    "zod": "4.3.6"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-quality.git",
+    "directory": "packages/mcp"
+  },
+  "private": true
+}

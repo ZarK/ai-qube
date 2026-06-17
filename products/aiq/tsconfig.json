@@ -1,0 +1,38 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/benchmark"
+    },
+    {
+      "path": "./packages/config-schema"
+    },
+    {
+      "path": "./packages/model"
+    },
+    {
+      "path": "./packages/engine"
+    },
+    {
+      "path": "./packages/reporters"
+    },
+    {
+      "path": "./packages/cli"
+    },
+    {
+      "path": "./packages/lsp"
+    },
+    {
+      "path": "./packages/hook"
+    },
+    {
+      "path": "./packages/github-action"
+    },
+    {
+      "path": "./packages/opencode-plugin"
+    },
+    {
+      "path": "./packages/mcp"
+    }
+  ]
+}

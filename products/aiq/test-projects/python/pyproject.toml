@@ -1,0 +1,6 @@
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests/test_main.py"]
+
+[tool.ty.environment]
+root = ["."]

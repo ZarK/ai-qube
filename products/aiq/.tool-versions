@@ -1,0 +1,5 @@
+golang 1.26.1
+java temurin-21.0.10+7.0.LTS
+maven 3.9.14
+gradle 9.4.0
+rust 1.92.0

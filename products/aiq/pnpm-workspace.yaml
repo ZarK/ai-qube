@@ -1,0 +1,29 @@
+packages:
+  - "packages/benchmark"
+  - "packages/cli"
+  - "packages/config-schema"
+  - "packages/model"
+  - "packages/engine"
+  - "packages/reporters"
+  - "packages/lsp"
+  - "packages/hook"
+  - "packages/github-action"
+  - "packages/opencode-plugin"
+  - "packages/mcp"
+
+minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - "@tjalve/qube-cli"
+minimumReleaseAgeIgnoreMissingTime: false
+minimumReleaseAgeStrict: true
+trustPolicy: no-downgrade
+trustPolicyExclude:
+  # Jest still pulls semver@6.3.1; replace the legacy test stack in #71.
+  - "semver@6.3.1"
+blockExoticSubdeps: true
+strictDepBuilds: true
+verifyDepsBeforeRun: error
+savePrefix: ""
+linkWorkspacePackages: true
+registries:
+  default: https://registry.npmjs.org/

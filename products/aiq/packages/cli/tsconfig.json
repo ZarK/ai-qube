@@ -1,0 +1,25 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist"
+  },
+  "references": [
+    {
+      "path": "../benchmark"
+    },
+    {
+      "path": "../config-schema"
+    },
+    {
+      "path": "../model"
+    },
+    {
+      "path": "../engine"
+    },
+    {
+      "path": "../reporters"
+    }
+  ],
+  "include": ["src/**/*.ts"]
+}

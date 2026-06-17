@@ -1,0 +1,4 @@
+1. Always use .venv for python and requirements
+2. Use uv, bun, asdf for package management
+3. Never under no circumstances disable or circumvent any pre-commit hooks
+4. Update all relevant documentation and READMEs after each change

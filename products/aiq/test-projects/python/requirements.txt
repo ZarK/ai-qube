@@ -1,0 +1,6 @@
+pytest==9.0.3
+pytest-cov==6.2.1
+coverage==7.9.2
+ruff==0.15.12
+ty==0.0.26
+radon==6.0.1
