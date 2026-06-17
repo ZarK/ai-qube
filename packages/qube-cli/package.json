@@ -1,0 +1,107 @@
+{
+  "name": "@tjalve/qube-cli",
+  "version": "0.1.1",
+  "description": "Reusable TypeScript CLI infrastructure for command-line packages.",
+  "license": "MIT",
+  "author": "ZarK",
+  "homepage": "https://github.com/ZarK/ai-qube-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-qube-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-qube-cli/issues"
+  },
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./metadata": {
+      "types": "./dist/metadata/index.d.ts",
+      "import": "./dist/metadata/index.js"
+    },
+    "./registry": {
+      "types": "./dist/registry/index.d.ts",
+      "import": "./dist/registry/index.js"
+    },
+    "./help": {
+      "types": "./dist/help/index.d.ts",
+      "import": "./dist/help/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/index.d.ts",
+      "import": "./dist/runtime/index.js"
+    },
+    "./schema": {
+      "types": "./dist/schema/index.d.ts",
+      "import": "./dist/schema/index.js"
+    },
+    "./errors": {
+      "types": "./dist/errors/index.d.ts",
+      "import": "./dist/errors/index.js"
+    },
+    "./output": {
+      "types": "./dist/output/index.d.ts",
+      "import": "./dist/output/index.js"
+    },
+    "./mutation": {
+      "types": "./dist/mutation/index.d.ts",
+      "import": "./dist/mutation/index.js"
+    },
+    "./terminal": {
+      "types": "./dist/terminal/index.d.ts",
+      "import": "./dist/terminal/index.js"
+    },
+    "./prompts": {
+      "types": "./dist/prompts/index.d.ts",
+      "import": "./dist/prompts/index.js"
+    },
+    "./redaction": {
+      "types": "./dist/redaction/index.d.ts",
+      "import": "./dist/redaction/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24.0.0",
+    "pnpm": ">=11.0.0"
+  },
+  "packageManager": "pnpm@11.0.4",
+  "scripts": {
+    "build:examples": "tsc -p examples/read-only-consumer/tsconfig.json && tsc -p examples/mutating-consumer/tsconfig.json",
+    "build": "pnpm run clean && tsc -p tsconfig.build.json",
+    "clean": "node scripts/clean.mjs",
+    "package-dry-run": "pnpm run build && node scripts/assert-pack-contents.mjs",
+    "test": "pnpm run build && pnpm run build:examples && node --test \"tests/*.test.mjs\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "verify": "pnpm run typecheck && pnpm test && pnpm run package-dry-run"
+  },
+  "keywords": [
+    "cli",
+    "typescript",
+    "toolkit",
+    "oclif"
+  ],
+  "dependencies": {
+    "@clack/prompts": "1.1.0",
+    "@oclif/core": "4.8.0"
+  },
+  "devDependencies": {
+    "@types/node": "24.12.2",
+    "typescript": "6.0.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

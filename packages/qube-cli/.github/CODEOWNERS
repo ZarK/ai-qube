@@ -1,0 +1,13 @@
+* @ZarK
+
+.github/workflows/ @ZarK
+.github/CODEOWNERS @ZarK
+.npmrc @ZarK
+package.json @ZarK
+pnpm-lock.yaml @ZarK
+pnpm-workspace.yaml @ZarK
+scripts/ @ZarK
+src/ @ZarK
+examples/ @ZarK
+docs/M4-adoption-validation.md @ZarK
+docs/compatibility-checklist.md @ZarK

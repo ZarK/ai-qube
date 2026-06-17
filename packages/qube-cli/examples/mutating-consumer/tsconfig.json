@@ -1,0 +1,21 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "src",
+    "outDir": "dist",
+    "paths": {
+      "@tjalve/qube-cli": ["../../dist/index.d.ts"],
+      "@tjalve/qube-cli/errors": ["../../dist/errors/index.d.ts"],
+      "@tjalve/qube-cli/metadata": ["../../dist/metadata/index.d.ts"],
+      "@tjalve/qube-cli/mutation": ["../../dist/mutation/index.d.ts"],
+      "@tjalve/qube-cli/registry": ["../../dist/registry/index.d.ts"],
+      "@tjalve/qube-cli/runtime": ["../../dist/runtime/index.d.ts"]
+    },
+    "types": [
+      "node"
+    ]
+  },
+  "include": [
+    "src/**/*.ts"
+  ]
+}
