@@ -1,0 +1,76 @@
+{
+  "todos": [
+    {
+      "id": "1",
+      "content": "Read issue #683 spec and requirements",
+      "status": "completed",
+      "priority": "high"
+    },
+    {
+      "id": "2",
+      "content": "Update import-wizard.tsx: Add per-stage parallelism UI in Step 3 (Advanced)",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "id": "3",
+      "content": "Update import-wizard.tsx: Improve dependency guidance/hints in Step 2",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "4",
+      "content": "Update App.tsx: Pass per-stage parallelism settings to onStartImport",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "5",
+      "content": "Manual UI audit via agent-browser on the real Electron app (CDP + __memexTest/MEMEX_FIXTURE_DIR per docs/manual-ui-audit.md)",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "oracle-review",
+      "content": "Request @oracle QA review of implementation and manual audit evidence",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "6",
+      "content": "Add E2E tests for import settings persistence and dependency hints",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "7",
+      "content": "Run cubic review after E2E tests and apply fixes",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "pr-review-wait",
+      "content": "After PR creation, wait 10 minutes and check Copilot/Cubic review comments",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "branch-check",
+      "content": "Verify current branch is correct for issue #683",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "ship",
+      "content": "Ship: commit, PR, merge, pull",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "id": "next",
+      "content": "⚠️ BOOTSTRAP NEXT ISSUE — DO NOT COMPLETE UNTIL NEW TODOS EXIST",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}

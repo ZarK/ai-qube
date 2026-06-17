@@ -1,0 +1,32 @@
+{
+  "sessions": {
+    "session-a": [
+      {
+        "id": "branch-check",
+        "content": "Verify current branch is correct for issue #827",
+        "status": "pending",
+        "priority": "high"
+      },
+      {
+        "id": "ship",
+        "content": "Ship #827: commit, PR, merge, pull",
+        "status": "pending",
+        "priority": "high"
+      }
+    ],
+    "session-b": [
+      {
+        "id": "branch-check",
+        "content": "Verify current branch is correct for issue #803",
+        "status": "pending",
+        "priority": "high"
+      },
+      {
+        "id": "ship",
+        "content": "Ship #803: commit, PR, merge, pull",
+        "status": "pending",
+        "priority": "high"
+      }
+    ]
+  }
+}

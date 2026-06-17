@@ -1,0 +1,76 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+get_issue_from_branch() {
+    local branch="$1"
+    echo "$branch" | grep -oE '/[0-9]+' | head -1 | tr -d '/' || true
+}
+
+get_incomplete_tasks() {
+    local issue_num="$1"
+    local body
+    body=$(gh issue view "$issue_num" --json body --jq '.body' 2>/dev/null)
+    
+    if [ -z "$body" ]; then
+        return 0
+    fi
+    
+    echo "$body" | grep -E '^\s*-\s*\[ \]' | sed -E 's/^[[:space:]]*-[[:space:]]*\[[[:space:]]\][[:space:]]*//' || true
+}
+
+current_branch=$(git branch --show-current 2>/dev/null)
+
+if [ -z "$current_branch" ]; then
+    exit 0
+fi
+
+if [ "$current_branch" = "main" ] || [ "$current_branch" = "master" ]; then
+    exit 0
+fi
+
+issue_num=$(get_issue_from_branch "$current_branch")
+
+if [ -z "$issue_num" ]; then
+    exit 0
+fi
+
+echo "🔍 Checking issue #$issue_num task completion before commit..."
+echo ""
+
+incomplete_tasks=$(get_incomplete_tasks "$issue_num")
+has_incomplete=false
+
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo "🚨 REVIEW BEFORE COMMITTING:"
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [ -n "$incomplete_tasks" ]; then
+    has_incomplete=true
+    while IFS= read -r item; do
+        if [ -n "$item" ]; then
+            echo "  ❓ Did you fully complete \"$item\" as intended by the issue?"
+        fi
+    done <<< "$incomplete_tasks"
+    echo ""
+fi
+
+echo "  ❓ Did you cover all new backend functionality with unit tests?"
+echo "  ❓ Did you cover all new frontend functionality with E2E tests?"
+echo ""
+echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+echo ""
+
+if [ "$has_incomplete" = true ]; then
+    echo "🛑 COMMIT BLOCKED: Issue #$issue_num has incomplete work"
+    echo ""
+    echo "To proceed:"
+    echo "  1. Complete all tasks above"
+    echo ""
+    exit 1
+fi
+
+echo "✅ All tasks complete"
+exit 0
