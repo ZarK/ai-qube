@@ -1,0 +1,146 @@
+const assert = require('node:assert/strict');
+const { describe, it } = require('node:test');
+const { spawnSync } = require('node:child_process');
+const { join } = require('node:path');
+
+function binRun(args, cwd = process.cwd()) {
+  return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
+}
+
+describe('schema command', () => {
+  it('backs implemented commands with the qube-cli registry metadata model', async () => {
+    const { EXECUTOR_COMMAND_REGISTRY } = await import('../dist/command_registry.js');
+    const { listCommands } = await import('@tjalve/qube-cli/registry');
+    const commands = listCommands(EXECUTOR_COMMAND_REGISTRY);
+    const commandNames = commands.map(command => command.name);
+    const init = commands.find(command => command.name === 'init');
+    const start = commands.find(command => command.name === 'start');
+    const depsBlockers = commands.find(command => command.name === 'deps blockers');
+    const depsReady = commands.find(command => command.name === 'deps ready');
+
+    assert.ok(init, 'Expected init command in registry');
+    assert.ok(start, 'Expected start command in registry');
+    assert.ok(depsBlockers, 'Expected deps blockers command in registry');
+    assert.ok(depsReady, 'Expected deps ready command in registry');
+
+    const exactVersions = init.flags.find(flag => flag.name === 'exact-dependency-versions');
+    const assignFlag = start.flags.find(flag => flag.name === 'assign');
+    const commentFlag = start.flags.find(flag => flag.name === 'comment');
+    const jsonFlag = depsReady.flags.find(flag => flag.name === 'json');
+    const dryRunFlag = init.flags.find(flag => flag.name === 'dry-run');
+
+    assert.ok(exactVersions, 'Expected exact-dependency-versions flag on init');
+    assert.ok(assignFlag, 'Expected assign flag on start');
+    assert.ok(commentFlag, 'Expected comment flag on start');
+    assert.ok(jsonFlag, 'Expected json flag on deps ready');
+    assert.ok(dryRunFlag, 'Expected dry-run flag on init');
+
+    assert.ok(commandNames.includes('deps blockers'));
+    assert.ok(commandNames.includes('pr gate'));
+    assert.ok(commandNames.includes('checklist update'));
+    assert.deepEqual(depsBlockers.arguments.map(argument => argument.name), ['issue']);
+    assert.equal(depsBlockers.arguments[0].required, true);
+    assert.equal(jsonFlag.short, 'j');
+    assert.equal(dryRunFlag.short, 'd');
+    assert.equal(exactVersions.negatable, true);
+    assert.equal(assignFlag.negatable, true);
+    assert.deepEqual(assignFlag.extensions.legacyForms, ['no-assign']);
+    assert.equal(commentFlag.negatable, true);
+    assert.equal(start.mutation.categories[0], 'github');
+    assert.equal(start.interactions.dryRun.supported, true);
+  });
+
+  it('emits toolkit schema metadata with Executor-specific config sections', () => {
+    const result = binRun(['schema', '--json']);
+    const parsed = JSON.parse(result.stdout);
+    const init = parsed.commands.find(command => command.name === 'init');
+    const doctor = parsed.commands.find(command => command.name === 'doctor');
+    const switchCommand = parsed.commands.find(command => command.name === 'switch');
+    const gatesPlan = parsed.commands.find(command => command.name === 'gates plan');
+    const migrate = parsed.commands.find(command => command.name === 'migrate');
+    const migrateLegacy = parsed.commands.find(command => command.name === 'migrate legacy');
+    const migrateMap = parsed.commands.find(command => command.name === 'migrate map');
+    const auditUi = parsed.commands.find(command => command.name === 'audit ui');
+    const reviewGate = parsed.commands.find(command => command.name === 'review gate');
+    const prView = parsed.commands.find(command => command.name === 'pr view');
+    const prBody = parsed.commands.find(command => command.name === 'pr body');
+    const prGate = parsed.commands.find(command => command.name === 'pr gate');
+    const checklistUpdate = parsed.commands.find(command => command.name === 'checklist update');
+    const flag = (command, name) => command.flags.find(item => item.name === name);
+    const argument = (command, name) => command.arguments.find(item => item.name === name);
+    const serviceNames = command => command.externalServices.map(service => service.name);
+    const errorKinds = command => command.errors.map(error => error.kind);
+    const exitCodes = command => command.exitCodes.map(exitCode => exitCode.code);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.schemaVersion, 1);
+    assert.equal(parsed.package.name, '@tjalve/aie');
+    assert.equal(parsed.bin, 'aie');
+    assert.deepEqual(parsed.sections.config.shape, ['version', 'providers', 'policy']);
+    assert.deepEqual(parsed.sections.config.supportedProviders.work, ['github']);
+    assert.deepEqual(parsed.sections.config.supportedProviders.repository, ['local-git']);
+    assert.equal(parsed.sections.config.defaultConfig.providers.work.kind, 'github');
+    assert.equal(parsed.sections.config.defaultConfig.policy.branch.baseBranch, 'main');
+    assert.deepEqual(flag(init, 'tool').tokens, ['--tool']);
+    assert.ok(flag(init, 'missing-milestone'));
+    assert.ok(flag(init, 'unverified-risk-approval').tokens.includes('--no-unverified-risk-approval'));
+    assert.deepEqual(flag(init, 'tool').options, ['all', 'claude-code', 'codex', 'opencode']);
+    assert.deepEqual(flag(init, 'missing-milestone').options, ['block', 'ignore', 'warn']);
+    assert.equal(flag(init, 'package-age-days').type, 'integer');
+    assert.match(flag(init, 'unverified-risk-approval').description, /source\/provenance/);
+    assert.equal(flag(doctor, 'json').type, 'boolean');
+    assert.ok(serviceNames(doctor).includes('github'));
+    assert.ok(errorKinds(doctor).includes('config-error'));
+    assert.ok(errorKinds(doctor).includes('invalid'));
+    assert.deepEqual(exitCodes(doctor), [0, 1]);
+    assert.equal(flag(switchCommand, 'from').type, 'string');
+    assert.deepEqual(argument(switchCommand, 'issue'), { name: 'issue', description: 'Target issue number, for example 93 or #93', required: true, multiple: false });
+    assert.deepEqual(argument(prView, 'pr'), { name: 'pr', description: 'Pull request number for concise PR state, for example 12 or #12', required: true, multiple: false });
+    assert.ok(serviceNames(prView).includes('github'));
+    assert.ok(errorKinds(prView).includes('review-state-unavailable'));
+    assert.equal(prView.interactions.json, true);
+    assert.equal(prView.dryRun.supported, false);
+    assert.equal(flag(prView, 'json').type, 'boolean');
+    assert.deepEqual(argument(prGate, 'pr'), { name: 'pr', description: 'Pull request number for the PR review gate, for example 12 or #12', required: true, multiple: false });
+    assert.deepEqual(argument(checklistUpdate, 'issue'), { name: 'issue', description: 'Issue number whose checklist should be updated, for example 93 or #93', required: true, multiple: false });
+    assert.equal(flag(checklistUpdate, 'state').type, 'option');
+    assert.deepEqual(flag(checklistUpdate, 'state').options, ['checked', 'unchecked']);
+    assert.equal(checklistUpdate.mutation.mutates, true);
+    assert.deepEqual(checklistUpdate.mutation.categories, ['github']);
+    assert.deepEqual(argument(parsed.commands.find(command => command.name === 'deps blockers'), 'issue'), { name: 'issue', description: 'Issue number, for example 93 or #93', required: true, multiple: false });
+    assert.deepEqual(argument(parsed.commands.find(command => command.name === 'start'), 'issue'), { name: 'issue', description: 'Issue selector: next, a bare number such as 93, or shell-safe #93', required: false, multiple: false });
+    assert.deepEqual(gatesPlan.extensions.stageValues, ['all', 'pre-pr', 'pre-merge']);
+    assert.deepEqual(flag(gatesPlan, 'stage').options, ['all', 'pre-merge', 'pre-pr']);
+    assert.equal(migrate.mutation.mutates, false);
+    assert.equal(migrateMap.mutation.mutates, false);
+    assert.equal(migrateMap.interactions.json, true);
+    assert.ok(migrateMap.extensions.helpForms.includes('aie migrate map help'));
+    assert.ok(migrate.examples.some(example => example.command === 'aie migrate map'));
+    assert.equal(migrateLegacy.mutation.mutates, true);
+    assert.deepEqual(migrateLegacy.mutation.categories, ['local-files']);
+    assert.equal(migrateLegacy.interactions.json, true);
+    assert.equal(migrateLegacy.dryRun.supported, true);
+    assert.doesNotMatch(migrateLegacy.description, /non-mutating/);
+    assert.ok(flag(migrateLegacy, 'dry-run'));
+    assert.ok(flag(migrateLegacy, 'apply'));
+    assert.ok(flag(migrateLegacy, 'cleanup'));
+    assert.ok(flag(migrateLegacy, 'install-wrappers'));
+    assert.ok(flag(migrateLegacy, 'path'));
+    assert.equal(flag(migrateLegacy, 'instruction').multiple, true);
+    assert.equal(flag(migrateLegacy, 'path').multiple, true);
+    assert.ok(errorKinds(migrateLegacy).includes('migration-error'));
+    assert.deepEqual(exitCodes(migrateLegacy), [0, 1]);
+    assert.deepEqual(migrateLegacy.extensions.migrationModeValues, ['audit-plan', 'apply-plan', 'apply-result']);
+    assert.deepEqual(migrateLegacy.extensions.migrationActionValues, ['remove', 'replace', 'preserve', 'skip']);
+    assert.deepEqual(migrateLegacy.extensions.migrationConfidenceValues, ['high', 'medium', 'review-required']);
+    assert.ok(migrateLegacy.extensions.helpForms.includes('aie migrate legacy --help'));
+    assert.ok(serviceNames(auditUi).includes('agent-browser'));
+    assert.ok(reviewGate.extensions.reviewAgentValues.includes('oracle'));
+    assert.ok(reviewGate.extensions.reviewAgentValues.includes('custom'));
+    assert.ok(serviceNames(prBody).includes('github'));
+    assert.ok(prBody.extensions.reviewAgentValues.includes('coderabbit'));
+    assert.ok(serviceNames(prGate).includes('github-copilot'));
+    assert.ok(serviceNames(prGate).includes('custom-pr-reviewer'));
+    assert.ok(errorKinds(prGate).includes('review-state-unavailable'));
+  });
+});

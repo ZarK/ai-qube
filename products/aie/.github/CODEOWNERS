@@ -1,0 +1,11 @@
+* @ZarK
+
+.github/workflows/ @ZarK
+.github/CODEOWNERS @ZarK
+.npmrc @ZarK
+package.json @ZarK
+pnpm-lock.yaml @ZarK
+pnpm-workspace.yaml @ZarK
+bin/ @ZarK
+src/ @ZarK
+docs/M6-legacy-migration-and-release-readiness.md @ZarK
