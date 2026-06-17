@@ -3815,7 +3815,7 @@ describe("engine runners", () => {
   );
 
   it.skipIf(!hasRustToolchain)(
-    "reports Rust coverage as not implemented when cargo llvm-cov is unavailable",
+    "reports Rust coverage as failed setup when cargo llvm-cov is unavailable",
     async () => {
       await withExclusiveRust(async () => {
         const project = await createRustFixtureProject("aiq-rust-coverage-missing-tool-runner-");
@@ -3885,12 +3885,20 @@ describe("engine runners", () => {
           engineContext,
         );
 
-        expect(result.status).toBe("not_implemented");
-        expect(result.diagnostics).toEqual([]);
+        expect(JSON.stringify(result)).not.toContain("not_implemented");
+        expect(result.status).toBe("failed");
+        expect(result.diagnostics).toEqual([
+          expect.objectContaining({
+            file: project.sourceFile,
+            severity: "error",
+            source: "cargo-llvm-cov",
+          }),
+        ]);
         expect(result.notes[0]).toContain("cargo-llvm-cov");
+        expect(result.notes[0]).toContain("disable Rust coverage");
         expect(result.toolRuns[0]).toMatchObject({
           exitCode: 101,
-          status: "not_implemented",
+          status: "failed",
           tool: "cargo-llvm-cov",
         });
       });

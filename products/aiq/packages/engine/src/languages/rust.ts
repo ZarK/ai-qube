@@ -804,17 +804,25 @@ async function runRustProjectTestTask(
       mode === "coverage" &&
       isMissingCargoSubcommand(joinOutputs(outcome.stdout, outcome.stderr), "llvm-cov")
     ) {
+      const message =
+        "Rust coverage requires the cargo-llvm-cov subcommand. Install it with `cargo install cargo-llvm-cov`, or disable Rust coverage.";
       return {
-        diagnostics: [],
+        diagnostics: [
+          runtime.createProcessFailureDiagnostic(
+            project.files[0] ?? project.manifestPath,
+            tool,
+            message,
+          ),
+        ],
         durationMs: outcome.durationMs,
-        notImplemented: true,
-        note: "Rust coverage requires the cargo-llvm-cov subcommand. Install it with `cargo install cargo-llvm-cov` to enable stage 8.",
+        notImplemented: false,
+        note: message,
         toolRun: runtime.createToolRunResult(
           tool,
           args,
           outcome.durationMs,
           outcome.exitCode,
-          "not_implemented",
+          "failed",
           outcome.finishedAt,
           outcome.startedAt,
         ),
