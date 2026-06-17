@@ -1,0 +1,23 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "allowImportingTsExtensions": false,
+    "declaration": true,
+    "declarationMap": true,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "sourceMap": true,
+    "types": ["node"]
+  },
+  "include": [
+    "src/**/*.ts"
+  ],
+  "exclude": [
+    "test/**/*.ts",
+    ".opencode/**/*.ts",
+    "opencode/**/*.ts",
+    "src/opencode/**/*.ts",
+    "dist/**"
+  ]
+}
