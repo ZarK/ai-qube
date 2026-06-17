@@ -226,7 +226,7 @@ describe("project graph", () => {
           runner: "vitest",
         },
       ],
-      unsupportedProjectRoots: [],
+      unsupportedProjects: [],
     });
 
     expect(selectTypeScriptProjects(graph, [workspace.sourceFile])).toEqual({

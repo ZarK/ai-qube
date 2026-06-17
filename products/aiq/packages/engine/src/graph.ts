@@ -132,7 +132,7 @@ const javaScriptGraphLanguageModule = {
     files: readonly string[],
   ): Promise<{
     projects: Array<{ files: string[]; projectRoot: string; runner: GraphJavaScriptTestRunner }>;
-    unsupportedProjectRoots: string[];
+    unsupportedProjects: Array<{ file: string; message: string; projectRoot: string }>;
   }> {
     return selectJavaScriptLanguageProjects(graph, files);
   },
@@ -334,7 +334,7 @@ export function selectJavaScriptProjects(
   files: readonly string[],
 ): Promise<{
   projects: Array<{ files: string[]; projectRoot: string; runner: GraphJavaScriptTestRunner }>;
-  unsupportedProjectRoots: string[];
+  unsupportedProjects: Array<{ file: string; message: string; projectRoot: string }>;
 }> {
   return javaScriptGraphLanguageModule.selectProjects(graph, files);
 }
