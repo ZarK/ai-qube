@@ -3,8 +3,10 @@ import { cp, mkdir, mkdtemp, rm, stat, utimes, writeFile } from "node:fs/promise
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { StageResult } from "../src/contracts.js";
 import { runPlannedTask } from "../src/runners.js";
+import { ToolRunner } from "../src/tool-runner.js";
 
 const fixtureTerraformRoot = path.resolve("test-projects/terraform");
 const fixtureHclRoot = path.resolve("test-projects/hcl");
@@ -78,10 +80,52 @@ async function createTerraformJsonFixtureProject(
 }
 
 afterEach(async () => {
+  vi.restoreAllMocks();
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
 });
 
+function expectMissingTerraformResult(result: StageResult, file: string): void {
+  expect(JSON.stringify(result)).not.toContain("not_implemented");
+  expect(result.status).toBe("failed");
+  expect(result.notes[0]).toContain("requires the 'terraform' binary");
+  expect(result.notes[0]).toContain("aiq doctor");
+  expect(result.diagnostics).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        file,
+        severity: "error",
+        source: "terraform",
+      }),
+    ]),
+  );
+  expect(result.diagnostics[0]?.message).toContain("requires the 'terraform' binary");
+  expect(result.toolRuns).toEqual(
+    expect.arrayContaining([expect.objectContaining({ status: "failed", tool: "terraform" })]),
+  );
+}
+
 describe("Terraform and HCL runners", () => {
+  it.each(["lint", "format", "typecheck"] as const)(
+    "reports missing Terraform binary as a setup failure for %s",
+    async (stageId) => {
+      vi.spyOn(ToolRunner.prototype, "resolveBinaryIfAvailable").mockResolvedValue(undefined);
+
+      const project = await createTerraformFixtureProject(`aiq-tf-missing-${stageId}-`);
+
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [project.mainFile],
+          id: `test-run:terraform:missing-${stageId}`,
+          stageId,
+        },
+        project.root,
+      );
+
+      expectMissingTerraformResult(result, project.mainFile);
+    },
+  );
+
   it("runs Terraform lint and reuses cached validation for typecheck", async () => {
     const project = await createTerraformFixtureProject("aiq-tf-lint-typecheck-");
 
@@ -105,10 +149,8 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(lint.status).toBe("not_implemented");
-      expect(typecheck.status).toBe("not_implemented");
-      expect(lint.notes[0]).toContain("Install 'terraform'");
-      expect(typecheck.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(lint, project.mainFile);
+      expectMissingTerraformResult(typecheck, project.mainFile);
       return;
     }
 
@@ -155,8 +197,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.terraformJsonFile);
       return;
     }
 
@@ -200,8 +241,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.mainFile);
       return;
     }
 
@@ -233,8 +273,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(lint.status).toBe("not_implemented");
-      expect(lint.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(lint, project.mainFile);
       return;
     }
 
@@ -302,8 +341,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.mainFile);
       return;
     }
 
@@ -339,8 +377,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.configFile);
       return;
     }
 
@@ -373,8 +410,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.configFile);
       return;
     }
 
@@ -408,8 +444,7 @@ describe("Terraform and HCL runners", () => {
     );
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expectMissingTerraformResult(result, project.configFile);
       return;
     }
 

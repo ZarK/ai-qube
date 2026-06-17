@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { PlannedTask, StageId, StageResult } from "../contracts.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import type { HashicorpRunnerRuntime } from "./contracts.js";
@@ -48,10 +50,7 @@ export async function runTerraformLintTask(
 
   const terraformBinary = await runtime.resolveBinaryIfAvailable(["terraform"]);
   if (terraformBinary === undefined) {
-    return runtime.createNotImplementedStageResult(
-      task.stageId,
-      "Install 'terraform' to enable Terraform and generic HCL linting.",
-    );
+    return createMissingTerraformBinaryStageResult(task.stageId, files, "lint", runtime);
   }
 
   const stageResults = await Promise.all([
@@ -91,10 +90,7 @@ export async function runTerraformFormatTask(
 
   const terraformBinary = await runtime.resolveBinaryIfAvailable(["terraform"]);
   if (terraformBinary === undefined) {
-    return runtime.createNotImplementedStageResult(
-      task.stageId,
-      "Install 'terraform' to enable Terraform and generic HCL formatting.",
-    );
+    return createMissingTerraformBinaryStageResult(task.stageId, files, "format", runtime);
   }
 
   const stageResults = await Promise.all([
@@ -292,10 +288,7 @@ async function runTerraformValidateStage(
 
   const terraformBinary = await runtime.resolveBinaryIfAvailable(["terraform"]);
   if (terraformBinary === undefined) {
-    return runtime.createNotImplementedStageResult(
-      task.stageId,
-      "Install 'terraform' to enable Terraform validation.",
-    );
+    return createMissingTerraformBinaryStageResult(task.stageId, files, "validation", runtime);
   }
   void terraformBinary;
 
@@ -374,6 +367,35 @@ function cloneToolRunResult(
     toolRun.startedAt,
     cacheHit,
   );
+}
+
+function createMissingTerraformBinaryStageResult(
+  stageId: StageId,
+  files: readonly string[],
+  operation: "format" | "lint" | "validation",
+  runtime: HashicorpRunnerRuntime,
+): StageResult {
+  const file = files[0] ?? runtime.cwd;
+  const fileLabel = path.basename(file) || file;
+  const operationLabel =
+    operation === "validation" ? "Terraform validation" : `Terraform ${operation}`;
+  const message = `${operationLabel} requires the 'terraform' binary for ${fileLabel}. Install Terraform, ensure 'terraform' is on PATH, then run \`aiq doctor\` to verify setup.`;
+
+  return {
+    diagnostics: [
+      {
+        file,
+        message,
+        severity: "error",
+        source: "terraform",
+      },
+    ],
+    durationMs: 0,
+    notes: [message],
+    stageId,
+    status: "failed",
+    toolRuns: [runtime.createToolRunResult("terraform", [], 0, undefined, "failed")],
+  };
 }
 
 function combineStageResults(

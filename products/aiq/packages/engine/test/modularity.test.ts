@@ -308,8 +308,18 @@ describe("engine modular authoring path", () => {
     });
 
     if (!hasTerraform) {
-      expect(result.status).toBe("not_implemented");
-      expect(result.notes[0]).toContain("Install 'terraform'");
+      expect(JSON.stringify(result)).not.toContain("not_implemented");
+      expect(result.status).toBe("failed");
+      expect(result.notes[0]).toContain("requires the 'terraform' binary");
+      expect(result.notes[0]).toContain("aiq doctor");
+      expect(result.diagnostics[0]).toMatchObject({
+        file: fixtureTerraformFile,
+        severity: "error",
+        source: "terraform",
+      });
+      expect(result.toolRuns).toEqual([
+        expect.objectContaining({ status: "failed", tool: "terraform" }),
+      ]);
       return;
     }
 
