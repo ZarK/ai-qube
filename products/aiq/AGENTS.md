@@ -115,7 +115,7 @@ Normal flow:
 5. Run the relevant quality gates.
 6. Commit with an issue reference.
 7. Open a PR that closes the issue.
-8. Request GitHub Copilot and cubic.dev review, wait at least 10 minutes, and inspect feedback before merge.
+8. Request comfyrabbitai review, wait at least 10 minutes, and inspect feedback before merge.
 9. After merge, run `pnpm exec aie complete <issue-number>` so dependent issues can unblock.
 
 Only one issue may be `S-InProgress` at a time. If an issue is already in progress, continue that issue first; use `aie complete <issue>` to finish it or `aie switch <issue>` when explicitly switching context. Do not manually mark a second issue in progress.
@@ -157,9 +157,9 @@ Use conventional types such as `feat`, `fix`, `docs`, `test`, `refactor`, and `c
 
 ## GitHub Delivery
 
-Agents may create branches, commit, push, and open PRs for assigned issues. Every PR must request GitHub Copilot review and cubic.dev review, then wait at least 10 minutes before continuing toward merge.
+Agents may create branches, commit, push, and open PRs for assigned issues. Every PR must request comfyrabbitai review, then wait at least 10 minutes before continuing toward merge.
 
-Merging requires passing CI, completion of the Copilot/cubic.dev review wait, and no unresolved blocking review feedback. If follow-up commits materially change the PR after AI reviews, repeat the review wait before merge.
+Merging requires passing CI, completion of the comfyrabbitai review wait, and no unresolved blocking review feedback. If follow-up commits materially change the PR after AI review, repeat the review wait before merge.
 
 ## Hard-Cut Product Policy
 

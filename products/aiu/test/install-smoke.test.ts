@@ -159,8 +159,10 @@ function readLockfileSection(lockfile: string, heading: "packages" | "snapshots"
 }
 
 async function runPnpm(args: readonly string[], cwd: string) {
+  const pnpmCommand = process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : "pnpm";
+  const pnpmArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm", ...args] : [...args];
   try {
-    return await execFileAsync("pnpm", [...args], {
+    return await execFileAsync(pnpmCommand, pnpmArgs, {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120_000,

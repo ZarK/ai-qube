@@ -203,6 +203,15 @@ importers:
         specifier: 6.0.2
         version: 6.0.2
 
+  products/qube:
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
 packages:
 
   '@actions/artifact@6.2.1':

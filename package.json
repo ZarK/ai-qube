@@ -9,13 +9,13 @@
     "pnpm": ">=11.0.0"
   },
   "scripts": {
-    "build": "pnpm --filter @tjalve/qube-cli run build && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --filter ai-code-quality run build",
+    "build": "pnpm --filter @tjalve/qube-cli run build && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --filter @tjalve/qube run build && pnpm --filter ai-code-quality run build",
     "build:aiq": "pnpm --filter ai-code-quality run build",
     "bench:aiq": "pnpm --filter ai-code-quality run bench:ci",
-    "typecheck": "pnpm --filter @tjalve/qube-cli run typecheck && pnpm --filter @tjalve/aib run typecheck && pnpm --filter @tjalve/aie run typecheck && pnpm --filter @tjalve/aiu run typecheck && pnpm --filter ai-code-quality run typecheck",
-    "test": "pnpm --filter @tjalve/qube-cli test && pnpm --filter @tjalve/aib test && pnpm --filter @tjalve/aie test && pnpm --filter @tjalve/aiu test && pnpm --filter ai-code-quality test",
+    "typecheck": "pnpm --filter @tjalve/qube-cli run typecheck && pnpm --filter @tjalve/aib run typecheck && pnpm --filter @tjalve/aie run typecheck && pnpm --filter @tjalve/aiu run typecheck && pnpm --filter @tjalve/qube run typecheck && pnpm --filter ai-code-quality run typecheck",
+    "test": "node --test \"test/*.test.mjs\" && pnpm --filter @tjalve/qube-cli test && pnpm --filter @tjalve/aib test && pnpm --filter @tjalve/aie test && pnpm --filter @tjalve/aiu test && pnpm --filter @tjalve/qube test && pnpm --filter ai-code-quality test",
     "test:aiq": "pnpm --filter ai-code-quality test",
-    "verify": "pnpm --filter @tjalve/qube-cli run verify && pnpm --filter @tjalve/aib run verify && pnpm --filter @tjalve/aie run verify && pnpm --filter @tjalve/aiu run release:check && pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality test && pnpm --filter ai-code-quality run test:publish-readiness",
+    "verify": "pnpm --filter @tjalve/qube-cli run verify && pnpm --filter @tjalve/aib run verify && pnpm --filter @tjalve/aie run verify && pnpm --filter @tjalve/aiu run release:check && pnpm --filter @tjalve/qube run verify && pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality test && pnpm --filter ai-code-quality run test:publish-readiness",
     "verify:aiq": "pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality test && pnpm --filter ai-code-quality run test:publish-readiness && pnpm --filter ai-code-quality run bench:ci"
   }
 }

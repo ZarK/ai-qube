@@ -14,6 +14,7 @@ import type { AiuTrustedStateAdapterResult, AiuTrustedCommandExecutionRecord } f
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const workspaceRoot = path.resolve(repoRoot, "..", "..");
 const aiuBin = path.join(repoRoot, "dist/src/bin/aiu.js");
 const observedAt = "2026-05-23T00:00:00.000Z";
 
@@ -118,9 +119,9 @@ describe("status reporting", () => {
       assert.ok(parsed.status.errors.some((error) => error.code === "trusted-command-malformed-json"));
       assert.deepEqual(parsed.status.decision.reasonCodes, ["stop-malformed-input"]);
       assert.equal(parsed.status.inputEnvelopes.length, 0);
-      assert.equal(parsed.status.paths.stateDir, path.join(repoRoot, ".umpire", "state"));
-      assert.equal(parsed.status.paths.lockDir, path.join(repoRoot, ".umpire", "locks"));
-      assert.equal(parsed.status.paths.logDir, path.join(repoRoot, ".umpire", "logs"));
+      assert.equal(parsed.status.paths.stateDir, path.join(workspaceRoot, ".umpire", "state"));
+      assert.equal(parsed.status.paths.lockDir, path.join(workspaceRoot, ".umpire", "locks"));
+      assert.equal(parsed.status.paths.logDir, path.join(workspaceRoot, ".umpire", "logs"));
       assert.match(parsed.status.paths.continuationState, /continuation\.json$/);
     } finally {
       await rm(dir, { recursive: true, force: true });

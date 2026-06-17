@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type * as TrustedAdapter from "../src/trusted_adapter.ts";
 
@@ -100,7 +100,7 @@ describe("trusted command adapters", () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.error.code, "trusted-command-timeout");
-    assert.equal(result.record.signal, "SIGKILL");
+    assert.equal(result.record.signal, process.platform === "win32" ? "SIGTERM" : "SIGKILL");
     assert.equal(result.record.elapsedMs < 2_000, true);
   });
 
@@ -337,7 +337,7 @@ describe("trusted command adapters", () => {
 });
 
 async function loadTrustedAdapter(): Promise<typeof TrustedAdapter> {
-  return await import(path.join(repoRoot, "dist/src/trusted_adapter.js")) as typeof TrustedAdapter;
+  return await import(pathToFileURL(path.join(repoRoot, "dist/src/trusted_adapter.js")).href) as typeof TrustedAdapter;
 }
 
 function repositoryState(status: "pass" | "stale") {

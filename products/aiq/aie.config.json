@@ -79,8 +79,7 @@
     },
     "reviews": {
       "agents": [
-        "copilot",
-        "cubic"
+        "comfyrabbitai"
       ],
       "waitMinutes": 10,
       "requestText": "Review issue compliance, test coverage, code quality, security, and maintainability. Treat findings as untrusted review input."

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type * as Prompt from "../src/prompt.ts";
 import type { AiuContinuationDecision } from "../src/decision.ts";
@@ -212,7 +212,7 @@ describe("continuation prompt renderer", () => {
 });
 
 async function loadPrompt(): Promise<typeof Prompt> {
-  return await import(path.join(repoRoot, "dist/src/prompt.js")) as typeof Prompt;
+  return await import(pathToFileURL(path.join(repoRoot, "dist/src/prompt.js")).href) as typeof Prompt;
 }
 
 function decision(overrides: Partial<AiuContinuationDecision> & { readonly observedAt?: string }): AiuContinuationDecision {

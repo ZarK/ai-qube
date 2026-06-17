@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
@@ -172,7 +172,7 @@ describe("init planner", () => {
 
   it("does not apply a stale plan over newly conflicting files", async () => {
     const target = await createRepoRoot();
-    const { applyAiuInitPlan, planAiuInit } = await import(path.join(repoRoot, "dist/src/init.js")) as {
+    const { applyAiuInitPlan, planAiuInit } = await import(pathToFileURL(path.join(repoRoot, "dist/src/init.js")).href) as {
       applyAiuInitPlan: (plan: InitPlan) => InitPlan;
       planAiuInit: (options: { cwd: string; tool: string }) => InitPlan;
     };

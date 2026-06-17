@@ -110,13 +110,17 @@ function sortByPath<T extends { path: string }>(items: T[]): T[] {
   return [...items].sort((left, right) => left.path.localeCompare(right.path));
 }
 
+function portablePath(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
 function isMigrationInventoryItem(item: MigrationInventoryItem | null): item is MigrationInventoryItem {
   return item !== null;
 }
 
 function relativePath(repoRoot: string, path: string): string {
   const value = relative(repoRoot, path);
-  return value === '' ? '.' : value;
+  return value === '' ? '.' : portablePath(value);
 }
 
 async function readTextIfPresent(path: string): Promise<string | null> {
@@ -140,11 +144,11 @@ async function listFiles(repoRoot: string, directory: string, recursive: boolean
   const entries = await listEntries(repoRoot, directory);
   const files = entries
     .filter(entry => entry.isFile())
-    .map(entry => directory === '.' ? entry.name : join(directory, entry.name));
+    .map(entry => directory === '.' ? entry.name : portablePath(join(directory, entry.name)));
   if (!recursive) return files.sort();
   const nested = await Promise.all(entries
     .filter(entry => entry.isDirectory())
-    .map(entry => listFiles(repoRoot, directory === '.' ? entry.name : join(directory, entry.name), true)));
+    .map(entry => listFiles(repoRoot, directory === '.' ? entry.name : portablePath(join(directory, entry.name)), true)));
   return [...files, ...nested.flat()].sort();
 }
 

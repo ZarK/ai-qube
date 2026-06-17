@@ -12,6 +12,10 @@ export interface PlannedRemoval {
   path: string;
 }
 
+function portablePath(path: string): string {
+  return path.replace(/\\/g, '/');
+}
+
 export function selectedLegacyPaths(repoRoot: string, inputPaths: string[] | undefined): { paths: string[]; conflicts: MigrationConflict[] } {
   const paths = new Set<string>();
   const conflicts: MigrationConflict[] = [];
@@ -19,7 +23,7 @@ export function selectedLegacyPaths(repoRoot: string, inputPaths: string[] | und
     const normalizedInput = inputPath.trim();
     if (normalizedInput === '') continue;
     const absolutePath = isAbsolute(normalizedInput) ? normalizedInput : resolve(repoRoot, normalizedInput);
-    const relativeSelectedPath = relative(repoRoot, absolutePath);
+    const relativeSelectedPath = portablePath(relative(repoRoot, absolutePath));
     if (relativeSelectedPath === '' || relativeSelectedPath.startsWith('..') || isAbsolute(relativeSelectedPath)) {
       conflicts.push({
         path: normalizedInput,

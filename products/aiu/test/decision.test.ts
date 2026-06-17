@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type * as Decision from "../src/decision.ts";
 import {
@@ -513,7 +513,7 @@ describe("continuation decision engine", () => {
 });
 
 async function loadDecision(): Promise<typeof Decision> {
-  return await import(path.join(repoRoot, "dist/src/decision.js")) as typeof Decision;
+  return await import(pathToFileURL(path.join(repoRoot, "dist/src/decision.js")).href) as typeof Decision;
 }
 
 function assertDecision(result: Decision.AiuContinuationDecision, kind: Decision.AiuContinuationDecision["kind"], reasonCode: string): void {

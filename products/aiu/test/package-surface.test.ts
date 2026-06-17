@@ -241,7 +241,9 @@ async function readPackageJson(): Promise<PackageJson> {
 }
 
 async function readPackDryRun(): Promise<PackDryRun> {
-  const result = await execFileAsync("pnpm", ["pack", "--dry-run", "--json"], {
+  const pnpmCommand = process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : "pnpm";
+  const pnpmArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm", "pack", "--dry-run", "--json"] : ["pack", "--dry-run", "--json"];
+  const result = await execFileAsync(pnpmCommand, pnpmArgs, {
     cwd: repoRoot,
     maxBuffer: 1024 * 1024,
   });
