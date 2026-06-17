@@ -1853,7 +1853,7 @@ describe("engine runners", () => {
       playwrightBin,
       process.platform === "win32"
         ? `@echo off\r\nnode "%~dp0\\..\\..\\playwright.cjs" %*\r\n`
-        : `#!/usr/bin/env node\nimport "../../playwright.cjs";\n`,
+        : `#!/usr/bin/env node\nrequire("../../playwright.cjs");\n`,
       "utf8",
     );
     if (process.platform !== "win32") {
