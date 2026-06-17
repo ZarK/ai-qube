@@ -56,6 +56,12 @@ type JavaScriptProject = {
   runner: JavaScriptTestRunner;
 };
 
+type UnsupportedJavaScriptTestProject = {
+  file: string;
+  message: string;
+  projectRoot: string;
+};
+
 type JavaScriptMetricsProject = {
   files: string[];
   packageJsonPath: string;
@@ -133,7 +139,10 @@ export function selectJavaScriptPackageProjects(
 export async function selectJavaScriptProjects(
   graph: ProjectGraph,
   files: readonly string[],
-): Promise<{ projects: JavaScriptProject[]; unsupportedProjectRoots: string[] }> {
+): Promise<{
+  projects: JavaScriptProject[];
+  unsupportedProjects: UnsupportedJavaScriptTestProject[];
+}> {
   return resolveSelectedJavaScriptProjects(selectJavaScriptPackageProjects(graph, files));
 }
 
@@ -396,7 +405,10 @@ async function createJavaScriptPackageProject(
 async function resolveJavaScriptProjects(
   graph: ProjectGraph | undefined,
   files: readonly string[],
-): Promise<{ projects: JavaScriptProject[]; unsupportedProjectRoots: string[] }> {
+): Promise<{
+  projects: JavaScriptProject[];
+  unsupportedProjects: UnsupportedJavaScriptTestProject[];
+}> {
   if (graph !== undefined) {
     return selectJavaScriptProjects(graph, files);
   }
@@ -407,18 +419,29 @@ async function resolveJavaScriptProjects(
 async function resolveSelectedJavaScriptProjects(packageProjects: {
   projects: JavaScriptPackageProject[];
   unsupportedFiles: string[];
-}): Promise<{ projects: JavaScriptProject[]; unsupportedProjectRoots: string[] }> {
-  const unsupportedProjectRoots = new Set<string>();
+}): Promise<{
+  projects: JavaScriptProject[];
+  unsupportedProjects: UnsupportedJavaScriptTestProject[];
+}> {
+  const unsupportedProjects = new Map<string, UnsupportedJavaScriptTestProject>();
 
   for (const file of packageProjects.unsupportedFiles) {
-    unsupportedProjectRoots.add(path.dirname(file));
+    const projectRoot = path.dirname(file);
+    unsupportedProjects.set(projectRoot, {
+      file,
+      message: `No JavaScript or TypeScript package project was found for ${projectRoot}. Add package.json with a supported Vitest or Jest unit/coverage runner, or adjust the selected files.`,
+      projectRoot,
+    });
   }
 
   const projects = await Promise.all(
     packageProjects.projects.map(async (project) => {
       const runner = await detectJavaScriptTestRunner(project.projectRoot);
       if (runner === undefined) {
-        unsupportedProjectRoots.add(project.projectRoot);
+        unsupportedProjects.set(
+          project.projectRoot,
+          await createUnsupportedJavaScriptTestProject(project),
+        );
         return undefined;
       }
 
@@ -435,9 +458,29 @@ async function resolveSelectedJavaScriptProjects(packageProjects: {
     projects: projects
       .filter((project): project is JavaScriptProject => project !== undefined)
       .sort((left, right) => left.projectRoot.localeCompare(right.projectRoot)),
-    unsupportedProjectRoots: [...unsupportedProjectRoots].sort((left, right) =>
-      left.localeCompare(right),
+    unsupportedProjects: [...unsupportedProjects.values()].sort((left, right) =>
+      left.projectRoot.localeCompare(right.projectRoot),
     ),
+  };
+}
+
+async function createUnsupportedJavaScriptTestProject(
+  project: JavaScriptPackageProject,
+): Promise<UnsupportedJavaScriptTestProject> {
+  const packageJson = await readPackageJson(project.packageJsonPath);
+  const testScript = readPackageScript(packageJson, "test");
+  if (testScript !== undefined && testScript.trim().length > 0) {
+    return {
+      file: project.packageJsonPath,
+      message: `Unsupported JavaScript or TypeScript test runner for ${project.projectRoot}: package script "test" is "${testScript}". AIQ unit/coverage supports Vitest and Jest reports; use the e2e stage for browser tests or configure a supported runner.`,
+      projectRoot: project.projectRoot,
+    };
+  }
+
+  return {
+    file: project.packageJsonPath,
+    message: `No JavaScript or TypeScript test runner is configured for ${project.projectRoot}. Add a Vitest or Jest config, dependency, or supported test script before using AIQ unit/coverage gates.`,
+    projectRoot: project.projectRoot,
   };
 }
 
@@ -688,18 +731,26 @@ async function runJavaScriptTestStage(
   const toolRuns = [] as ReturnType<JavaScriptRunnerRuntime["createToolRunResult"]>[];
   const notes: string[] = [];
   let totalDurationMs = 0;
-  let unsupportedProjectRoots: string[] = [];
+  let unsupportedProjects: UnsupportedJavaScriptTestProject[] = [];
   const stageTempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-js-stage-"));
 
   try {
     const resolvedProjects = await resolveJavaScriptProjects(runtime.graph, files);
-    unsupportedProjectRoots = resolvedProjects.unsupportedProjectRoots;
+    unsupportedProjects = resolvedProjects.unsupportedProjects;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        runtime.readUnsupportedRunnerNote(task.stageId, unsupportedProjectRoots),
+      const unsupportedDiagnostics = createUnsupportedJavaScriptTestDiagnostics(
+        unsupportedProjects,
+        runtime,
       );
+      return {
+        diagnostics: unsupportedDiagnostics,
+        durationMs: totalDurationMs,
+        notes: readUnsupportedJavaScriptTestNotes(unsupportedProjects, task.stageId),
+        stageId: task.stageId,
+        status: unsupportedDiagnostics.length > 0 ? "failed" : "passed",
+        toolRuns,
+      };
     }
 
     const projectResults = await runProjectBatches(
@@ -729,25 +780,41 @@ async function runJavaScriptTestStage(
     await rm(stageTempDir, { force: true, recursive: true }).catch(() => undefined);
   }
 
-  const status =
-    diagnostics.length > 0
-      ? "failed"
-      : unsupportedProjectRoots.length > 0
-        ? "not_implemented"
-        : "passed";
-
-  if (unsupportedProjectRoots.length > 0) {
-    notes.push(runtime.readUnsupportedRunnerNote(task.stageId, unsupportedProjectRoots));
-  }
+  diagnostics.push(...createUnsupportedJavaScriptTestDiagnostics(unsupportedProjects, runtime));
+  notes.push(...readUnsupportedJavaScriptTestNotes(unsupportedProjects, task.stageId));
 
   return {
     diagnostics,
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status,
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
+}
+
+function createUnsupportedJavaScriptTestDiagnostics(
+  projects: readonly UnsupportedJavaScriptTestProject[],
+  runtime: JavaScriptRunnerRuntime,
+): Diagnostic[] {
+  return projects.map((project) =>
+    runtime.createProcessFailureDiagnostic(project.file, "aiq-js-test-runner", project.message),
+  );
+}
+
+function readUnsupportedJavaScriptTestNotes(
+  projects: readonly UnsupportedJavaScriptTestProject[],
+  stageId: string,
+): string[] {
+  if (projects.length === 0) {
+    return [];
+  }
+
+  const roots = projects.map((project) => project.projectRoot).join(", ");
+  return [
+    `Unsupported JavaScript/TypeScript test configuration for ${stageId} in: ${roots}.`,
+    ...projects.map((project) => project.message),
+  ];
 }
 
 async function runJavaScriptE2eProjectTask(
@@ -1598,6 +1665,10 @@ function readPackageScripts(packageJson: Record<string, unknown>): Map<string, s
       .filter((entry): entry is [string, string] => typeof entry[1] === "string")
       .map(([name, script]) => [name, script]),
   );
+}
+
+function readPackageScript(packageJson: Record<string, unknown>, name: string): string | undefined {
+  return readPackageScripts(packageJson).get(name);
 }
 
 async function readJsonFile(filePath: string): Promise<Record<string, unknown> | undefined> {

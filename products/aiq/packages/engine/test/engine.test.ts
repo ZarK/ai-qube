@@ -801,7 +801,7 @@ describe("engine foundation", () => {
     expect(result.summary.status).toBe("failed");
     expect(result.summary.notImplementedStageCount).toBe(0);
     expect(result.stages[0]).toMatchObject({
-      diagnostics: [expect.objectContaining({ source: "aiq-unsupported" })],
+      diagnostics: [expect.objectContaining({ source: "aiq-js-test-runner" })],
       stageId: "unit",
       status: "failed",
     });
