@@ -98,6 +98,20 @@ function expectBashSetupFailure(
   expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: source });
 }
 
+function expectPowerShellSetupFailure(
+  result: Awaited<ReturnType<typeof runPlannedTask>>,
+  file: string,
+): void {
+  expect(JSON.stringify(result)).not.toContain("not_implemented");
+  expect(result.status).toBe("failed");
+  expect(result.diagnostics[0]).toMatchObject({
+    file,
+    severity: "error",
+    source: "pester",
+  });
+  expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: "pester" });
+}
+
 async function createDotNetFixtureProject(
   prefix: string,
 ): Promise<{ root: string; solutionFile: string; sourceFile: string; testFile: string }> {
@@ -5894,6 +5908,81 @@ describe("engine runners", () => {
       source: "invoke-formatter",
     });
     expect(result.toolRuns).toEqual([]);
+  });
+
+  it.each(["unit", "coverage"] as const)(
+    "reports missing PowerShell tests as a setup failure for %s",
+    async (stageId) => {
+      const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-no-tests-"));
+      tempDirs.push(tempDir);
+
+      const sourceFile = path.join(tempDir, "utils.ps1");
+      await writeFile(sourceFile, "function Invoke-Greeting { 'hello' }\n", "utf8");
+
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [sourceFile],
+          id: `test:1:${stageId}-powershell-no-tests`,
+          stageId,
+        },
+        process.cwd(),
+      );
+
+      expectPowerShellSetupFailure(result, sourceFile);
+      expect(result.notes[0]).toContain("No PowerShell test files were detected");
+      expect(result.notes[0]).toContain(`disable PowerShell ${stageId}`);
+    },
+  );
+
+  it("reports missing Pester as a PowerShell unit setup failure", async () => {
+    const project = await createPowerShellFixtureProject("aiq-powershell-missing-pester-");
+
+    vi.spyOn(ToolRunner.prototype, "resolvePowerShellModuleManifest").mockResolvedValue(undefined);
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [project.sourceFile],
+        id: "test:1:unit-powershell-missing-pester",
+        stageId: "unit",
+      },
+      process.cwd(),
+    );
+
+    expectPowerShellSetupFailure(result, project.sourceFile);
+    expect(result.notes[0]).toContain("Pester is required for PowerShell unit");
+    expect(result.notes[0]).toContain("Install Pester");
+  });
+
+  it("reports missing PowerShell coverage sources as a setup failure", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-no-coverage-"));
+    tempDirs.push(tempDir);
+
+    const testFile = path.join(tempDir, "utils.tests.ps1");
+    await writeFile(
+      testFile,
+      "Describe 'utils' { It 'passes' { $true | Should -Be $true } }\n",
+      "utf8",
+    );
+
+    vi.spyOn(ToolRunner.prototype, "resolvePowerShellModuleManifest").mockResolvedValue(
+      "/tmp/Pester.psd1",
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [testFile],
+        id: "test:1:coverage-powershell-no-sources",
+        stageId: "coverage",
+      },
+      process.cwd(),
+    );
+
+    expectPowerShellSetupFailure(result, testFile);
+    expect(result.notes[0]).toContain("No PowerShell source files were detected for coverage");
+    expect(result.notes[0]).toContain("disable PowerShell coverage");
   });
 
   it.skipIf(!hasPowerShellPesterToolchain)(

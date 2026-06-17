@@ -2082,9 +2082,9 @@ describe("engine foundation", () => {
         expect(coverageStage?.notes[0]).toContain("PowerShell coverage lines:");
       } else {
         expect(unitStage?.status).toBe("failed");
-        expect(unitStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+        expect(unitStage?.diagnostics[0]).toMatchObject({ source: "pester" });
         expect(coverageStage?.status).toBe("failed");
-        expect(coverageStage?.diagnostics[0]).toMatchObject({ source: "aiq-unsupported" });
+        expect(coverageStage?.diagnostics[0]).toMatchObject({ source: "pester" });
       }
     },
     60_000,
