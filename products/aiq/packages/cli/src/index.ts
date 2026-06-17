@@ -21,6 +21,7 @@ import {
 import { runServeCommand } from "./serve.js";
 import { formatError } from "./shared.js";
 import { type CliIo, type CliRunOptions, type ParsedArgs, cliHelp } from "./types.js";
+import { aiqPackageName, aiqPackageVersion } from "./version.js";
 import { runWatchCommand } from "./watch.js";
 
 export * from "./api.js";
@@ -32,6 +33,12 @@ export async function runCli(
   io: CliIo = defaultIo(),
   options: CliRunOptions = {},
 ): Promise<number> {
+  const versionRequest = normalizeVersionRequest(argv);
+  if (versionRequest !== undefined) {
+    io.stdout.write(renderVersionOutput(versionRequest.json));
+    return 0;
+  }
+
   let parsed: ParsedArgs;
 
   try {
@@ -78,6 +85,36 @@ export async function runCli(
     case "check":
       return runCheckCommand(parsed, io);
   }
+}
+
+function normalizeVersionRequest(argv: readonly string[]): { readonly json: boolean } | undefined {
+  const args = argv.slice(2);
+  while (args[0] === "--") {
+    args.shift();
+  }
+
+  if (!args.includes("--version")) {
+    return undefined;
+  }
+
+  if (!args.every((argument) => argument === "--version" || argument === "--json")) {
+    return undefined;
+  }
+
+  return { json: args.includes("--json") };
+}
+
+function renderVersionOutput(json: boolean): string {
+  if (json) {
+    return `${JSON.stringify({
+      ok: true,
+      command: "version",
+      package: { name: aiqPackageName, version: aiqPackageVersion },
+      version: aiqPackageVersion,
+    })}\n`;
+  }
+
+  return `${aiqPackageVersion}\n`;
 }
 
 function defaultIo(): CliIo {
