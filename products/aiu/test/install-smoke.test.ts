@@ -27,6 +27,8 @@ describe("packed tarball install smoke", () => {
     const tarball = await packPackage(packDir);
     await createLockedBlankRepo(target, tarball);
 
+    await runPnpm(["fetch", "--frozen-lockfile", "--ignore-scripts"], target);
+    await rm(path.join(target, "node_modules"), { recursive: true, force: true });
     await runPnpm(["install", "--frozen-lockfile", "--ignore-scripts", "--offline"], target);
     const result = await runPnpm(["exec", "aiu", "init", "--dry-run", "--json"], target);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
@@ -159,8 +161,10 @@ function readLockfileSection(lockfile: string, heading: "packages" | "snapshots"
 }
 
 async function runPnpm(args: readonly string[], cwd: string) {
+  const pnpmCommand = process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : "pnpm";
+  const pnpmArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm", ...args] : [...args];
   try {
-    return await execFileAsync("pnpm", [...args], {
+    return await execFileAsync(pnpmCommand, pnpmArgs, {
       cwd,
       maxBuffer: 10 * 1024 * 1024,
       timeout: 120_000,

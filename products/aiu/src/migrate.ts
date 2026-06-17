@@ -587,7 +587,7 @@ function getManagedHostPaths(): readonly ManagedHostPath[] {
   return Object.freeze(getAllAiuHostCapabilityProfiles().flatMap((profile) => {
     return profile.managedFiles.map((file) => ({
       host: profile.tool,
-      relativePath: file.relativePath,
+      relativePath: portablePath(file.relativePath),
       content: file.content,
     }));
   }));
@@ -885,7 +885,7 @@ function collectTextFiles(repoRoot: string, relativeRoot: string, scanErrors: Ai
   }
 
   return entries.sort(compareDirent).flatMap((entry) => {
-    const relativePath = path.join(relativeRoot, entry.name);
+    const relativePath = portablePath(path.join(relativeRoot, entry.name));
     if (entry.isDirectory()) {
       return collectTextFiles(repoRoot, relativePath, scanErrors);
     }
@@ -917,7 +917,7 @@ function collectManifestFiles(repoRoot: string, relativeRoot: string, scanErrors
   }
 
   return entries.sort(compareDirent).flatMap((entry) => {
-    const relativePath = relativeRoot === "." ? entry.name : path.join(relativeRoot, entry.name);
+    const relativePath = portablePath(relativeRoot === "." ? entry.name : path.join(relativeRoot, entry.name));
     if (entry.isDirectory()) {
       return RECURSIVE_SCAN_IGNORES.has(entry.name) ? [] : collectManifestFiles(repoRoot, relativePath, scanErrors);
     }
@@ -1101,7 +1101,11 @@ function uniqueFindings(findings: readonly AiuMigrationFinding[]): AiuMigrationF
 
 function relativeToRepo(repoRoot: string, absolutePath: string): string {
   const relativePath = path.relative(repoRoot, absolutePath);
-  return relativePath === "" ? path.basename(absolutePath) : relativePath;
+  return portablePath(relativePath === "" ? path.basename(absolutePath) : relativePath);
+}
+
+function portablePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
 }
 
 function readSchemaVersion(value: unknown): number | string | undefined {
@@ -1134,7 +1138,7 @@ function cleanupCandidateConfirmed(finding: AiuMigrationFinding, confirmations: 
 }
 
 function normalizeConfirmations(confirmations: readonly string[]): ReadonlySet<string> {
-  return new Set(confirmations.flatMap((item) => item.split(",")).map((item) => item.trim()).filter((item) => item.length > 0));
+  return new Set(confirmations.flatMap((item) => item.split(",")).map((item) => portablePath(item.trim())).filter((item) => item.length > 0));
 }
 
 function cleanupPlanReason(candidate: AiuMigrationFinding, confirmed: boolean): string {

@@ -194,8 +194,10 @@ describe('legacy compatibility wrappers and cleanup', () => {
     assert.match(queueWrapper, /executor-compat-wrapper-version: 1/);
     assert.match(queueWrapper, /exec 'aie' 'queue' "\$@"/);
     assert.match(startWrapper, /exec 'aie' 'start' "\$@"/);
-    assert.notEqual(statSync(join(repo, 'gh-priority-order.sh')).mode & 0o111, 0);
-    assert.notEqual(statSync(join(repo, 'scripts', 'gh-issue-start.sh')).mode & 0o111, 0);
+    if (process.platform !== 'win32') {
+      assert.notEqual(statSync(join(repo, 'gh-priority-order.sh')).mode & 0o111, 0);
+      assert.notEqual(statSync(join(repo, 'scripts', 'gh-issue-start.sh')).mode & 0o111, 0);
+    }
   });
 
   it('reports cleanup removals and preserves in dry-run output without mutating files', () => {

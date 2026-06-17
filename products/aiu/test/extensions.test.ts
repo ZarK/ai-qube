@@ -4,6 +4,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { getDefaultAiuConfig } from "../dist/src/config.js";
@@ -12,10 +13,12 @@ import type * as AiuOpenCode from "../src/opencode.ts";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(process.cwd());
+const pnpmCommand = process.platform === "win32" ? process.env.ComSpec ?? "cmd.exe" : "pnpm";
+const pnpmArgs = process.platform === "win32" ? ["/d", "/s", "/c", "pnpm"] : [];
 
 describe("extension API", () => {
   it("renders repo-level prompt section customizations without private internals", async () => {
-    const { renderAiuPromptSection } = await import(path.join(repoRoot, "dist/src/extensions.js")) as typeof AiuExtensions;
+    const { renderAiuPromptSection } = await import(pathToFileURL(path.join(repoRoot, "dist/src/extensions.js")).href) as typeof AiuExtensions;
     const config = {
       ...getDefaultAiuConfig(),
       prompts: {
@@ -40,7 +43,7 @@ describe("extension API", () => {
   });
 
   it("ignores inherited prompt section values", async () => {
-    const { renderAiuPromptSection } = await import(path.join(repoRoot, "dist/src/extensions.js")) as typeof AiuExtensions;
+    const { renderAiuPromptSection } = await import(pathToFileURL(path.join(repoRoot, "dist/src/extensions.js")).href) as typeof AiuExtensions;
     const sections = Object.create({
       work: {
         prepend: ["Inherited text must not be trusted."],
@@ -63,7 +66,7 @@ describe("extension API", () => {
 
 
   it("composes OpenCode handlers around the package runtime delegate", async () => {
-    const { createAiuOpenCodePlugin } = await import(path.join(repoRoot, "dist/src/opencode.js")) as typeof AiuOpenCode;
+    const { createAiuOpenCodePlugin } = await import(pathToFileURL(path.join(repoRoot, "dist/src/opencode.js")).href) as typeof AiuOpenCode;
     const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-extension-"));
     try {
       const calls: string[] = [];
@@ -91,7 +94,7 @@ describe("extension API", () => {
   });
 
   it("allows after OpenCode handlers to override the package delegate result", async () => {
-    const { createAiuOpenCodePlugin } = await import(path.join(repoRoot, "dist/src/opencode.js")) as typeof AiuOpenCode;
+    const { createAiuOpenCodePlugin } = await import(pathToFileURL(path.join(repoRoot, "dist/src/opencode.js")).href) as typeof AiuOpenCode;
     const override: AiuOpenCode.AiuOpenCodeHandler = (_event, context) => ({
       handled: true,
       metadata: {
@@ -107,7 +110,7 @@ describe("extension API", () => {
   });
 
   it("rejects handlers that call next more than once", async () => {
-    const { composeAiuOpenCodeHandlers } = await import(path.join(repoRoot, "dist/src/opencode.js")) as typeof AiuOpenCode;
+    const { composeAiuOpenCodeHandlers } = await import(pathToFileURL(path.join(repoRoot, "dist/src/opencode.js")).href) as typeof AiuOpenCode;
     const invalid: AiuOpenCode.AiuOpenCodeHandler = async (_event, _context, next) => {
       await next();
       return next();
@@ -146,7 +149,7 @@ describe("extension API", () => {
         "utf8",
       );
 
-      await execFileAsync("pnpm", ["exec", "tsc", "-p", tsconfigPath], { cwd: repoRoot });
+      await execFileAsync(pnpmCommand, [...pnpmArgs, "exec", "tsc", "-p", tsconfigPath], { cwd: repoRoot });
     } finally {
       await rm(tempRoot, { recursive: true, force: true });
     }

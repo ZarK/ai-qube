@@ -2,11 +2,7 @@ import path from "node:path";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
-export const AIU_PLUGIN_WRAPPER_RELATIVE_PATH = path.join(
-  ".opencode",
-  "plugins",
-  "ai-umpire-continuation.ts",
-);
+export const AIU_PLUGIN_WRAPPER_RELATIVE_PATH = ".opencode/plugins/ai-umpire-continuation.ts";
 
 export interface AiuPackageAssetPaths {
   packageRoot: string;

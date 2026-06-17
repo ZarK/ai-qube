@@ -462,7 +462,8 @@ describe("metadata-backed CLI", () => {
   });
 
   it("emits clean JSON for migration dry-run plans", async () => {
-    const result = await runCli(["migrate", "--dry-run", "--json"]);
+    const target = await createRepoRoot();
+    const result = await runCli(["migrate", "--dry-run", "--json"], target);
     const parsed = JSON.parse(result.stdout) as {
       ok: boolean;
       command: string;
@@ -546,7 +547,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.migrate.ok, true);
     assert.equal(parsed.migrate.cleanup, true);
     assert.equal(parsed.migrate.dryRun, true);
-    assert.ok(parsed.migrate.planned.some((item) => item.relativePath === path.join("scripts", "aiu-stop.js")));
+    assert.ok(parsed.migrate.planned.some((item) => item.relativePath === "scripts/aiu-stop.js"));
     assert.deepEqual(parsed.migrate.removed, []);
     assert.deepEqual(parsed.migrate.conflicted, []);
   });

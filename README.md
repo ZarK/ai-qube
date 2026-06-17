@@ -11,7 +11,7 @@ This repository is the monorepo home for:
 - `@tjalve/aie`: Executor work-item execution
 - `@tjalve/aiu`: Umpire continuation policy
 - `@tjalve/aiq`: Quality gates and evidence
-- `@tjalve/qube`: future composer package
+- `@tjalve/qube`: composer package for coordinating the standalone tools
 
 ## Monorepo Policy
 
@@ -19,8 +19,35 @@ Use pnpm workspaces as the baseline. Do not introduce Nx or Turbo until the
 package graph and CI cost justify it.
 
 Each product package must remain independently usable and publishable. The
-future `@tjalve/qube` package should compose the tools, not replace direct use
+`@tjalve/qube` package composes the tools, not replace direct use
 of `aib`, `aie`, `aiu`, or `aiq`.
+
+## Composer CLI
+
+Use `qube components` to list the standalone tools and `qube run <component>`
+to dispatch to a tool that is already installed or available in the workspace.
+The composer does not replace direct use of the product CLIs.
+
+```sh
+pnpm --filter @tjalve/qube run build
+pnpm --filter @tjalve/qube exec qube components
+```
+
+## Package Publishing
+
+Publishing is driven by immutable package-specific tags:
+
+- `publish-qube-cli-v<version>`
+- `publish-aib-v<version>`
+- `publish-aie-v<version>`
+- `publish-aiu-v<version>`
+- `publish-aiq-v<version>`
+- `publish-qube-v<version>`
+
+The publish workflow verifies the selected package before `npm publish
+--provenance --access public`. AIQ uses its full build, test, and publish
+readiness path; most non-AIQ product changes skip AIQ's cross-language setup,
+while shared CI/workspace files still trigger AIQ checks.
 
 ## Target Layout
 

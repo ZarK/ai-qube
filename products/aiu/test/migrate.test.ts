@@ -12,6 +12,7 @@ const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const aiuBin = path.join(repoRoot, "dist/src/bin/aiu.js");
 const tempRoots: string[] = [];
+const symlinkIt = process.platform === "win32" ? it.skip : it;
 
 describe("migration planner", () => {
   afterEach(async () => {
@@ -53,7 +54,7 @@ describe("migration planner", () => {
     assert.equal(result.exitCode, 0);
     assert.equal(parsed.migrate.ok, true);
     assert.deepEqual(parsed.migrate.repoLocalHooks, []);
-    assert.ok(parsed.migrate.filesToPreserve.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts") && item.category === "package-backed-host-file"));
+    assert.ok(parsed.migrate.filesToPreserve.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts" && item.category === "package-backed-host-file"));
   });
 
   it("detects migration inventory and full dry-run plan without writing files", async () => {
@@ -125,26 +126,26 @@ describe("migration planner", () => {
       ".agents/plugins/marketplace.json",
       ".claude/settings.json",
       ".codex/hooks/ai-umpire-stop.json",
-      path.join(".opencode", "plugins", "ai-umpire-continuation.ts"),
-      path.join("plugins", "ai-umpire", "hooks", "hooks.json"),
+      ".opencode/plugins/ai-umpire-continuation.ts",
+      "plugins/ai-umpire/hooks/hooks.json",
     ]);
-    assert.deepEqual(parsed.migrate.localCheckoutReferences.map((finding) => finding.relativePath).sort(), ["AGENTS.md", "package.json", path.join("packages", "app", "package.json")]);
-    assert.ok(parsed.migrate.copiedHelpers.some((finding) => finding.relativePath === path.join("scripts", "aiu-stop.js")));
-    assert.ok(parsed.migrate.commandWrappers.some((finding) => finding.relativePath === path.join(".opencode", "commands", "make-it-so.md")));
+    assert.deepEqual(parsed.migrate.localCheckoutReferences.map((finding) => finding.relativePath).sort(), ["AGENTS.md", "package.json", "packages/app/package.json"]);
+    assert.ok(parsed.migrate.copiedHelpers.some((finding) => finding.relativePath === "scripts/aiu-stop.js"));
+    assert.ok(parsed.migrate.commandWrappers.some((finding) => finding.relativePath === ".opencode/commands/make-it-so.md"));
     assert.ok(parsed.migrate.promptCustomizations.some((finding) => finding.relativePath === "aiu.config.json"));
-    assert.ok(parsed.migrate.stateFindings.some((finding) => finding.relativePath === path.join(".umpire", "whip.json")));
+    assert.ok(parsed.migrate.stateFindings.some((finding) => finding.relativePath === ".umpire/whip.json"));
     assert.ok(parsed.migrate.hostInstructionReferences.some((finding) => finding.relativePath === "AGENTS.md"));
     assert.ok(parsed.migrate.trustedCommandDescriptors.some((finding) => finding.sourceCommandSummary === "aie status --json"));
-    assert.ok(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === path.join(".opencode", "mystery.md")));
-    assert.equal(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === path.join("packages", "lib", "package.json")), false);
+    assert.ok(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === ".opencode/mystery.md"));
+    assert.equal(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === "packages/lib/package.json"), false);
     assert.ok(parsed.migrate.cleanupCandidates.length >= 4);
     assert.ok(parsed.migrate.conflicts.length >= 6);
     assert.ok(parsed.migrate.filesToCreate.length >= 1);
     assert.ok(parsed.migrate.filesToUpdate.some((item) => item.relativePath === "package.json"));
-    assert.ok(parsed.migrate.filesToPreserve.some((item) => item.relativePath === path.join(".umpire", "whip.json")));
+    assert.ok(parsed.migrate.filesToPreserve.some((item) => item.relativePath === ".umpire/whip.json"));
     assert.ok(parsed.migrate.packageBackedCommandPaths.some((command) => command.command === "pnpm exec aiu hook-stop --tool codex"));
     assert.equal(parsed.migrate.statePreservation.action, "preserve");
-    assert.ok(parsed.migrate.stateMigrations.some((item) => item.relativePath === path.join(".umpire", "whip.json") && item.recognized));
+    assert.ok(parsed.migrate.stateMigrations.some((item) => item.relativePath === ".umpire/whip.json" && item.recognized));
     assert.ok(parsed.migrate.requiredConfirmations.length >= 3);
     assert.ok(parsed.migrate.hostTrustSteps.length >= 3);
     assert.equal(parsed.migrate.recommendedNextCommand, "aiu init --dry-run --json");
@@ -175,7 +176,7 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.dryRun, false);
     assert.equal(parsed.migrate.ok, true);
     assert.ok(parsed.migrate.changed.some((item) => item.relativePath === "aiu.config.json" && item.action === "create"));
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts")));
+    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
     assert.equal(existsSync(path.join(target, "aiu.config.json")), true);
     const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
     assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code"]);
@@ -205,11 +206,11 @@ describe("migration planner", () => {
     assert.equal(result.exitCode, 0);
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.ok, false);
-    assert.ok(parsed.migrate.conflicted.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts")));
-    assert.ok(parsed.migrate.reviewRequired.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts")));
+    assert.ok(parsed.migrate.conflicted.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
+    assert.ok(parsed.migrate.reviewRequired.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
     assert.equal(parsed.migrate.recommendedNextCommand, "aiu migrate --apply --force --json");
     assert.ok(parsed.migrate.preserved.some((item) => item.relativePath === "aiu.config.json" && item.category === "existing-config"));
-    assert.ok(parsed.migrate.preserved.some((item) => item.relativePath === path.join(".umpire", "continuation.json")));
+    assert.ok(parsed.migrate.preserved.some((item) => item.relativePath === ".umpire/continuation.json"));
     assert.equal(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), "export const repoLocalPrompt = true;\n");
     assert.match(await readFile(path.join(target, "aiu.config.json"), "utf8"), /Keep this repo prompt/);
     assert.match(await readFile(path.join(target, ".umpire", "continuation.json"), "utf8"), /"active":true/);
@@ -227,7 +228,7 @@ describe("migration planner", () => {
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.force, true);
     assert.equal(parsed.migrate.ok, true);
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts") && item.action === "update"));
+    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts" && item.action === "update"));
     assert.equal(parsed.migrate.recommendedNextCommand, "aiu doctor --json");
     assert.match(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), /createAiuOpenCodePlugin/);
   });
@@ -246,8 +247,8 @@ describe("migration planner", () => {
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.force, true);
     assert.equal(parsed.migrate.ok, false);
-    assert.equal(parsed.migrate.changed.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts")), false);
-    assert.ok(parsed.migrate.skipped.some((item) => item.relativePath === path.join("scripts", "aiu-stop.js") && item.category === "cleanup-candidate"));
+    assert.equal(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"), false);
+    assert.ok(parsed.migrate.skipped.some((item) => item.relativePath === "scripts/aiu-stop.js" && item.category === "cleanup-candidate"));
     assert.equal(parsed.migrate.recommendedNextCommand, "Review reported paths, then rerun aiu migrate --dry-run --json.");
     assert.equal(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), "export const oldLocalHook = true;\n");
     assert.equal(await readFile(path.join(target, "scripts", "aiu-stop.js"), "utf8"), "console.log('old ai-umpire helper');\n");
@@ -263,7 +264,7 @@ describe("migration planner", () => {
     assert.equal(result.exitCode, 0);
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.ok, false);
-    assert.ok(parsed.migrate.conflicted.some((item) => item.relativePath === path.join(".opencode", "plugins", "ai-umpire-continuation.ts") && item.category === "package-managed-host-file"));
+    assert.ok(parsed.migrate.conflicted.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts" && item.category === "package-managed-host-file"));
     assert.equal(await readFile(path.join(target, ".opencode"), "utf8"), "not a directory\n");
   });
 
@@ -279,7 +280,7 @@ describe("migration planner", () => {
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.cleanup, true);
     assert.equal(parsed.migrate.dryRun, true);
-    assert.ok(parsed.migrate.planned.some((item) => item.relativePath === path.join("scripts", "aiu-stop.js") && item.sourceCategory === "copied-helper"));
+    assert.ok(parsed.migrate.planned.some((item) => item.relativePath === "scripts/aiu-stop.js" && item.sourceCategory === "copied-helper"));
     assert.equal(await readFile(path.join(target, "scripts", "aiu-stop.js"), "utf8"), "console.log('ai-umpire hook-stop helper');\n");
   });
 
@@ -299,9 +300,9 @@ describe("migration planner", () => {
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.dryRun, false);
     assert.equal(parsed.migrate.ok, false);
-    assert.ok(parsed.migrate.removed.some((item) => item.relativePath === path.join("scripts", "aiu-stop.js")));
-    assert.ok(parsed.migrate.reviewRequired.some((item) => item.relativePath === path.join(".opencode", "mystery.md")));
-    assert.ok(parsed.migrate.preserved.some((item) => item.relativePath === path.join(".umpire", "whip.json")));
+    assert.ok(parsed.migrate.removed.some((item) => item.relativePath === "scripts/aiu-stop.js"));
+    assert.ok(parsed.migrate.reviewRequired.some((item) => item.relativePath === ".opencode/mystery.md"));
+    assert.ok(parsed.migrate.preserved.some((item) => item.relativePath === ".umpire/whip.json"));
     assert.equal(existsSync(path.join(target, "scripts", "aiu-stop.js")), false);
     assert.equal(existsSync(path.join(target, ".opencode", "mystery.md")), true);
     assert.equal(existsSync(path.join(target, ".umpire", "whip.json")), true);
@@ -338,7 +339,7 @@ describe("migration planner", () => {
     assert.ok(parsed.migrate.conflicted.some((item) => item.relativePath === "../outside.js" && item.category === "cleanup-confirmation"));
   });
 
-  it("refuses symlink cleanup candidates without following them", async () => {
+  symlinkIt("refuses symlink cleanup candidates without following them", async () => {
     const target = await createRepoRoot();
     const outside = await mkdtemp(path.join(tmpdir(), "aiu-outside-"));
     tempRoots.push(outside);
@@ -352,7 +353,7 @@ describe("migration planner", () => {
     assert.equal(result.exitCode, 0);
     assert.equal(result.stderr, "");
     assert.equal(parsed.migrate.ok, true);
-    assert.equal(parsed.migrate.removed.some((item) => item.relativePath === path.join("scripts", "aiu-stop.js")), false);
+    assert.equal(parsed.migrate.removed.some((item) => item.relativePath === "scripts/aiu-stop.js"), false);
     assert.equal(existsSync(path.join(target, "scripts", "aiu-stop.js")), true);
     assert.equal(await readFile(path.join(outside, "aiu-stop.js"), "utf8"), "console.log('outside ai-umpire helper');\n");
   });

@@ -29,6 +29,10 @@ function cleanConfig() {
   return configToFileShape(getDefaults());
 }
 
+function opencodeCommandPath(name) {
+  return pathPosix.join('.opencode', 'commands', name);
+}
+
 describe('init service', () => {
   it('builds a dry-run plan for config and managed OpenCode files without writing', async () => {
     const repo = makeGitRepo();
@@ -38,7 +42,7 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     assert.equal(result.dryRun, true);
     assert.deepEqual(result.selectedTools, ['opencode']);
-    assert.deepEqual(result.actions.map(action => action.path), ['aie.config.json', 'AGENTS.md', join('.opencode', 'commands', 'make-it-so.md')]);
+    assert.deepEqual(result.actions.map(action => action.path), ['aie.config.json', 'AGENTS.md', opencodeCommandPath('make-it-so.md')]);
     assert.equal(result.actions.every(action => action.status === 'planned'), true);
     assert.equal(existsSync(join(repo, 'aie.config.json')), false);
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
@@ -232,8 +236,8 @@ describe('init service', () => {
       'aie.config.json',
       'AGENTS.md',
       'CLAUDE.md',
-      join('.opencode', 'commands', 'make-it-so.md'),
-      join('.opencode', 'commands', 'makeitso.md'),
+      opencodeCommandPath('make-it-so.md'),
+      opencodeCommandPath('makeitso.md'),
     ]);
     assert.match(planned.warnings.join('\n'), /Codex project command files are not installed; Codex uses the managed AGENTS\.md always-loaded instructions\./);
     assert.match(planned.warnings.join('\n'), /Claude Code project command files are not installed; Claude Code uses the managed CLAUDE\.md always-loaded instructions\./);

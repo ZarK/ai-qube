@@ -6,6 +6,10 @@ const { join } = require('node:path');
 const { describe, it } = require('node:test');
 const { getDefaults } = require('../dist/config/index.js');
 
+function portable(path) {
+  return path.replace(/\\/g, '/');
+}
+
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-branch-'));
   execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
@@ -64,7 +68,7 @@ describe('branch service', () => {
 
     const state = await createLocalGitRepositoryProvider({ cwd: repo }).inspect(configToExecutorPolicy(getDefaults()));
 
-    assert.equal(state.root, realpathSync(repo));
+    assert.equal(state.root, portable(realpathSync(repo)));
     assert.equal(state.activeRef.name, 'main');
     assert.equal(state.baseRef.name, 'main');
     assert.equal(state.baseRef.remoteName, 'origin');
@@ -105,7 +109,7 @@ describe('branch service', () => {
 
     const state = await createLocalGitRepositoryProvider({ cwd: linked }).inspect(configToExecutorPolicy(getDefaults()));
 
-    assert.equal(state.root, realpathSync(linked));
+    assert.equal(state.root, portable(realpathSync(linked)));
     assert.equal(state.worktree.linked, true);
     assert.match(state.worktree.gitDir, /worktrees/);
   });

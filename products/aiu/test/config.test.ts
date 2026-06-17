@@ -156,6 +156,9 @@ describe("config foundation", () => {
         whitespace: {
           argv: ["   "],
         },
+        surroundingWhitespace: {
+          argv: [" aie"],
+        },
         floatLimit: {
           argv: ["aie"],
           timeoutMs: 10.5,
@@ -209,6 +212,7 @@ describe("config foundation", () => {
     assert.ok(kinds.includes("invalid-host"));
     assert.ok(kinds.includes("unsafe-command-descriptor"));
     assert.ok(kinds.includes("missing-command-path"));
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "unsafe-command-descriptor" && diagnostic.path === "$.trustedStateCommands.surroundingWhitespace.argv[0]"));
     assert.ok(kinds.includes("invalid-duration"));
     assert.ok(kinds.includes("invalid-output-limit"));
     assert.ok(kinds.includes("contradictory-policy"));

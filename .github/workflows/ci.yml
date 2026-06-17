@@ -40,7 +40,7 @@ jobs:
             git diff --name-only "$base" "${{ github.sha }}" > changed.txt
           fi
 
-          if grep -Eq '^(\.github/workflows/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|packages/|products/aib/|products/aie/|products/aiu/|plugins/)' changed.txt; then
+          if grep -Eq '^(\.github/workflows/|package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml|packages/|products/aib/|products/aie/|products/aiu/|products/qube/|plugins/)' changed.txt; then
             echo "core=true" >> "$GITHUB_OUTPUT"
           else
             echo "core=false" >> "$GITHUB_OUTPUT"
@@ -82,6 +82,7 @@ jobs:
           pnpm --filter @tjalve/aib run build
           pnpm --filter @tjalve/aie run build
           pnpm --filter @tjalve/aiu run build
+          pnpm --filter @tjalve/qube run build
 
       - name: Typecheck core packages
         run: |
@@ -89,6 +90,15 @@ jobs:
           pnpm --filter @tjalve/aib run typecheck
           pnpm --filter @tjalve/aie run typecheck
           pnpm --filter @tjalve/aiu run typecheck
+          pnpm --filter @tjalve/qube run typecheck
+
+      - name: Test and pack-check core packages
+        run: |
+          pnpm --filter @tjalve/qube-cli run verify
+          pnpm --filter @tjalve/aib run verify
+          pnpm --filter @tjalve/aie run verify
+          pnpm --filter @tjalve/aiu run release:check
+          pnpm --filter @tjalve/qube run verify
 
   aiq:
     needs: changes
@@ -167,3 +177,9 @@ jobs:
 
       - name: Typecheck AIQ
         run: pnpm --filter ai-code-quality run typecheck
+
+      - name: Test AIQ
+        run: pnpm --filter ai-code-quality test
+
+      - name: Check AIQ package readiness
+        run: pnpm --filter ai-code-quality run test:publish-readiness

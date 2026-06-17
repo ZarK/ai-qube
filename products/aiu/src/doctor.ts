@@ -130,7 +130,7 @@ function buildAiuResolvedPaths(options: AiuInspectionOptions = {}, preloadedConf
     host: profile.tool,
     enabled: configLoad.config.hosts.enabled.includes(profile.tool),
     files: profile.managedFiles.map((file) => ({
-      relativePath: file.relativePath,
+      relativePath: portablePath(file.relativePath),
       absolutePath: path.join(configLoad.repoRoot, file.relativePath),
       description: file.description,
     })),
@@ -631,10 +631,25 @@ function canAccess(targetPath: string, mode: number): boolean {
 
 function isExecutableFile(targetPath: string): boolean {
   try {
-    return statSync(targetPath).isFile() && canAccess(targetPath, constants.X_OK);
+    const stat = statSync(targetPath);
+    if (!stat.isFile()) {
+      return false;
+    }
+    if (process.platform !== "win32") {
+      return canAccess(targetPath, constants.X_OK);
+    }
+    const executableExtensions = (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+      .split(";")
+      .map((extension) => extension.trim().toUpperCase())
+      .filter((extension) => extension.length > 0);
+    return executableExtensions.includes(path.extname(targetPath).toUpperCase());
   } catch {
     return false;
   }
+}
+
+function portablePath(filePath: string): string {
+  return filePath.replace(/\\/g, "/");
 }
 
 function normalizeText(value: string): string {

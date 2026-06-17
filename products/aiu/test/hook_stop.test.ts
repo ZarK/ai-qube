@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import type * as HookStop from "../src/hook_stop.ts";
 
@@ -304,7 +304,7 @@ describe("provider-neutral stop hooks", () => {
 });
 
 async function loadHookStop(): Promise<typeof HookStop> {
-  return await import(path.join(repoRoot, "dist/src/hook_stop.js")) as typeof HookStop;
+  return await import(pathToFileURL(path.join(repoRoot, "dist/src/hook_stop.js")).href) as typeof HookStop;
 }
 
 async function createRepo(options: {
