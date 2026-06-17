@@ -1656,15 +1656,13 @@ async function runCssLintTask(task: PlannedTask, cwd: string): Promise<StageResu
         )
       ).flat();
       const diagnostics = normalizeDiagnosticsToSelection(
-        deduplicateDiagnostics(rawDiagnostics),
+        deduplicateDiagnostics([
+          ...rawDiagnostics,
+          ...createMissingStylelintConfigDiagnostics(task.stageId, missingConfigFiles),
+        ]),
         files,
       );
-      const status: StageResult["status"] =
-        diagnostics.length > 0
-          ? "failed"
-          : missingConfigFiles.length > 0
-            ? "not_implemented"
-            : "passed";
+      const status: StageResult["status"] = diagnostics.length > 0 ? "failed" : "passed";
       return {
         diagnostics,
         missingConfigFiles,
@@ -1697,11 +1695,7 @@ async function runCssLintTask(task: PlannedTask, cwd: string): Promise<StageResu
           "stylelint",
           files,
           timed.durationMs,
-          timed.result.status === "not_implemented"
-            ? undefined
-            : timed.result.status === "passed"
-              ? 0
-              : 1,
+          timed.result.status === "passed" ? 0 : 1,
           timed.result.status,
           timed.finishedAt,
           timed.startedAt,
@@ -2124,7 +2118,19 @@ function createMissingStylelintConfigNote(stageId: StageId, files: readonly stri
     return `No Stylelint configuration was detected for ${stageId}.`;
   }
 
-  return `No Stylelint configuration was detected for ${stageId} in: ${files.join(", ")}.`;
+  return `No Stylelint configuration was detected for ${stageId} in: ${files.join(", ")}. Add a Stylelint config such as .stylelintrc.json, or disable CSS lint for those files.`;
+}
+
+function createMissingStylelintConfigDiagnostics(
+  stageId: StageId,
+  files: readonly string[],
+): Diagnostic[] {
+  return files.map((file) => ({
+    file,
+    message: `CSS ${stageId} requires a Stylelint configuration for this file. Add a Stylelint config such as .stylelintrc.json, or disable CSS lint for this file.`,
+    severity: "error",
+    source: "stylelint",
+  }));
 }
 
 function isMissingStylelintConfigError(error: unknown): error is Error {
