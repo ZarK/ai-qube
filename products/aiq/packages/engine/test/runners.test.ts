@@ -784,7 +784,7 @@ describe("engine runners", () => {
     });
   });
 
-  it("marks CSS lint as not implemented when no Stylelint config is present", async () => {
+  it("reports missing Stylelint config as a CSS lint setup failure", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-css-lint-runner-no-config-"));
     tempDirs.push(tempDir);
 
@@ -801,18 +801,29 @@ describe("engine runners", () => {
       process.cwd(),
     );
 
-    expect(result.status).toBe("not_implemented");
-    expect(result.diagnostics).toEqual([]);
-    expect(result.notes).toContain(
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(result.status).toBe("failed");
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        file: cssFile,
+        severity: "error",
+        source: "stylelint",
+      }),
+    ]);
+    expect(result.diagnostics[0]?.message).toContain("Stylelint configuration");
+    expect(result.diagnostics[0]?.message).toContain("disable CSS lint");
+    expect(result.notes.join(" ")).toContain(
       `No Stylelint configuration was detected for lint in: ${cssFile}.`,
     );
+    expect(result.notes.join(" ")).toContain("disable CSS lint");
     expect(result.toolRuns[0]).toMatchObject({
-      status: "not_implemented",
+      exitCode: 1,
+      status: "failed",
       tool: "stylelint",
     });
   });
 
-  it("prefers CSS lint failures over not_implemented when only some files lack Stylelint config", async () => {
+  it("reports configured CSS lint diagnostics with missing Stylelint config diagnostics", async () => {
     const configuredDir = await mkdtemp(path.join(os.tmpdir(), "aiq-css-lint-configured-"));
     const unconfiguredDir = await mkdtemp(path.join(os.tmpdir(), "aiq-css-lint-unconfigured-"));
     tempDirs.push(configuredDir, unconfiguredDir);
@@ -842,12 +853,15 @@ describe("engine runners", () => {
     expect(result.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ code: "color-named", file: badCssFile, source: "stylelint" }),
+        expect.objectContaining({ file: plainCssFile, source: "stylelint" }),
       ]),
     );
-    expect(result.notes).toContain("Stylelint reported 1 diagnostic.");
-    expect(result.notes).toContain(
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(result.notes).toContain("Stylelint reported 2 diagnostics.");
+    expect(result.notes.join(" ")).toContain(
       `No Stylelint configuration was detected for lint in: ${plainCssFile}.`,
     );
+    expect(result.notes.join(" ")).toContain("disable CSS lint");
     expect(result.toolRuns[0]).toMatchObject({
       exitCode: 1,
       status: "failed",
