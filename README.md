@@ -70,6 +70,10 @@ docs/
   notes/
 ```
 
+`packages/qube-core` and the `adapters/*` packages are private workspace
+packages. They define the first shared QUBE contract boundary without making the
+public product CLIs depend on unpublished packages.
+
 ## Planning
 
 Migration tracking starts at
