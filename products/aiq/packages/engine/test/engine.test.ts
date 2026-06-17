@@ -1349,9 +1349,9 @@ describe("engine foundation", () => {
       expect(reportJson.summary.notImplementedStageCount).toBe(0);
       expect(reportJson.summary.status).toBe("failed");
       expect(reportJson.stages.filter((stage) => stage.status === "failed")).toHaveLength(3);
-      expect(
-        reportJson.stages.flatMap((stage) => stage.notes).join(" "),
-      ).not.toContain("rewrite foundation slice");
+      expect(reportJson.stages.flatMap((stage) => stage.notes).join(" ")).not.toContain(
+        "rewrite foundation slice",
+      );
     }
   }, 20_000);
 
