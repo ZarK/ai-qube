@@ -645,9 +645,14 @@ export async function runGoMetricsTask(
     notes.push("Reused cached Go metrics for this file batch.");
   }
 
-  unsupportedFiles = task.files.filter(
-    (file) => !isGoTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-  );
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isGoTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
     diagnostics.push(
       ...createUnsupportedSharedMetricsDiagnostics(

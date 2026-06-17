@@ -355,9 +355,14 @@ export async function runJavaScriptMetricsTask(
     notes.push("Reused cached JavaScript/TypeScript metrics for this file batch.");
   }
 
-  unsupportedFiles = task.files.filter(
-    (file) => !isJavaScriptMetricsTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-  );
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isJavaScriptMetricsTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
     diagnostics.push(
       ...createUnsupportedSharedMetricsDiagnostics(

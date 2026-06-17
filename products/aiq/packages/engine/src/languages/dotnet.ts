@@ -526,12 +526,17 @@ export async function runDotNetMetricsTask(
     notes.push("Reused cached C# metrics for this file batch.");
   }
 
-  unsupportedFiles = task.files.filter((file) => {
-    return (
-      !dotNetExtensions.has(path.extname(file).toLowerCase()) &&
-      !runtime.isSharedMetricsCompanionFile(file)
-    );
-  });
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter((file) => {
+        return (
+          !dotNetExtensions.has(path.extname(file).toLowerCase()) &&
+          !runtime.isSharedMetricsCompanionFile(file)
+        );
+      }),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
     diagnostics.push(
       ...createUnsupportedSharedMetricsDiagnostics(

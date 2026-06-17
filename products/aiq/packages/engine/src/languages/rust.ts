@@ -662,9 +662,14 @@ export async function runRustMetricsTask(
     notes.push("Reused cached Rust metrics for this file batch.");
   }
 
-  unsupportedFiles = task.files.filter(
-    (file) => !isRustTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-  );
+  unsupportedFiles = [
+    ...new Set([
+      ...unsupportedFiles,
+      ...task.files.filter(
+        (file) => !isRustTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
+      ),
+    ]),
+  ].sort((left, right) => left.localeCompare(right));
   if (unsupportedFiles.length > 0) {
     diagnostics.push(
       ...createUnsupportedSharedMetricsDiagnostics(

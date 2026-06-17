@@ -2698,6 +2698,35 @@ describe("engine runners", () => {
     }
   });
 
+  it("reports supported-language shared metrics files that cannot resolve a project", async () => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-unresolved-rust-metrics-"));
+    tempDirs.push(tempDir);
+
+    const rustFile = path.join(tempDir, "orphan.rs");
+    await writeFile(rustFile, "fn main() {}\n", "utf8");
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 1,
+        files: [rustFile],
+        id: "test:1:complexity-rust-unresolved-project",
+        stageId: "complexity",
+      },
+      process.cwd(),
+    );
+
+    expect(JSON.stringify(result)).not.toContain("not_implemented");
+    expect(result.status).toBe("failed");
+    expect(result.diagnostics).toEqual([
+      expect.objectContaining({
+        file: rustFile,
+        severity: "error",
+        source: "aiq-shared-metrics",
+      }),
+    ]);
+    expect(result.toolRuns).toEqual([]);
+  });
+
   it("expands package.json selections to the actual JavaScript and TypeScript source count", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-js-metrics-package-json-"));
     tempDirs.push(tempDir);
