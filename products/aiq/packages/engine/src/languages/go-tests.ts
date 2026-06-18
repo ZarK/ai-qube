@@ -36,6 +36,25 @@ import {
   createSharedMetricTotals,
 } from "./shared-metrics-accumulator.js";
 
+type GoCommandOutcome = Awaited<ReturnType<GoRunnerRuntime["runExecutable"]>>;
+type GoTestReport = ReturnType<typeof parseGoTestReport>;
+type GoTestExecution = {
+  coveragePercent: number | undefined;
+  durationMs: number;
+  exitCode: number | undefined;
+  finishedAt: string;
+  toolArgs: string[];
+};
+type GoCoverageContext = {
+  args: string[];
+  coveragePath: string;
+  goCommand: string;
+  outcome: GoCommandOutcome;
+  project: GoProject;
+  report: GoTestReport;
+  runtime: GoRunnerRuntime;
+};
+
 export async function runGoUnitTask(
   task: PlannedTask,
   runtime: GoRunnerRuntime,
@@ -252,92 +271,155 @@ async function runGoProjectTestTask(
     const report = parseGoTestReport(
       outcome.stdout,
       project.projectRoot,
-      mode === "coverage" ? "go-test-coverage" : "go-test",
+      readGoTestTool(mode),
       project.files[0] ?? project.moduleFilePath,
     );
-    let coveragePercent: number | undefined;
-    let durationMs = outcome.durationMs;
-    let finishedAt = outcome.finishedAt;
-    let exitCode = outcome.exitCode;
-    const toolArgs = [...args];
-
-    if (mode === "coverage") {
-      if (await findFileExists(coveragePath)) {
-        const coverageArgs = commands.createGoCoverageArgs({ func: coveragePath });
-        const coverageOutcome = await runtime.runExecutable(
-          goCommand,
-          coverageArgs,
-          project.projectRoot,
-          runtime.signal,
-        );
-        durationMs += coverageOutcome.durationMs;
-        finishedAt = coverageOutcome.finishedAt;
-        toolArgs.push(...coverageArgs);
-
-        if (coverageOutcome.exitCode === 0) {
-          coveragePercent = parseGoCoveragePercent(coverageOutcome.stdout);
-        } else {
-          exitCode = coverageOutcome.exitCode;
-          report.diagnostics.push(
-            runtime.createProcessFailureDiagnostic(
-              project.files[0] ?? project.moduleFilePath,
-              "go-tool-cover",
-              runtime.readProcessFailureMessage(
-                "go tool cover",
-                coverageOutcome.stderr,
-                coverageOutcome.stdout,
-                coverageOutcome.exitCode,
-              ),
-            ),
-          );
-        }
-      } else if (outcome.exitCode === 0) {
-        exitCode = 1;
-        report.diagnostics.push(
-          runtime.createProcessFailureDiagnostic(
-            project.files[0] ?? project.moduleFilePath,
-            "go-test-coverage",
-            `go test did not produce coverage profile at ${coveragePath}.`,
-          ),
-        );
-      }
-    }
-
-    const status = exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && report.diagnostics.length === 0) {
-      report.diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          project.files[0] ?? project.moduleFilePath,
-          mode === "coverage" ? "go-test-coverage" : "go-test",
-          runtime.readProcessFailureMessage(
-            "go test",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
+    const execution =
+      mode === "coverage"
+        ? await readGoCoverageExecution({
+            args,
+            coveragePath,
+            goCommand,
+            outcome,
+            project,
+            report,
+            runtime,
+          })
+        : createGoTestExecution(outcome, args);
+    const status =
+      execution.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
+    appendSilentGoTestFailureDiagnostic({ mode, outcome, project, report, runtime, status });
 
     return {
       diagnostics: report.diagnostics,
-      durationMs,
-      note:
-        mode === "coverage"
-          ? readGoCoverageNote(coveragePercent, report.summary)
-          : readGoUnitNote(report.summary),
+      durationMs: execution.durationMs,
+      note: readGoTestNote(mode, execution.coveragePercent, report),
       toolRun: runtime.createToolRunResult(
-        mode === "coverage" ? "go-test-coverage" : "go-test",
-        toolArgs,
-        durationMs,
-        exitCode,
+        readGoTestTool(mode),
+        execution.toolArgs,
+        execution.durationMs,
+        execution.exitCode,
         status,
-        finishedAt,
+        execution.finishedAt,
         outcome.startedAt,
       ),
     };
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function createGoTestExecution(outcome: GoCommandOutcome, args: readonly string[]): GoTestExecution {
+  return {
+    coveragePercent: undefined,
+    durationMs: outcome.durationMs,
+    exitCode: outcome.exitCode,
+    finishedAt: outcome.finishedAt,
+    toolArgs: [...args],
+  };
+}
+
+async function readGoCoverageExecution(context: GoCoverageContext): Promise<GoTestExecution> {
+  if (await findFileExists(context.coveragePath)) {
+    return readGoCoverageProfileExecution(context);
+  }
+
+  const execution = createGoTestExecution(context.outcome, context.args);
+  if (context.outcome.exitCode === 0) {
+    execution.exitCode = 1;
+    context.report.diagnostics.push(
+      context.runtime.createProcessFailureDiagnostic(
+        context.project.files[0] ?? context.project.moduleFilePath,
+        "go-test-coverage",
+        `go test did not produce coverage profile at ${context.coveragePath}.`,
+      ),
+    );
+  }
+  return execution;
+}
+
+async function readGoCoverageProfileExecution(context: GoCoverageContext): Promise<GoTestExecution> {
+  const coverageArgs = commands.createGoCoverageArgs({ func: context.coveragePath });
+  const coverageOutcome = await context.runtime.runExecutable(
+    context.goCommand,
+    coverageArgs,
+    context.project.projectRoot,
+    context.runtime.signal,
+  );
+  const execution = createGoTestExecution(context.outcome, [...context.args, ...coverageArgs]);
+  execution.durationMs += coverageOutcome.durationMs;
+  execution.finishedAt = coverageOutcome.finishedAt;
+
+  if (coverageOutcome.exitCode === 0) {
+    execution.coveragePercent = parseGoCoveragePercent(coverageOutcome.stdout);
+  } else {
+    execution.exitCode = coverageOutcome.exitCode;
+    appendGoCoverageFailureDiagnostic(
+      context.project,
+      context.runtime,
+      coverageOutcome,
+      context.report,
+    );
+  }
+  return execution;
+}
+
+function appendGoCoverageFailureDiagnostic(
+  project: GoProject,
+  runtime: GoRunnerRuntime,
+  coverageOutcome: GoCommandOutcome,
+  report: GoTestReport,
+): void {
+  report.diagnostics.push(
+    runtime.createProcessFailureDiagnostic(
+      project.files[0] ?? project.moduleFilePath,
+      "go-tool-cover",
+      runtime.readProcessFailureMessage(
+        "go tool cover",
+        coverageOutcome.stderr,
+        coverageOutcome.stdout,
+        coverageOutcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function appendSilentGoTestFailureDiagnostic(context: {
+  mode: "coverage" | "unit",
+  outcome: GoCommandOutcome;
+  project: GoProject;
+  report: GoTestReport;
+  runtime: GoRunnerRuntime;
+  status: StageResult["status"];
+}): void {
+  if (context.status !== "failed" || context.report.diagnostics.length > 0) {
+    return;
+  }
+
+  context.report.diagnostics.push(
+    context.runtime.createProcessFailureDiagnostic(
+      context.project.files[0] ?? context.project.moduleFilePath,
+      readGoTestTool(context.mode),
+      context.runtime.readProcessFailureMessage(
+        "go test",
+        context.outcome.stderr,
+        context.outcome.stdout,
+        context.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function readGoTestNote(
+  mode: "coverage" | "unit",
+  coveragePercent: number | undefined,
+  report: GoTestReport,
+): string {
+  return mode === "coverage"
+    ? readGoCoverageNote(coveragePercent, report.summary)
+    : readGoUnitNote(report.summary);
+}
+
+function readGoTestTool(mode: "coverage" | "unit"): "go-test" | "go-test-coverage" {
+  return mode === "coverage" ? "go-test-coverage" : "go-test";
 }

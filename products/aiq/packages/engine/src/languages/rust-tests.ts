@@ -40,6 +40,29 @@ import {
   createSharedMetricTotals,
 } from "./shared-metrics-accumulator.js";
 
+type RustCommandOutcome = Awaited<ReturnType<RustRunnerRuntime["runExecutable"]>>;
+type RustTestReport = ReturnType<typeof parseRustTestReport>;
+type RustProjectTestResult = {
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  notImplemented: boolean;
+  note: string;
+  toolRun: ToolRunResult;
+};
+type RustCoverageResult = {
+  coveragePercent: number | undefined;
+  exitCode: number | undefined;
+};
+type RustCoverageContext = {
+  lcovPath: string;
+  mode: "coverage" | "unit";
+  outcome: RustCommandOutcome;
+  project: RustProject;
+  report: RustTestReport;
+  runtime: RustRunnerRuntime;
+  tool: string;
+};
+
 export async function runRustUnitTask(
   task: PlannedTask,
   runtime: RustRunnerRuntime,
@@ -233,13 +256,7 @@ async function runRustProjectTestTask(
   project: RustProject,
   mode: "coverage" | "unit",
   runtime: RustRunnerRuntime,
-): Promise<{
-  diagnostics: Diagnostic[];
-  durationMs: number;
-  notImplemented: boolean;
-  note: string;
-  toolRun: ToolRunResult;
-}> {
+): Promise<RustProjectTestResult> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-rust-runner-"));
 
   try {
@@ -248,7 +265,7 @@ async function runRustProjectTestTask(
       mode === "coverage"
         ? commands.createCargoLlvmCovArgs({ lcovPath })
         : commands.createCargoTestArgs();
-    const tool = mode === "coverage" ? "cargo-llvm-cov" : "cargo-test";
+    const tool = readRustTestTool(mode);
     const outcome = await runtime.runExecutable(
       await resolveRustBinary(runtime),
       args,
@@ -262,80 +279,42 @@ async function runRustProjectTestTask(
       tool,
       project.files[0] ?? project.manifestPath,
     );
-    if (
-      mode === "coverage" &&
-      isMissingCargoSubcommand(joinOutputs(outcome.stdout, outcome.stderr), "llvm-cov")
-    ) {
-      const message =
-        "Rust coverage requires the cargo-llvm-cov subcommand. Install it with `cargo install cargo-llvm-cov`, or disable Rust coverage.";
-      return {
-        diagnostics: [
-          runtime.createProcessFailureDiagnostic(
-            project.files[0] ?? project.manifestPath,
-            tool,
-            message,
-          ),
-        ],
-        durationMs: outcome.durationMs,
-        notImplemented: false,
-        note: message,
-        toolRun: runtime.createToolRunResult(
-          tool,
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          "failed",
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      };
-    }
-    let coveragePercent =
-      mode === "coverage" ? readLcovLineRate(await readOptionalTextFile(lcovPath)) : undefined;
-    let exitCode = outcome.exitCode;
-
-    if (mode === "coverage" && outcome.exitCode === 0 && !(await pathExists(lcovPath))) {
-      exitCode = 1;
-      coveragePercent = undefined;
-      report.diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          project.files[0] ?? project.manifestPath,
-          tool,
-          `cargo llvm-cov did not produce coverage report at ${lcovPath}.`,
-        ),
-      );
+    const missingToolResult = readMissingRustCoverageToolResult(
+      project,
+      runtime,
+      mode,
+      tool,
+      args,
+      outcome,
+    );
+    if (missingToolResult !== undefined) {
+      return missingToolResult;
     }
 
-    const status = exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
+    const coverage = await readRustCoverageResult({
+      lcovPath,
+      mode,
+      outcome,
+      project,
+      report,
+      runtime,
+      tool,
+    });
 
-    if (status === "failed" && report.diagnostics.length === 0) {
-      report.diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          project.files[0] ?? project.manifestPath,
-          tool,
-          runtime.readProcessFailureMessage(
-            mode === "coverage" ? "cargo llvm-cov" : "cargo test",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
+    const status =
+      coverage.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
+    appendSilentRustTestFailureDiagnostic({ mode, outcome, project, report, runtime, status, tool });
 
     return {
       diagnostics: report.diagnostics,
       durationMs: outcome.durationMs,
       notImplemented: false,
-      note:
-        mode === "coverage"
-          ? readRustCoverageNote(coveragePercent, report.summary)
-          : readRustUnitNote(report.summary),
+      note: readRustTestNote(mode, coverage.coveragePercent, report),
       toolRun: runtime.createToolRunResult(
         tool,
         args,
         outcome.durationMs,
-        exitCode,
+        coverage.exitCode,
         status,
         outcome.finishedAt,
         outcome.startedAt,
@@ -344,4 +323,103 @@ async function runRustProjectTestTask(
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function readMissingRustCoverageToolResult(
+  project: RustProject,
+  runtime: RustRunnerRuntime,
+  mode: "coverage" | "unit",
+  tool: string,
+  args: string[],
+  outcome: RustCommandOutcome,
+): RustProjectTestResult | undefined {
+  if (
+    mode !== "coverage" ||
+    !isMissingCargoSubcommand(joinOutputs(outcome.stdout, outcome.stderr), "llvm-cov")
+  ) {
+    return undefined;
+  }
+
+  const message =
+    "Rust coverage requires the cargo-llvm-cov subcommand. Install it with `cargo install cargo-llvm-cov`, or disable Rust coverage.";
+  return {
+    diagnostics: [
+      runtime.createProcessFailureDiagnostic(project.files[0] ?? project.manifestPath, tool, message),
+    ],
+    durationMs: outcome.durationMs,
+    notImplemented: false,
+    note: message,
+    toolRun: runtime.createToolRunResult(
+      tool,
+      args,
+      outcome.durationMs,
+      outcome.exitCode,
+      "failed",
+      outcome.finishedAt,
+      outcome.startedAt,
+    ),
+  };
+}
+
+async function readRustCoverageResult(context: RustCoverageContext): Promise<RustCoverageResult> {
+  if (context.mode !== "coverage") {
+    return { coveragePercent: undefined, exitCode: context.outcome.exitCode };
+  }
+
+  if (context.outcome.exitCode === 0 && !(await pathExists(context.lcovPath))) {
+    context.report.diagnostics.push(
+      context.runtime.createProcessFailureDiagnostic(
+        context.project.files[0] ?? context.project.manifestPath,
+        context.tool,
+        `cargo llvm-cov did not produce coverage report at ${context.lcovPath}.`,
+      ),
+    );
+    return { coveragePercent: undefined, exitCode: 1 };
+  }
+
+  return {
+    coveragePercent: readLcovLineRate(await readOptionalTextFile(context.lcovPath)),
+    exitCode: context.outcome.exitCode,
+  };
+}
+
+function appendSilentRustTestFailureDiagnostic(context: {
+  mode: "coverage" | "unit",
+  outcome: RustCommandOutcome;
+  project: RustProject;
+  report: RustTestReport;
+  runtime: RustRunnerRuntime;
+  status: StageResult["status"];
+  tool: string;
+}): void {
+  if (context.status !== "failed" || context.report.diagnostics.length > 0) {
+    return;
+  }
+
+  context.report.diagnostics.push(
+    context.runtime.createProcessFailureDiagnostic(
+      context.project.files[0] ?? context.project.manifestPath,
+      context.tool,
+      context.runtime.readProcessFailureMessage(
+        context.mode === "coverage" ? "cargo llvm-cov" : "cargo test",
+        context.outcome.stderr,
+        context.outcome.stdout,
+        context.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function readRustTestNote(
+  mode: "coverage" | "unit",
+  coveragePercent: number | undefined,
+  report: RustTestReport,
+): string {
+  return mode === "coverage"
+    ? readRustCoverageNote(coveragePercent, report.summary)
+    : readRustUnitNote(report.summary);
+}
+
+function readRustTestTool(mode: "coverage" | "unit"): "cargo-llvm-cov" | "cargo-test" {
+  return mode === "coverage" ? "cargo-llvm-cov" : "cargo-test";
 }
