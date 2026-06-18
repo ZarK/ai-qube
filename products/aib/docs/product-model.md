@@ -76,6 +76,7 @@ For `aib` itself, this repository uses regular planning documents. The product m
 - `aib` does not require a coding project. It must also support documentation, research, process, content, design, or operations projects.
 - `aib` does not ask deep technical questions during initial idea clarification unless the user volunteers that detail.
 - `aib` does not install global agent commands, tools, or skills without explicit user action.
+- `aib init --agent <host>` may project local repository assets for supported hosts. Those assets teach the host to operate `aib`; they do not replace the CLI state machine or install global commands.
 
 ## Artifact Model
 

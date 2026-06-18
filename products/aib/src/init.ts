@@ -2,6 +2,7 @@ import { resolve } from "node:path";
 
 import { createDryRunPlan, type DryRunPlan } from "@tjalve/qube-cli/mutation";
 
+import { createAgentAssetPlan, type AgentAssetFile } from "./agent_assets.js";
 import type { AibConfig, LoadedAibConfig } from "./config.js";
 import { createInitialSession, type BootstrapSession } from "./session.js";
 import { createBootstrapState, defaultStatePath, type BootstrapState } from "./state.js";
@@ -14,6 +15,7 @@ export interface InitPlan {
   readonly session: BootstrapSession;
   readonly state: BootstrapState;
   readonly plannedDocuments: readonly string[];
+  readonly agentAssets: readonly AgentAssetFile[];
   readonly dryRunPlan: DryRunPlan;
 }
 
@@ -30,6 +32,7 @@ export function createInitPlan(input: {
   const milestonesDir = config.paths?.milestonesDir ?? `${docsDir}/milestones`;
   const issuesDir = config.paths?.issuesDir ?? `${docsDir}/issues`;
   const sessionPath = defaultStatePath(target, stateDir);
+  const agentAssets = createAgentAssetPlan(config.agent?.host);
   const state = createBootstrapState({
     intent: input.idea,
     agentHost: config.agent?.host,
@@ -45,7 +48,8 @@ export function createInitPlan(input: {
     sessionPath,
     `${target}/${specPath}`,
     `${target}/${milestonesDir}/`,
-    `${target}/${issuesDir}/`
+    `${target}/${issuesDir}/`,
+    ...agentAssets.map((file) => `${target}/${file.path}`)
   ];
 
   return {
@@ -56,6 +60,7 @@ export function createInitPlan(input: {
     session,
     state,
     plannedDocuments,
+    agentAssets,
     dryRunPlan: createDryRunPlan({
       command: "aib init",
       summary: "Prepare a local bootstrap planning workspace for an AI agent without changing files.",
@@ -78,7 +83,13 @@ export function createInitPlan(input: {
           target: `${target}/${specPath}`,
           category: "local-files",
           description: "Create the project specification document after high-level discovery."
-        }
+        },
+        ...agentAssets.map((file) => ({
+          action: "write" as const,
+          target: `${target}/${file.path}`,
+          category: "local-files" as const,
+          description: `Create ${file.host} ${file.kind} asset for operating the aib workflow.`
+        }))
       ],
       rerunCommand: "aib init --dry-run"
     })

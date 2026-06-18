@@ -116,6 +116,8 @@ Agent-host adapters may render:
 
 The core product should ask for or detect host capabilities instead of hardcoding OpenCode behavior everywhere.
 
+`aib init --agent codex --dry-run --json` reports planned local host files before writing. Applying `aib init --agent opencode --json` can write local OpenCode command assets under `.opencode/commands/` plus shared instructions, but global host installation remains an explicit separate action.
+
 ## Repository Layout Model
 
 `aib` should not assume a single coding project at the repo root.

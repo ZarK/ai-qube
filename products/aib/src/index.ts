@@ -21,6 +21,8 @@ export type {
   WorkItemPriority,
   WorkItemStatus
 } from "./contracts.js";
+export { createAgentAssetPlan, writeAgentAssetFiles } from "./agent_assets.js";
+export type { AgentAssetFile, AgentAssetKind } from "./agent_assets.js";
 export { defaultAibConfig, loadAibConfig, mergeAibConfig, parseAibConfig } from "./config.js";
 export type { AibAgentHost, AibConfig, AibPrivacyMode, AibProviderKind, LoadedAibConfig } from "./config.js";
 export { createInitPlan } from "./init.js";
