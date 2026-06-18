@@ -63,18 +63,13 @@ async function runJavaScriptTestStage(
     unsupportedProjects = resolvedProjects.unsupportedProjects;
 
     if (resolvedProjects.projects.length === 0) {
-      const unsupportedDiagnostics = createUnsupportedJavaScriptTestDiagnostics(
+      return createNoSupportedJavaScriptProjectsStageResult(
         unsupportedProjects,
         runtime,
-      );
-      return {
-        diagnostics: unsupportedDiagnostics,
-        durationMs: totalDurationMs,
-        notes: readUnsupportedJavaScriptTestNotes(unsupportedProjects, task.stageId),
-        stageId: task.stageId,
-        status: unsupportedDiagnostics.length > 0 ? "failed" : "passed",
+        task.stageId,
+        totalDurationMs,
         toolRuns,
-      };
+      );
     }
 
     const projectResults = await runProjectBatches(
@@ -117,6 +112,27 @@ async function runJavaScriptTestStage(
   };
 }
 
+function createNoSupportedJavaScriptProjectsStageResult(
+  unsupportedProjects: readonly UnsupportedJavaScriptTestProject[],
+  runtime: JavaScriptRunnerRuntime,
+  stageId: StageResult["stageId"],
+  durationMs: number,
+  toolRuns: ToolRunResult[],
+): StageResult {
+  const unsupportedDiagnostics = createUnsupportedJavaScriptTestDiagnostics(
+    unsupportedProjects,
+    runtime,
+  );
+  return {
+    diagnostics: unsupportedDiagnostics,
+    durationMs,
+    notes: readUnsupportedJavaScriptTestNotes(unsupportedProjects, stageId),
+    stageId,
+    status: unsupportedDiagnostics.length > 0 ? "failed" : "passed",
+    toolRuns,
+  };
+}
+
 async function runJavaScriptProjectTask(
   project: JavaScriptProject,
   runtime: JavaScriptRunnerRuntime,
@@ -149,6 +165,29 @@ async function runJavaScriptProjectTask(
     projectIndex,
   );
 
+  cacheReusableJavaScriptExecution(runtime, cacheKey, execution, allowCoverageReuse, preferredMode);
+
+  if (shouldFallbackToPlainUnit(preferCoverageExecution, execution)) {
+    const unitExecution = await executeJavaScriptProjectTask(
+      project,
+      runtime,
+      "unit",
+      stageTempDir,
+      projectIndex,
+    );
+    return materializeJavaScriptProjectStageResult(unitExecution, "unit", false);
+  }
+
+  return materializeJavaScriptProjectStageResult(execution, mode, false);
+}
+
+function cacheReusableJavaScriptExecution(
+  runtime: JavaScriptRunnerRuntime,
+  cacheKey: string,
+  execution: JavaScriptProjectExecution,
+  allowCoverageReuse: boolean,
+  preferredMode: "coverage" | "unit",
+): void {
   if (
     allowCoverageReuse &&
     execution.coverageSummaryError === undefined &&
@@ -157,16 +196,6 @@ async function runJavaScriptProjectTask(
   ) {
     runtime.setRunScopedValue("javascript:test-execution", cacheKey, execution);
   }
-
-  if (shouldFallbackToPlainUnit(preferCoverageExecution, execution)) {
-    return materializeJavaScriptProjectStageResult(
-      await executeJavaScriptProjectTask(project, runtime, "unit", stageTempDir, projectIndex),
-      "unit",
-      false,
-    );
-  }
-
-  return materializeJavaScriptProjectStageResult(execution, mode, false);
 }
 
 async function executeJavaScriptProjectTask(
@@ -214,30 +243,25 @@ async function executeJavaScriptProjectTask(
     outcome.exitCode === 0 && diagnostics.length === 0 && summary.failed === 0
       ? "passed"
       : "failed";
-
-  if (status === "failed" && diagnostics.length === 0) {
-    diagnostics.push(
-      runtime.createProcessFailureDiagnostic(
-        project.files[0] ?? project.projectRoot,
-        project.runner,
-        summary.failed > 0
-          ? `${capitalize(project.runner)} reported ${summary.failed} failing test${summary.failed === 1 ? "" : "s"} in its summary.`
-          : runtime.readProcessFailureMessage(
-              mode === "coverage" ? `${project.runner} coverage` : `${project.runner} tests`,
-              outcome.stderr,
-              outcome.stdout,
-              outcome.exitCode,
-            ),
-      ),
-    );
-  }
+  appendSilentJavaScriptTestFailureDiagnostic({
+    diagnostics,
+    mode,
+    outcome,
+    project,
+    runtime,
+    status,
+    summary,
+  });
 
   return {
     coverageSummary,
-    coverageSummaryError:
-      mode === "coverage" && outcome.exitCode === 0 && !isValidCoverageSummary(coverageSummary)
-        ? `Expected coverage summary at "${path.join(coverageDirectory, "coverage-summary.json")}" for ${project.runner} coverage with total line coverage.`
-        : undefined,
+    coverageSummaryError: readJavaScriptCoverageSummaryError(
+      coverageDirectory,
+      coverageSummary,
+      mode,
+      outcome.exitCode,
+      project.runner,
+    ),
     diagnostics,
     runner: project.runner,
     summary,
@@ -251,6 +275,61 @@ async function executeJavaScriptProjectTask(
       outcome.startedAt,
     ),
   };
+}
+
+function appendSilentJavaScriptTestFailureDiagnostic(options: {
+  diagnostics: Diagnostic[];
+  mode: "coverage" | "unit";
+  outcome: Awaited<ReturnType<JavaScriptRunnerRuntime["runExecutable"]>>;
+  project: JavaScriptProject;
+  runtime: JavaScriptRunnerRuntime;
+  status: "failed" | "passed";
+  summary: { failed: number; passed: number; total: number };
+}): void {
+  if (options.status !== "failed" || options.diagnostics.length > 0) {
+    return;
+  }
+
+  options.diagnostics.push(
+    options.runtime.createProcessFailureDiagnostic(
+      options.project.files[0] ?? options.project.projectRoot,
+      options.project.runner,
+      readSilentJavaScriptTestFailureMessage(options),
+    ),
+  );
+}
+
+function readSilentJavaScriptTestFailureMessage(options: {
+  mode: "coverage" | "unit";
+  outcome: Awaited<ReturnType<JavaScriptRunnerRuntime["runExecutable"]>>;
+  project: JavaScriptProject;
+  runtime: JavaScriptRunnerRuntime;
+  summary: { failed: number; passed: number; total: number };
+}): string {
+  return options.summary.failed > 0
+    ? `${capitalize(options.project.runner)} reported ${options.summary.failed} failing test${options.summary.failed === 1 ? "" : "s"} in its summary.`
+    : options.runtime.readProcessFailureMessage(
+        options.mode === "coverage"
+          ? `${options.project.runner} coverage`
+          : `${options.project.runner} tests`,
+        options.outcome.stderr,
+        options.outcome.stdout,
+        options.outcome.exitCode,
+      );
+}
+
+function readJavaScriptCoverageSummaryError(
+  coverageDirectory: string,
+  coverageSummary: Record<string, unknown> | undefined,
+  mode: "coverage" | "unit",
+  exitCode: number | undefined,
+  runner: JavaScriptProject["runner"],
+): string | undefined {
+  if (mode !== "coverage" || exitCode !== 0 || isValidCoverageSummary(coverageSummary)) {
+    return undefined;
+  }
+
+  return `Expected coverage summary at "${path.join(coverageDirectory, "coverage-summary.json")}" for ${runner} coverage with total line coverage.`;
 }
 
 async function prepareJavaScriptProjectTempDir(

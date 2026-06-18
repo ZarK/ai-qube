@@ -137,28 +137,16 @@ export async function runJavaScriptE2eTask(
       resolvedProjects.projects,
       runtime,
     );
-    for (const file of resolvedProjects.unsupportedFiles) {
-      const message =
-        "No JavaScript or TypeScript package project was found for e2e. Add package.json plus a Playwright config/tests or an agent-browser/manual-audit script before using AIQ refactoring gates.";
-      diagnostics.push(runtime.createProcessFailureDiagnostic(file, "aiq-e2e", message));
-      notes.push(message);
-    }
+    appendUnsupportedJavaScriptE2eFiles(resolvedProjects.unsupportedFiles, runtime, diagnostics, notes);
 
     if (projects.length === 0) {
-      if (diagnostics.length > 0) {
-        return {
-          diagnostics,
-          durationMs: totalDurationMs,
-          notes,
-          stageId: task.stageId,
-          status: "failed",
-          toolRuns,
-        };
-      }
-
-      return runtime.createNoopStageResult(
+      return createNoJavaScriptE2eProjectsStageResult(
+        diagnostics,
+        notes,
+        runtime,
         task.stageId,
-        "No JavaScript or TypeScript package projects were selected for e2e.",
+        toolRuns,
+        totalDurationMs,
       );
     }
 
@@ -195,6 +183,36 @@ export async function runJavaScriptE2eTask(
     status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
+}
+
+function appendUnsupportedJavaScriptE2eFiles(
+  files: readonly string[],
+  runtime: JavaScriptRunnerRuntime,
+  diagnostics: Diagnostic[],
+  notes: string[],
+): void {
+  for (const file of files) {
+    const message =
+      "No JavaScript or TypeScript package project was found for e2e. Add package.json plus a Playwright config/tests or an agent-browser/manual-audit script before using AIQ refactoring gates.";
+    diagnostics.push(runtime.createProcessFailureDiagnostic(file, "aiq-e2e", message));
+    notes.push(message);
+  }
+}
+
+function createNoJavaScriptE2eProjectsStageResult(
+  diagnostics: Diagnostic[],
+  notes: string[],
+  runtime: JavaScriptRunnerRuntime,
+  stageId: StageResult["stageId"],
+  toolRuns: ToolRunResult[],
+  durationMs: number,
+): StageResult {
+  return diagnostics.length > 0
+    ? { diagnostics, durationMs, notes, stageId, status: "failed", toolRuns }
+    : runtime.createNoopStageResult(
+        stageId,
+        "No JavaScript or TypeScript package projects were selected for e2e.",
+      );
 }
 
 export function createUnsupportedJavaScriptTestDiagnostics(

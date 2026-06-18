@@ -31,15 +31,25 @@ export function isValidJavaScriptTestReport(
     return false;
   }
 
+  return isRecordArray(report.testResults) && isValidJavaScriptTestCounts(report);
+}
+
+export function isValidCoverageSummary(
+  coverageSummary: Record<string, unknown> | undefined,
+): coverageSummary is Record<string, unknown> {
+  const counts = readCoverageLineCounts(coverageSummary);
+  return counts !== undefined && isValidCoverageLineCounts(counts);
+}
+
+function isValidJavaScriptTestCounts(report: Record<string, unknown>): boolean {
   const failed = readCoverageMetric(report, "numFailedTests");
   const passed = readCoverageMetric(report, "numPassedTests");
   const total = readCoverageMetric(report, "numTotalTests");
+  if (failed === undefined || passed === undefined || total === undefined) {
+    return false;
+  }
 
   return (
-    isRecordArray(report.testResults) &&
-    failed !== undefined &&
-    passed !== undefined &&
-    total !== undefined &&
     isNonNegativeInteger(failed) &&
     isNonNegativeInteger(passed) &&
     isNonNegativeInteger(total) &&
@@ -49,27 +59,33 @@ export function isValidJavaScriptTestReport(
   );
 }
 
-export function isValidCoverageSummary(
+function readCoverageLineCounts(
   coverageSummary: Record<string, unknown> | undefined,
-): coverageSummary is Record<string, unknown> {
+): { covered: number; pct: number; skipped: number; total: number } | undefined {
   const total = readCoverageMetric(coverageSummary, "total", "lines", "total");
   const covered = readCoverageMetric(coverageSummary, "total", "lines", "covered");
   const skipped = readCoverageMetric(coverageSummary, "total", "lines", "skipped");
   const pct = readCoverageMetric(coverageSummary, "total", "lines", "pct");
+  return total === undefined || covered === undefined || skipped === undefined || pct === undefined
+    ? undefined
+    : { covered, pct, skipped, total };
+}
 
+function isValidCoverageLineCounts(counts: {
+  covered: number;
+  pct: number;
+  skipped: number;
+  total: number;
+}): boolean {
   return (
-    total !== undefined &&
-    covered !== undefined &&
-    skipped !== undefined &&
-    pct !== undefined &&
-    isNonNegativeInteger(total) &&
-    isNonNegativeInteger(covered) &&
-    isNonNegativeInteger(skipped) &&
-    covered <= total &&
-    covered + skipped <= total &&
-    pct >= 0 &&
-    pct <= 100 &&
-    isCoveragePctConsistent(total, covered, pct)
+    isNonNegativeInteger(counts.total) &&
+    isNonNegativeInteger(counts.covered) &&
+    isNonNegativeInteger(counts.skipped) &&
+    counts.covered <= counts.total &&
+    counts.covered + counts.skipped <= counts.total &&
+    counts.pct >= 0 &&
+    counts.pct <= 100 &&
+    isCoveragePctConsistent(counts.total, counts.covered, counts.pct)
   );
 }
 
