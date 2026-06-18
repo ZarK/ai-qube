@@ -211,7 +211,7 @@ function renderStageLines(config: Config): string[] {
   return [
     'branch-check: verify the current branch matches the active issue before shipping; create the issue branch when needed.',
     'implementation: implement the complete issue scope and update GitHub issue checkboxes or comments when they are the durable acceptance or planning record.',
-    'audit: run the configured manual UI audit with `aie audit ui <issue> --prepare` for user-facing UI changes, inspect the real running app with agent-browser first, capture screenshots for important states, write browser-observation.md and notes.md visual analysis, keep evidence local, or record why no UI audit applies.',
+    'audit: run the configured manual UI audit with `aie audit ui <issue> --prepare` for user-facing UI changes, start local UI servers with `aie run start --name ui-audit -- <command>` when a long-running app is needed, run one bounded `aie run wait --name ui-audit --url <url> --timeout 30`, inspect the real running app with agent-browser first, capture screenshots for important states, write browser-observation.md and notes.md visual analysis, stop the server with `aie run stop --name ui-audit`, keep evidence local, or record the exact blocker from `aie run status --name ui-audit`.',
     reviewStage,
     'test: run configured quality gates plus the relevant build, typecheck, and test commands for changed code.',
     'PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
@@ -275,7 +275,7 @@ Repository policy:
 - Local base branch freshness checks before new issue work are ${yesNo(config.requireBaseBranchFreshness)}.
 - Autonomous shipping mode is ${yesNo(config.autonomousMode)}.
 - ${renderMilestoneText(config)}
-- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use \`aie audit ui <issue>\` for local evidence guidance, then inspect the real app, capture screenshots, and record browser-observed visual analysis.
+- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use \`aie audit ui <issue>\` for local evidence guidance, use \`aie run start --name ui-audit -- <command>\` plus one bounded \`aie run wait --name ui-audit --url <url> --timeout 30\` for long-running local apps, then inspect the real app, capture screenshots, and record browser-observed visual analysis.
 - Quality Control gate intent is ${yesNo(config.qualityControl)}.
 - ${renderReviewAgentText(config)}
 - ${renderQualityGateText(config)}
@@ -287,7 +287,7 @@ Work cycle:
 2. Keep at most one open issue in progress. ${renderPreStartText(config)}
 3. Start work with \`aie start next\` or \`aie start <issue>\`, then inspect context with \`aie view <issue>\`.
 4. Verify or create the issue branch with \`aie branch check <issue>\` or \`aie branch create <issue>\`.
-5. Implement the complete issue scope, run \`aie audit ui <issue>\` when user-facing UI changed, inspect the real running app, capture screenshots, record browser-observation.md and notes.md visual analysis, run \`aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
+5. Implement the complete issue scope, run \`aie audit ui <issue>\` when user-facing UI changed, start needed UI servers with \`aie run start --name ui-audit -- <command>\`, run one bounded \`aie run wait --name ui-audit --url <url> --timeout 30\`, inspect the real running app, capture screenshots, record browser-observation.md and notes.md visual analysis, stop the server with \`aie run stop --name ui-audit\`, run \`aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
 6. ${renderShippingStep(config)}
 7. ${renderMergeStep(config)}
 8. After merge, run \`aie complete <issue>\`, return to the configured base branch, pull the latest remote base branch, verify pre-start policy is still clear, and continue to the next ready issue.
@@ -337,6 +337,7 @@ Rules:
 - ${renderMakeItSoAuthorizationText(config)}
 - Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks for them; start implementation only after normal Executor queue and pre-start policy pass.
 - Use \`aie\` commands for queue and lifecycle state instead of manually changing labels whenever possible.
+- Use \`aie run start --name ui-audit -- <command>\`, \`aie run wait --name ui-audit --url <url> --timeout 30\`, \`aie run status --name ui-audit\`, and \`aie run stop --name ui-audit\` for long-running UI audit or integration-test app servers; do not improvise raw PowerShell job/process recipes when this runner is available.
 - Use \`aie pr view <pr> --json\`, \`aie pr gate <pr>\`, and \`aie pr body <issue>\` for pull request state instead of raw \`gh pr view\` review/comment payloads whenever possible.
 - ${renderMakeItSoPreStartText(config)}
 - ${shippingText}

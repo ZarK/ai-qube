@@ -10,14 +10,11 @@ import { branchCommandError, formatBranchResult, parseBranchIssue, shouldShowBra
 import { commandDescription, commandExamples, isHelpToken } from './command_metadata.js';
 import { completeIssue } from './complete/index.js';
 import { getDefaults, loadConfig, loadConfigFile, type ValidationError } from './config/index.js';
-import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
 import { buildDoctorDiagnostics } from './doctor.js';
 import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGateStage } from './gates/index.js';
 import { runInit } from './init/index.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';
 import { buildMigrationMap, formatMigrationMap, formatMigrationPlan, runMigration } from './migrate/index.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
-import { githubIssueNumber } from './providers/github/github_work_codec.js';
 import { computeQueue, getNextIssue } from './queue/index.js';
 import { buildRepoPrimePlan } from './repo/index.js';
 import { formatDoctorHuman } from './renderers/doctor_renderer.js';
@@ -33,17 +30,12 @@ import { viewIssue } from './view.js';
 import { commandFailure, commandResult, numberFlag, readBooleanFlag, stringArg, stringFlag, stringListFlag } from './runtime_result.js';
 import { policyFromRuntimeFlags } from './runtime_init_policy.js';
 import { handleDepsFix } from './runtime_deps_fix.js';
+import { handleDepsBlocked, handleDepsBlockers, handleDepsBlocking, handleDepsChain, handleDepsGraph, handleDepsReady } from './runtime_deps_handlers.js';
 import { handleLabelsSetup } from './runtime_labels_setup.js';
 import { handleSchema } from './runtime_schema.js';
-
-function formatConfigErrors(errors: ValidationError[]): string {
-  return errors.map(error => `${error.path}: ${error.message}`).join('\n');
-}
-
-function lineOutput(lines: string[]): string {
-  return `${lines.join('\n')}\n`;
-}
-
+import { handleRunStart, handleRunStatus, handleRunStop, handleRunWait } from './runtime_run_handlers.js';
+function formatConfigErrors(errors: ValidationError[]): string { return errors.map(error => `${error.path}: ${error.message}`).join('\n'); }
+function lineOutput(lines: string[]): string { return `${lines.join('\n')}\n`; }
 function parseIssueNumber(input: string | undefined, command: string, role = 'issue'): number {
   if (!input || isHelpToken(input)) throw new Error(`Missing ${role} number.`);
   const cleaned = input.replace(/^#/, '').trim();
@@ -64,7 +56,6 @@ function usageResult(context: Parameters<RuntimeCommandHandler>[0], command: str
 function configLoadFailure(context: Parameters<RuntimeCommandHandler>[0], command: string, loaded: { errors: ValidationError[] }, nextAction: string) {
   return commandFailure(context, { ok: false, command, errors: loaded.errors, nextAction }, `Failed to load trusted Executor config:\n${formatConfigErrors(loaded.errors)}\nNext action: ${nextAction}`);
 }
-
 async function handleStart(context: Parameters<RuntimeCommandHandler>[0]) {
   const issue = stringArg(context, 'issue');
   const examples = commandExamples('start');
@@ -441,36 +432,13 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const diagnostics = await buildDoctorDiagnostics();
     return commandResult(context, diagnostics, formatDoctorHuman(diagnostics));
   },
-  'deps blocked': async context => {
-    const blocked = await getAllBlockedIssues();
-    return commandResult(context, { ok: true, command: 'deps blocked', blocked }, lineOutput(['Blocked open issues:', ...(blocked.length === 0 ? ['  None.'] : blocked.map(item => `  #${item.number} "${item.title}" (${item.state}) blocked by: ${item.blockers.map(blocker => `#${blocker.number} (${blocker.state})`).join(', ')}`))]));
-  },
-  'deps blockers': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps blockers');
-    const workItem = await createGitHubWorkProvider().getWorkItem({ providerId: 'github', id: String(issueNumber) });
-    const issue = { number: githubIssueNumber(workItem), title: workItem.title, state: workItem.state === 'open' ? 'OPEN' : 'CLOSED' };
-    const blockers = await getDirectBlockers(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps blockers', issue, blockers }, lineOutput([`Direct blockers for #${issue.number} "${issue.title}" (${issue.state}):`, ...(blockers.length === 0 ? ['  None declared.'] : blockers.map(blocker => `  #${blocker.number} "${blocker.title}" (${blocker.state})`))]));
-  },
-  'deps blocking': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps blocking');
-    const blocked = await getIssuesBlockedBy(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps blocking', issue: issueNumber, blocked }, lineOutput([`Open issues blocked by #${issueNumber}:`, ...(blocked.length === 0 ? ['  None.'] : blocked.map(item => `  #${item.number} "${item.title}" (${item.state})`))]));
-  },
-  'deps chain': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps chain');
-    const chain = await getDependencyChain(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps chain', issue: issueNumber, chain }, lineOutput([`Dependency chain for #${issueNumber}:`, ...chain.map(item => `  #${item.number} "${item.title}" (${item.state})`)]));
-  },
+  'deps blocked': handleDepsBlocked,
+  'deps blockers': handleDepsBlockers,
+  'deps blocking': handleDepsBlocking,
+  'deps chain': handleDepsChain,
   'deps fix': handleDepsFix,
-  'deps graph': async context => {
-    const graph = await getDependencyGraph();
-    return commandResult(context, { ok: true, command: 'deps graph', nodes: graph.nodes, blockers: graph.blockers, cycles: graph.cycles }, lineOutput(['Dependency graph (nodes + blockers):', ...graph.nodes.map(node => `  #${node.number} "${node.title}" (${node.state})${(graph.blockers[node.number] || []).length > 0 ? ' blocked by: ' + (graph.blockers[node.number] || []).map(issue => `#${issue}`).join(', ') : ''}`), ...(graph.cycles.length > 0 ? ['Cycles:', ...graph.cycles.map(cycle => `  ${cycle.map(issue => `#${issue}`).join(' -> ')}`)] : [])]));
-  },
-  'deps ready': async context => {
-    const ready = await getReadyIssues();
-    return commandResult(context, { ok: true, command: 'deps ready', ready }, lineOutput(['Ready issues (no open blockers):', ...(ready.length === 0 ? ['  None.'] : ready.map(item => `  #${item.number} "${item.title}" (${item.state})`))]));
-  },
+  'deps graph': handleDepsGraph,
+  'deps ready': handleDepsReady,
   gates: topic(['Use `aie gates plan --dry-run`, `aie gates plan --stage pre-pr --json`, or `aie gates status --json`.', 'Gate commands are read from trusted repository config and are never executed by Executor.']),
   'gates plan': async context => {
     const loaded = await loadConfigFile();
@@ -528,6 +496,11 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const plan = await buildRepoPrimePlan({ config, dryRun, yes: readBooleanFlag(context, 'yes') });
     return commandResult(context, { ...plan, command: 'repo prime', dryRun }, formatRepoPrimeHuman(plan, dryRun));
   },
+  run: topic(['Use `aie run start --name ui-audit -- <command>` for long-running local app servers.', 'Use `aie run wait --name ui-audit --url <url> --timeout 30`, `aie run status --name ui-audit`, and `aie run stop --name ui-audit` for bounded readiness and cleanup.']),
+  'run start': handleRunStart,
+  'run wait': handleRunWait,
+  'run status': handleRunStatus,
+  'run stop': handleRunStop,
   review: topic(['Use `aie review gate <issue> --prompt`, `aie review gate <issue> --dry-run`, or `aie review gate <issue> --json`.', 'Review helpers render prompts and evidence requirements; Executor never invokes host-only reviewers or treats review output as policy.']),
   'review gate': context => handleConfigCommand(context, 'review gate'),
   schema: handleSchema,

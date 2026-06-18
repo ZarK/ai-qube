@@ -15,6 +15,7 @@ import {
   REVIEW_GATE_FLAG_DETAILS,
 } from './command_flag_details.js';
 import { defineExecutorCommands } from './command_definition.js';
+import { RUN_COMMAND_DEFINITIONS } from './command_catalog_run.js';
 
 export const CONFIG_ERROR_KINDS = ['missing', 'invalid', 'unknown', 'duplicate'];
 export const COMMON_ERROR_KINDS = ['parse-error', 'config-error', 'github-error', 'repository-state-error'];
@@ -259,6 +260,7 @@ const COMMAND_DEFINITIONS = [
     stableErrorKinds: ['parse-error', 'config-error', 'local-evidence-error', ...CONFIG_ERROR_KINDS],
     examples: ['aie audit ui 93 --dry-run', 'aie audit ui 93 --prepare', 'aie audit ui 93 --check --json'],
   },
+  ...RUN_COMMAND_DEFINITIONS,
   {
     name: 'review',
     description: 'Render review-agent gate prompts and evidence requirements without invoking host-only reviewers.',

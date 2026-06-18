@@ -3,7 +3,7 @@ import { listCommands } from '@tjalve/qube-cli/registry';
 import type { ExecutorCommandExtensions } from './command_definition.js';
 import { EXECUTOR_COMMAND_REGISTRY } from './command_registry.js';
 
-export type CommandMutationTarget = 'github' | 'git' | 'local-files';
+export type CommandMutationTarget = 'github' | 'git' | 'local-files' | 'local-process';
 
 export interface CommandSchema {
   name: string;

@@ -15,7 +15,7 @@ interface ExecutorFlagExtensions extends MetadataExtensions {
   readonly legacyForms?: readonly string[];
 }
 
-interface ExecutorCommandDefinition {
+export interface ExecutorCommandDefinition {
   name: string;
   description: string;
   args: string[];
@@ -105,6 +105,10 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'pr view': { pr: 'Pull request number for concise PR state, for example 12 or #12' },
     'pr body': { issue: 'Issue number the pull request closes, for example 93 or #93' },
     'pr gate': { pr: 'Pull request number for the PR review gate, for example 12 or #12' },
+    'run start': {
+      command: 'App command executable after --, for example npm in `aie run start -- npm run dev`',
+      ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`commandArg${index + 1}`, 'Optional app command argument captured after --'])),
+    },
     'branch suggest': { issue: 'Issue number used to suggest a branch name, for example 93 or #93' },
     'branch check': { issue: 'Issue number used to verify the current branch, for example 93 or #93' },
     'branch create': { issue: 'Issue number used to create the policy-compliant branch, for example 93 or #93' },
@@ -125,6 +129,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'deps blockers',
     'deps blocking',
     'deps chain',
+    'run start',
     'view',
   ]);
   const defaultDescriptions: Record<string, string> = {
@@ -132,10 +137,11 @@ function toArgumentMetadata(commandName: string, argument: string) {
     pr: 'Pull request number, for example 12 or #12',
     target: 'Target path or selector for the command',
   };
+  const required = commandName === 'run start' ? argument === 'command' : requiredArgCommands.has(commandName);
   return {
     name: argument,
     description: descriptions[commandName]?.[argument] ?? defaultDescriptions[argument] ?? `Argument ${argument} for aie ${commandName}`,
-    required: requiredArgCommands.has(commandName),
+    required,
   };
 }
 
