@@ -134,6 +134,35 @@ export const PR_BODY_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const RUN_START_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable local app runner start output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show spawn options and metadata paths without starting a process', default: false },
+  { name: '--name', type: 'string', description: 'Stable runner name used by later status, wait, and stop commands', default: 'ui-audit' },
+  { name: '--cwd', type: 'string', description: 'Working directory for the app command, resolved relative to the repository root', default: '.' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const RUN_WAIT_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable local app readiness output', default: false },
+  { name: '--name', type: 'string', description: 'Stable runner name to inspect', default: 'ui-audit' },
+  { name: '--url', type: 'string', description: 'HTTP URL to poll until a bounded readiness result is reached' },
+  { name: '--timeout', type: 'integer', description: 'Maximum readiness wait in seconds', default: 30 },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const RUN_STATUS_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable local app runner status output', default: false },
+  { name: '--name', type: 'string', description: 'Stable runner name to inspect', default: 'ui-audit' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const RUN_STOP_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable local app runner stop output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the process that would be stopped without killing it or removing metadata', default: false },
+  { name: '--name', type: 'string', description: 'Stable runner name to stop', default: 'ui-audit' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const CHECKLIST_UPDATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable issue checklist mutation output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Plan the issue checklist body update without mutating GitHub', default: false },

@@ -290,6 +290,8 @@ describe('init service', () => {
     assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
     assert.match(agents, /implementation: implement the complete issue scope/);
     assert.match(agents, /audit: run the configured manual UI audit/);
+    assert.match(agents, /aie run start --name ui-audit -- <command>/);
+    assert.match(agents, /aie run wait --name ui-audit --url <url> --timeout 30/);
     assert.match(agents, /review: run `aie review gate <issue> --prompt`, use `aie pr view <pr> --json` for concise PR state when inspecting, run `aie pr gate <pr>` when a PR exists to request reviewers/);
     assert.match(agents, /test: run configured quality gates/);
     assert.match(agents, /PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue/);
@@ -325,6 +327,7 @@ describe('init service', () => {
     assert.match(command, /explicit full authorization under repository policy to commit, push, create non-draft PRs, run `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status, merge, run `aie complete <issue>`, pull the configured base branch, and continue/);
     assert.match(command, /Analysis, investigation, queue triage, and manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
     assert.match(command, /Use `aie pr view <pr> --json`, `aie pr gate <pr>`, and `aie pr body <issue>` for pull request state instead of raw `gh pr view` review\/comment payloads whenever possible/);
+    assert.match(command, /Use `aie run start --name ui-audit -- <command>`, `aie run wait --name ui-audit --url <url> --timeout 30`, `aie run status --name ui-audit`, and `aie run stop --name ui-audit`/);
     assert.match(command, /no linked worktree is in use/);
     assert.match(command, /tests\/audits\/configured gates/);
     assert.match(command, /non-draft, ready-for-review pull request with issue closure -> `aie pr gate <pr>` to request reviewers, wait for configured review gates, and check status/);

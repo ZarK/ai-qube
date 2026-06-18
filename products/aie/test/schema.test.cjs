@@ -65,6 +65,9 @@ describe('schema command', () => {
     const prView = parsed.commands.find(command => command.name === 'pr view');
     const prBody = parsed.commands.find(command => command.name === 'pr body');
     const prGate = parsed.commands.find(command => command.name === 'pr gate');
+    const runStart = parsed.commands.find(command => command.name === 'run start');
+    const runWait = parsed.commands.find(command => command.name === 'run wait');
+    const runStop = parsed.commands.find(command => command.name === 'run stop');
     const checklistUpdate = parsed.commands.find(command => command.name === 'checklist update');
     const flag = (command, name) => command.flags.find(item => item.name === name);
     const argument = (command, name) => command.arguments.find(item => item.name === name);
@@ -102,6 +105,15 @@ describe('schema command', () => {
     assert.equal(prView.dryRun.supported, false);
     assert.equal(flag(prView, 'json').type, 'boolean');
     assert.deepEqual(argument(prGate, 'pr'), { name: 'pr', description: 'Pull request number for the PR review gate, for example 12 or #12', required: true, multiple: false });
+    assert.deepEqual(argument(runStart, 'command'), { name: 'command', description: 'App command executable after --, for example npm in `aie run start -- npm run dev`', required: false, multiple: false });
+    assert.equal(flag(runStart, 'name').type, 'string');
+    assert.equal(flag(runStart, 'cwd').type, 'string');
+    assert.deepEqual(runStart.mutation.categories, ['local-files', 'local-process']);
+    assert.equal(runStart.dryRun.supported, true);
+    assert.equal(flag(runWait, 'url').type, 'string');
+    assert.equal(flag(runWait, 'timeout').type, 'integer');
+    assert.ok(serviceNames(runWait).includes('local-http'));
+    assert.deepEqual(runStop.mutation.categories, ['local-files', 'local-process']);
     assert.deepEqual(argument(checklistUpdate, 'issue'), { name: 'issue', description: 'Issue number whose checklist should be updated, for example 93 or #93', required: true, multiple: false });
     assert.equal(flag(checklistUpdate, 'state').type, 'option');
     assert.deepEqual(flag(checklistUpdate, 'state').options, ['checked', 'unchecked']);
