@@ -630,12 +630,7 @@ function withMilestoneDraftState(state: BootstrapState, result: MilestoneDraftRe
     },
     planning: {
       ...state.planning,
-      milestoneDrafts: result.milestones,
-      artifacts: {
-        ...state.artifacts,
-        milestones: result.artifacts,
-        workItems: state.artifacts.workItems.length > 0 ? state.artifacts.workItems : []
-      }
+      milestoneDrafts: result.milestones
     }
   };
   return withPlanningNext(updated);
