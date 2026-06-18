@@ -440,7 +440,14 @@ export const specReopenCommand = defineCommand({
   supplyChain: {
     sensitive: false
   },
-  errors: stateCommandErrors,
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-section-invalid",
+      description: "The requested spec section id is not selected for this project.",
+      exitCode: 3
+    }
+  ],
   exitCodes: stateCommandExitCodes
 });
 
