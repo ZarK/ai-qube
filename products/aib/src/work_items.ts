@@ -2,14 +2,32 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
-import { renderMarkdownWorkItemDraft, type MarkdownWorkItem } from "./renderers.js";
+import { renderGitHubIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
+
+export type WorkItemRenderProvider = "github" | "markdown";
 
 export interface WorkItemDraftResult {
   readonly milestone: MilestoneDraft;
   readonly drafts: readonly WorkItemDraft[];
   readonly queueOrder: QueueOrderValidation;
   readonly rendered: readonly MarkdownWorkItem[];
+  readonly artifacts: readonly PlanningArtifact[];
+}
+
+export interface RenderedGitHubWorkItem extends GitHubIssueDraft {
+  readonly draftId: string;
+}
+
+export interface RenderedMarkdownWorkItem extends MarkdownWorkItem {
+  readonly draftId: string;
+}
+
+export interface WorkItemRenderResult {
+  readonly provider: WorkItemRenderProvider;
+  readonly drafts: readonly WorkItemDraft[];
+  readonly queueOrder: QueueOrderValidation;
+  readonly rendered: readonly (RenderedGitHubWorkItem | RenderedMarkdownWorkItem)[];
   readonly artifacts: readonly PlanningArtifact[];
 }
 
@@ -61,6 +79,65 @@ export function writeWorkItemDrafts(
   const result = createWorkItemDrafts(state, milestoneSelector, baseDir);
   for (const item of result.rendered) {
     const path = resolve(baseDir, item.path);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, item.content);
+  }
+  return result;
+}
+
+export function renderWorkItemDrafts(
+  state: BootstrapState,
+  provider: WorkItemRenderProvider,
+  options: { readonly outputDir?: string } = {}
+): WorkItemRenderResult {
+  const drafts = state.planning.workItemDrafts;
+  if (drafts.length === 0) {
+    throw new TypeError("no work item drafts are recorded in bootstrap state");
+  }
+  const queueOrder = validateWorkItemDraftOrder(drafts);
+  if (!queueOrder.ok) {
+    throw new WorkItemQueueOrderError(queueOrder.conflicts);
+  }
+
+  if (provider === "github") {
+    const rendered = drafts.map((draft) => ({
+      draftId: draft.draftId,
+      ...renderGitHubIssueDraft(draft)
+    }));
+    return {
+      provider,
+      drafts,
+      queueOrder,
+      rendered,
+      artifacts: []
+    };
+  }
+
+  const outputDir = options.outputDir ?? `${dirname(state.artifacts.spec.path)}/issues`;
+  const rendered = drafts.map((draft) => ({
+    draftId: draft.draftId,
+    ...renderMarkdownWorkItemDraft(draft, outputDir)
+  }));
+  return {
+    provider,
+    drafts,
+    queueOrder,
+    rendered,
+    artifacts: rendered.map((item) => ({
+      path: item.path,
+      status: "ready"
+    }))
+  };
+}
+
+export function writeRenderedMarkdownWorkItems(
+  state: BootstrapState,
+  options: { readonly outputDir?: string; readonly baseDir?: string } = {}
+): WorkItemRenderResult {
+  const result = renderWorkItemDrafts(state, "markdown", options);
+  for (const item of result.rendered) {
+    if (!("path" in item)) continue;
+    const path = resolve(options.baseDir ?? process.cwd(), item.path);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, item.content);
   }
