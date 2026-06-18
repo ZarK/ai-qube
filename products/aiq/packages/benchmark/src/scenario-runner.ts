@@ -194,6 +194,15 @@ async function resolveScenarioManifest(
 
   for (const input of scenario.inputs) {
     const inputPath = path.resolve(workspaceRoot, input);
+    const relativeInputPath = path.relative(workspaceRoot, inputPath);
+    if (
+      relativeInputPath === ".." ||
+      relativeInputPath.startsWith(`..${path.sep}`) ||
+      path.isAbsolute(relativeInputPath)
+    ) {
+      throw new Error(`Input '${input}' must resolve inside the benchmark workspace.`);
+    }
+
     const inputStats = await stat(inputPath).catch((error: unknown) => {
       throw new Error(
         `Input '${input}' does not exist in benchmark fixture: ${formatError(error)}`,

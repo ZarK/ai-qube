@@ -1134,7 +1134,7 @@ export function createDefaultBenchmarkCorpus(root = process.cwd()): BenchmarkSce
       description: "Diff-only single-file format benchmark for the .NET fixture.",
       fixturePath: fixture("test-projects/dotnet"),
       id: "dotnet-format-single-file-diff",
-      inputs: ["src/DotnetProject/Program.cs"],
+      inputs: ["src/DotNetFixture/Greeter.cs"],
       kind: "diff-only",
       metadata: {
         languages: ["dotnet"],

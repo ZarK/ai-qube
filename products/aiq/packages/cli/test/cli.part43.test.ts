@@ -67,6 +67,7 @@ describe("CLI foundation", () => {
 
     oversizedRequest.write('{"manifest":{"files":["src/index.ts"]},"padding":"');
     oversizedRequest.write("x".repeat(1_100_000));
+    oversizedRequest.end('"}');
 
     await expect(oversizedResponse).resolves.toMatchObject({
       payload: {

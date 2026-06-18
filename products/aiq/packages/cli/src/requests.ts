@@ -53,7 +53,7 @@ export async function createManifestInput(
   }
 
   if (parsed.filesFrom !== undefined) {
-    manifestFiles.push(...(await readFilesFromList(parsed.filesFrom, io.cwd)));
+    manifestFiles.push(...(await readFilesFromList(parsed.filesFrom, io.cwd, parsed.command)));
     sources.add("file-list");
   }
 
@@ -81,13 +81,17 @@ export async function createManifestInput(
   };
 }
 
-async function readFilesFromList(filesFrom: string, cwd: string): Promise<string[]> {
+async function readFilesFromList(
+  filesFrom: string,
+  cwd: string,
+  command: ParsedArgs["command"],
+): Promise<string[]> {
   try {
     return splitLines(await readFile(path.resolve(cwd, filesFrom), "utf8"));
   } catch (error) {
     if (isErrorCode(error, "ENOENT")) {
       throw new Error(
-        `File list not found: ${filesFrom}. Check the path or pass files directly with aiq run <paths...>.`,
+        `File list not found: ${filesFrom}. Check the path or pass files directly with aiq ${command} <paths...>.`,
         { cause: error },
       );
     }

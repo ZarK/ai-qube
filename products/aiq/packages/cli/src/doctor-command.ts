@@ -26,6 +26,7 @@ import {
 } from "./doctor-tools.js";
 
 const execFileAsync = promisify(execFile);
+const doctorProbeTimeoutMs = 5_000;
 
 export async function runDoctorCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {
   try {
@@ -277,6 +278,7 @@ async function runCommand(
     const result = await execFileAsync(command, args, {
       encoding: "utf8",
       maxBuffer: 1024 * 1024,
+      timeout: doctorProbeTimeoutMs,
     });
     return { exitCode: 0, stdout: result.stdout };
   } catch (error) {

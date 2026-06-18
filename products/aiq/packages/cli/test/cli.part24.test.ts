@@ -41,11 +41,12 @@ describe("CLI foundation", () => {
   });
 
   it("fails with usage code when a positional input file does not exist", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-missing-positional-");
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
     const exitCode = await runCli(["node", "aiq", "check", "missing-cli-input.ts"], {
-      cwd: process.cwd(),
+      cwd: project.root,
       stderr,
       stdin: new MemoryInput(),
       stdout,
@@ -58,13 +59,14 @@ describe("CLI foundation", () => {
   });
 
   it("fails with usage code when a --files input does not exist", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-missing-files-flag-");
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
     const exitCode = await runCli(
       ["node", "aiq", "check", "--files", "missing-cli-flag-input.ts"],
       {
-        cwd: process.cwd(),
+        cwd: project.root,
         stderr,
         stdin: new MemoryInput(),
         stdout,
@@ -78,11 +80,12 @@ describe("CLI foundation", () => {
   });
 
   it("fails with usage code when the --files-from list does not exist", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-missing-files-from-");
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
     const exitCode = await runCli(["node", "aiq", "check", "--files-from", "missing-files.txt"], {
-      cwd: process.cwd(),
+      cwd: project.root,
       stderr,
       stdin: new MemoryInput(),
       stdout,
@@ -92,15 +95,17 @@ describe("CLI foundation", () => {
     expect(stdout.value).toBe("");
     expect(stderr.value).toContain("File list not found:");
     expect(stderr.value).toContain("missing-files.txt");
+    expect(stderr.value).toContain("aiq check <paths...>");
   });
 
   it("fails with usage code when watch startup inputs do not resolve", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-missing-watch-");
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
     await expect(
       runCli(["node", "aiq", "watch", "missing-watch-input.ts"], {
-        cwd: process.cwd(),
+        cwd: project.root,
         stderr,
         stdin: new MemoryInput(),
         stdout,
@@ -113,6 +118,7 @@ describe("CLI foundation", () => {
   });
 
   it("rejects malformed integer flags with usage code", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-malformed-integer-");
     for (const argv of [
       ["node", "aiq", "serve", "--port", "3000abc"],
       ["node", "aiq", "watch", "src/index.ts", "--debounce-ms", "40ms"],
@@ -121,7 +127,7 @@ describe("CLI foundation", () => {
       const stderr = new MemoryOutput();
 
       const exitCode = await runCli(argv, {
-        cwd: process.cwd(),
+        cwd: project.root,
         stderr,
         stdin: new MemoryInput(),
         stdout,

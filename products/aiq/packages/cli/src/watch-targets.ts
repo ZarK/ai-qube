@@ -25,15 +25,15 @@ export function buildWatchReplanPaths(
     replanPaths.add(path.resolve(cwd, "aiq.config.json"));
     replanPaths.add(path.resolve(cwd, ".aiq", "aiq.config.json"));
   } else {
-    replanPaths.add(path.resolve(configPath));
+    replanPaths.add(path.resolve(cwd, configPath));
   }
   if (progressPath !== undefined) {
-    replanPaths.add(path.resolve(progressPath));
+    replanPaths.add(path.resolve(cwd, progressPath));
   } else if (watchProgressPath) {
     replanPaths.add(path.resolve(cwd, ".aiq", "progress.json"));
   }
   if (filesFromPath !== undefined) {
-    replanPaths.add(path.resolve(filesFromPath));
+    replanPaths.add(path.resolve(cwd, filesFromPath));
   }
   return replanPaths;
 }

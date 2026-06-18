@@ -24,42 +24,47 @@ describe("CLI foundation", () => {
       { signal: controller.signal },
     );
 
-    const listening = await waitFor(() => {
-      const lines = parseJsonLines<{ event: string; url: string }>(stdout.value);
-      return lines.find((line) => line.event === "listening");
-    });
+    let exitCode: number | undefined;
+    try {
+      const listening = await waitFor(() => {
+        const lines = parseJsonLines<{ event: string; url: string }>(stdout.value);
+        return lines.find((line) => line.event === "listening");
+      });
 
-    const healthResponse = await fetch(`${listening.url}/health`);
-    expect(healthResponse.status).toBe(200);
-    await expect(healthResponse.json()).resolves.toEqual({ ok: true });
+      const healthResponse = await fetch(`${listening.url}/health`);
+      expect(healthResponse.status).toBe(200);
+      await expect(healthResponse.json()).resolves.toEqual({ ok: true });
 
-    const runResponse = await fetch(`${listening.url}/run`, {
-      body: JSON.stringify({
-        manifest: {
-          files: ["src/index.ts"],
+      const runResponse = await fetch(`${listening.url}/run`, {
+        body: JSON.stringify({
+          manifest: {
+            files: ["src/index.ts"],
+          },
+          stages: ["typecheck"],
+        }),
+        headers: {
+          "content-type": "application/json",
         },
-        stages: ["typecheck"],
-      }),
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
-    });
+        method: "POST",
+      });
 
-    expect(runResponse.status).toBe(200);
-    await expect(runResponse.json()).resolves.toMatchObject({
-      context: "serve",
-      ok: true,
-      request: {
+      expect(runResponse.status).toBe(200);
+      await expect(runResponse.json()).resolves.toMatchObject({
         context: "serve",
-      },
-      summary: {
-        status: "passed",
-      },
-    });
-    expect(stderr.value).toBe("");
+        ok: true,
+        request: {
+          context: "serve",
+        },
+        summary: {
+          status: "passed",
+        },
+      });
+      expect(stderr.value).toBe("");
+    } finally {
+      controller.abort();
+      exitCode = await runPromise;
+    }
 
-    controller.abort();
-    await expect(runPromise).resolves.toBe(0);
+    expect(exitCode).toBe(0);
   });
 });

@@ -119,7 +119,7 @@ export function countOccurrences(text: string, needle: string): number {
 }
 
 export async function waitFor<T>(
-  getValue: () => T | undefined,
+  getValue: () => Promise<T | undefined> | T | undefined,
   options: { intervalMs?: number; timeoutMs?: number } = {},
 ): Promise<T> {
   const timeoutMs = options.timeoutMs ?? 5_000;
@@ -127,7 +127,7 @@ export async function waitFor<T>(
   const startedAt = Date.now();
 
   while (Date.now() - startedAt < timeoutMs) {
-    const value = getValue();
+    const value = await getValue();
     if (value !== undefined) {
       return value;
     }
@@ -141,11 +141,23 @@ export async function waitFor<T>(
 }
 
 export function parseJsonLines<T>(value: string): T[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .map((line) => JSON.parse(line) as T);
+  const lines = value.split("\n");
+  return lines.flatMap((line, index) => {
+    const trimmedLine = line.trim();
+    if (trimmedLine.length === 0) {
+      return [];
+    }
+
+    try {
+      return [JSON.parse(trimmedLine) as T];
+    } catch (error) {
+      const isIncompleteTrailingLine = index === lines.length - 1 && !value.endsWith("\n");
+      if (isIncompleteTrailingLine) {
+        return [];
+      }
+      throw error;
+    }
+  });
 }
 
 export type CommandResult = {

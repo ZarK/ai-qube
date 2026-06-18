@@ -108,7 +108,8 @@ function resolveBenchmarkSuiteOptions(options: RunBenchmarkSuiteOptions): {
 } {
   const cwd = path.resolve(options.cwd ?? process.cwd());
   return {
-    corpusRoot: path.resolve(options.corpusRoot ?? cwd),
+    corpusRoot:
+      options.corpusRoot === undefined ? cwd : path.resolve(cwd, options.corpusRoot),
     cwd,
     outDir: path.resolve(cwd, options.outDir ?? defaultBenchmarkOutDir),
   };

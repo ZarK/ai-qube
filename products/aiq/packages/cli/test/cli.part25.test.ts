@@ -35,7 +35,10 @@ describe("CLI foundation", () => {
       return lines.find((line) => line.event === "listening");
     });
 
-    expect(listening.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/u);
+    const listeningUrl = new URL(listening.url);
+    expect(listeningUrl.protocol).toBe("http:");
+    expect(listeningUrl.hostname).toBe("127.0.0.1");
+    expect(Number(listeningUrl.port)).toBeGreaterThan(0);
     expect(stderr.value).toBe("");
 
     controller.abort();

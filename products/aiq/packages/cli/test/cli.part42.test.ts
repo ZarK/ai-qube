@@ -39,21 +39,20 @@ describe("CLI foundation", () => {
     blockingRequest.on("error", () => undefined);
     blockingRequest.write('{"manifest":{"files":["src/index.ts"]},"stages":["typecheck"]');
 
-    await new Promise((resolve) => {
-      setTimeout(resolve, 50);
-    });
-
-    const busyResponse = await fetch(`${listening.url}/run`, {
-      body: JSON.stringify({
-        manifest: {
-          files: ["src/index.ts"],
+    const busyResponse = await waitFor(async () => {
+      const response = await fetch(`${listening.url}/run`, {
+        body: JSON.stringify({
+          manifest: {
+            files: ["src/index.ts"],
+          },
+          stages: ["typecheck"],
+        }),
+        headers: {
+          "content-type": "application/json",
         },
-        stages: ["typecheck"],
-      }),
-      headers: {
-        "content-type": "application/json",
-      },
-      method: "POST",
+        method: "POST",
+      });
+      return response.status === 503 ? response : undefined;
     });
 
     expect(busyResponse.status).toBe(503);

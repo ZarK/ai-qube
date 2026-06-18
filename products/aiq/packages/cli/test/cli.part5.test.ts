@@ -26,7 +26,7 @@ describe("CLI foundation", () => {
       expect(exitCode).toBe(0);
       expect(stderr.value).toBe("");
       expect(stdout.value).toContain("AIQ CLI");
-      expect(stdout.value).toContain("aiq doctor");
+      expect(stdout.value).toContain(`aiq ${command}`);
     }
   });
 
