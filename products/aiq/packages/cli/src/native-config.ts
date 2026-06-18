@@ -17,6 +17,72 @@ interface NativeConfigDetection {
 }
 
 const maxScannedFiles = 2_000;
+const jsTestConfigNames = new Set([
+  "jest.config.cjs",
+  "jest.config.js",
+  "jest.config.mjs",
+  "jest.config.ts",
+  "vitest.config.cjs",
+  "vitest.config.cts",
+  "vitest.config.js",
+  "vitest.config.mjs",
+  "vitest.config.mts",
+  "vitest.config.ts",
+]);
+const playwrightConfigNames = new Set([
+  "playwright.config.cjs",
+  "playwright.config.cts",
+  "playwright.config.js",
+  "playwright.config.mjs",
+  "playwright.config.mts",
+  "playwright.config.ts",
+]);
+const pythonQualityConfigNames = new Set([
+  ".ruff.toml",
+  "pyproject.toml",
+  "radon.cfg",
+  "ruff.toml",
+  "setup.cfg",
+  "tox.ini",
+]);
+const nativeConfigSetters: ReadonlyMap<string, (configs: NativeConfigDetection) => void> = new Map([
+  [
+    "biome.json",
+    (configs) => {
+      configs.biome = true;
+    },
+  ],
+  [
+    "biome.jsonc",
+    (configs) => {
+      configs.biome = true;
+    },
+  ],
+  [
+    ".lizard",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    ".lizardrc",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    "lizard.conf",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    "tsconfig.json",
+    (configs) => {
+      configs.tsconfig = true;
+    },
+  ],
+]);
 
 export async function detectNativeConfigs(cwd: string): Promise<NativeConfigDetection> {
   const configs: NativeConfigDetection = {
@@ -37,11 +103,19 @@ export function resolveDoctorNativeConfigChecks(
   configs: NativeConfigDetection,
 ): DoctorCheckOutput[] {
   const selected = new Set(stages);
-  const checks: DoctorCheckOutput[] = [];
-  const hasJavaScriptOrTypeScript = languages.has("javascript") || languages.has("typescript");
+  return nativeConfigCheckRules
+    .filter((rule) => rule.applies(languages, selected))
+    .map((rule) => rule.create(configs));
+}
 
-  if (hasJavaScriptOrTypeScript && usesAnyStage(selected, ["lint", "format"])) {
-    checks.push({
+const nativeConfigCheckRules: Array<{
+  applies: (languages: ReadonlySet<LanguageId>, selected: ReadonlySet<StageId>) => boolean;
+  create: (configs: NativeConfigDetection) => DoctorCheckOutput;
+}> = [
+  {
+    applies: (languages, selected) =>
+      hasJavaScriptOrTypeScript(languages) && usesAnyStage(selected, ["lint", "format"]),
+    create: (configs) => ({
       detail: configs.biome
         ? "detected; Biome will use repository config"
         : "not detected; Biome will use built-in defaults unless repository config is added",
@@ -49,11 +123,11 @@ export function resolveDoctorNativeConfigChecks(
       ok: true,
       required: false,
       source: "project",
-    });
-  }
-
-  if (languages.has("typescript") && selected.has("typecheck")) {
-    checks.push({
+    }),
+  },
+  {
+    applies: (languages, selected) => languages.has("typescript") && selected.has("typecheck"),
+    create: (configs) => ({
       detail: configs.tsconfig
         ? "detected; TypeScript typecheck uses tsconfig.json"
         : "not detected; add tsconfig.json before running TypeScript typecheck",
@@ -61,11 +135,12 @@ export function resolveDoctorNativeConfigChecks(
       ok: configs.tsconfig,
       required: true,
       source: "project",
-    });
-  }
-
-  if (hasJavaScriptOrTypeScript && usesAnyStage(selected, ["unit", "coverage"])) {
-    checks.push({
+    }),
+  },
+  {
+    applies: (languages, selected) =>
+      hasJavaScriptOrTypeScript(languages) && usesAnyStage(selected, ["unit", "coverage"]),
+    create: (configs) => ({
       detail: configs.jsTest
         ? "detected; JS/TS tests use the repository test runner config or package script"
         : "not detected; add Vitest/Jest config or a package test script before running unit or coverage",
@@ -73,11 +148,11 @@ export function resolveDoctorNativeConfigChecks(
       ok: configs.jsTest,
       required: true,
       source: "project",
-    });
-  }
-
-  if (hasJavaScriptOrTypeScript && selected.has("e2e")) {
-    checks.push({
+    }),
+  },
+  {
+    applies: (languages, selected) => hasJavaScriptOrTypeScript(languages) && selected.has("e2e"),
+    create: (configs) => ({
       detail: configs.playwright
         ? "detected; e2e uses Playwright config or a project e2e/audit script"
         : "not detected; add Playwright config/tests or a project e2e/audit script before running e2e",
@@ -85,14 +160,13 @@ export function resolveDoctorNativeConfigChecks(
       ok: configs.playwright,
       required: true,
       source: "project",
-    });
-  }
-
-  if (
-    languages.has("python") &&
-    usesAnyStage(selected, ["lint", "format", "complexity", "maintainability"])
-  ) {
-    checks.push({
+    }),
+  },
+  {
+    applies: (languages, selected) =>
+      languages.has("python") &&
+      usesAnyStage(selected, ["lint", "format", "complexity", "maintainability"]),
+    create: (configs) => ({
       detail: configs.pythonQuality
         ? "detected; Python tools use repository quality config"
         : "not detected; Ruff and Radon-compatible tools will use their defaults unless repository config is added",
@@ -100,14 +174,13 @@ export function resolveDoctorNativeConfigChecks(
       ok: true,
       required: false,
       source: "project",
-    });
-  }
-
-  if (
-    hasJavaScriptOrTypeScript &&
-    usesAnyStage(selected, ["sloc", "complexity", "maintainability"])
-  ) {
-    checks.push({
+    }),
+  },
+  {
+    applies: (languages, selected) =>
+      hasJavaScriptOrTypeScript(languages) &&
+      usesAnyStage(selected, ["sloc", "complexity", "maintainability"]),
+    create: (configs) => ({
       detail: configs.lizard
         ? "detected; metrics cache tracks lizard config changes"
         : "not detected; lizard metrics use AIQ defaults unless repository config is added",
@@ -115,11 +188,9 @@ export function resolveDoctorNativeConfigChecks(
       ok: true,
       required: false,
       source: "project",
-    });
-  }
-
-  return checks;
-}
+    }),
+  },
+];
 
 async function collectNativeConfigs(
   directory: string,
@@ -160,50 +231,19 @@ async function collectNativeConfigs(
 }
 
 async function addNativeConfig(filePath: string, configs: NativeConfigDetection): Promise<void> {
-  switch (path.basename(filePath)) {
-    case "biome.json":
-    case "biome.jsonc":
-      configs.biome = true;
-      return;
-    case "jest.config.cjs":
-    case "jest.config.js":
-    case "jest.config.mjs":
-    case "jest.config.ts":
-    case "vitest.config.cjs":
-    case "vitest.config.cts":
-    case "vitest.config.js":
-    case "vitest.config.mjs":
-    case "vitest.config.mts":
-    case "vitest.config.ts":
-      configs.jsTest = true;
-      return;
-    case ".lizard":
-    case ".lizardrc":
-    case "lizard.conf":
-      configs.lizard = true;
-      return;
-    case "playwright.config.cjs":
-    case "playwright.config.cts":
-    case "playwright.config.js":
-    case "playwright.config.mjs":
-    case "playwright.config.mts":
-    case "playwright.config.ts":
-      configs.playwright = true;
-      return;
-    case ".ruff.toml":
-    case "pyproject.toml":
-    case "radon.cfg":
-    case "ruff.toml":
-    case "setup.cfg":
-    case "tox.ini":
-      configs.pythonQuality = true;
-      return;
-    case "tsconfig.json":
-      configs.tsconfig = true;
-      return;
-    case "package.json":
-      await addPackageNativeConfig(filePath, configs);
-      return;
+  const baseName = path.basename(filePath);
+  nativeConfigSetters.get(baseName)?.(configs);
+  if (jsTestConfigNames.has(baseName)) {
+    configs.jsTest = true;
+  }
+  if (playwrightConfigNames.has(baseName)) {
+    configs.playwright = true;
+  }
+  if (pythonQualityConfigNames.has(baseName)) {
+    configs.pythonQuality = true;
+  }
+  if (baseName === "package.json") {
+    await addPackageNativeConfig(filePath, configs);
   }
 }
 
@@ -227,28 +267,42 @@ async function addPackageNativeConfig(
     .map((scriptName) => readNestedString(packageJson, ["scripts", scriptName])?.toLowerCase())
     .filter((script): script is string => script !== undefined);
 
-  if (
+  if (hasPackageJsTestConfig(packageJson, testScript)) {
+    configs.jsTest = true;
+  }
+
+  if (hasPackagePlaywrightConfig(packageJson, e2eScripts)) {
+    configs.playwright = true;
+  }
+}
+
+function hasPackageJsTestConfig(packageJson: Record<string, unknown>, testScript: string): boolean {
+  return (
     testScript.includes("vitest") ||
     testScript.includes("jest") ||
     hasPackageDependency(packageJson, "vitest") ||
     hasPackageDependency(packageJson, "jest")
-  ) {
-    configs.jsTest = true;
-  }
+  );
+}
 
-  if (
+function hasPackagePlaywrightConfig(
+  packageJson: Record<string, unknown>,
+  e2eScripts: readonly string[],
+): boolean {
+  return (
     e2eScripts.length > 0 ||
     hasPackageDependency(packageJson, "@playwright/test") ||
     hasPackageDependency(packageJson, "playwright") ||
-    e2eScripts.some(
-      (script) =>
-        script.includes("playwright") ||
-        script.includes("agent-browser") ||
-        script.includes("manual-audit"),
-    )
-  ) {
-    configs.playwright = true;
-  }
+    e2eScripts.some(isPlaywrightLikeScript)
+  );
+}
+
+function isPlaywrightLikeScript(script: string): boolean {
+  return (
+    script.includes("playwright") ||
+    script.includes("agent-browser") ||
+    script.includes("manual-audit")
+  );
 }
 
 function hasPackageDependency(packageJson: Record<string, unknown>, dependency: string): boolean {
@@ -278,4 +332,8 @@ function readNestedString(record: Record<string, unknown>, keys: string[]): stri
 
 function usesAnyStage(selected: ReadonlySet<StageId>, stages: readonly StageId[]): boolean {
   return stages.some((stage) => selected.has(stage));
+}
+
+function hasJavaScriptOrTypeScript(languages: ReadonlySet<LanguageId>): boolean {
+  return languages.has("javascript") || languages.has("typescript");
 }

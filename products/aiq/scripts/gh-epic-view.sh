@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2005
 
 # Epic-focused GitHub Issues Viewer
 # Provides epic-specific views and management commands

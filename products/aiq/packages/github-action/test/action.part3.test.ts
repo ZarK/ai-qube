@@ -1,0 +1,263 @@
+import { execFile } from "node:child_process";
+import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+
+import { afterEach, describe, expect, it } from "vitest";
+import { defaultConfig } from "../../config-schema/src/index.js";
+import type { RunResult } from "../../model/src/index.js";
+
+import {
+  type GitHubActionIo,
+  parseGitHubActionStageInput,
+  parsePositiveInteger,
+  runAiqGitHubAction,
+} from "../src/index.js";
+
+const execFileAsync = promisify(execFile);
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { force: true, recursive: true })));
+});
+
+describe("github action adapter", () => {
+  it("keeps the action runtime path pointed at a bundled file", async () => {
+    const actionYamlPath = path.resolve("packages/github-action/action.yml");
+    const actionYaml = await readFile(actionYamlPath, "utf8");
+    const mainMatch = /^\s*main:\s*(.+)$/mu.exec(actionYaml);
+    const runtimePath = path.resolve(path.dirname(actionYamlPath), mainMatch?.[1] ?? "missing");
+
+    expect(mainMatch?.[1]).toBe("dist/main.mjs");
+    await expect(access(runtimePath)).resolves.toBeUndefined();
+
+    const runtimeSource = await readFile(runtimePath, "utf8");
+    const shebangLines = runtimeSource.split(/\r?\n/u).filter((line) => line.startsWith("#!"));
+    expect(shebangLines).toEqual(["#!/usr/bin/env node"]);
+
+    const repoDir = await createGitRepo({
+      "src/index.ts": "const bundled = 1;\nexport { bundled };\n",
+    });
+    const result = await execFileAsync(process.execPath, [runtimePath], {
+      cwd: repoDir,
+      env: {
+        ...process.env,
+        GITHUB_WORKSPACE: repoDir,
+        INPUT_ANNOTATE: "false",
+        INPUT_FILES: "src/index.ts",
+        INPUT_STAGES: "lint",
+        "INPUT_UPLOAD-ARTIFACT": "false",
+      },
+    });
+
+    expect(result.stderr).not.toContain("Dynamic require");
+    expect(result.stderr).not.toContain("SyntaxError");
+    expect(result.stdout).toContain("AIQ check");
+  });
+});
+
+class MemoryGitHubActionIo implements GitHubActionIo {
+  readonly annotations: Array<{
+    file?: string;
+    level: string;
+    message: string;
+    title: string;
+  }> = [];
+
+  readonly failedMessages: string[] = [];
+
+  readonly infoMessages: string[] = [];
+
+  readonly outputs = new Map<string, boolean | number | string>();
+
+  readonly uploads: Array<{
+    files: string[];
+    name: string;
+    rootDirectory: string;
+  }> = [];
+
+  emitAnnotation(annotation: {
+    file?: string;
+    level: "error" | "notice" | "warning";
+    message: string;
+    title: string;
+  }): void {
+    this.annotations.push(annotation);
+  }
+
+  info(message: string): void {
+    this.infoMessages.push(message);
+  }
+
+  setFailed(message: string): void {
+    this.failedMessages.push(message);
+  }
+
+  setOutput(name: string, value: boolean | number | string): void {
+    this.outputs.set(name, value);
+  }
+
+  async uploadArtifact(
+    name: string,
+    files: string[],
+    rootDirectory: string,
+  ): Promise<{ id: number; size: number }> {
+    this.uploads.push({ files, name, rootDirectory });
+    return {
+      id: 1,
+      size: files.length,
+    };
+  }
+}
+
+async function createGitRepo(
+  files: Record<string, string>,
+  config?: Record<string, unknown>,
+): Promise<string> {
+  const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-github-action-"));
+  tempDirs.push(repoDir);
+
+  await execFileAsync("git", ["init"], { cwd: repoDir });
+
+  if (config !== undefined) {
+    await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
+    await writeFile(
+      path.join(repoDir, ".aiq", "aiq.config.json"),
+      `${JSON.stringify(config, null, 2)}\n`,
+      "utf8",
+    );
+  }
+
+  for (const [relativePath, contents] of Object.entries(files)) {
+    const filePath = path.join(repoDir, relativePath);
+    await mkdir(path.dirname(filePath), { recursive: true });
+    await writeFile(filePath, contents, "utf8");
+    await execFileAsync("git", ["add", relativePath], { cwd: repoDir });
+  }
+
+  return repoDir;
+}
+
+function createRunResult(options: {
+  cwd: string;
+  diagnostics: Array<{
+    file: string;
+    message: string;
+    severity: "error" | "info" | "warning";
+    source: string;
+  }>;
+  outDir: string;
+  reportPath: string;
+  status: "failed" | "passed";
+}): RunResult {
+  const planPath = path.join(options.outDir, "aiq.plan.json");
+  const result: RunResult = {
+    artifactType: "report",
+    artifactVersion: 1,
+    artifacts: {
+      outDir: options.outDir,
+      planPath,
+      reportPath: options.reportPath,
+    },
+    context: "github",
+    durationMs: 1,
+    engineVersion: "0.0.0",
+    finishedAt: "2026-03-23T00:00:00.000Z",
+    mode: "check",
+    ok: options.status === "passed",
+    stages: [
+      {
+        diagnostics: options.diagnostics,
+        durationMs: 1,
+        notes: [],
+        stageId: "lint",
+        status: options.status,
+        toolRuns: [],
+      },
+    ],
+    plan: {
+      artifactType: "plan",
+      artifactVersion: 1,
+      artifacts: {
+        outDir: options.outDir,
+      },
+      context: "github",
+      createdAt: "2026-03-23T00:00:00.000Z",
+      engineVersion: "0.0.0",
+      input: {
+        entries: [
+          {
+            extension: ".ts",
+            path: path.join(options.cwd, "src/index.ts"),
+          },
+        ],
+        files: [path.join(options.cwd, "src/index.ts")],
+        root: options.cwd,
+        source: "direct",
+        summary: {
+          fileCount: 1,
+        },
+      },
+      stages: ["lint"],
+      profile: "deep",
+      runId: "run_123",
+      summary: {
+        fileCount: 1,
+        stageCount: 1,
+        taskCount: 1,
+      },
+      tasks: [
+        {
+          fileCount: 1,
+          files: [path.join(options.cwd, "src/index.ts")],
+          id: "task_123",
+          stageId: "lint",
+        },
+      ],
+    },
+    request: {
+      context: "github",
+      cwd: options.cwd,
+      manifest: {
+        entries: [
+          {
+            extension: ".ts",
+            path: path.join(options.cwd, "src/index.ts"),
+          },
+        ],
+        files: [path.join(options.cwd, "src/index.ts")],
+        root: options.cwd,
+        source: "direct",
+        summary: {
+          fileCount: 1,
+        },
+      },
+      mode: "check",
+      outDir: options.outDir,
+      selection: {
+        stages: ["lint"],
+        profile: "deep",
+      },
+      writeArtifacts: true,
+    },
+    runId: "run_123",
+    startedAt: "2026-03-23T00:00:00.000Z",
+    summary: {
+      cacheHitCount: 0,
+      cacheHitRate: 0,
+      cacheMissCount: 0,
+      diagnosticCount: options.diagnostics.length,
+      durationMs: 1,
+      fileCount: 1,
+      notImplementedStageCount: 0,
+      stageCount: 1,
+      status: options.status,
+      taskCount: 1,
+      toolDurationMs: 0,
+      toolRunCount: 0,
+    },
+  };
+
+  return result;
+}

@@ -95,6 +95,15 @@ interface ResolvedGitHubSelection {
   publishDiagnostics: boolean;
 }
 
+interface ResolvedGitHubActionAdapterDependencies {
+  cwd: string;
+  gitBinary: string;
+  listTrackedFilesImpl: ListTrackedFilesImpl;
+  readFileImpl: ReadTextFileImpl;
+  resolveConfigImpl: typeof resolveAiqConfig;
+  runEngineImpl: typeof runEngine;
+}
+
 export class AiqGitHubActionAdapter {
   private readonly cwd: string;
 
@@ -109,12 +118,13 @@ export class AiqGitHubActionAdapter {
   private readonly runEngineImpl: typeof runEngine;
 
   constructor(options: AiqGitHubActionAdapterOptions = {}) {
-    this.cwd = path.resolve(options.cwd ?? process.cwd());
-    this.gitBinary = options.gitBinary ?? "git";
-    this.listTrackedFilesImpl = options.listTrackedFilesImpl ?? listTrackedFiles;
-    this.readFileImpl = options.readFileImpl ?? readFile;
-    this.resolveConfigImpl = options.resolveConfigImpl ?? resolveAiqConfig;
-    this.runEngineImpl = options.runEngineImpl ?? runEngine;
+    const dependencies = resolveGitHubActionAdapterDependencies(options);
+    this.cwd = dependencies.cwd;
+    this.gitBinary = dependencies.gitBinary;
+    this.listTrackedFilesImpl = dependencies.listTrackedFilesImpl;
+    this.readFileImpl = dependencies.readFileImpl;
+    this.resolveConfigImpl = dependencies.resolveConfigImpl;
+    this.runEngineImpl = dependencies.runEngineImpl;
   }
 
   async run(options: AiqGitHubActionRunOptions = {}): Promise<AiqGitHubActionExecutionResult> {
@@ -241,6 +251,23 @@ export function createAiqGitHubActionAdapter(
   return new AiqGitHubActionAdapter(options);
 }
 
+function resolveGitHubActionAdapterDependencies(
+  options: AiqGitHubActionAdapterOptions,
+): ResolvedGitHubActionAdapterDependencies {
+  return {
+    cwd: path.resolve(withDefault(options.cwd, process.cwd())),
+    gitBinary: withDefault(options.gitBinary, "git"),
+    listTrackedFilesImpl: withDefault(options.listTrackedFilesImpl, listTrackedFiles),
+    readFileImpl: withDefault(options.readFileImpl, readFile),
+    resolveConfigImpl: withDefault(options.resolveConfigImpl, resolveAiqConfig),
+    runEngineImpl: withDefault(options.runEngineImpl, runEngine),
+  };
+}
+
+function withDefault<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
+}
+
 export async function runAiqGitHubAction(
   io: GitHubActionIo,
   options: AiqGitHubActionRunOptions = {},
@@ -250,32 +277,85 @@ export async function runAiqGitHubAction(
   const outcome = await adapter.run(options);
 
   if (outcome.skipped || outcome.report === undefined) {
-    io.info("AIQ GitHub Action skipped: no files were selected.");
-    io.setOutput("ok", true);
-    io.setOutput("status", "skipped");
-    io.setOutput("diagnostic-count", 0);
-    io.setOutput("annotation-count", 0);
-    return outcome;
+    return reportSkippedGitHubAction(io, outcome);
   }
 
+  const reportedOutcome: AiqGitHubActionExecutionResult & { report: RunResult } = {
+    ...outcome,
+    report: outcome.report,
+  };
   for (const annotation of outcome.annotations) {
     io.emitAnnotation(annotation);
   }
 
-  let upload: GitHubArtifactUploadResult | undefined;
-  if (
+  const upload = await uploadGitHubActionArtifacts(io, options, reportedOutcome);
+  io.info(formatRunResultAsText(reportedOutcome.report).trimEnd());
+  setGitHubActionOutputs(io, reportedOutcome, upload);
+  reportGitHubActionFailure(io, reportedOutcome.report);
+
+  return upload === undefined ? outcome : { ...outcome, upload };
+}
+
+function reportSkippedGitHubAction(
+  io: GitHubActionIo,
+  outcome: AiqGitHubActionExecutionResult,
+): AiqGitHubActionExecutionResult {
+  io.info("AIQ GitHub Action skipped: no files were selected.");
+  io.setOutput("ok", true);
+  io.setOutput("status", "skipped");
+  io.setOutput("diagnostic-count", 0);
+  io.setOutput("annotation-count", 0);
+  return outcome;
+}
+
+async function uploadGitHubActionArtifacts(
+  io: GitHubActionIo,
+  options: AiqGitHubActionRunOptions,
+  outcome: AiqGitHubActionExecutionResult & { report: RunResult },
+): Promise<GitHubArtifactUploadResult | undefined> {
+  if (!shouldUploadGitHubActionArtifact(io, options, outcome)) {
+    return undefined;
+  }
+
+  const uploadArtifact = io.uploadArtifact;
+  if (uploadArtifact === undefined) {
+    return undefined;
+  }
+
+  return uploadArtifact.call(
+    io,
+    options.artifactName ?? "aiq-report",
+    outcome.artifactPaths,
+    outcome.report.artifacts.outDir,
+  );
+}
+
+function shouldUploadGitHubActionArtifact(
+  io: GitHubActionIo,
+  options: AiqGitHubActionRunOptions,
+  outcome: AiqGitHubActionExecutionResult,
+): boolean {
+  return (
     (options.uploadArtifact ?? true) &&
     io.uploadArtifact !== undefined &&
     outcome.artifactPaths.length > 0
-  ) {
-    upload = await io.uploadArtifact(
-      options.artifactName ?? "aiq-report",
-      outcome.artifactPaths,
-      outcome.report.artifacts.outDir,
-    );
-  }
+  );
+}
 
-  io.info(formatRunResultAsText(outcome.report).trimEnd());
+function setGitHubActionOutputs(
+  io: GitHubActionIo,
+  outcome: AiqGitHubActionExecutionResult & { report: RunResult },
+  upload: GitHubArtifactUploadResult | undefined,
+): void {
+  setGitHubActionReportOutputs(io, outcome);
+  setGitHubActionWorkflowOutputs(io, outcome);
+  setGitHubActionArtifactOutputs(io, upload);
+}
+
+function setGitHubActionReportOutputs(
+  io: GitHubActionIo,
+  outcome: AiqGitHubActionExecutionResult & { report: RunResult },
+): void {
   io.setOutput("ok", outcome.report.ok);
   io.setOutput("status", outcome.report.summary.status);
   io.setOutput("diagnostic-count", outcome.report.summary.diagnosticCount);
@@ -286,26 +366,41 @@ export async function runAiqGitHubAction(
     "stages",
     (outcome.workflow?.selectedStages ?? outcome.report.request.selection.stages).join(","),
   );
-  if (outcome.workflow !== undefined) {
-    io.setOutput("current-stage", outcome.workflow.currentStage.index);
-    io.setOutput("current-stage-name", outcome.workflow.currentStage.id);
-    io.setOutput("progress-path", outcome.workflow.progressPath);
+}
+
+function setGitHubActionWorkflowOutputs(
+  io: GitHubActionIo,
+  outcome: AiqGitHubActionExecutionResult,
+): void {
+  if (outcome.workflow === undefined) {
+    return;
   }
 
+  io.setOutput("current-stage", outcome.workflow.currentStage.index);
+  io.setOutput("current-stage-name", outcome.workflow.currentStage.id);
+  io.setOutput("progress-path", outcome.workflow.progressPath);
+}
+
+function setGitHubActionArtifactOutputs(
+  io: GitHubActionIo,
+  upload: GitHubArtifactUploadResult | undefined,
+): void {
   if (upload?.id !== undefined) {
     io.setOutput("artifact-id", upload.id);
   }
   if (upload?.size !== undefined) {
     io.setOutput("artifact-size", upload.size);
   }
+}
 
-  if (!outcome.report.ok) {
-    io.setFailed(
-      `AIQ reported ${outcome.report.summary.diagnosticCount} diagnostic${outcome.report.summary.diagnosticCount === 1 ? "" : "s"} with status ${outcome.report.summary.status}.`,
-    );
+function reportGitHubActionFailure(io: GitHubActionIo, report: RunResult): void {
+  if (report.ok) {
+    return;
   }
 
-  return upload === undefined ? outcome : { ...outcome, upload };
+  io.setFailed(
+    `AIQ reported ${report.summary.diagnosticCount} diagnostic${report.summary.diagnosticCount === 1 ? "" : "s"} with status ${report.summary.status}.`,
+  );
 }
 
 export async function listTrackedFiles(options: ListTrackedFilesOptions): Promise<string[]> {

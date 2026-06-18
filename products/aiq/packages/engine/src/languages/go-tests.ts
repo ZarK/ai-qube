@@ -1,0 +1,309 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+
+import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../contracts.js";
+import * as commands from "../tools/command-builders.js";
+import type { GoRunnerRuntime } from "./contracts.js";
+import {
+  parseGoCoveragePercent,
+  parseGoTestReport,
+  readGoCoverageNote,
+  readGoUnitNote,
+  resolveGoBinary,
+} from "./go-tools.js";
+import type { GoProject } from "./go-projects.js";
+import {
+  createGoProjectResolutionDiagnostics,
+  createGoProjectResolutionFailureStage,
+  createGoProjectResolutionMessage,
+  filterGoFiles,
+  findFileExists,
+  resolveGoProjects,
+  runProjectBatches,
+} from "./go-projects.js";
+export { runGoMetricsTask } from "./go-metrics-task.js";
+
+type GoCommandOutcome = Awaited<ReturnType<GoRunnerRuntime["runExecutable"]>>;
+type GoTestReport = ReturnType<typeof parseGoTestReport>;
+type GoTestExecution = {
+  coveragePercent: number | undefined;
+  durationMs: number;
+  exitCode: number | undefined;
+  finishedAt: string;
+  toolArgs: string[];
+};
+type GoCoverageContext = {
+  args: string[];
+  coveragePath: string;
+  goCommand: string;
+  outcome: GoCommandOutcome;
+  project: GoProject;
+  report: GoTestReport;
+  runtime: GoRunnerRuntime;
+};
+
+export async function runGoUnitTask(
+  task: PlannedTask,
+  runtime: GoRunnerRuntime,
+): Promise<StageResult> {
+  return runGoTestStage(task, runtime, "unit");
+}
+
+export async function runGoCoverageTask(
+  task: PlannedTask,
+  runtime: GoRunnerRuntime,
+): Promise<StageResult> {
+  return runGoTestStage(task, runtime, "coverage");
+}
+
+async function runGoTestStage(
+  task: PlannedTask,
+  runtime: GoRunnerRuntime,
+  mode: "coverage" | "unit",
+): Promise<StageResult> {
+  const files = filterGoFiles(task.files);
+  if (files.length === 0) {
+    return runtime.createNoopStageResult(
+      task.stageId,
+      `No Go files were selected for ${task.stageId}.`,
+    );
+  }
+
+  const diagnostics: Diagnostic[] = [];
+  const notes: string[] = [];
+  const toolRuns: ToolRunResult[] = [];
+  let totalDurationMs = 0;
+  let unsupportedFiles: string[] = [];
+
+  try {
+    const resolvedProjects = await resolveGoProjects(runtime.graph, files);
+    unsupportedFiles = resolvedProjects.unsupportedFiles;
+
+    if (resolvedProjects.projects.length === 0) {
+      return createGoProjectResolutionFailureStage(task.stageId, files);
+    }
+
+    const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) =>
+      runGoProjectTestTask(project, mode, runtime),
+    );
+
+    for (const projectResult of projectResults) {
+      totalDurationMs += projectResult.durationMs;
+      diagnostics.push(...projectResult.diagnostics);
+      notes.push(projectResult.note);
+      toolRuns.push(projectResult.toolRun);
+    }
+  } catch (error) {
+    runtime.throwIfAbortError(error);
+    return runtime.createExecutionFailureStage(
+      task.stageId,
+      mode === "coverage" ? "go-test-coverage" : "go-test",
+      files[0] ?? runtime.cwd,
+      error,
+      totalDurationMs,
+      diagnostics,
+      toolRuns,
+    );
+  }
+
+  if (unsupportedFiles.length > 0) {
+    const message = createGoProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createGoProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
+  }
+
+  return {
+    diagnostics,
+    durationMs: totalDurationMs,
+    notes,
+    stageId: task.stageId,
+    status: diagnostics.length > 0 ? "failed" : "passed",
+    toolRuns,
+  };
+}
+
+async function runGoProjectTestTask(
+  project: GoProject,
+  mode: "coverage" | "unit",
+  runtime: GoRunnerRuntime,
+): Promise<{
+  diagnostics: Diagnostic[];
+  durationMs: number;
+  note: string;
+  toolRun: ToolRunResult;
+}> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-go-runner-"));
+
+  try {
+    const coveragePath = path.join(tempDir, "coverage.out");
+    const args = commands.createGoTestArgs(
+      mode === "coverage" ? { coverageProfile: coveragePath } : {},
+    );
+    const goCommand = await resolveGoBinary("go", runtime);
+    const outcome = await runtime.runExecutable(
+      goCommand,
+      args,
+      project.projectRoot,
+      runtime.signal,
+    );
+    const report = parseGoTestReport(
+      outcome.stdout,
+      project.projectRoot,
+      readGoTestTool(mode),
+      project.files[0] ?? project.moduleFilePath,
+    );
+    const execution =
+      mode === "coverage"
+        ? await readGoCoverageExecution({
+            args,
+            coveragePath,
+            goCommand,
+            outcome,
+            project,
+            report,
+            runtime,
+          })
+        : createGoTestExecution(outcome, args);
+    const status =
+      execution.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
+    appendSilentGoTestFailureDiagnostic({ mode, outcome, project, report, runtime, status });
+
+    return {
+      diagnostics: report.diagnostics,
+      durationMs: execution.durationMs,
+      note: readGoTestNote(mode, execution.coveragePercent, report),
+      toolRun: runtime.createToolRunResult(
+        readGoTestTool(mode),
+        execution.toolArgs,
+        execution.durationMs,
+        execution.exitCode,
+        status,
+        execution.finishedAt,
+        outcome.startedAt,
+      ),
+    };
+  } finally {
+    await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
+  }
+}
+
+function createGoTestExecution(
+  outcome: GoCommandOutcome,
+  args: readonly string[],
+): GoTestExecution {
+  return {
+    coveragePercent: undefined,
+    durationMs: outcome.durationMs,
+    exitCode: outcome.exitCode,
+    finishedAt: outcome.finishedAt,
+    toolArgs: [...args],
+  };
+}
+
+async function readGoCoverageExecution(context: GoCoverageContext): Promise<GoTestExecution> {
+  if (await findFileExists(context.coveragePath)) {
+    return readGoCoverageProfileExecution(context);
+  }
+
+  const execution = createGoTestExecution(context.outcome, context.args);
+  if (context.outcome.exitCode === 0) {
+    execution.exitCode = 1;
+    context.report.diagnostics.push(
+      context.runtime.createProcessFailureDiagnostic(
+        context.project.files[0] ?? context.project.moduleFilePath,
+        "go-test-coverage",
+        `go test did not produce coverage profile at ${context.coveragePath}.`,
+      ),
+    );
+  }
+  return execution;
+}
+
+async function readGoCoverageProfileExecution(
+  context: GoCoverageContext,
+): Promise<GoTestExecution> {
+  const coverageArgs = commands.createGoCoverageArgs({ func: context.coveragePath });
+  const coverageOutcome = await context.runtime.runExecutable(
+    context.goCommand,
+    coverageArgs,
+    context.project.projectRoot,
+    context.runtime.signal,
+  );
+  const execution = createGoTestExecution(context.outcome, [...context.args, ...coverageArgs]);
+  execution.durationMs += coverageOutcome.durationMs;
+  execution.finishedAt = coverageOutcome.finishedAt;
+
+  if (coverageOutcome.exitCode === 0) {
+    execution.coveragePercent = parseGoCoveragePercent(coverageOutcome.stdout);
+  } else {
+    execution.exitCode = coverageOutcome.exitCode;
+    appendGoCoverageFailureDiagnostic(
+      context.project,
+      context.runtime,
+      coverageOutcome,
+      context.report,
+    );
+  }
+  return execution;
+}
+
+function appendGoCoverageFailureDiagnostic(
+  project: GoProject,
+  runtime: GoRunnerRuntime,
+  coverageOutcome: GoCommandOutcome,
+  report: GoTestReport,
+): void {
+  report.diagnostics.push(
+    runtime.createProcessFailureDiagnostic(
+      project.files[0] ?? project.moduleFilePath,
+      "go-tool-cover",
+      runtime.readProcessFailureMessage(
+        "go tool cover",
+        coverageOutcome.stderr,
+        coverageOutcome.stdout,
+        coverageOutcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function appendSilentGoTestFailureDiagnostic(context: {
+  mode: "coverage" | "unit";
+  outcome: GoCommandOutcome;
+  project: GoProject;
+  report: GoTestReport;
+  runtime: GoRunnerRuntime;
+  status: StageResult["status"];
+}): void {
+  if (context.status !== "failed" || context.report.diagnostics.length > 0) {
+    return;
+  }
+
+  context.report.diagnostics.push(
+    context.runtime.createProcessFailureDiagnostic(
+      context.project.files[0] ?? context.project.moduleFilePath,
+      readGoTestTool(context.mode),
+      context.runtime.readProcessFailureMessage(
+        "go test",
+        context.outcome.stderr,
+        context.outcome.stdout,
+        context.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function readGoTestNote(
+  mode: "coverage" | "unit",
+  coveragePercent: number | undefined,
+  report: GoTestReport,
+): string {
+  return mode === "coverage"
+    ? readGoCoverageNote(coveragePercent, report.summary)
+    : readGoUnitNote(report.summary);
+}
+
+function readGoTestTool(mode: "coverage" | "unit"): "go-test" | "go-test-coverage" {
+  return mode === "coverage" ? "go-test-coverage" : "go-test";
+}

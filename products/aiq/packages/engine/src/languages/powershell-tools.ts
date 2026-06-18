@@ -1,19 +1,14 @@
-import { realpathSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-
 import type { Diagnostic, StageResult, ToolRunResult } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
-import { pathExists } from "../utils/path-utils.js";
 import type { PowerShellRunnerRuntime } from "./contracts.js";
 import {
-  type ScriptProject,
-  createMissingScriptTestsNote,
-  resolvePowerShellProjectCoverageFiles,
-  resolvePowerShellProjectTestFiles,
-  resolveScriptProjects,
-} from "./script.js";
+  normalizeDiagnosticsToSelection,
+  runPowerShellProjectTestTask,
+  summarizeProjectStageStatus,
+  toPowerShellStringLiteral,
+} from "./powershell-test.js";
+import { resolveScriptProjects } from "./script.js";
+export { runPowerShellFormatLanguageTask } from "./powershell-format.js";
 
 export async function runPowerShellLintLanguageTask(
   task: { files: string[]; stageId: StageResult["stageId"] },
@@ -22,66 +17,28 @@ export async function runPowerShellLintLanguageTask(
   const args = ["Invoke-ScriptAnalyzer", "-Path", ...task.files];
 
   try {
-    const moduleManifestPath =
-      await runtime.resolveRequiredPowerShellModuleManifest("PSScriptAnalyzer");
-    const outcome = await runtime.runPowerShellScript(
-      [
-        "$ErrorActionPreference = 'Stop'",
-        `Import-Module -Name ${toPowerShellStringLiteral(moduleManifestPath)} -Force`,
-        `$paths = @(${task.files.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-        "$results = foreach ($path in $paths) {",
-        "  Invoke-ScriptAnalyzer -Path $path",
-        "}",
-        "$results | ConvertTo-Json -Depth 8 -Compress",
-        "",
-      ].join("\n"),
-      runtime.cwd,
-      runtime.signal,
-    );
+    const outcome = await runPSScriptAnalyzer(task.files, runtime);
     const diagnostics = normalizeDiagnosticsToSelection(
       parsers.parsePowerShellAnalyzerDiagnostics(outcome.stdout, runtime.cwd),
       task.files,
     );
     const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          task.files[0] ?? runtime.cwd,
-          "psscriptanalyzer",
-          runtime.readProcessFailureMessage(
-            "PSScriptAnalyzer",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    return {
+    appendSilentPSScriptAnalyzerFailureDiagnostic({
       diagnostics,
-      durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? ["PSScriptAnalyzer passed."]
-          : [
-              `PSScriptAnalyzer reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
-            ],
+      files: task.files,
+      outcome,
+      runtime,
+      status,
+    });
+
+    return createPSScriptAnalyzerStageResult({
+      args,
+      diagnostics,
+      outcome,
+      runtime,
       stageId: task.stageId,
       status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "psscriptanalyzer",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
+    });
   } catch (error) {
     runtime.throwIfAbortError(error);
     return runtime.createExecutionFailureStage(
@@ -93,130 +50,90 @@ export async function runPowerShellLintLanguageTask(
   }
 }
 
-export async function runPowerShellFormatLanguageTask(
-  task: { files: string[]; stageId: StageResult["stageId"] },
+async function runPSScriptAnalyzer(
+  files: readonly string[],
   runtime: PowerShellRunnerRuntime,
-): Promise<StageResult> {
-  const args = ["Invoke-Formatter", "-Path", ...task.files];
+): Promise<Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>> {
+  const moduleManifestPath =
+    await runtime.resolveRequiredPowerShellModuleManifest("PSScriptAnalyzer");
+  return runtime.runPowerShellScript(
+    [
+      "$ErrorActionPreference = 'Stop'",
+      `Import-Module -Name ${toPowerShellStringLiteral(moduleManifestPath)} -Force`,
+      `$paths = @(${files.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
+      "$results = foreach ($path in $paths) {",
+      "  Invoke-ScriptAnalyzer -Path $path",
+      "}",
+      "$results | ConvertTo-Json -Depth 8 -Compress",
+      "",
+    ].join("\n"),
+    runtime.cwd,
+    runtime.signal,
+  );
+}
 
-  try {
-    const originalContents = new Map(
-      await Promise.all(
-        task.files.map(async (file) => [file, await readFile(file, "utf8")] as const),
-      ),
-    );
-    const moduleManifestPath =
-      await runtime.resolveRequiredPowerShellModuleManifest("PSScriptAnalyzer");
-    const outcome = await runtime.runPowerShellScript(
-      [
-        "$ErrorActionPreference = 'Stop'",
-        `Import-Module -Name ${toPowerShellStringLiteral(moduleManifestPath)} -Force`,
-        `$paths = @(${task.files.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-        "$results = foreach ($path in $paths) {",
-        "  $content = Get-Content -LiteralPath $path -Raw",
-        "  [pscustomobject]@{",
-        "    Path = (Resolve-Path -LiteralPath $path).Path",
-        "    Formatted = (Invoke-Formatter -ScriptDefinition $content)",
-        "  }",
-        "}",
-        "$results | ConvertTo-Json -Depth 8 -Compress",
-        "",
-      ].join("\n"),
-      runtime.cwd,
-      runtime.signal,
-    );
-    const formatResults = parsers.parsePowerShellFormatResults(outcome.stdout, runtime.cwd);
-    const selectedPaths = task.files.map((file) => ({
-      file,
-      normalized: path.normalize(file),
-      realPath: tryRealpath(file),
-    }));
-    const formattedByFile = new Map(
-      formatResults.map((entry) => [
-        matchDiagnosticFile(entry.file, selectedPaths) ?? entry.file,
-        entry.formatted,
-      ]),
-    );
-    const diagnostics: Diagnostic[] = [];
-
-    for (const file of task.files) {
-      const original = originalContents.get(file);
-      const formatted = formattedByFile.get(file);
-      if (original === undefined || formatted === undefined) {
-        continue;
-      }
-
-      if (normalizeLineEndings(original) === normalizeLineEndings(formatted)) {
-        continue;
-      }
-
-      diagnostics.push({
-        file,
-        message: "File requires formatting.",
-        severity: "error",
-        source: "invoke-formatter",
-      });
-    }
-
-    if (outcome.exitCode === 0 && formatResults.length !== task.files.length) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          task.files[0] ?? runtime.cwd,
-          "invoke-formatter",
-          "Invoke-Formatter did not return formatted output for every selected file.",
-        ),
-      );
-    }
-
-    const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          task.files[0] ?? runtime.cwd,
-          "invoke-formatter",
-          runtime.readProcessFailureMessage(
-            "Invoke-Formatter",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    return {
-      diagnostics,
-      durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? ["Invoke-Formatter passed."]
-          : [
-              `Invoke-Formatter reported ${diagnostics.length} formatting diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
-            ],
-      stageId: task.stageId,
-      status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "invoke-formatter",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
-  } catch (error) {
-    runtime.throwIfAbortError(error);
-    return runtime.createExecutionFailureStage(
-      task.stageId,
-      "invoke-formatter",
-      readErrorFilePath(error) ?? task.files[0] ?? runtime.cwd,
-      error,
-    );
+function appendSilentPSScriptAnalyzerFailureDiagnostic(options: {
+  diagnostics: Diagnostic[];
+  files: readonly string[];
+  outcome: Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>;
+  runtime: PowerShellRunnerRuntime;
+  status: StageResult["status"];
+}): void {
+  if (options.status !== "failed" || options.diagnostics.length > 0) {
+    return;
   }
+
+  options.diagnostics.push(
+    options.runtime.createProcessFailureDiagnostic(
+      options.files[0] ?? options.runtime.cwd,
+      "psscriptanalyzer",
+      options.runtime.readProcessFailureMessage(
+        "PSScriptAnalyzer",
+        options.outcome.stderr,
+        options.outcome.stdout,
+        options.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function createPSScriptAnalyzerStageResult(options: {
+  args: string[];
+  diagnostics: Diagnostic[];
+  outcome: Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>;
+  runtime: PowerShellRunnerRuntime;
+  stageId: StageResult["stageId"];
+  status: StageResult["status"];
+}): StageResult {
+  return {
+    diagnostics: options.diagnostics,
+    durationMs: options.outcome.durationMs,
+    notes: readPSScriptAnalyzerNotes(options.status, options.diagnostics),
+    stageId: options.stageId,
+    status: options.status,
+    toolRuns: [
+      options.runtime.createToolRunResult(
+        "psscriptanalyzer",
+        options.args,
+        options.outcome.durationMs,
+        options.outcome.exitCode,
+        options.status,
+        options.outcome.finishedAt,
+        options.outcome.startedAt,
+      ),
+    ],
+  };
+}
+
+function readPSScriptAnalyzerNotes(
+  status: StageResult["status"],
+  diagnostics: readonly Diagnostic[],
+): string[] {
+  return status === "passed"
+    ? ["PSScriptAnalyzer passed."]
+    : [
+        `PSScriptAnalyzer reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
+      ];
 }
 
 export async function runPowerShellTestLanguageTask(
@@ -265,290 +182,4 @@ export async function runPowerShellTestLanguageTask(
     status: summarizeProjectStageStatus(statuses),
     toolRuns,
   };
-}
-
-async function runPowerShellProjectTestTask(
-  project: ScriptProject,
-  mode: "coverage" | "unit",
-  runtime: PowerShellRunnerRuntime,
-): Promise<{
-  diagnostics: Diagnostic[];
-  durationMs: number;
-  note: string;
-  status: StageResult["status"];
-  toolRuns: ToolRunResult[];
-}> {
-  const testFiles = await resolvePowerShellProjectTestFiles(project, runtime.findMatchingFiles);
-  if (testFiles.length === 0) {
-    return createPowerShellTestSetupFailure(
-      project,
-      `${createMissingScriptTestsNote("PowerShell", project.projectRoot)} Add Pester tests or disable PowerShell ${mode}.`,
-      runtime,
-    );
-  }
-
-  const pesterModulePath = await runtime.resolvePowerShellModuleManifest("Pester");
-  if (pesterModulePath === undefined) {
-    return createPowerShellTestSetupFailure(
-      project,
-      `Pester is required for PowerShell ${mode} and was not detected in ${project.projectRoot}. Install Pester or disable PowerShell ${mode}.`,
-      runtime,
-    );
-  }
-
-  const coverageFiles =
-    mode === "coverage"
-      ? await resolvePowerShellProjectCoverageFiles(project, runtime.findMatchingFiles)
-      : [];
-  if (mode === "coverage" && coverageFiles.length === 0) {
-    return createPowerShellTestSetupFailure(
-      project,
-      `No PowerShell source files were detected for coverage in ${project.projectRoot}. Add non-test .ps1 sources or disable PowerShell coverage.`,
-      runtime,
-    );
-  }
-
-  const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-runner-"));
-
-  try {
-    const junitPath = path.join(tempDir, "junit.xml");
-    const coveragePath = path.join(tempDir, "coverage.xml");
-    const args = [
-      "Invoke-Pester",
-      "-Path",
-      ...testFiles,
-      ...(mode === "coverage" ? ["-CodeCoverage", ...coverageFiles] : []),
-    ];
-    const outcome = await runtime.runPowerShellScript(
-      [
-        "$ErrorActionPreference = 'Stop'",
-        `Import-Module -Name ${toPowerShellStringLiteral(pesterModulePath)} -Force`,
-        "$configuration = New-PesterConfiguration",
-        `$configuration.Run.Path = @(${testFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-        "$configuration.Run.PassThru = $true",
-        "$configuration.Run.Exit = $false",
-        "$configuration.Output.Verbosity = 'None'",
-        "$configuration.TestResult.Enabled = $true",
-        `$configuration.TestResult.OutputPath = ${toPowerShellStringLiteral(junitPath)}`,
-        "$configuration.TestResult.OutputFormat = 'JUnitXml'",
-        ...(mode === "coverage"
-          ? [
-              "$configuration.CodeCoverage.Enabled = $true",
-              `$configuration.CodeCoverage.Path = @(${coverageFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-              `$configuration.CodeCoverage.OutputPath = ${toPowerShellStringLiteral(coveragePath)}`,
-              "$configuration.CodeCoverage.OutputFormat = 'Cobertura'",
-            ]
-          : []),
-        "$result = Invoke-Pester -Configuration $configuration",
-        "[pscustomobject]@{",
-        "  TotalCount = $result.TotalCount",
-        "  PassedCount = $result.PassedCount",
-        "  FailedCount = $result.FailedCount",
-        "} | ConvertTo-Json -Compress",
-        "",
-      ].join("\n"),
-      project.projectRoot,
-      runtime.signal,
-    );
-
-    const report = await parsers.parseJvmJunitReports(
-      [junitPath],
-      testFiles[0] ?? project.projectRoot,
-      readOptionalTextFile,
-    );
-    const diagnostics: Diagnostic[] = report.diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      source: "pester",
-    }));
-    const summary = parsers.parsePowerShellTestSummary(outcome.stdout) ?? report.summary;
-    const coveragePercent =
-      mode === "coverage"
-        ? parsers.readCoberturaLineRate(await readOptionalTextFile(coveragePath))
-        : undefined;
-    const status =
-      outcome.exitCode === 0 && diagnostics.length === 0 && summary.failed === 0
-        ? "passed"
-        : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          testFiles[0] ?? project.projectRoot,
-          "pester",
-          summary.failed > 0
-            ? `Pester reported ${summary.failed} failing test${summary.failed === 1 ? "" : "s"}.`
-            : runtime.readProcessFailureMessage(
-                "Pester",
-                outcome.stderr,
-                outcome.stdout,
-                outcome.exitCode,
-              ),
-        ),
-      );
-    }
-
-    return {
-      diagnostics,
-      durationMs: outcome.durationMs,
-      note:
-        mode === "coverage"
-          ? readPowerShellCoverageNote(summary, coveragePercent)
-          : readPowerShellUnitNote(summary),
-      status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "pester",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
-  } finally {
-    await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
-  }
-}
-
-function createPowerShellTestSetupFailure(
-  project: ScriptProject,
-  message: string,
-  runtime: PowerShellRunnerRuntime,
-): {
-  diagnostics: Diagnostic[];
-  durationMs: number;
-  note: string;
-  status: StageResult["status"];
-  toolRuns: ToolRunResult[];
-} {
-  const file = project.files[0] ?? project.projectRoot;
-
-  return {
-    diagnostics: [
-      {
-        file,
-        message,
-        severity: "error",
-        source: "pester",
-      },
-    ],
-    durationMs: 0,
-    note: message,
-    status: "failed",
-    toolRuns: [runtime.createToolRunResult("pester", [], 0, undefined, "failed")],
-  };
-}
-
-function summarizeProjectStageStatus(
-  statuses: readonly StageResult["status"][],
-): StageResult["status"] {
-  if (statuses.length === 0) {
-    return "passed";
-  }
-  if (statuses.includes("failed")) {
-    return "failed";
-  }
-  return "passed";
-}
-
-function readPowerShellUnitNote(summary: {
-  failed: number;
-  passed: number;
-  total: number;
-}): string {
-  if (summary.total === 0) {
-    return "Pester found no tests.";
-  }
-  return `Pester ran ${summary.total} test${summary.total === 1 ? "" : "s"}: ${summary.passed} passed, ${summary.failed} failed.`;
-}
-
-function readPowerShellCoverageNote(
-  summary: { failed: number; passed: number; total: number },
-  coveragePercent: number | undefined,
-): string {
-  if (summary.total === 0) {
-    return "Pester found no tests.";
-  }
-  if (coveragePercent === undefined) {
-    return `PowerShell coverage completed after ${summary.total} test${summary.total === 1 ? "" : "s"}.`;
-  }
-  return `PowerShell coverage lines: ${coveragePercent.toFixed(1)}% across ${summary.total} test${summary.total === 1 ? "" : "s"}.`;
-}
-
-function toPowerShellStringLiteral(value: string): string {
-  return `'${value.replaceAll("'", "''")}'`;
-}
-
-function normalizeLineEndings(value: string): string {
-  return value.replace(/\r\n/gu, "\n");
-}
-
-function readErrorFilePath(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("path" in error)) {
-    return undefined;
-  }
-
-  return typeof error.path === "string" ? path.resolve(error.path) : undefined;
-}
-
-async function readOptionalTextFile(filePath: string | undefined): Promise<string | undefined> {
-  if (filePath === undefined || !(await pathExists(filePath))) {
-    return undefined;
-  }
-  return readFile(filePath, "utf8");
-}
-
-function normalizeDiagnosticsToSelection(
-  diagnostics: readonly Diagnostic[],
-  selectedFiles: readonly string[],
-): Diagnostic[] {
-  if (diagnostics.length === 0 || selectedFiles.length === 0) {
-    return [...diagnostics];
-  }
-
-  const selectedPaths = selectedFiles.map((file) => ({
-    file,
-    normalized: path.normalize(file),
-    realPath: tryRealpath(file),
-  }));
-
-  return diagnostics.map((diagnostic) => {
-    const matchedFile = matchDiagnosticFile(diagnostic.file, selectedPaths);
-    if (matchedFile === undefined || matchedFile === diagnostic.file) {
-      return diagnostic;
-    }
-
-    return {
-      ...diagnostic,
-      file: matchedFile,
-    };
-  });
-}
-
-function matchDiagnosticFile(
-  file: string,
-  selectedPaths: ReadonlyArray<{ file: string; normalized: string; realPath: string | undefined }>,
-): string | undefined {
-  const normalized = path.normalize(file);
-  const directMatch = selectedPaths.find((entry) => entry.normalized === normalized);
-  if (directMatch !== undefined) {
-    return directMatch.file;
-  }
-
-  const realPath = tryRealpath(file);
-  if (realPath === undefined) {
-    return undefined;
-  }
-
-  return selectedPaths.find((entry) => entry.realPath === realPath)?.file;
-}
-
-function tryRealpath(filePath: string): string | undefined {
-  try {
-    return realpathSync.native(filePath);
-  } catch {
-    return undefined;
-  }
 }
