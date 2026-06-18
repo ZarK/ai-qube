@@ -51,13 +51,10 @@ export function readLcovLineRate(reportContents: string | undefined): number | u
   let linesFound = 0;
   let linesHit = 0;
   for (const line of reportContents.split(/\r?\n/u)) {
-    if (line.startsWith("LF:")) {
-      linesFound += readIntegerString(line.slice(3)) ?? 0;
-      foundData = true;
-    } else if (line.startsWith("LH:")) {
-      linesHit += readIntegerString(line.slice(3)) ?? 0;
-      foundData = true;
-    }
+    const counts = readLcovLineCounts(line);
+    linesFound += counts.linesFound;
+    linesHit += counts.linesHit;
+    foundData ||= counts.foundData;
   }
 
   if (!foundData || linesFound === 0) {
@@ -65,6 +62,20 @@ export function readLcovLineRate(reportContents: string | undefined): number | u
   }
 
   return (linesHit / linesFound) * 100;
+}
+
+function readLcovLineCounts(line: string): {
+  foundData: boolean;
+  linesFound: number;
+  linesHit: number;
+} {
+  if (line.startsWith("LF:")) {
+    return { foundData: true, linesFound: readIntegerString(line.slice(3)) ?? 0, linesHit: 0 };
+  }
+  if (line.startsWith("LH:")) {
+    return { foundData: true, linesFound: 0, linesHit: readIntegerString(line.slice(3)) ?? 0 };
+  }
+  return { foundData: false, linesFound: 0, linesHit: 0 };
 }
 
 export function readCoverageMetric(
