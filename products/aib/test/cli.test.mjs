@@ -744,6 +744,61 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.equal(status.artifacts.workItems.length, 3);
 });
 
+test("end-to-end bootstrap flow reaches renderable work item drafts from CLI answers", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-e2e-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--agent", "codex", "--idea", "Build a lightweight field notes CLI", "--json"]));
+
+  const answers = [
+    ["project.audience", "Researchers collecting structured notes"],
+    ["project.coreJob", "Capture notes and export reviewable summaries"],
+    ["project.shape", "CLI package"],
+    ["project.successNarrative", "A researcher can capture a note, review it, and export a summary"],
+    ["project.scope", "Local note capture, summary export, and markdown handoff"],
+    ["project.nonGoals", "No sync service, mobile app, or external account system"],
+    ["project.constraints", "Offline-first, deterministic local files, no network requirement"],
+    ["project.reuseBoundary", "Reusable package core with examples only"],
+    ["project.planningSurface", "Local markdown first, provider rendering after review"]
+  ];
+  for (const [field, value] of answers) {
+    parseJsonStdout(runAib(["answer", "--state", init.statePath, "--field", field, "--value", value, "--json"]));
+  }
+
+  const next = parseJsonStdout(runAib(["next", "--state", init.statePath, "--json"]));
+  assert.equal(next.nextAction.kind, "draft_spec");
+
+  const spec = parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  assert.equal(spec.state.phase, "spec_acceptance");
+
+  const validation = parseJsonStdout(runAib(["spec", "validate", "--state", init.statePath, "--json"]));
+  assert.equal(validation.validation.ok, true);
+
+  const accepted = parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "all", "--json"]));
+  assert.equal(accepted.state.phase, "milestone_generation");
+
+  const milestones = parseJsonStdout(runAib(["milestones", "generate", "--state", init.statePath, "--json"]));
+  assert.equal(milestones.milestones.length, 3);
+  assert.equal(milestones.state.phase, "work_item_generation");
+
+  const workItems = parseJsonStdout(runAib([
+    "work-items",
+    "generate",
+    "--state",
+    init.statePath,
+    "--milestone",
+    milestones.milestones[0].id,
+    "--json"
+  ]));
+  assert.equal(workItems.drafts.length, 3);
+  assert.equal(workItems.queueOrder.ok, true);
+
+  const githubPreview = parseJsonStdout(runAib(["work-items", "render", "--state", init.statePath, "--provider", "github", "--dry-run", "--json"]));
+  assert.equal(githubPreview.plannedIssues.length, 3);
+  assert.match(githubPreview.plannedIssues[0].body, /^Sequence: \d+/m);
+
+  const markdownPreview = parseJsonStdout(runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run", "--json"]));
+  assert.equal(markdownPreview.plannedWrites.length, 3);
+});
+
 test("milestones distinguish sequential foundations from independent features", async () => {
   const sequentialDir = await mkdtemp(join(tmpdir(), "aib-milestone-sequential-"));
   const sequentialInit = parseJsonStdout(runAib(["init", sequentialDir, "--idea", "Build a process playbook", "--json"]));

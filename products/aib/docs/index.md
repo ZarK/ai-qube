@@ -11,6 +11,7 @@ The intent is to keep `aib` clear enough to implement while avoiding confusing r
 - [Architecture](architecture.md) - package, state, provider, and agent-host boundaries.
 - [Core Contracts](contracts.md) - neutral planning state, work item drafts, capabilities, and render adapter boundaries.
 - [Agent JSON Protocol](protocol.md) - state and next-action envelopes used by agents.
+- [Release Readiness](release-readiness.md) - gates, safety notes, stable surface, and migration guidance.
 - [Work Buckets](work-buckets.md) - implementation buckets aligned to the existing GitHub issue queue.
 - [Issue Alignment](issue-alignment.md) - mapping between the current issues and missing work.
 
