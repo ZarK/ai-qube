@@ -167,14 +167,7 @@ export const statusCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: false
   },
-  errors: [
-    ...stateCommandErrors,
-    {
-      kind: "spec-section-invalid",
-      description: "The requested spec section id is not selected for this project.",
-      exitCode: 3
-    }
-  ],
+  errors: stateCommandErrors,
   exitCodes: stateCommandExitCodes
 });
 
@@ -454,7 +447,7 @@ export const specReopenCommand = defineCommand({
 export const milestonesGenerateCommand = defineCommand({
   kind: "command",
   name: "milestones generate",
-  description: "Guard milestone generation until the current spec is validated and accepted.",
+  description: "Generate milestone planning docs from an accepted spec before work-item drafting.",
   flags: [
     defineFlag({
       name: "json",
@@ -467,12 +460,74 @@ export const milestonesGenerateCommand = defineCommand({
       description: "Path to the bootstrap session JSON file.",
       type: "string",
       defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview milestone plans without writing docs or updating the session file.",
+      type: "boolean"
     })
   ],
   examples: [
     defineExample({
       description: "Check whether milestone generation is allowed.",
       command: "aib milestones generate --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-not-accepted",
+      description: "Milestone generation is blocked until all required spec sections are accepted.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: stateCommandExitCodes
+});
+
+export const workItemsGenerateCommand = defineCommand({
+  kind: "command",
+  name: "work-items generate",
+  description: "Guard work-item generation until at least one milestone doc exists.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "milestone",
+      description: "Milestone id or path to use for work-item drafting.",
+      type: "string"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Check whether work-item generation is allowed.",
+      command: "aib work-items generate --json"
     })
   ],
   output: {
@@ -488,8 +543,8 @@ export const milestonesGenerateCommand = defineCommand({
   errors: [
     ...stateCommandErrors,
     {
-      kind: "spec-not-accepted",
-      description: "Milestone generation is blocked until all required spec sections are accepted.",
+      kind: "milestone-required",
+      description: "Work item generation is blocked until at least one milestone doc exists.",
       exitCode: 3
     }
   ],
@@ -591,6 +646,7 @@ export const bootstrapRegistry = createCommandRegistry({
     specValidateCommand,
     specAcceptCommand,
     specReopenCommand,
-    milestonesGenerateCommand
+    milestonesGenerateCommand,
+    workItemsGenerateCommand
   ]
 });

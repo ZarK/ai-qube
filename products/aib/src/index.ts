@@ -10,6 +10,7 @@ export type {
   CapabilityStatus,
   ContextInspectionPlan,
   ContextInspectionTarget,
+  MilestoneDraft,
   PlanningArtifact,
   PlanningState,
   ProviderCapabilityReport,
@@ -33,6 +34,8 @@ export { DYNAMIC_SPEC_CHAPTERS, REQUIRED_SPEC_CHAPTERS, selectSpecChapters, spec
 export type { SelectedSpecChapter, SpecAcceptanceStatus, SpecChapter, SpecChapterId, SpecSectionDraft, SpecValidationResult } from "./spec_chapters.js";
 export { createSpecDraft, parseSpecMarkdownSections, requiredSpecSectionIds, resolveSpecPath, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 export type { SpecDraftResult, SpecValidationReport } from "./spec.js";
+export { createMilestoneDrafts, milestoneDocsExist, writeMilestoneDrafts } from "./milestones.js";
+export type { MilestoneDraftResult } from "./milestones.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
