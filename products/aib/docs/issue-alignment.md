@@ -66,6 +66,17 @@ This issue covers milestone planning as a distinct phase:
 - milestone dependencies are explicit
 - milestone docs may include diagrams and pseudo-algorithm notes but not production code
 
+### Executor Queue Ordering
+
+Generate Executor-compatible queue ordering metadata.
+
+This section covers queue display metadata for generated work items:
+
+- generated drafts include stable `Sequence:` hints when the target workflow is Executor-compatible
+- GitHub and markdown renderers preserve `Blocked by:` dependency lines and `Sequence:` ordering hints
+- `Sequence:` is not the dependency model; blockers remain authoritative
+- sequence values are validated against generated-draft blockers before provider mutation
+
 ### Non-Code Project Support
 
 Created issue: `#12 M3/M4: Non-code project support in planning flows`
