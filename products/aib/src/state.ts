@@ -352,6 +352,37 @@ export function computeNextAction(state: BootstrapState): ComputedNextAction {
           stopCondition: "Stop and request section-aware spec acceptance before generating milestones."
         };
       }
+      return {
+        kind: "generate_artifacts",
+        actor: "agent",
+        summary: "Generate milestone candidates from the accepted spec before drafting work items.",
+        missingDecisions: [],
+        stateFields: ["artifacts.milestones", "planning.milestoneDrafts"],
+        nextCommand: "aib milestones generate --json",
+        stopCondition: "Plan at least the first three milestones before generating work items unless the human explicitly overrides."
+      };
+    }
+    if (state.phase === "work_item_generation") {
+      if (state.artifacts.milestones.length === 0) {
+        return {
+          kind: "generate_artifacts",
+          actor: "agent",
+          summary: "Work-item generation is blocked until milestone docs exist.",
+          missingDecisions: ["artifacts.milestones"],
+          stateFields: ["artifacts.milestones", "planning.milestoneDrafts"],
+          nextCommand: "aib milestones generate --json",
+          stopCondition: "Stop and generate milestone docs before drafting work items."
+        };
+      }
+      return {
+        kind: "generate_artifacts",
+        actor: "agent",
+        summary: "Milestone docs exist. Generate work item drafts from a selected milestone next.",
+        missingDecisions: [],
+        stateFields: ["artifacts.workItems", "planning.workItemDrafts"],
+        nextCommand: "aib work-items generate --milestone <milestone-id> --json",
+        stopCondition: "Stop after drafting work items from milestone docs and recording them in state."
+      };
     }
     return {
       kind: "generate_artifacts",
@@ -671,6 +702,7 @@ function parsePlanning(value: unknown): PlanningState {
       ...(typeof project.type === "string" ? { type: project.type } : {})
     },
     artifacts,
+    milestoneDrafts: Array.isArray(record.milestoneDrafts) ? record.milestoneDrafts as PlanningState["milestoneDrafts"] : [],
     workItemDrafts: Array.isArray(record.workItemDrafts) ? record.workItemDrafts as PlanningState["workItemDrafts"] : [],
     providers: Array.isArray(record.providers) ? record.providers as PlanningState["providers"] : [],
     agentHosts: Array.isArray(record.agentHosts) ? record.agentHosts as PlanningState["agentHosts"] : [],

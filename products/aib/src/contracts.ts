@@ -62,6 +62,20 @@ export interface WorkItemDraft {
   readonly providerMetadata?: Readonly<Record<string, unknown>>;
 }
 
+export interface MilestoneDraft {
+  readonly id: string;
+  readonly title: string;
+  readonly path: string;
+  readonly summary: string;
+  readonly boundaries: readonly string[];
+  readonly dependencies: readonly string[];
+  readonly proofOfCompletion: readonly string[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly likelyWorkItemThemes: readonly string[];
+  readonly technicalDecisions: readonly string[];
+  readonly specAnchors: readonly string[];
+}
+
 export interface PlanningArtifact {
   readonly path: string;
   readonly status: ArtifactStatus;
@@ -88,6 +102,7 @@ export interface PlanningState {
     readonly milestones: readonly PlanningArtifact[];
     readonly workItems: readonly PlanningArtifact[];
   };
+  readonly milestoneDrafts: readonly MilestoneDraft[];
   readonly workItemDrafts: readonly WorkItemDraft[];
   readonly providers: readonly ProviderCapabilityReport[];
   readonly agentHosts: readonly AgentHostCapabilityReport[];
@@ -115,6 +130,7 @@ export function createInitialPlanningState(input: {
       milestones: [],
       workItems: []
     },
+    milestoneDrafts: [],
     workItemDrafts: [],
     providers: [],
     agentHosts: [],

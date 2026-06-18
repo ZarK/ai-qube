@@ -21,6 +21,34 @@ function parseJsonStdout(result) {
 
 const forbiddenEarlyQuestionTerms = /\b(api|apis|schema|schemas|selector|selectors|ipc|ci|package manager|provider)\b/i;
 
+function fullSpecWithFeatureMap(features) {
+  const sections = [
+    ["Purpose", "purpose", "Build a dashboard for operational review."],
+    ["Audience and stakeholders", "audience_stakeholders", "Operators and maintainers."],
+    ["Success narrative", "success_narrative", "Operators can see what needs attention and act confidently."],
+    ["Scope", "scope", "Dashboard, alerts, and export for the first useful version."],
+    ["Non-goals", "non_goals", "No mobile app or unrelated workflow automation."],
+    ["Project shape", "project_shape", "Web app with local planning artifacts."],
+    ["Functional requirements", "functional_requirements", "The app must monitor work, flag blocked items, and export summaries."],
+    ["Non-functional requirements", "non_functional_requirements", "Outputs must be reviewable, accessible, and deterministic enough for handoff."],
+    ["Constraints and assumptions", "constraints_assumptions", "Accessible UI and product-language planning artifacts."],
+    ["Feature or capability map", "feature_capability_map", features.map((feature) => `- ${feature}`).join("\n")],
+    ["Risks and unknowns", "risks_unknowns", "- Review cadence may change.\n- Alert thresholds may need tuning."],
+    ["Spec acceptance checklist", "spec_acceptance_checklist", "- [x] Purpose\n- [x] Scope\n- [x] Risks"]
+  ];
+  return `${[
+    "# Project spec",
+    "",
+    ...sections.flatMap(([title, id, body]) => [
+      `## ${title}`,
+      `<!-- aib:spec-section ${id} -->`,
+      "",
+      body,
+      ""
+    ])
+  ].join("\n")}\n`;
+}
+
 test("renders help and version", () => {
   const help = runAib(["--help"]);
   assert.equal(help.status, 0, help.stderr);
@@ -509,6 +537,138 @@ test("spec accept and reopen preserve section-aware acceptance", async () => {
   assert.deepEqual(redraft.state.spec.acceptedSectionIds, []);
   assert.deepEqual(redraft.state.spec.reopenedSectionIds, []);
   assert.equal(redraft.state.spec.validation, undefined);
+});
+
+test("milestones generate writes planning-depth docs before work items", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-milestones-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a local planning CLI", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Build a local planning CLI",
+    audience: "Agents working with maintainers",
+    coreJob: "Turn accepted specs into delivery plans",
+    shape: "CLI package",
+    successNarrative: "An agent can plan milestones before issues",
+    scope: "Milestone planning before work-item drafting",
+    nonGoals: "No provider issue creation yet",
+    constraints: "Local markdown artifacts first",
+    reuseBoundary: "Reusable package core",
+    planningSurface: "Local markdown first"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "all", "--json"]));
+
+  const blockedWorkItems = runAib(["work-items", "generate", "--state", init.statePath, "--json"]);
+  assert.notEqual(blockedWorkItems.status, 0);
+  assert.equal(JSON.parse(blockedWorkItems.stdout).error.kind, "milestone-required");
+
+  const dryRun = parseJsonStdout(runAib(["milestones", "generate", "--state", init.statePath, "--dry-run", "--json"]));
+  assert.equal(dryRun.mutated, false);
+  assert.equal(dryRun.milestones.length, 3);
+  assert.match(dryRun.recommendation, /first three milestones/i);
+  await assert.rejects(readFile(join(dir, "docs", "milestones", "001-planning-foundation.md"), "utf8"));
+
+  const generated = parseJsonStdout(runAib(["milestones", "generate", "--state", init.statePath, "--json"]));
+  assert.equal(generated.mutated, true);
+  assert.equal(generated.state.phase, "work_item_generation");
+  assert.equal(generated.state.planning.milestoneDrafts.length, 3);
+  assert.equal(generated.state.artifacts.milestones.length, 3);
+  assert.equal(generated.nextAction.nextCommand, "aib work-items generate --milestone <milestone-id> --json");
+
+  const firstDoc = await readFile(join(dir, "docs", "milestones", "001-planning-foundation.md"), "utf8");
+  assert.match(firstDoc, /## Delivery goal/);
+  assert.match(firstDoc, /## Boundaries/);
+  assert.match(firstDoc, /## Dependencies/);
+  assert.match(firstDoc, /## Proof of completion/);
+  assert.match(firstDoc, /## Likely work item themes/);
+  assert.match(firstDoc, /Do not include production code/);
+  assert.doesNotMatch(firstDoc, /\bfunction\s+\w+\(|interface\s+\w+\s*\{/);
+
+  const allowedWorkItems = parseJsonStdout(runAib(["work-items", "generate", "--state", init.statePath, "--json"]));
+  assert.equal(allowedWorkItems.allowed, true);
+});
+
+test("milestones distinguish sequential foundations from independent features", async () => {
+  const sequentialDir = await mkdtemp(join(tmpdir(), "aib-milestone-sequential-"));
+  const sequentialInit = parseJsonStdout(runAib(["init", sequentialDir, "--idea", "Build a process playbook", "--json"]));
+  const sequentialState = JSON.parse(await readFile(sequentialInit.statePath, "utf8"));
+  sequentialState.project = {
+    intent: "Build a process playbook",
+    audience: "Operations team",
+    coreJob: "Describe handoffs",
+    shape: "process playbook",
+    successNarrative: "The team can run the process",
+    scope: "First operating checklist",
+    nonGoals: "No software implementation",
+    constraints: "Stakeholder signoff required"
+  };
+  await writeFile(sequentialInit.statePath, JSON.stringify(sequentialState), "utf8");
+  parseJsonStdout(runAib(["spec", "draft", "--state", sequentialInit.statePath, "--json"]));
+  parseJsonStdout(runAib(["spec", "accept", "--state", sequentialInit.statePath, "--section", "all", "--json"]));
+  const sequential = parseJsonStdout(runAib(["milestones", "generate", "--state", sequentialInit.statePath, "--json"]));
+  assert.deepEqual(sequential.milestones[0].dependencies, []);
+  assert.deepEqual(sequential.milestones[1].dependencies, [sequential.milestones[0].id]);
+  assert.deepEqual(sequential.milestones[2].dependencies, [sequential.milestones[1].id]);
+
+  const featureDir = await mkdtemp(join(tmpdir(), "aib-milestone-features-"));
+  const featureInit = parseJsonStdout(runAib(["init", featureDir, "--idea", "Build a dashboard", "--json"]));
+  const featureState = JSON.parse(await readFile(featureInit.statePath, "utf8"));
+  featureState.project = {
+    intent: "Build a dashboard",
+    audience: "Operators",
+    coreJob: "Monitor work",
+    shape: "web app",
+    successNarrative: "Operators see what needs attention",
+    scope: "Dashboard, alerts, and export",
+    nonGoals: "No mobile app",
+    constraints: "Accessible UI"
+  };
+  await mkdir(join(featureDir, "docs"), { recursive: true });
+  await writeFile(featureInit.statePath, JSON.stringify({
+    ...featureState,
+    phase: "spec_acceptance",
+    spec: {
+      ...featureState.spec,
+      acceptedSectionIds: [
+        "purpose",
+        "audience_stakeholders",
+        "success_narrative",
+        "scope",
+        "non_goals",
+        "project_shape",
+        "functional_requirements",
+        "non_functional_requirements",
+        "constraints_assumptions",
+        "feature_capability_map",
+        "risks_unknowns",
+        "spec_acceptance_checklist"
+      ],
+      validation: {
+        ok: true,
+        missingRequiredSections: [],
+        placeholderSections: []
+      }
+    },
+    artifacts: {
+      ...featureState.artifacts,
+      spec: {
+        ...featureState.artifacts.spec,
+        status: "accepted"
+      }
+    }
+  }), "utf8");
+  await writeFile(join(featureDir, "docs", "spec.md"), fullSpecWithFeatureMap([
+    "Monitor operational work queues",
+    "Alert maintainers about blocked items",
+    "Export a weekly review summary"
+  ]), "utf8");
+
+  const feature = parseJsonStdout(runAib(["milestones", "generate", "--state", featureInit.statePath, "--json"]));
+  assert.equal(feature.milestones.length, 4);
+  assert.deepEqual(feature.milestones[1].dependencies, [feature.milestones[0].id]);
+  assert.deepEqual(feature.milestones[2].dependencies, [feature.milestones[0].id]);
+  assert.notEqual(feature.milestones[1].id, feature.milestones[2].id);
 });
 
 test("configured references request context inspection before human questions", async () => {
