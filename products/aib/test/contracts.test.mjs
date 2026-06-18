@@ -5,6 +5,7 @@ import {
   capability,
   createInitialPlanningState,
   getProfileByKind,
+  parseSpecMarkdownSections,
   REQUIRED_SPEC_CHAPTERS,
   selectProjectProfile,
   selectSpecChapters,
@@ -225,6 +226,18 @@ test("spec validation accepts concise completed required sections", () => {
   assert.equal(result.ok, true);
   assert.deepEqual(result.placeholderSections, []);
   assert.deepEqual(result.missingRequiredSections, []);
+});
+
+test("spec markdown parsing recognizes dynamic section markers", () => {
+  const sections = parseSpecMarkdownSections([
+    "## User experience and workflows",
+    "<!-- aib:spec-section user_experience_workflows -->",
+    "",
+    "Describe the primary workflow."
+  ].join("\n"));
+
+  assert.equal(sections[0]?.id, "user_experience_workflows");
+  assert.equal(sections[0]?.title, "User experience and workflows");
 });
 
 test("spec acceptance blocks milestones until required sections are accepted", () => {

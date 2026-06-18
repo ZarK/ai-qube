@@ -167,7 +167,14 @@ export const statusCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: false
   },
-  errors: stateCommandErrors,
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-section-invalid",
+      description: "The requested spec section id is not selected for this project.",
+      exitCode: 3
+    }
+  ],
   exitCodes: stateCommandExitCodes
 });
 
@@ -206,6 +213,286 @@ export const nextCommand = defineCommand({
     ttyPrompt: false
   },
   errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
+});
+
+export const specDraftCommand = defineCommand({
+  kind: "command",
+  name: "spec draft",
+  description: "Draft docs/spec.md from recorded discovery state and move into section-aware spec acceptance.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview the spec draft without writing docs/spec.md or the session file.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Draft the spec artifact from current state.",
+      command: "aib spec draft --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
+});
+
+export const specValidateCommand = defineCommand({
+  kind: "command",
+  name: "spec validate",
+  description: "Validate the spec artifact for required sections and placeholder content.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview validation without updating the session file.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Validate the current spec artifact.",
+      command: "aib spec validate --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
+});
+
+export const specAcceptCommand = defineCommand({
+  kind: "command",
+  name: "spec accept",
+  description: "Accept one required spec section or all required sections after validation.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview acceptance without updating the session file.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "section",
+      description: "Spec section id to accept, or all for every required section.",
+      type: "string",
+      required: true
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Accept a reviewed spec section.",
+      command: "aib spec accept --section purpose --json"
+    }),
+    defineExample({
+      description: "Accept all required sections after review.",
+      command: "aib spec accept --section all --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-section-invalid",
+      description: "The requested spec section id is not selected for this project.",
+      exitCode: 3
+    },
+    {
+      kind: "spec-validation-failed",
+      description: "The spec artifact is missing required sections or contains placeholder content.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: stateCommandExitCodes
+});
+
+export const specReopenCommand = defineCommand({
+  kind: "command",
+  name: "spec reopen",
+  description: "Explicitly reopen an accepted spec section for revision.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview reopening without updating the session file.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "section",
+      description: "Spec section id to reopen.",
+      type: "string",
+      required: true
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Reopen an accepted section for revision.",
+      command: "aib spec reopen --section purpose --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-section-invalid",
+      description: "The requested spec section id is not selected for this project.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: stateCommandExitCodes
+});
+
+export const milestonesGenerateCommand = defineCommand({
+  kind: "command",
+  name: "milestones generate",
+  description: "Guard milestone generation until the current spec is validated and accepted.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Check whether milestone generation is allowed.",
+      command: "aib milestones generate --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "spec-not-accepted",
+      description: "Milestone generation is blocked until all required spec sections are accepted.",
+      exitCode: 3
+    }
+  ],
   exitCodes: stateCommandExitCodes
 });
 
@@ -295,5 +582,15 @@ export const answerCommand = defineCommand({
 
 export const bootstrapRegistry = createCommandRegistry({
   topics: [planningTopic],
-  commands: [initCommand, statusCommand, nextCommand, answerCommand]
+  commands: [
+    initCommand,
+    statusCommand,
+    nextCommand,
+    answerCommand,
+    specDraftCommand,
+    specValidateCommand,
+    specAcceptCommand,
+    specReopenCommand,
+    milestonesGenerateCommand
+  ]
 });

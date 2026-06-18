@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -383,6 +383,134 @@ test("spec acceptance records sections and gates milestone generation", async ()
   assert.equal(ready.nextAction.kind, "generate_artifacts");
 });
 
+test("spec draft writes a self-contained artifact and enters acceptance", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-spec-draft-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a local planning CLI", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Build a local planning CLI",
+    audience: "Agents working with maintainers",
+    coreJob: "Turn discovery into accepted specs",
+    shape: "CLI package",
+    successNarrative: "An agent can draft and accept a spec without chat memory",
+    scope: "Spec drafting and acceptance",
+    nonGoals: "No milestone rendering yet",
+    constraints: "Local files only",
+    reuseBoundary: "Reusable package core",
+    planningSurface: "Local markdown first"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+
+  const dryRun = parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--dry-run", "--json"]));
+  assert.equal(dryRun.mutated, false);
+  assert.match(dryRun.content, /## Purpose/);
+  assert.match(dryRun.content, /aib:spec-section purpose/);
+  await assert.rejects(readFile(join(dir, "docs", "spec.md"), "utf8"));
+
+  const drafted = parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  assert.equal(drafted.mutated, true);
+  assert.equal(drafted.state.phase, "spec_acceptance");
+  assert.equal(drafted.state.artifacts.spec.status, "draft");
+  assert.ok(drafted.chapters.some((chapter) => chapter.id === "package_reuse_boundaries"));
+
+  const spec = await readFile(join(dir, "docs", "spec.md"), "utf8");
+  assert.match(spec, /Turn discovery into accepted specs/);
+  assert.doesNotMatch(spec, /AppData|aib-spec-draft/);
+});
+
+test("spec validate rejects placeholder sections before acceptance", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-spec-validate-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a research brief", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Build a research brief",
+    audience: "Policy analysts",
+    coreJob: "Summarize evidence",
+    shape: "research brief",
+    successNarrative: "Analysts can act on the summary",
+    scope: "First brief",
+    nonGoals: "No publication workflow",
+    constraints: "No sensitive data"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  await mkdir(join(dir, "docs"), { recursive: true });
+  await writeFile(
+    join(dir, "docs", "spec.md"),
+    [
+      "# Project spec",
+      "",
+      "## Purpose",
+      "<!-- aib:spec-section purpose -->",
+      "",
+      "TBD"
+    ].join("\n"),
+    "utf8"
+  );
+
+  const validation = parseJsonStdout(runAib(["spec", "validate", "--state", init.statePath, "--json"]));
+  assert.equal(validation.validation.ok, false);
+  assert.ok(validation.validation.placeholderSections.includes("Purpose"));
+  assert.ok(validation.validation.missingRequiredSections.includes("audience_stakeholders"));
+  assert.equal(validation.state.artifacts.spec.status, "blocked");
+
+  const accept = runAib(["spec", "accept", "--state", init.statePath, "--section", "purpose", "--json"]);
+  assert.notEqual(accept.status, 0);
+  assert.equal(JSON.parse(accept.stdout).error.kind, "spec-validation-failed");
+});
+
+test("spec accept and reopen preserve section-aware acceptance", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-spec-command-accept-"));
+  const init = parseJsonStdout(runAib(["init", dir, "--idea", "Build a process playbook", "--json"]));
+  const state = JSON.parse(await readFile(init.statePath, "utf8"));
+  state.project = {
+    intent: "Build a process playbook",
+    audience: "Operations team",
+    coreJob: "Describe handoffs",
+    shape: "process playbook",
+    successNarrative: "The team can run the process",
+    scope: "First operating checklist",
+    nonGoals: "No software implementation",
+    constraints: "Stakeholder signoff required"
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+
+  const blocked = runAib(["milestones", "generate", "--state", init.statePath, "--json"]);
+  assert.notEqual(blocked.status, 0);
+  assert.equal(JSON.parse(blocked.stdout).error.kind, "spec-not-accepted");
+
+  const purpose = parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "purpose", "--json"]));
+  assert.deepEqual(purpose.state.spec.acceptedSectionIds, ["purpose"]);
+  assert.equal(purpose.state.phase, "spec_acceptance");
+
+  const all = parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "all", "--json"]));
+  assert.equal(all.state.phase, "milestone_generation");
+  assert.equal(all.state.artifacts.spec.status, "accepted");
+  assert.equal(all.spec.canGenerateMilestones, true);
+
+  const allowed = parseJsonStdout(runAib(["milestones", "generate", "--state", init.statePath, "--json"]));
+  assert.equal(allowed.allowed, true);
+
+  const reopened = parseJsonStdout(runAib(["spec", "reopen", "--state", init.statePath, "--section", "purpose", "--json"]));
+  assert.equal(reopened.state.phase, "spec_acceptance");
+  assert.ok(!reopened.state.spec.acceptedSectionIds.includes("purpose"));
+  assert.ok(reopened.state.spec.reopenedSectionIds.includes("purpose"));
+
+  const blockedAgain = runAib(["milestones", "generate", "--state", init.statePath, "--json"]);
+  assert.notEqual(blockedAgain.status, 0);
+  assert.equal(JSON.parse(blockedAgain.stdout).error.kind, "spec-not-accepted");
+
+  const reopenAgain = runAib(["spec", "reopen", "--state", init.statePath, "--section", "purpose", "--json"]);
+  assert.notEqual(reopenAgain.status, 0);
+  assert.equal(JSON.parse(reopenAgain.stdout).error.kind, "spec-section-invalid");
+
+  parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "purpose", "--json"]));
+  const redraft = parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  assert.deepEqual(redraft.state.spec.acceptedSectionIds, []);
+  assert.deepEqual(redraft.state.spec.reopenedSectionIds, []);
+  assert.equal(redraft.state.spec.validation, undefined);
+});
+
 test("configured references request context inspection before human questions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-context-inspection-"));
   const configPath = join(dir, "aib.config.json");
@@ -560,6 +688,17 @@ test("state validation checks question budget bounds and artifact structure", as
   assert.equal(JSON.parse(nine.stdout).error.kind, "state-invalid");
 
   state.agent.questionBudget = 3;
+  state.spec.validation = {
+    ok: "yes",
+    missingRequiredSections: [],
+    placeholderSections: []
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const invalidValidation = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(invalidValidation.status, 0);
+  assert.match(JSON.parse(invalidValidation.stdout).error.likelyCause, /spec\.validation\.ok/);
+
+  state.spec.validation = undefined;
   delete state.artifacts.spec.path;
   await writeFile(init.statePath, JSON.stringify(state), "utf8");
   const missingPath = runAib(["status", "--state", init.statePath, "--json"]);
