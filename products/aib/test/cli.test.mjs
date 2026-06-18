@@ -78,15 +78,35 @@ test("schema exposes dry-run and mutation metadata", () => {
 });
 
 test("init dry-run returns agent-facing next action without mutating", () => {
-  const result = parseJsonStdout(runAib(["init", "--dry-run", "--json", "--idea", "Local photo archive"]));
+  const result = parseJsonStdout(runAib(["init", "--agent", "codex", "--dry-run", "--json", "--idea", "Local photo archive"]));
   assert.equal(result.ok, true);
   assert.equal(result.command, "init");
   assert.equal(result.mutated, false);
   assert.equal(result.dryRun, true);
   assert.equal(result.nextAction.actor, "agent");
+  assert.equal(result.plannedAgentFiles[0].host, "codex");
+  assert.ok(result.plannedAgentFiles[0].path.endsWith("AGENTS.md"));
   assert.match(result.nextAction.summary, /human/i);
   assert.ok(result.sessionPath.endsWith("/.bootstrap/session.json") || result.sessionPath.endsWith("\\.bootstrap\\session.json"));
   assert.equal(result.session.project.intent, "Local photo archive");
+});
+
+test("init with opencode writes local command assets without global installs", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-opencode-"));
+  const result = parseJsonStdout(runAib(["init", dir, "--agent", "opencode", "--json", "--idea", "Plan a CLI package"]));
+  assert.equal(result.mutated, true);
+  assert.equal(result.agentAssets.length, 2);
+  assert.ok(result.agentAssets.some((asset) => asset.path.endsWith("AGENTS.md")));
+  assert.ok(result.agentAssets.some((asset) => asset.path.endsWith(join(".opencode", "commands", "aib-bootstrap.md"))));
+
+  const command = await readFile(join(dir, ".opencode", "commands", "aib-bootstrap.md"), "utf8");
+  assert.match(command, /aib next --json/);
+  assert.match(command, /aib answer --field <field> --value <answer> --json/);
+  assert.match(command, /Do not install global commands/);
+
+  const instructions = await readFile(join(dir, "AGENTS.md"), "utf8");
+  assert.match(instructions, /agent-operated planning engine/);
+  assert.match(instructions, /`aib` state machine/);
 });
 
 test("init dry-run does not write state", async () => {

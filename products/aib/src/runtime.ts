@@ -3,6 +3,7 @@ import { createDryRunPlanFields, renderDryRunPlan } from "@tjalve/qube-cli/mutat
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/qube-cli/runtime";
 import { dirname } from "node:path";
 
+import { writeAgentAssetFiles } from "./agent_assets.js";
 import { loadAibConfig } from "./config.js";
 import { createInitPlan } from "./init.js";
 import {
@@ -77,11 +78,13 @@ export const aibCli = createCli({
       try {
         if (flags["dry-run"] !== true) {
           const written = writeBootstrapState(plan.sessionPath, plan.state);
+          const writtenAgentAssets = writeAgentAssetFiles(plan.target, plan.agentAssets);
           const nextAction = computeNextAction(written.state);
           return {
             json: {
               mutated: true,
               statePath: written.statePath,
+              agentAssets: writtenAgentAssets,
               state: written.state,
               phase: written.state.phase,
               nextAction,
@@ -100,6 +103,12 @@ export const aibCli = createCli({
             config: plan.config,
             sessionPath: plan.sessionPath,
             plannedDocuments: plan.plannedDocuments,
+            plannedAgentFiles: plan.agentAssets.map((file) => ({
+              id: file.id,
+              host: file.host,
+              path: `${plan.target}/${file.path}`,
+              kind: file.kind
+            })),
             session: plan.session,
             state: plan.state,
             nextAction: computeNextAction(plan.state)

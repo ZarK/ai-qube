@@ -3,6 +3,7 @@ import { test } from "node:test";
 
 import {
   capability,
+  createAgentAssetPlan,
   createInitialPlanningState,
   getProfileByKind,
   parseSpecMarkdownSections,
@@ -58,6 +59,22 @@ test("capability reports represent policy-blocked operations", () => {
     status: "policy-blocked",
     reason: "offline project"
   });
+});
+
+test("agent asset plans cover supported host instruction surfaces", () => {
+  const codex = createAgentAssetPlan("codex");
+  assert.deepEqual(codex.map((file) => file.path), ["AGENTS.md"]);
+  assert.match(codex[0].body, /aib next --json/);
+
+  const opencode = createAgentAssetPlan("opencode");
+  assert.deepEqual(opencode.map((file) => file.path), ["AGENTS.md", ".opencode/commands/aib-bootstrap.md"]);
+  assert.match(opencode[1].body, /aib init --agent opencode --json/);
+
+  const claude = createAgentAssetPlan("claude-code");
+  assert.deepEqual(claude.map((file) => file.path), ["CLAUDE.md"]);
+
+  const gemini = createAgentAssetPlan("gemini");
+  assert.deepEqual(gemini.map((file) => file.path), ["GEMINI.md"]);
 });
 
 test("markdown work item rendering does not require GitHub auth or IDs", () => {
