@@ -76,6 +76,51 @@ describe('local app runner service', () => {
     assert.deepEqual(status.logTail.stdout, ['ready-ish']);
   });
 
+  it('does not treat substring executable names as the expected process', async () => {
+    const { runStatus, runPaths } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    const paths = runPaths(root, 'ui-audit');
+    mkdirSync(paths.directory, { recursive: true });
+    writeFileSync(paths.metadataPath, JSON.stringify({
+      version: 1,
+      name: 'ui-audit',
+      pid: process.pid,
+      command: ['go'],
+      cwd: root,
+      startedAt: '2026-06-18T00:00:00.000Z',
+      platform: process.platform,
+      stdoutPath: paths.stdoutPath,
+      stderrPath: paths.stderrPath,
+      metadataPath: paths.metadataPath,
+    }, null, 2));
+
+    const status = runStatus({ repoRoot: root, name: 'ui-audit' });
+
+    assert.equal(status.ok, true);
+    assert.equal(status.status, 'unknown');
+  });
+
+  it('rejects file readiness URLs before probing', async () => {
+    const { runWait } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    let probed = false;
+
+    const result = await runWait({
+      repoRoot: root,
+      name: 'ui-audit',
+      url: 'file:///tmp/ready',
+      fetchImpl: async () => {
+        probed = true;
+        throw new Error('should not probe');
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'request-failed');
+    assert.equal(probed, false);
+    assert.match(result.error, /Refusing non-local readiness URL/);
+  });
+
   it('fails bounded readiness waits with captured log tails', async () => {
     const { runPaths, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();

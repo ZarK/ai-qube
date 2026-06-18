@@ -47,9 +47,9 @@ export const handleRunStart: RuntimeCommandHandler = async context => {
     const message = 'Failed to run `aie run start`: missing app command after `--`. Likely cause: no server command was provided. Next action: run `aie run start --name ui-audit -- npm run dev`.';
     return commandFailure(context, { ok: false, command: 'run start', error: message }, message);
   }
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix aie.config.json, then start the local app runner again.');
   try {
+    const loaded = await loadConfigFile();
+    if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix aie.config.json, then start the local app runner again.');
     const result = runStart({
       repoRoot: loaded.root,
       name: runName(context),
@@ -71,9 +71,9 @@ export const handleRunWait: RuntimeCommandHandler = async context => {
     const message = 'Failed to run `aie run wait`: missing --url. Likely cause: no readiness endpoint was provided. Next action: run `aie run wait --name ui-audit --url http://127.0.0.1:3000 --timeout 30`.';
     return commandFailure(context, { ok: false, command: 'run wait', error: message }, message);
   }
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run wait', loaded, 'Fix aie.config.json, then wait for the local app runner again.');
   try {
+    const loaded = await loadConfigFile();
+    if (!loaded.ok) return configLoadFailure(context, 'run wait', loaded, 'Fix aie.config.json, then wait for the local app runner again.');
     const result = await runWait({
       repoRoot: loaded.root,
       name: runName(context),
@@ -102,9 +102,9 @@ export const handleRunStatus: RuntimeCommandHandler = async context => {
 };
 
 export const handleRunStop: RuntimeCommandHandler = async context => {
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run stop', loaded, 'Fix aie.config.json, then stop the local app runner again.');
   try {
+    const loaded = await loadConfigFile();
+    if (!loaded.ok) return configLoadFailure(context, 'run stop', loaded, 'Fix aie.config.json, then stop the local app runner again.');
     const result = runStop({ repoRoot: loaded.root, name: runName(context), dryRun: readBooleanFlag(context, 'dry-run') });
     return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
   } catch (err: unknown) {

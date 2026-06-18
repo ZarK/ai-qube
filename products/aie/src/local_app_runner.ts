@@ -1,7 +1,8 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { basename, resolve, join } from 'node:path';
+import { resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import { processIdentity } from './local_app_runner_process.js';
 import type {
   RunMetadata,
   RunNameOptions,
@@ -32,11 +33,6 @@ export type {
   RunWaitResult,
   SpawnPlan,
 } from './local_app_runner_types.js';
-
-interface ProcessIdentity {
-  state: RunStatusState;
-  commandLine: string | null;
-}
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
 const DEFAULT_POLL_INTERVAL_MS = 500;
@@ -105,50 +101,6 @@ export function readRunMetadata(repoRoot: string, name: string): RunMetadata | n
     throw new Error(`run metadata is malformed at ${paths.metadataPath}`);
   }
   return parsed as unknown as RunMetadata;
-}
-
-function pidState(pid: number): RunStatusState {
-  try {
-    process.kill(pid, 0);
-    return 'running';
-  } catch (err: unknown) {
-    const code = isRecord(err) && typeof err.code === 'string' ? err.code : '';
-    return code === 'ESRCH' ? 'stopped' : 'unknown';
-  }
-}
-
-function normalizeExecutableName(value: string): string {
-  return basename(value).toLowerCase().replace(/\.(cmd|exe|ps1|bat)$/i, '');
-}
-
-function commandLineForPid(pid: number, platform: NodeJS.Platform): string | null {
-  if (pid === process.pid) return [process.execPath, ...process.argv].join(' ');
-  if (platform === 'win32') {
-    const script = `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" | Select-Object -ExpandProperty CommandLine)`;
-    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8', timeout: 2000, windowsHide: true });
-    const output = result.stdout.trim();
-    return result.status === 0 && output ? output : null;
-  }
-  if (platform === 'linux') {
-    try {
-      const output = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim();
-      return output || null;
-    } catch {
-      return null;
-    }
-  }
-  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 });
-  const output = result.stdout.trim();
-  return result.status === 0 && output ? output : null;
-}
-
-function processIdentity(metadata: RunMetadata, platform = process.platform): ProcessIdentity {
-  const state = pidState(metadata.pid);
-  if (state !== 'running') return { state, commandLine: null };
-  const commandLine = commandLineForPid(metadata.pid, platform);
-  if (!commandLine) return { state: 'unknown', commandLine: null };
-  const expected = normalizeExecutableName(metadata.command[0] ?? '');
-  return expected && commandLine.toLowerCase().includes(expected) ? { state: 'running', commandLine } : { state: 'unknown', commandLine };
 }
 
 function statusFromMetadata(metadata: RunMetadata | null): RunStatusState {
@@ -344,7 +296,6 @@ async function fetchReady(fetchImpl: typeof fetch, url: string): Promise<{ ready
 function isLocalReadinessUrl(input: string): boolean {
   try {
     const parsed = new URL(input);
-    if (parsed.protocol === 'file:') return true;
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
     const host = parsed.hostname.toLowerCase();
     return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '0.0.0.0';
