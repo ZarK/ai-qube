@@ -5,7 +5,13 @@ import { Config } from './config/index.js';
 import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
 import { redact } from './gh.js';
 
-export type UiAuditEvidenceState = 'disabled' | 'missing' | 'incomplete' | 'local-evidence-found';
+export type UiAuditEvidenceState =
+  | 'disabled'
+  | 'missing'
+  | 'metadata-only'
+  | 'browser-visited'
+  | 'screenshots-captured'
+  | 'visual-analysis-recorded';
 
 export interface UiAuditCheck {
   id: string;
@@ -18,8 +24,10 @@ export interface UiAuditEvidence {
   directory: string;
   screenshotsDirectory: string;
   notesPath: string;
+  browserObservationPath: string;
   directoryExists: boolean;
   notesFound: boolean;
+  browserObservationFound: boolean;
   screenshotCount: number;
   state: UiAuditEvidenceState;
   missing: string[];
@@ -67,13 +75,13 @@ const CHECKLIST: UiAuditCheck[] = [
     id: 'running-app',
     title: 'Open the real running application',
     why: 'Manual UI audit evidence must come from the application users will actually see, not from generated instructions or static guesses.',
-    action: 'Start the app with the repository command, open the target page, and record the URL, commit, browser, and viewport in notes.md.',
+    action: 'Start the app with the repository command, open the target page, and record the URL, commit, browser, and viewport in browser-observation.md.',
   },
   {
     id: 'visible-outcomes',
     title: 'Verify visible outcomes and core interactions',
     why: 'Executor cannot infer pass/fail from screenshots alone; the agent must inspect the rendered behavior and user-facing state changes.',
-    action: 'Use agent-browser first. Click, type, navigate, and confirm the visible outcome for the changed UI paths.',
+    action: 'Use agent-browser first. Click, type, navigate, and describe the visible outcome for the changed UI paths in notes.md.',
   },
   {
     id: 'accessibility-keyboard',
@@ -85,7 +93,7 @@ const CHECKLIST: UiAuditCheck[] = [
     id: 'responsive-visual',
     title: 'Inspect responsive and visual quality',
     why: 'UI changes must remain usable across practical viewport sizes and should not introduce obvious clipping, overlap, or unreadable states.',
-    action: 'Check at narrow, medium, and desktop widths. Capture local screenshots only when useful and keep them in screenshots/.',
+    action: 'Check at narrow, medium, and desktop widths. Capture local screenshots for the important states and keep them in screenshots/.',
   },
 ];
 
@@ -131,15 +139,17 @@ function countScreenshots(path: string): number {
 
 function auditSummary(state: UiAuditEvidenceState): string {
   if (state === 'disabled') return 'Manual UI audit is disabled by repository config.';
-  if (state === 'local-evidence-found') return 'Local UI audit evidence was found. Executor reports evidence presence only and cannot certify audit pass/fail.';
-  if (state === 'incomplete') return 'Manual UI audit evidence directory exists but notes or screenshots are missing.';
+  if (state === 'visual-analysis-recorded') return 'Browser or screenshot evidence plus visual analysis notes were found. Executor reports evidence presence only and cannot certify audit pass/fail.';
+  if (state === 'screenshots-captured') return 'Local screenshots were found, but visual analysis notes are still missing.';
+  if (state === 'browser-visited') return 'A browser observation note was found, but screenshots or visual analysis notes are still missing.';
+  if (state === 'metadata-only') return 'Manual UI audit evidence directory exists, but browser/screenshot evidence and visual analysis are missing.';
   return 'No manual UI audit evidence is recorded for this issue.';
 }
 
 function auditReasonCode(state: UiAuditEvidenceState): GateEvidenceReasonCode {
   if (state === 'disabled') return 'manual-audit-disabled';
-  if (state === 'local-evidence-found') return 'local-evidence-found';
-  if (state === 'incomplete') return 'manual-audit-incomplete';
+  if (state === 'visual-analysis-recorded') return 'local-evidence-found';
+  if (state === 'metadata-only' || state === 'browser-visited' || state === 'screenshots-captured') return 'manual-audit-incomplete';
   return 'missing-evidence';
 }
 
@@ -149,7 +159,7 @@ function auditResult(state: UiAuditEvidenceState): GateResult {
 }
 
 function auditTrust(state: UiAuditEvidenceState): EvidenceTrust {
-  return state === 'local-evidence-found' ? 'local-evidence' : 'unverified';
+  return state === 'visual-analysis-recorded' ? 'local-evidence' : 'unverified';
 }
 
 function buildAuditGateEvidence(issueNumber: number, directory: string, state: UiAuditEvidenceState, summary: string, trust: EvidenceTrust, reasonCode: GateEvidenceReasonCode): GateEvidence {
@@ -190,23 +200,32 @@ function withAuditEvidence(issueNumber: number, evidence: Omit<UiAuditEvidence, 
 function readEvidence(directory: string, issueNumber: number): UiAuditEvidence {
   const screenshotsDirectory = join(directory, 'screenshots');
   const notesPath = join(directory, 'notes.md');
+  const browserObservationPath = join(directory, 'browser-observation.md');
   const directoryExists = existsSync(directory) && statSync(directory).isDirectory();
   const notesFound = hasNonEmptyFile(notesPath);
+  const browserObservationFound = hasNonEmptyFile(browserObservationPath);
   const screenshotCount = countScreenshots(screenshotsDirectory);
   const missing: string[] = [];
   if (!directoryExists) missing.push('local evidence directory');
-  if (!notesFound && screenshotCount === 0) missing.push('notes.md or local screenshot evidence');
+  if (directoryExists && !browserObservationFound && screenshotCount === 0) missing.push('browser-observation.md or local screenshots');
+  if (directoryExists && !notesFound) missing.push('notes.md visual analysis');
   const state: UiAuditEvidenceState = !directoryExists
     ? 'missing'
-    : notesFound || screenshotCount > 0
-      ? 'local-evidence-found'
-      : 'incomplete';
+    : notesFound && (browserObservationFound || screenshotCount > 0)
+      ? 'visual-analysis-recorded'
+      : screenshotCount > 0
+        ? 'screenshots-captured'
+        : browserObservationFound
+          ? 'browser-visited'
+          : 'metadata-only';
   return withAuditEvidence(issueNumber, {
     directory: redact(directory),
     screenshotsDirectory: redact(screenshotsDirectory),
     notesPath: redact(notesPath),
+    browserObservationPath: redact(browserObservationPath),
     directoryExists,
     notesFound,
+    browserObservationFound,
     screenshotCount,
     state,
     missing,
@@ -226,7 +245,7 @@ function createDirectory(path: string, dryRun: boolean, created: string[]): void
 function buildWarnings(config: Config): string[] {
   const warnings = [
     'Screenshot upload is out of scope and disabled by default; keep evidence local unless a future opt-in integration is configured.',
-    'Executor never claims a UI audit passed from generated instructions, screenshots, or local notes alone.',
+    'Executor never claims a UI audit passed from generated instructions, screenshots, browser observations, or local notes alone.',
   ];
   if (!config.uiAuditAppLaunch || !config.uiAuditTarget) {
     warnings.push('No app launch command or audit target URL is configured yet; use the repository-specific run command and record the real URL in notes.md.');
@@ -237,11 +256,11 @@ function buildWarnings(config: Config): string[] {
 
 function nextAction(result: Pick<UiAuditResult, 'required' | 'prepare' | 'check' | 'dryRun' | 'evidence'>): string {
   if (!result.required) return 'No manual UI audit is required by config; record why the UI audit does not apply before shipping UI work.';
-  if (result.prepare && !result.dryRun) return 'Run the real application, audit it with agent-browser first, and write notes or local screenshots into the evidence directory.';
-  if (result.check) return result.evidence.state === 'local-evidence-found'
-    ? 'Inspect the local evidence yourself; Executor reports evidence presence only and cannot certify that the audit passed.'
-    : 'Create real running-app audit notes or screenshots, then rerun `aie audit ui <issue> --check`.';
-  return 'Run `aie audit ui <issue> --prepare`, audit the real running app with agent-browser first, and record local evidence.';
+  if (result.prepare && !result.dryRun) return 'Run the real application, audit it with agent-browser first, capture screenshots for important states, and write browser-observation.md plus notes.md visual analysis.';
+  if (result.check) return result.evidence.state === 'visual-analysis-recorded'
+    ? 'Inspect the local evidence yourself; Executor reports browser/screenshot evidence plus visual-analysis presence only and cannot certify that the audit passed.'
+    : 'Create browser-observed or screenshot evidence plus notes.md visual analysis, then rerun `aie audit ui <issue> --check`.';
+  return 'Run `aie audit ui <issue> --prepare`, audit the real running app with agent-browser first, capture screenshots, and record browser-observation.md plus notes.md visual analysis.';
 }
 
 export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResult {
@@ -282,6 +301,9 @@ export function runUiAudit(config: Config, options: UiAuditOptions): UiAuditResu
 export function formatUiAudit(result: UiAuditResult): string {
   const lines = [`Manual UI audit for issue #${result.issue}: ${result.required ? 'required' : 'disabled by config'}.`];
   lines.push(`Evidence directory: ${result.evidence.directory}`);
+  lines.push(`Browser observation: ${result.evidence.browserObservationPath}`);
+  lines.push(`Visual analysis notes: ${result.evidence.notesPath}`);
+  lines.push(`Screenshots directory: ${result.evidence.screenshotsDirectory}`);
   if (result.prepare) lines.push(result.dryRun ? 'Dry-run: would create local evidence directories if missing.' : 'Prepared local evidence directories if they were missing.');
   if (result.check) lines.push(`Evidence check: ${result.evidence.state}.`);
   lines.push(`Evidence source: ${result.evidence.source}/${result.evidence.trust}; reason=${result.evidence.reasonCode}.`);
@@ -299,7 +321,7 @@ export function formatUiAudit(result: UiAuditResult): string {
   }
   if (result.evidence.missing.length > 0) lines.push(`Missing evidence: ${result.evidence.missing.join(', ')}.`);
   lines.push('Screenshot upload: disabled and out of scope; keep screenshots local by default.');
-  lines.push('Executor reports audit guidance and local evidence state only; it never claims UI audit pass/fail from generated instructions alone.');
+  lines.push('Executor reports audit guidance and local evidence state only; it never claims UI audit pass/fail from generated instructions, metadata, screenshots, browser observations, or local notes alone.');
   lines.push(`Next action: ${result.nextAction}`);
   return lines.join('\n');
 }

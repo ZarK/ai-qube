@@ -54,7 +54,7 @@ describe('manual UI audit model', () => {
     assert.equal(existsSync(join(home, 'github-verification', 'product-ui', '93')), false);
   });
 
-  it('prepares local evidence directories and checks recorded notes', () => {
+  it('requires browser or screenshot evidence in addition to visual analysis notes', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const repo = join(home, 'workspace', 'product-ui');
     const config = getDefaults();
@@ -69,14 +69,55 @@ describe('manual UI audit model', () => {
     assert.equal(prepared.createdDirectories.length, 2);
     assert.equal(existsSync(evidenceDirectory), true);
     assert.equal(existsSync(join(evidenceDirectory, 'screenshots')), true);
-    assert.equal(checked.evidence.state, 'local-evidence-found');
+    assert.equal(checked.evidence.state, 'metadata-only');
     assert.equal(checked.evidence.notesFound, true);
+    assert.equal(checked.evidence.browserObservationFound, false);
     assert.equal(checked.evidence.source, 'manual-audit');
-    assert.equal(checked.evidence.trust, 'local-evidence');
-    assert.equal(checked.evidence.reasonCode, 'local-evidence-found');
+    assert.equal(checked.evidence.trust, 'unverified');
+    assert.equal(checked.evidence.reasonCode, 'manual-audit-incomplete');
     assert.equal(checked.evidence.verified, false);
     assert.equal(checked.evidence.gateEvidence.result, 'unknown');
-    assert.match(checked.nextAction, /cannot certify|Executor reports evidence presence/);
+    assert.deepEqual(checked.evidence.missing, ['browser-observation.md or local screenshots']);
+    assert.match(checked.nextAction, /browser-observed or screenshot evidence/);
+  });
+
+  it('distinguishes browser visits, screenshots, and visual analysis evidence states', () => {
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const repo = join(home, 'workspace', 'product-ui');
+    const config = getDefaults();
+    const evidenceDirectory = join(home, 'github-verification', 'product-ui', '96');
+    const screenshotsDirectory = join(evidenceDirectory, 'screenshots');
+
+    mkdirSync(screenshotsDirectory, { recursive: true });
+
+    const metadataOnly = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
+    assert.equal(metadataOnly.evidence.state, 'metadata-only');
+    assert.deepEqual(metadataOnly.evidence.missing, ['browser-observation.md or local screenshots', 'notes.md visual analysis']);
+
+    writeFileSync(join(evidenceDirectory, 'browser-observation.md'), 'Opened http://localhost:3000/settings at desktop width.\n');
+    const browserVisited = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
+    assert.equal(browserVisited.evidence.state, 'browser-visited');
+    assert.equal(browserVisited.evidence.browserObservationFound, true);
+    assert.deepEqual(browserVisited.evidence.missing, ['notes.md visual analysis']);
+
+    writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
+    const screenshotsCaptured = runUiAudit(config, { issueNumber: 97, repoRoot: repo, homeDirectory: home, prepare: true });
+    const secondEvidenceDirectory = join(home, 'github-verification', 'product-ui', '97');
+    const secondScreenshotsDirectory = join(secondEvidenceDirectory, 'screenshots');
+    writeFileSync(join(secondScreenshotsDirectory, 'settings.png'), 'fake image bytes\n');
+    const screenshotsOnly = runUiAudit(config, { issueNumber: 97, repoRoot: repo, homeDirectory: home, check: true });
+    assert.equal(screenshotsCaptured.prepare, true);
+    assert.equal(screenshotsOnly.evidence.state, 'screenshots-captured');
+    assert.equal(screenshotsOnly.evidence.screenshotCount, 1);
+    assert.deepEqual(screenshotsOnly.evidence.missing, ['notes.md visual analysis']);
+
+    writeFileSync(join(evidenceDirectory, 'notes.md'), 'Visible outcome matched the expected settings UI at desktop width.\n');
+    const visualAnalysis = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
+    assert.equal(visualAnalysis.evidence.state, 'visual-analysis-recorded');
+    assert.equal(visualAnalysis.evidence.trust, 'local-evidence');
+    assert.equal(visualAnalysis.evidence.reasonCode, 'local-evidence-found');
+    assert.equal(visualAnalysis.evidence.gateEvidence.result, 'unknown');
+    assert.match(visualAnalysis.nextAction, /cannot certify/);
   });
 
   it('reports disabled audit policy without requiring local evidence', () => {
@@ -176,11 +217,14 @@ describe('manual UI audit CLI', () => {
     assert.equal(existsSync(join(evidenceDirectory, 'screenshots')), true);
   });
 
-  it('checks local evidence without claiming audit pass', () => {
+  it('checks local visual evidence without claiming audit pass', () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
     const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
-    mkdirSync(evidenceDirectory, { recursive: true });
+    const screenshotsDirectory = join(evidenceDirectory, 'screenshots');
+    mkdirSync(screenshotsDirectory, { recursive: true });
+    writeFileSync(join(evidenceDirectory, 'browser-observation.md'), 'Opened the real running app with agent-browser.\n');
+    writeFileSync(join(screenshotsDirectory, 'home.png'), 'fake image bytes\n');
     writeFileSync(join(evidenceDirectory, 'notes.md'), 'Real running app checked locally.\n');
 
     const result = binRun(['audit', 'ui', '93', '--check', '--json'], repo, { HOME: home, USERPROFILE: home });
@@ -188,11 +232,29 @@ describe('manual UI audit CLI', () => {
 
     assert.equal(result.status, 0);
     assert.equal(parsed.check, true);
-    assert.equal(parsed.evidence.state, 'local-evidence-found');
+    assert.equal(parsed.evidence.state, 'visual-analysis-recorded');
+    assert.equal(parsed.evidence.browserObservationFound, true);
+    assert.equal(parsed.evidence.screenshotCount, 1);
     assert.equal(parsed.evidence.source, 'manual-audit');
     assert.equal(parsed.evidence.trust, 'local-evidence');
     assert.equal(parsed.evidence.reasonCode, 'local-evidence-found');
     assert.match(parsed.nextAction, /cannot certify|Executor reports evidence presence/);
+  });
+
+  it('reports missing visual evidence when check only finds metadata directories', () => {
+    const repo = makeGitRepo();
+    const home = mkdtempSync(join(tmpdir(), 'aie-audit-home-'));
+    const evidenceDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    mkdirSync(join(evidenceDirectory, 'screenshots'), { recursive: true });
+
+    const result = binRun(['audit', 'ui', '93', '--check', '--json'], repo, { HOME: home, USERPROFILE: home });
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.evidence.state, 'metadata-only');
+    assert.equal(parsed.evidence.reasonCode, 'manual-audit-incomplete');
+    assert.deepEqual(parsed.evidence.missing, ['browser-observation.md or local screenshots', 'notes.md visual analysis']);
+    assert.match(parsed.nextAction, /browser-observed or screenshot evidence/);
   });
 
   it('fails audit commands on malformed trusted config', () => {
