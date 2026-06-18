@@ -411,31 +411,41 @@ function isSetupGuidanceCommand(command: CommandName): command is "ci" | "hook" 
 }
 
 function validateSetupGuidanceCommand(parsed: ParsedArgs): void {
-  if (
-    parsed.files.length > 0 ||
-    parsed.filesFrom !== undefined ||
-    parsed.stdinFileList ||
-    parsed.stages.length > 0 ||
-    parsed.profile !== undefined ||
-    parsed.outDir !== undefined ||
-    parsed.benchmarkCorpusRoot !== undefined ||
-    parsed.benchmarkScenarioIds.length > 0 ||
-    parsed.benchmarkTags.length > 0 ||
-    parsed.benchmarkKinds.length > 0 ||
-    parsed.debounceMs !== defaultWatchDebounceMs ||
-    parsed.host !== defaultServeHost ||
-    parsed.port !== defaultServePort
-  ) {
+  if (hasSetupGuidanceUnsupportedOptions(parsed)) {
     throw new Error(
       "Setup guidance commands only accept their documented subcommand and --format.",
     );
   }
 
   const expectedSubcommand =
-    parsed.command === "hook" ? "install" : parsed.command === "ci" ? "setup" : "write";
+    setupGuidanceSubcommands[parsed.command as keyof typeof setupGuidanceSubcommands];
   if (parsed.setupSubcommand !== expectedSubcommand) {
     throw new Error(`Use aiq ${parsed.command} ${expectedSubcommand}.`);
   }
+}
+
+const setupGuidanceSubcommands = {
+  ci: "setup",
+  hook: "install",
+  ignore: "write",
+} as const satisfies Record<"ci" | "hook" | "ignore", string>;
+
+function hasSetupGuidanceUnsupportedOptions(parsed: ParsedArgs): boolean {
+  return [
+    parsed.files.length > 0,
+    parsed.filesFrom !== undefined,
+    parsed.stdinFileList,
+    parsed.stages.length > 0,
+    parsed.profile !== undefined,
+    parsed.outDir !== undefined,
+    parsed.benchmarkCorpusRoot !== undefined,
+    parsed.benchmarkScenarioIds.length > 0,
+    parsed.benchmarkTags.length > 0,
+    parsed.benchmarkKinds.length > 0,
+    parsed.debounceMs !== defaultWatchDebounceMs,
+    parsed.host !== defaultServeHost,
+    parsed.port !== defaultServePort,
+  ].some(Boolean);
 }
 
 function hasNonJsonOnlyFormat(args: string[]): boolean {

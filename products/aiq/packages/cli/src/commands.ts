@@ -237,28 +237,50 @@ export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise
     }),
   );
 
-  try {
-    if (parsed.dryRun) {
-      request.writeArtifacts = false;
-      const plan = await createRunPlan(request);
-      io.stdout.write(formatDryRunOutput(parsed.format, plan));
-      return 0;
-    }
+  return executeFirstRunRequest(parsed, io, request);
+}
 
-    const result = await runEngine(request);
-    io.stdout.write(
-      writeFirstRunJsonPrelude(parsed.format)
-        ? formatRunResultOutput(parsed.format, result)
-        : formatRunResultOutput(parsed.format, result, "run", { verbose: parsed.verbose }),
-    );
-    if (parsed.format === "text") {
-      io.stdout.write(formatFirstRunResultDetails(result));
-    }
-    return result.ok ? 0 : 1;
+async function executeFirstRunRequest(
+  parsed: ParsedArgs,
+  io: CliIo,
+  request: RunRequest,
+): Promise<number> {
+  try {
+    return parsed.dryRun
+      ? await executeFirstRunDryRun(parsed, io, request)
+      : await executeFirstRunEngine(parsed, io, request);
   } catch (error) {
     io.stderr.write(`${formatError(error)}\n`);
     return 3;
   }
+}
+
+async function executeFirstRunDryRun(
+  parsed: ParsedArgs,
+  io: CliIo,
+  request: RunRequest,
+): Promise<number> {
+  request.writeArtifacts = false;
+  const plan = await createRunPlan(request);
+  io.stdout.write(formatDryRunOutput(parsed.format, plan));
+  return 0;
+}
+
+async function executeFirstRunEngine(
+  parsed: ParsedArgs,
+  io: CliIo,
+  request: RunRequest,
+): Promise<number> {
+  const result = await runEngine(request);
+  io.stdout.write(
+    writeFirstRunJsonPrelude(parsed.format)
+      ? formatRunResultOutput(parsed.format, result)
+      : formatRunResultOutput(parsed.format, result, "run", { verbose: parsed.verbose }),
+  );
+  if (parsed.format === "text") {
+    io.stdout.write(formatFirstRunResultDetails(result));
+  }
+  return result.ok ? 0 : 1;
 }
 
 export async function runCheckCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {

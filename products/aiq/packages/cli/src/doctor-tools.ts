@@ -40,6 +40,142 @@ interface DoctorBundledTool {
   source: "bundled" | "project";
 }
 
+const toolchainStages: StageId[] = [
+  "lint",
+  "format",
+  "typecheck",
+  "unit",
+  "sloc",
+  "complexity",
+  "maintainability",
+  "coverage",
+];
+
+const doctorToolRequirementRules: Array<{
+  languages: readonly LanguageId[];
+  requirement: DoctorToolRequirement;
+  stages: readonly StageId[];
+}> = [
+  {
+    languages: ["python"],
+    requirement: {
+      binaries: ["python3", "python"],
+      install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
+      name: "Python runtime",
+      required: true,
+      source: "external",
+    },
+    stages: toolchainStages,
+  },
+  {
+    languages: ["go"],
+    requirement: {
+      binaries: ["go"],
+      install: "Install the Go toolchain from your normal toolchain manager.",
+      name: "Go toolchain",
+      required: true,
+      source: "external",
+    },
+    stages: toolchainStages,
+  },
+  {
+    languages: ["rust"],
+    requirement: {
+      binaries: ["cargo"],
+      install: "Install Rust and Cargo with rustup or your normal toolchain manager.",
+      name: "Rust Cargo",
+      required: true,
+      source: "external",
+    },
+    stages: toolchainStages,
+  },
+  {
+    languages: ["dotnet"],
+    requirement: {
+      binaries: ["dotnet"],
+      install: "Install the .NET SDK for this project.",
+      name: ".NET SDK",
+      required: true,
+      source: "external",
+    },
+    stages: toolchainStages,
+  },
+  {
+    languages: ["java", "kotlin"],
+    requirement: {
+      binaries: ["java"],
+      install: "Install a JVM runtime and the project build tool wrapper or Maven/Gradle.",
+      name: "JVM runtime",
+      required: true,
+      source: "external",
+    },
+    stages: toolchainStages,
+  },
+  {
+    languages: ["terraform", "hcl"],
+    requirement: {
+      binaries: ["terraform"],
+      install: "Install Terraform CLI to enable Terraform/HCL lint, format, and validation.",
+      name: "Terraform CLI",
+      required: true,
+      source: "external",
+    },
+    stages: ["lint", "format", "typecheck"],
+  },
+];
+
+const bundledToolRules: Array<{
+  applies: (languages: ReadonlySet<LanguageId>, selected: ReadonlySet<StageId>) => boolean;
+  tool: DoctorBundledTool;
+}> = [
+  {
+    applies: (languages, selected) =>
+      usesAnyLanguage(languages, ["javascript", "typescript"]) &&
+      usesAnyStage(selected, ["lint", "format"]),
+    tool: {
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "Biome JS/TS lint/format tool",
+      source: "bundled",
+    },
+  },
+  {
+    applies: (languages, selected) => languages.has("typescript") && selected.has("typecheck"),
+    tool: {
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "TypeScript compiler",
+      source: "bundled",
+    },
+  },
+  {
+    applies: (languages, selected) =>
+      usesAnyStage(selected, ["unit", "coverage"]) &&
+      usesAnyLanguage(languages, ["javascript", "typescript"]),
+    tool: {
+      detail: "uses the project's configured npm test runner when present",
+      name: "JS/TS test runner",
+      source: "project",
+    },
+  },
+  {
+    applies: (languages, selected) =>
+      usesAnyStage(selected, ["lint", "format"]) &&
+      usesAnyLanguage(languages, ["html", "css", "yaml", "sql"]),
+    tool: {
+      detail: "provided by the @tjalve/aiq package dependency graph",
+      name: "Bundled web/data document tools",
+      source: "bundled",
+    },
+  },
+  {
+    applies: (languages, selected) => selected.has("security") && languages.size > 0,
+    tool: {
+      detail: "provided by the @tjalve/aiq package runtime",
+      name: "AIQ shared security scanner",
+      source: "bundled",
+    },
+  },
+];
+
 export function resolveDoctorToolRequirements(
   languages: ReadonlySet<LanguageId>,
   stages: readonly StageId[],
@@ -47,138 +183,17 @@ export function resolveDoctorToolRequirements(
   const requirements = new Map<string, DoctorToolRequirement>();
   const selected = new Set(stages);
 
-  const addRequirement = (requirement: DoctorToolRequirement) => {
-    requirements.set(requirement.name, requirement);
-  };
-
-  if (
-    languages.has("python") &&
-    usesAnyStage(selected, [
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "sloc",
-      "complexity",
-      "maintainability",
-      "coverage",
-    ])
-  ) {
-    addRequirement({
-      binaries: ["python3", "python"],
-      install: "Install Python 3 and project Python tools such as ruff, ty, pytest, and radon.",
-      name: "Python runtime",
-      required: true,
-      source: "external",
-    });
-  }
-
-  if (
-    languages.has("go") &&
-    usesAnyStage(selected, [
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "sloc",
-      "complexity",
-      "maintainability",
-      "coverage",
-    ])
-  ) {
-    addRequirement({
-      binaries: ["go"],
-      install: "Install the Go toolchain from your normal toolchain manager.",
-      name: "Go toolchain",
-      required: true,
-      source: "external",
-    });
-  }
-
-  if (
-    languages.has("rust") &&
-    usesAnyStage(selected, [
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "sloc",
-      "complexity",
-      "maintainability",
-      "coverage",
-    ])
-  ) {
-    addRequirement({
-      binaries: ["cargo"],
-      install: "Install Rust and Cargo with rustup or your normal toolchain manager.",
-      name: "Rust Cargo",
-      required: true,
-      source: "external",
-    });
-  }
-
-  if (
-    languages.has("dotnet") &&
-    usesAnyStage(selected, [
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "sloc",
-      "complexity",
-      "maintainability",
-      "coverage",
-    ])
-  ) {
-    addRequirement({
-      binaries: ["dotnet"],
-      install: "Install the .NET SDK for this project.",
-      name: ".NET SDK",
-      required: true,
-      source: "external",
-    });
-  }
-
-  if (
-    (languages.has("java") || languages.has("kotlin")) &&
-    usesAnyStage(selected, [
-      "lint",
-      "format",
-      "typecheck",
-      "unit",
-      "sloc",
-      "complexity",
-      "maintainability",
-      "coverage",
-    ])
-  ) {
-    addRequirement({
-      binaries: ["java"],
-      install: "Install a JVM runtime and the project build tool wrapper or Maven/Gradle.",
-      name: "JVM runtime",
-      required: true,
-      source: "external",
-    });
-  }
-
-  if (
-    (languages.has("terraform") || languages.has("hcl")) &&
-    usesAnyStage(selected, ["lint", "format", "typecheck"])
-  ) {
-    addRequirement({
-      binaries: ["terraform"],
-      install: "Install Terraform CLI to enable Terraform/HCL lint, format, and validation.",
-      name: "Terraform CLI",
-      required: true,
-      source: "external",
-    });
+  for (const rule of doctorToolRequirementRules) {
+    if (usesAnyLanguage(languages, rule.languages) && usesAnyStage(selected, rule.stages)) {
+      requirements.set(rule.requirement.name, rule.requirement);
+    }
   }
 
   if (
     languages.has("powershell") &&
     usesAnyStage(selected, ["lint", "format", "unit", "coverage"])
   ) {
-    addRequirement({
+    requirements.set("PowerShell runtime", {
       binaries:
         process.platform === "win32"
           ? ["pwsh.exe", "pwsh", "powershell.exe", "powershell"]
@@ -201,7 +216,7 @@ export function resolveDoctorToolRequirements(
       "kotlin",
     ];
     if (lizardLanguages.some((language) => languages.has(language))) {
-      addRequirement({
+      requirements.set("Lizard metrics tool", {
         binaries: ["lizard"],
         install: "Install lizard where AIQ runs to enable non-Python metrics stages.",
         name: "Lizard metrics tool",
@@ -220,57 +235,10 @@ export function resolveDoctorBundledTools(
 ): DoctorBundledTool[] {
   const selected = new Set(stages);
   const checks = new Map<string, DoctorBundledTool>();
-  const add = (tool: DoctorBundledTool) => {
-    checks.set(tool.name, tool);
-  };
-
-  if (
-    (languages.has("javascript") || languages.has("typescript")) &&
-    usesAnyStage(selected, ["lint", "format"])
-  ) {
-    add({
-      detail: "provided by the @tjalve/aiq package dependency graph",
-      name: "Biome JS/TS lint/format tool",
-      source: "bundled",
-    });
-  }
-
-  if (languages.has("typescript") && selected.has("typecheck")) {
-    add({
-      detail: "provided by the @tjalve/aiq package dependency graph",
-      name: "TypeScript compiler",
-      source: "bundled",
-    });
-  }
-
-  if (
-    usesAnyStage(selected, ["unit", "coverage"]) &&
-    (languages.has("javascript") || languages.has("typescript"))
-  ) {
-    add({
-      detail: "uses the project's configured npm test runner when present",
-      name: "JS/TS test runner",
-      source: "project",
-    });
-  }
-
-  if (
-    usesAnyStage(selected, ["lint", "format"]) &&
-    (languages.has("html") || languages.has("css") || languages.has("yaml") || languages.has("sql"))
-  ) {
-    add({
-      detail: "provided by the @tjalve/aiq package dependency graph",
-      name: "Bundled web/data document tools",
-      source: "bundled",
-    });
-  }
-
-  if (selected.has("security") && languages.size > 0) {
-    add({
-      detail: "provided by the @tjalve/aiq package runtime",
-      name: "AIQ shared security scanner",
-      source: "bundled",
-    });
+  for (const rule of bundledToolRules) {
+    if (rule.applies(languages, selected)) {
+      checks.set(rule.tool.name, rule.tool);
+    }
   }
 
   return [...checks.values()];
@@ -294,5 +262,12 @@ export function mergeDoctorPrerequisites(
 
 function usesAnyStage(selected: ReadonlySet<StageId>, stages: readonly StageId[]): boolean {
   return stages.some((stage) => selected.has(stage));
+}
+
+function usesAnyLanguage(
+  languages: ReadonlySet<LanguageId>,
+  candidates: readonly LanguageId[],
+): boolean {
+  return candidates.some((language) => languages.has(language));
 }
 

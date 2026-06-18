@@ -164,56 +164,20 @@ export async function runWatchCommand(
       return;
     }
 
-    const runKind =
-      pendingContinuousTrigger !== undefined && timer === undefined
-        ? "continuous"
-        : cadenceRequested
-          ? "cadence"
-          : undefined;
+    const runKind = resolveNextWatchRunKind(
+      pendingContinuousTrigger,
+      cadenceRequested,
+      timer,
+    );
     if (runKind === undefined) {
       return;
     }
 
     runInFlight = true;
-    const trigger = runKind === "continuous" ? (pendingContinuousTrigger ?? "startup") : "cadence";
-    if (runKind === "continuous") {
-      pendingContinuousTrigger = undefined;
-    } else {
-      cadenceRequested = false;
-    }
+    const trigger = consumeWatchRunTrigger(runKind);
 
     try {
-      const nextPrepared = await ensurePrepared(trigger);
-      const execution = runKind === "continuous" ? nextPrepared.continuous : nextPrepared.cadence;
-      if (execution === undefined) {
-        if (runKind === "continuous" && nextPrepared.cadence !== undefined) {
-          cadenceRequested = true;
-        }
-        lastExitCode = 0;
-        return;
-      }
-
-      const result = await runResolvedRequest(
-        {
-          ...execution.request,
-          signal: activeSignal.signal,
-        },
-        execution.plan,
-      );
-      lastExitCode = result.ok ? 0 : 1;
-      writeWatchOutput(
-        io,
-        parsed.format,
-        trigger,
-        result,
-        nextPrepared.progress === undefined
-          ? undefined
-          : createRunWorkflowForStages(
-              nextPrepared.progress,
-              execution.request.selection.stages,
-              result,
-            ),
-      );
+      await executePreparedWatchRun(runKind, trigger);
     } catch (error) {
       if (isCliCancellation(error, activeSignal.signal)) {
         return;
@@ -223,16 +187,74 @@ export async function runWatchCommand(
       io.stderr.write(`${formatError(error)}\n`);
     } finally {
       runInFlight = false;
-      if (!activeSignal.signal.aborted) {
-        if (rerunRequested && pendingContinuousTrigger !== undefined) {
-          rerunRequested = false;
-          scheduleContinuousRun(pendingContinuousTrigger);
-        } else if (pendingContinuousTrigger !== undefined && timer === undefined) {
-          void executeNextRun();
-        } else if (cadenceRequested) {
-          void executeNextRun();
-        }
-      }
+      scheduleFollowUpRun();
+    }
+  };
+
+  const consumeWatchRunTrigger = (runKind: "cadence" | "continuous"): string => {
+    if (runKind === "cadence") {
+      cadenceRequested = false;
+      return "cadence";
+    }
+
+    const trigger = pendingContinuousTrigger ?? "startup";
+    pendingContinuousTrigger = undefined;
+    return trigger;
+  };
+
+  const executePreparedWatchRun = async (
+    runKind: "cadence" | "continuous",
+    trigger: string,
+  ): Promise<void> => {
+    const nextPrepared = await ensurePrepared(trigger);
+    const execution = runKind === "continuous" ? nextPrepared.continuous : nextPrepared.cadence;
+    if (execution === undefined) {
+      cadenceRequested = runKind === "continuous" && nextPrepared.cadence !== undefined;
+      lastExitCode = 0;
+      return;
+    }
+
+    const result = await runResolvedRequest(
+      {
+        ...execution.request,
+        signal: activeSignal.signal,
+      },
+      execution.plan,
+    );
+    lastExitCode = result.ok ? 0 : 1;
+    writeWatchOutput(
+      io,
+      parsed.format,
+      trigger,
+      result,
+      nextPrepared.progress === undefined
+        ? undefined
+        : createRunWorkflowForStages(
+            nextPrepared.progress,
+            execution.request.selection.stages,
+            result,
+          ),
+    );
+  };
+
+  const scheduleFollowUpRun = (): void => {
+    if (activeSignal.signal.aborted) {
+      return;
+    }
+
+    if (rerunRequested && pendingContinuousTrigger !== undefined) {
+      rerunRequested = false;
+      scheduleContinuousRun(pendingContinuousTrigger);
+      return;
+    }
+
+    if (pendingContinuousTrigger !== undefined && timer === undefined) {
+      void executeNextRun();
+      return;
+    }
+
+    if (cadenceRequested) {
+      void executeNextRun();
     }
   };
 
@@ -386,5 +408,17 @@ async function createPreparedWatchExecution(
     plan: buildRunPlan(resolvedRequest),
     request: resolvedRequest,
   };
+}
+
+function resolveNextWatchRunKind(
+  pendingContinuousTrigger: string | undefined,
+  cadenceRequested: boolean,
+  timer: ReturnType<typeof setTimeout> | undefined,
+): "cadence" | "continuous" | undefined {
+  if (pendingContinuousTrigger !== undefined && timer === undefined) {
+    return "continuous";
+  }
+
+  return cadenceRequested ? "cadence" : undefined;
 }
 

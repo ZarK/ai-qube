@@ -48,6 +48,59 @@ const doctorLanguageOrder: LanguageId[] = [
   "documents",
 ];
 
+const markerLanguageMap: ReadonlyMap<string, LanguageId> = new Map([
+  ["Cargo.toml", "rust"],
+  ["go.mod", "go"],
+  ["package.json", "javascript"],
+  ["pyproject.toml", "python"],
+  ["requirements.txt", "python"],
+  ["tsconfig.json", "typescript"],
+  ["pom.xml", "java"],
+  ["build.gradle", "java"],
+  ["build.gradle.kts", "java"],
+  ["settings.gradle", "java"],
+  ["settings.gradle.kts", "java"],
+]);
+
+const extensionLanguageMap: ReadonlyMap<string, LanguageId> = new Map([
+  [".bash", "bash"],
+  [".bats", "bash"],
+  [".sh", "bash"],
+  [".cjs", "javascript"],
+  [".js", "javascript"],
+  [".jsx", "javascript"],
+  [".mjs", "javascript"],
+  [".css", "css"],
+  [".cs", "dotnet"],
+  [".csproj", "dotnet"],
+  [".fsproj", "dotnet"],
+  [".sln", "dotnet"],
+  [".slnx", "dotnet"],
+  [".vbproj", "dotnet"],
+  [".go", "go"],
+  [".hcl", "hcl"],
+  [".htm", "html"],
+  [".html", "html"],
+  [".java", "java"],
+  [".kt", "kotlin"],
+  [".kts", "kotlin"],
+  [".ps1", "powershell"],
+  [".psd1", "powershell"],
+  [".psm1", "powershell"],
+  [".py", "python"],
+  [".pyi", "python"],
+  [".rs", "rust"],
+  [".sql", "sql"],
+  [".tf", "terraform"],
+  [".tfvars", "terraform"],
+  [".ts", "typescript"],
+  [".tsx", "typescript"],
+  [".cts", "typescript"],
+  [".mts", "typescript"],
+  [".yaml", "yaml"],
+  [".yml", "yaml"],
+]);
+
 export async function detectProjectLanguages(cwd: string): Promise<Set<LanguageId>> {
   const languages = new Set<LanguageId>();
   await collectProjectLanguages(cwd, languages, { scannedFiles: 0 });
@@ -94,104 +147,16 @@ async function collectProjectLanguages(
 }
 
 function addMarkerLanguages(fileName: string, languages: Set<LanguageId>): void {
-  switch (fileName) {
-    case "Cargo.toml":
-      languages.add("rust");
-      return;
-    case "go.mod":
-      languages.add("go");
-      return;
-    case "package.json":
-      languages.add("javascript");
-      return;
-    case "pyproject.toml":
-    case "requirements.txt":
-      languages.add("python");
-      return;
-    case "tsconfig.json":
-      languages.add("typescript");
-      return;
-    case "pom.xml":
-    case "build.gradle":
-    case "build.gradle.kts":
-    case "settings.gradle":
-    case "settings.gradle.kts":
-      languages.add("java");
-      return;
+  const language = markerLanguageMap.get(fileName);
+  if (language !== undefined) {
+    languages.add(language);
   }
 }
 
 function addDetectedLanguages(fileName: string, languages: Set<LanguageId>): void {
-  const extension = path.extname(fileName).toLowerCase();
-  switch (extension) {
-    case ".bash":
-    case ".bats":
-    case ".sh":
-      languages.add("bash");
-      return;
-    case ".cjs":
-    case ".js":
-    case ".jsx":
-    case ".mjs":
-      languages.add("javascript");
-      return;
-    case ".css":
-      languages.add("css");
-      return;
-    case ".cs":
-    case ".csproj":
-    case ".fsproj":
-    case ".sln":
-    case ".slnx":
-    case ".vbproj":
-      languages.add("dotnet");
-      return;
-    case ".go":
-      languages.add("go");
-      return;
-    case ".hcl":
-      languages.add("hcl");
-      return;
-    case ".htm":
-    case ".html":
-      languages.add("html");
-      return;
-    case ".java":
-      languages.add("java");
-      return;
-    case ".kt":
-    case ".kts":
-      languages.add("kotlin");
-      return;
-    case ".ps1":
-    case ".psd1":
-    case ".psm1":
-      languages.add("powershell");
-      return;
-    case ".py":
-    case ".pyi":
-      languages.add("python");
-      return;
-    case ".rs":
-      languages.add("rust");
-      return;
-    case ".sql":
-      languages.add("sql");
-      return;
-    case ".tf":
-    case ".tfvars":
-      languages.add("terraform");
-      return;
-    case ".ts":
-    case ".tsx":
-    case ".cts":
-    case ".mts":
-      languages.add("typescript");
-      return;
-    case ".yaml":
-    case ".yml":
-      languages.add("yaml");
-      return;
+  const language = extensionLanguageMap.get(path.extname(fileName).toLowerCase());
+  if (language !== undefined) {
+    languages.add(language);
   }
 }
 

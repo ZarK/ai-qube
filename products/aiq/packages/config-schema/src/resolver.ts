@@ -38,81 +38,10 @@ export function mergeAiqConfig(base: AiqConfig, override?: AiqConfigFile): AiqCo
     return merged;
   }
 
-  if (override.inputs?.ignore !== undefined) {
-    merged.inputs.ignore = [...override.inputs.ignore];
-  }
-
-  if (override.stages !== undefined) {
-    for (const stageId of aiqStageIds) {
-      const stageOverride = override.stages[stageId];
-      if (stageOverride === undefined) {
-        continue;
-      }
-
-      if (stageOverride?.enabled !== undefined) {
-        merged.stages[stageId].enabled = stageOverride.enabled;
-      }
-
-      if (stageOverride.languages !== undefined) {
-        for (const languageId of aiqLanguageIds) {
-          const languageOverride = stageOverride.languages[languageId];
-          if (languageOverride === undefined) {
-            continue;
-          }
-
-          merged.stages[stageId].languages[languageId] = cloneStageLanguageConfig(languageOverride);
-        }
-      }
-    }
-  }
-
-  if (override.profiles !== undefined) {
-    for (const profileName of aiqProfileNames) {
-      const profileOverride = override.profiles[profileName];
-      if (profileOverride === undefined) {
-        continue;
-      }
-
-      if (profileOverride.changedOnly !== undefined) {
-        merged.profiles[profileName].changedOnly = profileOverride.changedOnly;
-      }
-
-      if (profileOverride.stages !== undefined) {
-        merged.profiles[profileName].stages = [...profileOverride.stages];
-      }
-    }
-  }
-
-  if (override.surfaces !== undefined) {
-    for (const surfaceId of aiqSurfaceIds) {
-      const surfaceOverride = override.surfaces[surfaceId];
-      if (surfaceOverride === undefined) {
-        continue;
-      }
-
-      const surface = cloneSurfaceConfig(merged.surfaces[surfaceId]);
-      if (surfaceOverride.cadenceMs !== undefined) {
-        surface.cadenceMs = surfaceOverride.cadenceMs;
-      }
-      if (surfaceOverride.cadenceStages !== undefined) {
-        surface.cadenceStages = [...surfaceOverride.cadenceStages];
-      }
-      if (surfaceOverride.changedOnly !== undefined) {
-        surface.changedOnly = surfaceOverride.changedOnly;
-      }
-      if (surfaceOverride.stages !== undefined) {
-        surface.stages = [...surfaceOverride.stages];
-      }
-      if (surfaceOverride.profile !== undefined) {
-        surface.profile = surfaceOverride.profile;
-      }
-      if (surfaceOverride.publishDiagnostics !== undefined) {
-        surface.publishDiagnostics = surfaceOverride.publishDiagnostics;
-      }
-
-      merged.surfaces[surfaceId] = surface;
-    }
-  }
+  applyInputOverrides(merged, override);
+  applyStageOverrides(merged, override);
+  applyProfileOverrides(merged, override);
+  applySurfaceOverrides(merged, override);
 
   return merged;
 }
@@ -126,29 +55,22 @@ export async function resolveAiqConfig(
   const surfaceConfig = config.surfaces[options.surface];
   const profile = options.profile ?? surfaceConfig.profile;
   const profileConfig = resolveProfile(config, profile);
-  const requestedStages =
-    options.stages !== undefined
-      ? uniqueStages(options.stages)
-      : filterEnabledStages(
-          config,
-          surfaceConfig.stages !== undefined ? surfaceConfig.stages : profileConfig.stages,
-        );
+  const requestedStages = resolveRequestedStages(options, config, surfaceConfig, profileConfig);
   const cadenceStages = uniqueStages(surfaceConfig.cadenceStages ?? []).filter((stageId) =>
     requestedStages.includes(stageId),
   );
 
-  const resolved: ResolvedAiqConfig = {
-    ...(surfaceConfig.cadenceMs === undefined ? {} : { cadenceMs: surfaceConfig.cadenceMs }),
+  const resolved: ResolvedAiqConfig = createResolvedAiqConfig({
     cadenceStages,
-    changedOnly: surfaceConfig.changedOnly ?? profileConfig.changedOnly,
     config,
     cwd,
-    stages: requestedStages,
+    loadedPath: loaded.path,
+    options,
     profile,
-    publishDiagnostics: surfaceConfig.publishDiagnostics ?? false,
-    source: loaded.path === undefined ? "defaults" : "file",
-    surface: options.surface,
-  };
+    profileConfig,
+    requestedStages,
+    surfaceConfig,
+  });
 
   if (loaded.path !== undefined) {
     resolved.configPath = loaded.path;
@@ -156,6 +78,124 @@ export async function resolveAiqConfig(
   }
 
   return resolved;
+}
+
+function applyInputOverrides(merged: AiqConfig, override: AiqConfigFile): void {
+  if (override.inputs?.ignore !== undefined) {
+    merged.inputs.ignore = [...override.inputs.ignore];
+  }
+}
+
+function applyStageOverrides(merged: AiqConfig, override: AiqConfigFile): void {
+  for (const stageId of aiqStageIds) {
+    const stageOverride = override.stages?.[stageId];
+    if (stageOverride === undefined) {
+      continue;
+    }
+
+    if (stageOverride.enabled !== undefined) {
+      merged.stages[stageId].enabled = stageOverride.enabled;
+    }
+    applyStageLanguageOverrides(merged.stages[stageId], stageOverride);
+  }
+}
+
+function applyStageLanguageOverrides(
+  stage: AiqStageConfig,
+  stageOverride: AiqStageConfigFile,
+): void {
+  for (const languageId of aiqLanguageIds) {
+    const languageOverride = stageOverride.languages?.[languageId];
+    if (languageOverride !== undefined) {
+      stage.languages[languageId] = cloneStageLanguageConfig(languageOverride);
+    }
+  }
+}
+
+function applyProfileOverrides(merged: AiqConfig, override: AiqConfigFile): void {
+  for (const profileName of aiqProfileNames) {
+    const profileOverride = override.profiles?.[profileName];
+    if (profileOverride === undefined) {
+      continue;
+    }
+
+    if (profileOverride.changedOnly !== undefined) {
+      merged.profiles[profileName].changedOnly = profileOverride.changedOnly;
+    }
+    if (profileOverride.stages !== undefined) {
+      merged.profiles[profileName].stages = [...profileOverride.stages];
+    }
+  }
+}
+
+function applySurfaceOverrides(merged: AiqConfig, override: AiqConfigFile): void {
+  for (const surfaceId of aiqSurfaceIds) {
+    const surfaceOverride = override.surfaces?.[surfaceId];
+    if (surfaceOverride !== undefined) {
+      merged.surfaces[surfaceId] = mergeSurfaceConfig(
+        merged.surfaces[surfaceId],
+        surfaceOverride,
+      );
+    }
+  }
+}
+
+function mergeSurfaceConfig(
+  base: AiqSurfaceConfig,
+  override: Partial<AiqSurfaceConfig>,
+): AiqSurfaceConfig {
+  return {
+    ...cloneSurfaceConfig(base),
+    ...(override.cadenceMs === undefined ? {} : { cadenceMs: override.cadenceMs }),
+    ...(override.cadenceStages === undefined ? {} : { cadenceStages: [...override.cadenceStages] }),
+    ...(override.changedOnly === undefined ? {} : { changedOnly: override.changedOnly }),
+    ...(override.stages === undefined ? {} : { stages: [...override.stages] }),
+    ...(override.profile === undefined ? {} : { profile: override.profile }),
+    ...(override.publishDiagnostics === undefined
+      ? {}
+      : { publishDiagnostics: override.publishDiagnostics }),
+  };
+}
+
+function resolveRequestedStages(
+  options: ResolveAiqConfigOptions,
+  config: AiqConfig,
+  surfaceConfig: AiqSurfaceConfig,
+  profileConfig: AiqProfileConfig,
+): AiqStageId[] {
+  return options.stages !== undefined
+    ? uniqueStages(options.stages)
+    : filterEnabledStages(
+        config,
+        surfaceConfig.stages !== undefined ? surfaceConfig.stages : profileConfig.stages,
+      );
+}
+
+function createResolvedAiqConfig(options: {
+  cadenceStages: AiqStageId[];
+  config: AiqConfig;
+  cwd: string;
+  loadedPath: string | undefined;
+  options: ResolveAiqConfigOptions;
+  profile: AiqProfileName;
+  profileConfig: AiqProfileConfig;
+  requestedStages: AiqStageId[];
+  surfaceConfig: AiqSurfaceConfig;
+}): ResolvedAiqConfig {
+  return {
+    ...(options.surfaceConfig.cadenceMs === undefined
+      ? {}
+      : { cadenceMs: options.surfaceConfig.cadenceMs }),
+    cadenceStages: options.cadenceStages,
+    changedOnly: options.surfaceConfig.changedOnly ?? options.profileConfig.changedOnly,
+    config: options.config,
+    cwd: options.cwd,
+    stages: options.requestedStages,
+    profile: options.profile,
+    publishDiagnostics: options.surfaceConfig.publishDiagnostics ?? false,
+    source: options.loadedPath === undefined ? "defaults" : "file",
+    surface: options.options.surface,
+  };
 }
 
 function cloneAiqConfig(config: AiqConfig): AiqConfig {

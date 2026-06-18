@@ -69,72 +69,28 @@ async function readStatusReport(reportPath: string): Promise<{
   try {
     rawReport = await readFile(reportPath, "utf8");
   } catch (error) {
-    if (isErrorCode(error, "ENOENT")) {
-      return {
-        lastRun: {
-          failedStages: [],
-          stages: [],
-          status: "none",
-        },
-      };
-    }
-
-    return {
-      lastRun: {
-        failedStages: [],
-        stages: [],
-        status: "unreadable",
-      },
-    };
+    return { lastRun: createEmptyLastRun(isErrorCode(error, "ENOENT") ? "none" : "unreadable") };
   }
 
   let value: unknown;
   try {
     value = JSON.parse(rawReport);
   } catch {
-    return {
-      lastRun: {
-        failedStages: [],
-        stages: [],
-        status: "unreadable",
-      },
-    };
+    return { lastRun: createEmptyLastRun("unreadable") };
   }
 
   if (!isRecord(value)) {
-    return {
-      lastRun: {
-        failedStages: [],
-        stages: [],
-        status: "unreadable",
-      },
-    };
+    return { lastRun: createEmptyLastRun("unreadable") };
   }
 
   const status = readRunStatus(value);
   if (status === undefined) {
-    return {
-      lastRun: {
-        failedStages: [],
-        stages: [],
-        status: "unreadable",
-      },
-    };
+    return { lastRun: createEmptyLastRun("unreadable") };
   }
 
   const runId = typeof value.runId === "string" ? value.runId : undefined;
   const finishedAt = typeof value.finishedAt === "string" ? value.finishedAt : undefined;
-  const artifacts = isRecord(value.artifacts) ? value.artifacts : {};
-  const planPath = typeof artifacts.planPath === "string" ? artifacts.planPath : undefined;
-  const actualReportPath =
-    typeof artifacts.reportPath === "string" ? artifacts.reportPath : undefined;
-  const artifactPaths =
-    planPath === undefined && actualReportPath === undefined
-      ? undefined
-      : {
-          ...(planPath === undefined ? {} : { plan: planPath }),
-          ...(actualReportPath === undefined ? {} : { report: actualReportPath }),
-        };
+  const artifactPaths = readArtifactPaths(value);
 
   return {
     ...(artifactPaths === undefined ? {} : { artifactPaths }),
@@ -146,6 +102,31 @@ async function readStatusReport(reportPath: string): Promise<{
       status,
     },
   };
+}
+
+function createEmptyLastRun(status: StatusLastRun["status"]): StatusLastRun {
+  return {
+    failedStages: [],
+    stages: [],
+    status,
+  };
+}
+
+function readArtifactPaths(value: Record<string, unknown>):
+  | {
+      plan?: string;
+      report?: string;
+    }
+  | undefined {
+  const artifacts = isRecord(value.artifacts) ? value.artifacts : {};
+  const planPath = typeof artifacts.planPath === "string" ? artifacts.planPath : undefined;
+  const reportPath = typeof artifacts.reportPath === "string" ? artifacts.reportPath : undefined;
+  return planPath === undefined && reportPath === undefined
+    ? undefined
+    : {
+        ...(planPath === undefined ? {} : { plan: planPath }),
+        ...(reportPath === undefined ? {} : { report: reportPath }),
+      };
 }
 
 export async function loadOptionalRunProgress(

@@ -244,51 +244,93 @@ function parseSurfaceConfigOverrides(
     );
 
     const parsedConfig: Partial<AiqSurfaceConfig> = {};
-    if (surfaceConfig.cadenceMs !== undefined) {
-      parsedConfig.cadenceMs = parsePositiveInteger(
-        surfaceConfig.cadenceMs,
-        `${source}.${surfaceId}.cadenceMs`,
-      );
-    }
-
-    if (surfaceConfig.cadenceStages !== undefined) {
-      parsedConfig.cadenceStages = parseStageList(
-        surfaceConfig.cadenceStages,
-        `${source}.${surfaceId}.cadenceStages`,
-      );
-    }
-
-    if (surfaceConfig.changedOnly !== undefined) {
-      if (typeof surfaceConfig.changedOnly !== "boolean") {
-        throw new Error(`${source}.${surfaceId}.changedOnly must be a boolean.`);
-      }
-      parsedConfig.changedOnly = surfaceConfig.changedOnly;
-    }
-
-    if (surfaceConfig.stages !== undefined) {
-      parsedConfig.stages = parseStageList(surfaceConfig.stages, `${source}.${surfaceId}.stages`);
-    }
-
-    if (surfaceConfig.profile !== undefined) {
-      if (!aiqProfileNames.includes(surfaceConfig.profile as AiqProfileName)) {
-        throw new Error(
-          `${source}.${surfaceId}.profile must be one of ${aiqProfileNames.join(", ")}.`,
-        );
-      }
-      parsedConfig.profile = surfaceConfig.profile as AiqProfileName;
-    }
-
-    if (surfaceConfig.publishDiagnostics !== undefined) {
-      if (typeof surfaceConfig.publishDiagnostics !== "boolean") {
-        throw new Error(`${source}.${surfaceId}.publishDiagnostics must be a boolean.`);
-      }
-      parsedConfig.publishDiagnostics = surfaceConfig.publishDiagnostics;
-    }
+    parseOptionalSurfaceNumber(surfaceConfig, parsedConfig, surfaceId as AiqSurfaceId, source);
+    parseOptionalSurfaceStages(surfaceConfig, parsedConfig, surfaceId as AiqSurfaceId, source);
+    parseOptionalSurfaceBooleans(surfaceConfig, parsedConfig, surfaceId as AiqSurfaceId, source);
+    parseOptionalSurfaceProfile(surfaceConfig, parsedConfig, surfaceId as AiqSurfaceId, source);
 
     config[surfaceId as AiqSurfaceId] = parsedConfig;
   }
 
   return config;
+}
+
+function parseOptionalSurfaceNumber(
+  surfaceConfig: Record<string, unknown>,
+  parsedConfig: Partial<AiqSurfaceConfig>,
+  surfaceId: AiqSurfaceId,
+  source: string,
+): void {
+  if (surfaceConfig.cadenceMs !== undefined) {
+    parsedConfig.cadenceMs = parsePositiveInteger(
+      surfaceConfig.cadenceMs,
+      `${source}.${surfaceId}.cadenceMs`,
+    );
+  }
+}
+
+function parseOptionalSurfaceStages(
+  surfaceConfig: Record<string, unknown>,
+  parsedConfig: Partial<AiqSurfaceConfig>,
+  surfaceId: AiqSurfaceId,
+  source: string,
+): void {
+  if (surfaceConfig.cadenceStages !== undefined) {
+    parsedConfig.cadenceStages = parseStageList(
+      surfaceConfig.cadenceStages,
+      `${source}.${surfaceId}.cadenceStages`,
+    );
+  }
+  if (surfaceConfig.stages !== undefined) {
+    parsedConfig.stages = parseStageList(surfaceConfig.stages, `${source}.${surfaceId}.stages`);
+  }
+}
+
+function parseOptionalSurfaceBooleans(
+  surfaceConfig: Record<string, unknown>,
+  parsedConfig: Partial<AiqSurfaceConfig>,
+  surfaceId: AiqSurfaceId,
+  source: string,
+): void {
+  const changedOnly = parseOptionalBoolean(
+    surfaceConfig.changedOnly,
+    `${source}.${surfaceId}.changedOnly`,
+  );
+  const publishDiagnostics = parseOptionalBoolean(
+    surfaceConfig.publishDiagnostics,
+    `${source}.${surfaceId}.publishDiagnostics`,
+  );
+  if (changedOnly !== undefined) {
+    parsedConfig.changedOnly = changedOnly;
+  }
+  if (publishDiagnostics !== undefined) {
+    parsedConfig.publishDiagnostics = publishDiagnostics;
+  }
+}
+
+function parseOptionalSurfaceProfile(
+  surfaceConfig: Record<string, unknown>,
+  parsedConfig: Partial<AiqSurfaceConfig>,
+  surfaceId: AiqSurfaceId,
+  source: string,
+): void {
+  if (surfaceConfig.profile === undefined) {
+    return;
+  }
+  if (!aiqProfileNames.includes(surfaceConfig.profile as AiqProfileName)) {
+    throw new Error(`${source}.${surfaceId}.profile must be one of ${aiqProfileNames.join(", ")}.`);
+  }
+  parsedConfig.profile = surfaceConfig.profile as AiqProfileName;
+}
+
+function parseOptionalBoolean(value: unknown, source: string): boolean | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "boolean") {
+    throw new Error(`${source} must be a boolean.`);
+  }
+  return value;
 }
 
 function parseStageList(value: unknown, source: string): AiqStageId[] {
