@@ -50,6 +50,14 @@ export interface BootstrapState {
   };
   readonly spec: {
     readonly acceptedSectionIds: readonly string[];
+    readonly reopenedSectionIds: readonly string[];
+    readonly unresolvedGaps: readonly string[];
+    readonly revision: number;
+    readonly validation?: {
+      readonly ok: boolean;
+      readonly missingRequiredSections: readonly string[];
+      readonly placeholderSections: readonly string[];
+    };
   };
   readonly assumptions: readonly string[];
   readonly artifacts: PlanningState["artifacts"];
@@ -227,7 +235,10 @@ export function createBootstrapState(input: {
       questionBudget: input.questionBudget ?? 3
     },
     spec: {
-      acceptedSectionIds: []
+      acceptedSectionIds: [],
+      reopenedSectionIds: [],
+      unresolvedGaps: [],
+      revision: 0
     },
     assumptions: [],
     artifacts: planning.artifacts,
@@ -606,7 +617,20 @@ function parseDiscovery(value: Readonly<Record<string, unknown>> | undefined): B
 
 function parseSpec(value: Readonly<Record<string, unknown>> | undefined): BootstrapState["spec"] {
   return {
-    acceptedSectionIds: parseStringArray(value?.acceptedSectionIds)
+    acceptedSectionIds: parseStringArray(value?.acceptedSectionIds),
+    reopenedSectionIds: parseStringArray(value?.reopenedSectionIds),
+    unresolvedGaps: parseStringArray(value?.unresolvedGaps),
+    revision: typeof value?.revision === "number" && Number.isInteger(value.revision) && value.revision >= 0 ? value.revision : 0,
+    ...(value?.validation !== undefined ? { validation: parseSpecValidation(value.validation) } : {})
+  };
+}
+
+function parseSpecValidation(value: unknown): NonNullable<BootstrapState["spec"]["validation"]> {
+  const record = requireRecord(value, "spec.validation");
+  return {
+    ok: record.ok === true,
+    missingRequiredSections: parseStringArray(record.missingRequiredSections),
+    placeholderSections: parseStringArray(record.placeholderSections)
   };
 }
 

@@ -1,12 +1,36 @@
 import { createCliError } from "@tjalve/qube-cli/errors";
 import { createDryRunPlanFields, renderDryRunPlan } from "@tjalve/qube-cli/mutation";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/qube-cli/runtime";
+import { dirname } from "node:path";
 
 import { loadAibConfig } from "./config.js";
 import { createInitPlan } from "./init.js";
-import { answerCommand, bootstrapRegistry, initCommand, nextCommand, planningTopic, statusCommand } from "./metadata.js";
+import {
+  answerCommand,
+  bootstrapRegistry,
+  initCommand,
+  milestonesGenerateCommand,
+  nextCommand,
+  planningTopic,
+  specAcceptCommand,
+  specDraftCommand,
+  specReopenCommand,
+  specValidateCommand,
+  statusCommand
+} from "./metadata.js";
 import { packageJson } from "./package.js";
-import { AnswerError, applyAnswer, computeNextAction, computeSpecStatus, isAgentHost, readBootstrapState, writeBootstrapState } from "./state.js";
+import {
+  AnswerError,
+  applyAnswer,
+  computeNextAction,
+  computeSpecStatus,
+  isAgentHost,
+  readBootstrapState,
+  writeBootstrapState,
+  type BootstrapState
+} from "./state.js";
+import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
+import type { SpecChapterId } from "./spec_chapters.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -93,6 +117,8 @@ export const aibCli = createCli({
         const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
         const nextAction = computeNextAction(envelope.state);
         const spec = computeSpecStatus(envelope.state);
+        const projectRoot = projectRootForState(envelope.statePath);
+        const validation = specFileExists(envelope.state, projectRoot) ? validateSpecFile(envelope.state, projectRoot) : undefined;
         return {
           json: {
             statePath: envelope.statePath,
@@ -100,6 +126,7 @@ export const aibCli = createCli({
             missingDecisions: nextAction.missingDecisions,
             artifacts: envelope.state.artifacts,
             spec,
+            specValidation: validation,
             nextCommand: nextAction.nextCommand,
             nextAction
           },
@@ -166,6 +193,195 @@ export const aibCli = createCli({
         throw stateError("answer", error);
       }
     }),
+    createCommand(specDraftCommand, ({ flags }) => {
+      try {
+        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const envelope = readBootstrapState(statePath);
+        const projectRoot = projectRootForState(envelope.statePath);
+        const draft = flags["dry-run"] === true ? createSpecDraft(envelope.state, projectRoot) : writeSpecDraft(envelope.state, projectRoot);
+        const updated = withSpecDraftState(envelope.state, draft.unresolvedGaps);
+        if (flags["dry-run"] === true) {
+          const nextAction = computeNextAction(updated);
+          return {
+            json: {
+              mutated: false,
+              dryRun: true,
+              statePath: envelope.statePath,
+              specPath: draft.specPath,
+              content: draft.content,
+              chapters: draft.chapters,
+              unresolvedGaps: draft.unresolvedGaps,
+              state: updated,
+              nextAction
+            },
+            human: `Dry run: would draft spec at ${draft.specPath}.\nNext action: ${computeNextAction(updated).summary}\n`
+          };
+        }
+        const written = writeBootstrapState(envelope.statePath, updated);
+        const nextAction = computeNextAction(written.state);
+        return {
+          json: {
+            mutated: true,
+            statePath: written.statePath,
+            specPath: draft.specPath,
+            chapters: draft.chapters,
+            unresolvedGaps: draft.unresolvedGaps,
+            state: written.state,
+            nextAction
+          },
+          human: `Drafted spec at ${draft.specPath}.\nNext action: ${nextAction.summary}\n`
+        };
+      } catch (error) {
+        throw stateError("spec draft", error);
+      }
+    }),
+    createCommand(specValidateCommand, ({ flags }) => {
+      try {
+        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const envelope = readBootstrapState(statePath);
+        const validation = validateSpecFile(envelope.state, projectRootForState(envelope.statePath));
+        const updated = withSpecValidationState(envelope.state, validation);
+        if (flags["dry-run"] === true) {
+          return {
+            json: {
+              mutated: false,
+              dryRun: true,
+              statePath: envelope.statePath,
+              validation,
+              state: updated,
+              nextAction: computeNextAction(updated)
+            },
+            human: `Dry run: spec validation ${validation.ok ? "passed" : "failed"}.\n`
+          };
+        }
+        const written = writeBootstrapState(envelope.statePath, updated);
+        return {
+          json: {
+            mutated: true,
+            statePath: written.statePath,
+            validation,
+            state: written.state,
+            nextAction: computeNextAction(written.state)
+          },
+          human: `Spec validation ${validation.ok ? "passed" : "failed"}.\n`
+        };
+      } catch (error) {
+        throw stateError("spec validate", error);
+      }
+    }),
+    createCommand(specAcceptCommand, ({ flags }) => {
+      try {
+        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const section = typeof flags.section === "string" ? flags.section : "";
+        const envelope = readBootstrapState(statePath);
+        const validation = validateSpecFile(envelope.state, projectRootForState(envelope.statePath));
+        if (!validation.ok) {
+          throw specValidationError(validation);
+        }
+        const updated = withAcceptedSpecState(envelope.state, section, validation);
+        if (flags["dry-run"] === true) {
+          return {
+            json: {
+              mutated: false,
+              dryRun: true,
+              statePath: envelope.statePath,
+              section,
+              state: updated,
+              spec: computeSpecStatus(updated),
+              nextAction: computeNextAction(updated)
+            },
+            human: `Dry run: would accept spec section ${section}.\n`
+          };
+        }
+        const written = writeBootstrapState(envelope.statePath, updated);
+        return {
+          json: {
+            mutated: true,
+            statePath: written.statePath,
+            section,
+            state: written.state,
+            spec: computeSpecStatus(written.state),
+            nextAction: computeNextAction(written.state)
+          },
+          human: `Accepted spec section ${section}.\n`
+        };
+      } catch (error) {
+        if (isCliSpecError(error)) throw error;
+        throw stateError("spec accept", error);
+      }
+    }),
+    createCommand(specReopenCommand, ({ flags }) => {
+      try {
+        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const section = typeof flags.section === "string" ? flags.section : "";
+        const envelope = readBootstrapState(statePath);
+        const updated = withReopenedSpecState(envelope.state, section);
+        if (flags["dry-run"] === true) {
+          return {
+            json: {
+              mutated: false,
+              dryRun: true,
+              statePath: envelope.statePath,
+              section,
+              state: updated,
+              spec: computeSpecStatus(updated),
+              nextAction: computeNextAction(updated)
+            },
+            human: `Dry run: would reopen spec section ${section}.\n`
+          };
+        }
+        const written = writeBootstrapState(envelope.statePath, updated);
+        return {
+          json: {
+            mutated: true,
+            statePath: written.statePath,
+            section,
+            state: written.state,
+            spec: computeSpecStatus(written.state),
+            nextAction: computeNextAction(written.state)
+          },
+          human: `Reopened spec section ${section}.\n`
+        };
+      } catch (error) {
+        if (isCliSpecError(error)) throw error;
+        throw stateError("spec reopen", error);
+      }
+    }),
+    createCommand(milestonesGenerateCommand, ({ flags }) => {
+      try {
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const validation = validateSpecFile(envelope.state, projectRootForState(envelope.statePath));
+        const spec = computeSpecStatus(envelope.state);
+        if (!validation.ok || !spec.canGenerateMilestones || envelope.state.artifacts.spec.status !== "accepted") {
+          throw createCliError({
+            command: "milestones generate",
+            kind: "spec-not-accepted",
+            operation: "guard milestone generation",
+            likelyCause: `Spec validation ok: ${validation.ok}. Missing accepted sections: ${spec.missingRequiredAcceptance.join(", ") || "none"}.`,
+            suggestedNextAction: "Run aib spec validate --json, then accept each required section with aib spec accept --section <id> --json.",
+            category: "validation",
+            exitCode: 3
+          });
+        }
+        return {
+          json: {
+            allowed: true,
+            statePath: envelope.statePath,
+            spec,
+            validation,
+            nextAction: {
+              kind: "generate_artifacts",
+              actor: "agent",
+              summary: "Spec is validated and accepted. Milestone drafting may proceed."
+            }
+          },
+          human: "Spec is accepted. Milestone generation may proceed.\n"
+        };
+      } catch (error) {
+        if (isCliSpecError(error)) throw error;
+        throw stateError("milestones generate", error);
+      }
+    }),
     createSchemaCommand({
       registry: () => runtimeRegistry,
       bin: "aib",
@@ -209,4 +425,174 @@ function answerError(error: AnswerError): ReturnType<typeof createCliError> {
     category: "validation",
     exitCode: 3
   });
+}
+
+function withSpecDraftState(state: BootstrapState, unresolvedGaps: readonly string[]): BootstrapState {
+  const updated: BootstrapState = {
+    ...state,
+    phase: "spec_acceptance",
+    spec: {
+      ...state.spec,
+      unresolvedGaps,
+      revision: state.spec.revision + 1
+    },
+    artifacts: {
+      ...state.artifacts,
+      spec: {
+        ...state.artifacts.spec,
+        status: "draft"
+      }
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function withSpecValidationState(
+  state: BootstrapState,
+  validation: { ok: boolean; missingRequiredSections: readonly string[]; placeholderSections: readonly string[] }
+): BootstrapState {
+  const updated: BootstrapState = {
+    ...state,
+    phase: "spec_acceptance",
+    spec: {
+      ...state.spec,
+      validation: {
+        ok: validation.ok,
+        missingRequiredSections: validation.missingRequiredSections,
+        placeholderSections: validation.placeholderSections
+      }
+    },
+    artifacts: {
+      ...state.artifacts,
+      spec: {
+        ...state.artifacts.spec,
+        status: validation.ok ? "ready" : "blocked"
+      }
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function withAcceptedSpecState(
+  state: BootstrapState,
+  section: string,
+  validation: { ok: boolean; missingRequiredSections: readonly string[]; placeholderSections: readonly string[] }
+): BootstrapState {
+  const required = requiredSpecSectionIds(state);
+  const acceptedSectionIds = section === "all" ? required : acceptOneSection(state, required, section);
+  const acceptedSet = new Set(acceptedSectionIds);
+  const reopenedSectionIds = state.spec.reopenedSectionIds.filter((id) => !acceptedSet.has(id));
+  const allRequiredAccepted = required.every((id) => acceptedSet.has(id));
+  const updated: BootstrapState = {
+    ...state,
+    phase: allRequiredAccepted ? "milestone_generation" : "spec_acceptance",
+    spec: {
+      ...state.spec,
+      acceptedSectionIds,
+      reopenedSectionIds,
+      validation: {
+        ok: validation.ok,
+        missingRequiredSections: validation.missingRequiredSections,
+        placeholderSections: validation.placeholderSections
+      }
+    },
+    artifacts: {
+      ...state.artifacts,
+      spec: {
+        ...state.artifacts.spec,
+        status: allRequiredAccepted ? "accepted" : "ready"
+      }
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function withReopenedSpecState(state: BootstrapState, section: string): BootstrapState {
+  const selected = new Set(requiredSpecSectionIds(state));
+  if (!selected.has(section as SpecChapterId)) {
+    throw createCliError({
+      command: "spec reopen",
+      kind: "spec-section-invalid",
+      operation: "reopen spec section",
+      likelyCause: `Spec section "${section}" is not a selected required section.`,
+      suggestedNextAction: "Run aib status --json and choose one of spec.chapters where required is true.",
+      category: "validation",
+      exitCode: 3
+    });
+  }
+  const updated: BootstrapState = {
+    ...state,
+    phase: "spec_acceptance",
+    spec: {
+      ...state.spec,
+      acceptedSectionIds: state.spec.acceptedSectionIds.filter((id) => id !== section),
+      reopenedSectionIds: state.spec.reopenedSectionIds.includes(section)
+        ? state.spec.reopenedSectionIds
+        : [...state.spec.reopenedSectionIds, section],
+      revision: state.spec.revision + 1
+    },
+    artifacts: {
+      ...state.artifacts,
+      spec: {
+        ...state.artifacts.spec,
+        status: "draft"
+      }
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function acceptOneSection(
+  state: BootstrapState,
+  required: readonly SpecChapterId[],
+  section: string
+): readonly string[] {
+  if (!required.includes(section as SpecChapterId)) {
+    throw createCliError({
+      command: "spec accept",
+      kind: "spec-section-invalid",
+      operation: "accept spec section",
+      likelyCause: `Spec section "${section}" is not a selected required section.`,
+      suggestedNextAction: "Run aib status --json and choose one of spec.chapters where required is true, or pass --section all.",
+      category: "validation",
+      exitCode: 3
+    });
+  }
+  return state.spec.acceptedSectionIds.includes(section)
+    ? state.spec.acceptedSectionIds
+    : [...state.spec.acceptedSectionIds, section];
+}
+
+function withPlanningNext(state: BootstrapState): BootstrapState {
+  return {
+    ...state,
+    planning: {
+      ...state.planning,
+      artifacts: state.artifacts,
+      nextAction: computeNextAction(state)
+    }
+  };
+}
+
+function specValidationError(validation: {
+  readonly missingRequiredSections: readonly string[];
+  readonly placeholderSections: readonly string[];
+}): ReturnType<typeof createCliError> {
+  return createCliError({
+    command: "spec accept",
+    kind: "spec-validation-failed",
+    operation: "accept spec section",
+    likelyCause: `Missing sections: ${validation.missingRequiredSections.join(", ") || "none"}. Placeholder sections: ${validation.placeholderSections.join(", ") || "none"}.`,
+    suggestedNextAction: "Revise docs/spec.md, run aib spec validate --json, then accept reviewed sections.",
+    category: "validation",
+    exitCode: 3
+  });
+}
+
+function isCliSpecError(error: unknown): error is ReturnType<typeof createCliError> {
+  return typeof error === "object" && error !== null && "kind" in error && "exitCode" in error;
+}
+
+function projectRootForState(statePath: string): string {
+  return dirname(dirname(statePath));
 }

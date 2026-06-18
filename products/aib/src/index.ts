@@ -31,6 +31,8 @@ export { getProfileByKind, selectProjectProfile, specChaptersForProject, workIte
 export type { ProjectProfile, ProjectProfileKind } from "./project_profiles.js";
 export { DYNAMIC_SPEC_CHAPTERS, REQUIRED_SPEC_CHAPTERS, selectSpecChapters, specAcceptanceStatus, validateSpecSections } from "./spec_chapters.js";
 export type { SelectedSpecChapter, SpecAcceptanceStatus, SpecChapter, SpecChapterId, SpecSectionDraft, SpecValidationResult } from "./spec_chapters.js";
+export { createSpecDraft, parseSpecMarkdownSections, requiredSpecSectionIds, resolveSpecPath, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
+export type { SpecDraftResult, SpecValidationReport } from "./spec.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
