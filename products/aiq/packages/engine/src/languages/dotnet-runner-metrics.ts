@@ -4,8 +4,16 @@ import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../con
 import { createFileMetricDiagnostics } from "../metrics-thresholds.js";
 import type { DotNetRunnerRuntime, SharedMetricsMode } from "./contracts.js";
 import { getDotNetMetricsProjectMetrics } from "./dotnet-tools.js";
-import { createUnsupportedSharedMetricsDiagnostics, readUnsupportedSharedMetricsNotes } from "./shared-metrics-support.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+} from "./shared-metrics-support.js";
 import { dotNetExtensions, filterDotNetFiles, resolveDotNetMetricsFiles, resolveDotNetProjects } from "./dotnet-projects.js";
+import {
+  addCachedMetricDuration,
+  addLizardFileMetrics,
+  createSharedMetricTotals,
+} from "./shared-metrics-accumulator.js";
 
 export async function runDotNetMetricsTask(
   task: PlannedTask,
@@ -23,14 +31,7 @@ export async function runDotNetMetricsTask(
   const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
-  let totalDurationMs = 0;
-  let totalSloc = 0;
-  let totalBlocks = 0;
-  let maxComplexity = 0;
-  let maxRank = "A";
-  let minMaintainability = Number.POSITIVE_INFINITY;
-  let minMaintainabilityRank = "A";
-  let scannedFileCount = 0;
+  const totals = createSharedMetricTotals();
   let unsupportedFiles: string[] = [];
 
   try {
@@ -49,8 +50,8 @@ export async function runDotNetMetricsTask(
       }
 
       const cachedMetrics = await getDotNetMetricsProjectMetrics(project, runtime);
-      totalDurationMs += cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs;
-      scannedFileCount += Object.keys(cachedMetrics.metrics.files).length;
+      addCachedMetricDuration(totals, cachedMetrics);
+      addLizardFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
           "aiq-csharp-metrics",
@@ -64,18 +65,6 @@ export async function runDotNetMetricsTask(
         ),
       );
 
-      for (const fileMetrics of Object.values(cachedMetrics.metrics.files)) {
-        totalSloc += fileMetrics.raw.sloc;
-        totalBlocks += fileMetrics.blockCount;
-        if (fileMetrics.maxComplexity.score > maxComplexity) {
-          maxComplexity = fileMetrics.maxComplexity.score;
-          maxRank = fileMetrics.maxComplexity.rank;
-        }
-        if (fileMetrics.maintainability.score < minMaintainability) {
-          minMaintainability = fileMetrics.maintainability.score;
-          minMaintainabilityRank = fileMetrics.maintainability.rank;
-        }
-      }
       diagnostics.push(
         ...createFileMetricDiagnostics(cachedMetrics.metrics.files, mode, "aiq-csharp-metrics"),
       );
@@ -87,7 +76,7 @@ export async function runDotNetMetricsTask(
       "aiq-csharp-metrics",
       files[0] ?? runtime.cwd,
       error,
-      totalDurationMs,
+      totals.totalDurationMs,
       diagnostics,
       toolRuns,
     );
@@ -97,13 +86,13 @@ export async function runDotNetMetricsTask(
     runtime.readSharedMetricsNote(
       "C#",
       mode,
-      scannedFileCount,
-      totalSloc,
-      totalBlocks,
-      maxComplexity,
-      maxRank,
-      minMaintainability,
-      minMaintainabilityRank,
+      totals.scannedFileCount,
+      totals.totalSloc,
+      totals.totalBlocks,
+      totals.maxComplexity,
+      totals.maxRank,
+      totals.minMaintainability,
+      totals.minMaintainabilityRank,
       "methods",
     ),
   );
@@ -112,33 +101,25 @@ export async function runDotNetMetricsTask(
     notes.push("Reused cached C# metrics for this file batch.");
   }
 
-  unsupportedFiles = [
-    ...new Set([
-      ...unsupportedFiles,
-      ...task.files.filter((file) => {
-        return (
-          !dotNetExtensions.has(path.extname(file).toLowerCase()) &&
-          !runtime.isSharedMetricsCompanionFile(file)
-        );
-      }),
-    ]),
-  ].sort((left, right) => left.localeCompare(right));
-  if (unsupportedFiles.length > 0) {
-    diagnostics.push(
-      ...createUnsupportedSharedMetricsDiagnostics(
-        unsupportedFiles,
-        task.stageId,
-        "C#",
-        "C# project files",
-        runtime.createProcessFailureDiagnostic,
-      ),
+  unsupportedFiles = collectUnsupportedSharedMetricsFiles(unsupportedFiles, task.files, (file) => {
+    return (
+      dotNetExtensions.has(path.extname(file).toLowerCase()) ||
+      runtime.isSharedMetricsCompanionFile(file)
     );
-    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "C#"));
-  }
+  });
+  appendUnsupportedSharedMetricsIssue({
+    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
+    diagnostics,
+    languageLabel: "C#",
+    notes,
+    stageId: task.stageId,
+    supportedFileDescription: "C# project files",
+    unsupportedFiles,
+  });
 
   return {
     diagnostics,
-    durationMs: totalDurationMs,
+    durationMs: totals.totalDurationMs,
     notes,
     stageId: task.stageId,
     status: diagnostics.length > 0 ? "failed" : "passed",

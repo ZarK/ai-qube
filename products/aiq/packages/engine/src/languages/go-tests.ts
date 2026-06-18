@@ -27,9 +27,14 @@ import {
   runProjectBatches,
 } from "./go-projects.js";
 import {
-  createUnsupportedSharedMetricsDiagnostics,
-  readUnsupportedSharedMetricsNotes,
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
 } from "./shared-metrics-support.js";
+import {
+  addCachedMetricDuration,
+  addLizardFileMetrics,
+  createSharedMetricTotals,
+} from "./shared-metrics-accumulator.js";
 
 export async function runGoUnitTask(
   task: PlannedTask,
@@ -61,14 +66,7 @@ export async function runGoMetricsTask(
   const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
-  let totalDurationMs = 0;
-  let totalSloc = 0;
-  let totalBlocks = 0;
-  let maxComplexity = 0;
-  let maxRank = "A";
-  let minMaintainability = Number.POSITIVE_INFINITY;
-  let minMaintainabilityRank = "A";
-  let scannedFileCount = 0;
+  const totals = createSharedMetricTotals();
   let unsupportedFiles: string[] = [];
 
   try {
@@ -87,8 +85,8 @@ export async function runGoMetricsTask(
       }
 
       const cachedMetrics = await getGoMetricsProjectMetrics(project, runtime);
-      totalDurationMs += cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs;
-      scannedFileCount += Object.keys(cachedMetrics.metrics.files).length;
+      addCachedMetricDuration(totals, cachedMetrics);
+      addLizardFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
           "lizard",
@@ -102,18 +100,6 @@ export async function runGoMetricsTask(
         ),
       );
 
-      for (const fileMetrics of Object.values(cachedMetrics.metrics.files)) {
-        totalSloc += fileMetrics.raw.sloc;
-        totalBlocks += fileMetrics.blockCount;
-        if (fileMetrics.maxComplexity.score > maxComplexity) {
-          maxComplexity = fileMetrics.maxComplexity.score;
-          maxRank = fileMetrics.maxComplexity.rank;
-        }
-        if (fileMetrics.maintainability.score < minMaintainability) {
-          minMaintainability = fileMetrics.maintainability.score;
-          minMaintainabilityRank = fileMetrics.maintainability.rank;
-        }
-      }
       diagnostics.push(
         ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
       );
@@ -125,7 +111,7 @@ export async function runGoMetricsTask(
       "lizard",
       files[0] ?? runtime.cwd,
       error,
-      totalDurationMs,
+      totals.totalDurationMs,
       diagnostics,
       toolRuns,
     );
@@ -135,13 +121,13 @@ export async function runGoMetricsTask(
     runtime.readSharedMetricsNote(
       "Go",
       mode,
-      scannedFileCount,
-      totalSloc,
-      totalBlocks,
-      maxComplexity,
-      maxRank,
-      minMaintainability,
-      minMaintainabilityRank,
+      totals.scannedFileCount,
+      totals.totalSloc,
+      totals.totalBlocks,
+      totals.maxComplexity,
+      totals.maxRank,
+      totals.minMaintainability,
+      totals.minMaintainabilityRank,
       "functions",
     ),
   );
@@ -150,30 +136,22 @@ export async function runGoMetricsTask(
     notes.push("Reused cached Go metrics for this file batch.");
   }
 
-  unsupportedFiles = [
-    ...new Set([
-      ...unsupportedFiles,
-      ...task.files.filter(
-        (file) => !isGoTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-      ),
-    ]),
-  ].sort((left, right) => left.localeCompare(right));
-  if (unsupportedFiles.length > 0) {
-    diagnostics.push(
-      ...createUnsupportedSharedMetricsDiagnostics(
-        unsupportedFiles,
-        task.stageId,
-        "Go",
-        "Go files or Go project files",
-        runtime.createProcessFailureDiagnostic,
-      ),
-    );
-    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "Go"));
-  }
+  unsupportedFiles = collectUnsupportedSharedMetricsFiles(unsupportedFiles, task.files, (file) => {
+    return isGoTaskFile(file) || runtime.isSharedMetricsCompanionFile(file);
+  });
+  appendUnsupportedSharedMetricsIssue({
+    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
+    diagnostics,
+    languageLabel: "Go",
+    notes,
+    stageId: task.stageId,
+    supportedFileDescription: "Go files or Go project files",
+    unsupportedFiles,
+  });
 
   return {
     diagnostics,
-    durationMs: totalDurationMs,
+    durationMs: totals.totalDurationMs,
     notes,
     stageId: task.stageId,
     status: diagnostics.length > 0 ? "failed" : "passed",

@@ -2,8 +2,16 @@ import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../con
 import { createLizardMetricsDiagnostics } from "../metrics-thresholds.js";
 import type { JvmRunnerRuntime, SharedMetricsMode } from "./contracts.js";
 import { getJvmMetricsProjectMetrics, resolveJvmMetricsFiles } from "./jvm-tools.js";
-import { createUnsupportedSharedMetricsDiagnostics, readUnsupportedSharedMetricsNotes } from "./shared-metrics-support.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+} from "./shared-metrics-support.js";
 import { filterJvmFiles, isJvmTaskFile, resolveJvmProjects } from "./jvm-projects.js";
+import {
+  addCachedMetricDuration,
+  addLizardFileMetrics,
+  createSharedMetricTotals,
+} from "./shared-metrics-accumulator.js";
 
 export async function runJvmMetricsTask(
   task: PlannedTask,
@@ -21,14 +29,7 @@ export async function runJvmMetricsTask(
   const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
-  let totalDurationMs = 0;
-  let totalSloc = 0;
-  let totalBlocks = 0;
-  let maxComplexity = 0;
-  let maxRank = "A";
-  let minMaintainability = Number.POSITIVE_INFINITY;
-  let minMaintainabilityRank = "A";
-  let scannedFileCount = 0;
+  const totals = createSharedMetricTotals();
   let unsupportedFiles: string[] = [];
 
   try {
@@ -47,8 +48,8 @@ export async function runJvmMetricsTask(
       }
 
       const cachedMetrics = await getJvmMetricsProjectMetrics(project, runtime);
-      totalDurationMs += cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs;
-      scannedFileCount += Object.keys(cachedMetrics.metrics.files).length;
+      addCachedMetricDuration(totals, cachedMetrics);
+      addLizardFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
           "lizard",
@@ -62,18 +63,6 @@ export async function runJvmMetricsTask(
         ),
       );
 
-      for (const fileMetrics of Object.values(cachedMetrics.metrics.files)) {
-        totalSloc += fileMetrics.raw.sloc;
-        totalBlocks += fileMetrics.blockCount;
-        if (fileMetrics.maxComplexity.score > maxComplexity) {
-          maxComplexity = fileMetrics.maxComplexity.score;
-          maxRank = fileMetrics.maxComplexity.rank;
-        }
-        if (fileMetrics.maintainability.score < minMaintainability) {
-          minMaintainability = fileMetrics.maintainability.score;
-          minMaintainabilityRank = fileMetrics.maintainability.rank;
-        }
-      }
       diagnostics.push(
         ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
       );
@@ -85,7 +74,7 @@ export async function runJvmMetricsTask(
       "lizard",
       files[0] ?? runtime.cwd,
       error,
-      totalDurationMs,
+      totals.totalDurationMs,
       diagnostics,
       toolRuns,
     );
@@ -95,13 +84,13 @@ export async function runJvmMetricsTask(
     runtime.readSharedMetricsNote(
       "JVM",
       mode,
-      scannedFileCount,
-      totalSloc,
-      totalBlocks,
-      maxComplexity,
-      maxRank,
-      minMaintainability,
-      minMaintainabilityRank,
+      totals.scannedFileCount,
+      totals.totalSloc,
+      totals.totalBlocks,
+      totals.maxComplexity,
+      totals.maxRank,
+      totals.minMaintainability,
+      totals.minMaintainabilityRank,
       "methods",
     ),
   );
@@ -110,30 +99,22 @@ export async function runJvmMetricsTask(
     notes.push("Reused cached JVM metrics for this file batch.");
   }
 
-  unsupportedFiles = [
-    ...new Set([
-      ...unsupportedFiles,
-      ...task.files.filter(
-        (file) => !isJvmTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-      ),
-    ]),
-  ].sort((left, right) => left.localeCompare(right));
-  if (unsupportedFiles.length > 0) {
-    diagnostics.push(
-      ...createUnsupportedSharedMetricsDiagnostics(
-        unsupportedFiles,
-        task.stageId,
-        "JVM",
-        "Java, Kotlin, or JVM project files",
-        runtime.createProcessFailureDiagnostic,
-      ),
-    );
-    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "JVM"));
-  }
+  unsupportedFiles = collectUnsupportedSharedMetricsFiles(unsupportedFiles, task.files, (file) => {
+    return isJvmTaskFile(file) || runtime.isSharedMetricsCompanionFile(file);
+  });
+  appendUnsupportedSharedMetricsIssue({
+    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
+    diagnostics,
+    languageLabel: "JVM",
+    notes,
+    stageId: task.stageId,
+    supportedFileDescription: "Java, Kotlin, or JVM project files",
+    unsupportedFiles,
+  });
 
   return {
     diagnostics,
-    durationMs: totalDurationMs,
+    durationMs: totals.totalDurationMs,
     notes,
     stageId: task.stageId,
     status: diagnostics.length > 0 ? "failed" : "passed",

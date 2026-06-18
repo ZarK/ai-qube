@@ -9,13 +9,21 @@ import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import * as commands from "../tools/command-builders.js";
 import { findNearestLizardConfig, readConfigFingerprint } from "../tools/native-config.js";
 import type { JavaScriptRunnerRuntime, SharedMetricsMode } from "./contracts.js";
-import { createUnsupportedSharedMetricsDiagnostics, readUnsupportedSharedMetricsNotes } from "./shared-metrics-support.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+} from "./shared-metrics-support.js";
 import type {
   JavaScriptMetricsProject,
   JavaScriptMetricsProjectMetrics,
   JavaScriptProject,
 } from "./javascript-projects.js";
 import { filterJavaScriptMetricsFiles, isJavaScriptMetricsTaskFile, resolveJavaScriptMetricsFiles, resolveJavaScriptMetricsProjects } from "./javascript-projects.js";
+import {
+  addCachedMetricDuration,
+  addLizardFileMetrics,
+  createSharedMetricTotals,
+} from "./shared-metrics-accumulator.js";
 
 export async function runJavaScriptMetricsTask(
   task: PlannedTask,
@@ -33,14 +41,7 @@ export async function runJavaScriptMetricsTask(
   const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns = [] as ReturnType<JavaScriptRunnerRuntime["createToolRunResult"]>[];
-  let totalDurationMs = 0;
-  let totalSloc = 0;
-  let totalBlocks = 0;
-  let maxComplexity = 0;
-  let maxRank = "A";
-  let minMaintainability = Number.POSITIVE_INFINITY;
-  let minMaintainabilityRank = "A";
-  let scannedFileCount = 0;
+  const totals = createSharedMetricTotals();
   let unsupportedFiles: string[] = [];
 
   try {
@@ -62,8 +63,8 @@ export async function runJavaScriptMetricsTask(
       }
 
       const cachedMetrics = await getJavaScriptMetricsProjectMetrics(project, runtime);
-      totalDurationMs += cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs;
-      scannedFileCount += Object.keys(cachedMetrics.metrics.files).length;
+      addCachedMetricDuration(totals, cachedMetrics);
+      addLizardFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
           "lizard",
@@ -77,18 +78,6 @@ export async function runJavaScriptMetricsTask(
         ),
       );
 
-      for (const fileMetrics of Object.values(cachedMetrics.metrics.files)) {
-        totalSloc += fileMetrics.raw.sloc;
-        totalBlocks += fileMetrics.blockCount;
-        if (fileMetrics.maxComplexity.score > maxComplexity) {
-          maxComplexity = fileMetrics.maxComplexity.score;
-          maxRank = fileMetrics.maxComplexity.rank;
-        }
-        if (fileMetrics.maintainability.score < minMaintainability) {
-          minMaintainability = fileMetrics.maintainability.score;
-          minMaintainabilityRank = fileMetrics.maintainability.rank;
-        }
-      }
       diagnostics.push(
         ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
       );
@@ -100,7 +89,7 @@ export async function runJavaScriptMetricsTask(
       "lizard",
       files[0] ?? runtime.cwd,
       error,
-      totalDurationMs,
+      totals.totalDurationMs,
       diagnostics,
       toolRuns,
     );
@@ -110,13 +99,13 @@ export async function runJavaScriptMetricsTask(
     runtime.readSharedMetricsNote(
       "JavaScript/TypeScript",
       mode,
-      scannedFileCount,
-      totalSloc,
-      totalBlocks,
-      maxComplexity,
-      maxRank,
-      minMaintainability,
-      minMaintainabilityRank,
+      totals.scannedFileCount,
+      totals.totalSloc,
+      totals.totalBlocks,
+      totals.maxComplexity,
+      totals.maxRank,
+      totals.minMaintainability,
+      totals.minMaintainabilityRank,
       "functions",
     ),
   );
@@ -125,32 +114,22 @@ export async function runJavaScriptMetricsTask(
     notes.push("Reused cached JavaScript/TypeScript metrics for this file batch.");
   }
 
-  unsupportedFiles = [
-    ...new Set([
-      ...unsupportedFiles,
-      ...task.files.filter(
-        (file) => !isJavaScriptMetricsTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file),
-      ),
-    ]),
-  ].sort((left, right) => left.localeCompare(right));
-  if (unsupportedFiles.length > 0) {
-    diagnostics.push(
-      ...createUnsupportedSharedMetricsDiagnostics(
-        unsupportedFiles,
-        task.stageId,
-        "JavaScript/TypeScript",
-        "JavaScript or TypeScript files",
-        runtime.createProcessFailureDiagnostic,
-      ),
-    );
-    notes.push(
-      ...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "JavaScript/TypeScript"),
-    );
-  }
+  unsupportedFiles = collectUnsupportedSharedMetricsFiles(unsupportedFiles, task.files, (file) => {
+    return isJavaScriptMetricsTaskFile(file) || runtime.isSharedMetricsCompanionFile(file);
+  });
+  appendUnsupportedSharedMetricsIssue({
+    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
+    diagnostics,
+    languageLabel: "JavaScript/TypeScript",
+    notes,
+    stageId: task.stageId,
+    supportedFileDescription: "JavaScript or TypeScript files",
+    unsupportedFiles,
+  });
 
   return {
     diagnostics,
-    durationMs: totalDurationMs,
+    durationMs: totals.totalDurationMs,
     notes,
     stageId: task.stageId,
     status: diagnostics.length > 0 ? "failed" : "passed",

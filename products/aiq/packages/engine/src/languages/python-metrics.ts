@@ -3,7 +3,15 @@ import { createPythonMetricsDiagnostics } from "../metrics-thresholds.js";
 import type { PythonRunnerRuntime, SharedMetricsMode } from "./contracts.js";
 import { getPythonMetricsProjectMetrics } from "./python-tools.js";
 import { filterPythonTaskFiles, isPythonTaskFile, resolvePythonProjects, resolvePythonSourceProject } from "./python-projects.js";
-import { createUnsupportedSharedMetricsDiagnostics, readUnsupportedSharedMetricsNotes } from "./shared-metrics-support.js";
+import {
+  appendUnsupportedSharedMetricsIssue,
+  collectUnsupportedSharedMetricsFiles,
+} from "./shared-metrics-support.js";
+import {
+  addCachedMetricDuration,
+  addPythonFileMetrics,
+  createSharedMetricTotals,
+} from "./shared-metrics-accumulator.js";
 
 export async function runPythonComplexityTask(
   task: PlannedTask,
@@ -39,20 +47,13 @@ async function runPythonMetricsTask(
     );
   }
 
-  let unsupportedFiles = task.files.filter((file) => {
-    return !isPythonTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file);
+  const unsupportedFiles = collectUnsupportedSharedMetricsFiles([], task.files, (file) => {
+    return isPythonTaskFile(file) || runtime.isSharedMetricsCompanionFile(file);
   });
   const diagnostics: Diagnostic[] = [];
   const notes: string[] = [];
   const toolRuns: StageResult["toolRuns"] = [];
-  let totalDurationMs = 0;
-  let totalSloc = 0;
-  let totalBlocks = 0;
-  let maxComplexity = 0;
-  let maxRank = "A";
-  let minMaintainability = Number.POSITIVE_INFINITY;
-  let minMaintainabilityRank = "A";
-  let scannedFileCount = 0;
+  const totals = createSharedMetricTotals();
 
   try {
     const projects = await resolvePythonProjects(runtime.graph, files);
@@ -61,8 +62,8 @@ async function runPythonMetricsTask(
         await resolvePythonSourceProject(project, runtime),
         runtime,
       );
-      totalDurationMs += cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs;
-      scannedFileCount += Object.keys(cachedMetrics.metrics.files).length;
+      addCachedMetricDuration(totals, cachedMetrics);
+      addPythonFileMetrics(totals, cachedMetrics.metrics.files);
       toolRuns.push(
         runtime.createToolRunResult(
           "radon",
@@ -76,21 +77,6 @@ async function runPythonMetricsTask(
         ),
       );
 
-      for (const fileMetrics of Object.values(cachedMetrics.metrics.files)) {
-        totalSloc += fileMetrics.raw.sloc;
-        totalBlocks += fileMetrics.cc.length;
-        for (const block of fileMetrics.cc) {
-          if (block.complexity > maxComplexity) {
-            maxComplexity = block.complexity;
-            maxRank = block.rank;
-          }
-        }
-
-        if (fileMetrics.mi.score < minMaintainability) {
-          minMaintainability = fileMetrics.mi.score;
-          minMaintainabilityRank = fileMetrics.mi.rank;
-        }
-      }
       diagnostics.push(
         ...createPythonMetricsDiagnostics(cachedMetrics.metrics.files, mode, "radon"),
       );
@@ -102,7 +88,7 @@ async function runPythonMetricsTask(
       "radon",
       files[0] ?? runtime.cwd,
       error,
-      totalDurationMs,
+      totals.totalDurationMs,
       diagnostics,
       toolRuns,
     );
@@ -112,13 +98,13 @@ async function runPythonMetricsTask(
     runtime.readSharedMetricsNote(
       "Python",
       mode,
-      scannedFileCount,
-      totalSloc,
-      totalBlocks,
-      maxComplexity,
-      maxRank,
-      minMaintainability,
-      minMaintainabilityRank,
+      totals.scannedFileCount,
+      totals.totalSloc,
+      totals.totalBlocks,
+      totals.maxComplexity,
+      totals.maxRank,
+      totals.minMaintainability,
+      totals.minMaintainabilityRank,
       "functions or classes",
     ),
   );
@@ -127,25 +113,19 @@ async function runPythonMetricsTask(
     notes.push("Reused cached Python metrics for this file batch.");
   }
 
-  unsupportedFiles = task.files.filter((file) => {
-    return !isPythonTaskFile(file) && !runtime.isSharedMetricsCompanionFile(file);
+  appendUnsupportedSharedMetricsIssue({
+    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
+    diagnostics,
+    languageLabel: "Python",
+    notes,
+    stageId: task.stageId,
+    supportedFileDescription: "Python files",
+    unsupportedFiles,
   });
-  if (unsupportedFiles.length > 0) {
-    diagnostics.push(
-      ...createUnsupportedSharedMetricsDiagnostics(
-        unsupportedFiles,
-        task.stageId,
-        "Python",
-        "Python files",
-        runtime.createProcessFailureDiagnostic,
-      ),
-    );
-    notes.push(...readUnsupportedSharedMetricsNotes(unsupportedFiles, task.stageId, "Python"));
-  }
 
   return {
     diagnostics,
-    durationMs: totalDurationMs,
+    durationMs: totals.totalDurationMs,
     notes,
     stageId: task.stageId,
     status: diagnostics.length > 0 ? "failed" : "passed",
