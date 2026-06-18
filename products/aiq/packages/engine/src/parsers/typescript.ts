@@ -14,50 +14,17 @@ export function parseTscDiagnostics(output: string, cwd: string): Diagnostic[] {
       continue;
     }
 
-    const match =
-      /^(.*?)(?:\((\d+),(\d+)\)|:(\d+):(\d+))(?:\s-\s|:\s*|\s+)(error|warning|info)\s(TS\d+):\s(.+)$/u.exec(
-        trimmed,
-      );
-    if (match !== null) {
+    const parsed = parseTscDiagnosticLine(trimmed, cwd);
+    if (parsed !== undefined) {
       if (current !== undefined) {
         diagnostics.push(current);
       }
 
-      const filePath = match[1];
-      const startLineValue = match[2] ?? match[4];
-      const startColumnValue = match[3] ?? match[5];
-      const code = match[7];
-      const message = match[8];
-      if (
-        filePath === undefined ||
-        startLineValue === undefined ||
-        startColumnValue === undefined ||
-        code === undefined ||
-        message === undefined
-      ) {
-        continue;
-      }
-
-      const file = path.resolve(cwd, filePath);
-      const startLine = Number(startLineValue);
-      const startColumn = Number(startColumnValue);
-      current = {
-        code,
-        file,
-        message,
-        range: {
-          startColumn,
-          startLine,
-        },
-        severity: normalizeSeverity(match[6]),
-        source: "tsc",
-      };
+      current = parsed;
       continue;
     }
 
-    if (current !== undefined && !/^Found \d+ error/u.test(trimmed)) {
-      current.message = `${current.message}\n${trimmed}`;
-    }
+    appendTscDiagnosticContinuation(current, trimmed);
   }
 
   if (current !== undefined) {
@@ -65,4 +32,60 @@ export function parseTscDiagnostics(output: string, cwd: string): Diagnostic[] {
   }
 
   return diagnostics;
+}
+
+function parseTscDiagnosticLine(line: string, cwd: string): Diagnostic | undefined {
+  const match =
+    /^(.*?)(?:\((\d+),(\d+)\)|:(\d+):(\d+))(?:\s-\s|:\s*|\s+)(error|warning|info)\s(TS\d+):\s(.+)$/u.exec(
+      line,
+    );
+  if (match === null) {
+    return undefined;
+  }
+
+  const parts = readTscDiagnosticMatchParts(match);
+  if (parts === undefined) {
+    return undefined;
+  }
+
+  return {
+    code: parts.code,
+    file: path.resolve(cwd, parts.filePath),
+    message: parts.message,
+    range: {
+      startColumn: Number(parts.startColumnValue),
+      startLine: Number(parts.startLineValue),
+    },
+    severity: normalizeSeverity(match[6]),
+    source: "tsc",
+  };
+}
+
+function readTscDiagnosticMatchParts(match: RegExpExecArray):
+  | {
+      code: string;
+      filePath: string;
+      message: string;
+      startColumnValue: string;
+      startLineValue: string;
+    }
+  | undefined {
+  const filePath = match[1];
+  const startLineValue = match[2] ?? match[4];
+  const startColumnValue = match[3] ?? match[5];
+  const code = match[7];
+  const message = match[8];
+  return filePath === undefined ||
+    startLineValue === undefined ||
+    startColumnValue === undefined ||
+    code === undefined ||
+    message === undefined
+    ? undefined
+    : { code, filePath, message, startColumnValue, startLineValue };
+}
+
+function appendTscDiagnosticContinuation(current: Diagnostic | undefined, line: string): void {
+  if (current !== undefined && !/^Found \d+ error/u.test(line)) {
+    current.message = `${current.message}\n${line}`;
+  }
 }

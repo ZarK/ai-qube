@@ -8,6 +8,22 @@ import {
 
 export { collectGoVetDiagnostics, parseGoVetDiagnostics } from "./go-vet.js";
 
+type GoTestReportState = {
+  diagnostics: Diagnostic[];
+  failed: number;
+  packageOutputs: Map<string, string[]>;
+  passed: number;
+  testOutputs: Map<string, string[]>;
+  total: number;
+};
+type GoTestEvent = {
+  action: string | undefined;
+  outputLine: string | undefined;
+  packageKey: string;
+  testKey: string;
+  testName: string | undefined;
+};
+
 export function parseGoCompilerDiagnostics(
   output: string,
   cwd: string,
@@ -55,93 +71,133 @@ export function parseGoTestReport(
   diagnostics: Diagnostic[];
   summary: { failed: number; passed: number; total: number };
 } {
-  const diagnostics: Diagnostic[] = [];
-  const testOutputs = new Map<string, string[]>();
-  const packageOutputs = new Map<string, string[]>();
-  let failed = 0;
-  let passed = 0;
-  let total = 0;
+  const state: GoTestReportState = {
+    diagnostics: [],
+    failed: 0,
+    packageOutputs: new Map<string, string[]>(),
+    passed: 0,
+    testOutputs: new Map<string, string[]>(),
+    total: 0,
+  };
 
   for (const line of output.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
+    const event = parseGoTestEvent(line, cwd);
+    if (event === undefined) {
       continue;
     }
 
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    if (typeof parsed !== "object" || parsed === null) {
-      continue;
-    }
-
-    const record = parsed as Record<string, unknown>;
-    const action = readString(record, "Action");
-    const packageName = readString(record, "Package") ?? cwd;
-    const testName = readString(record, "Test");
-    const outputLine = readString(record, "Output")?.replace(/\r?\n$/u, "");
-    const packageKey = packageName;
-    const testKey = `${packageKey}::${testName ?? ""}`;
-
-    if (outputLine !== undefined && outputLine.length > 0) {
-      const packageEntries = packageOutputs.get(packageKey) ?? [];
-      packageEntries.push(outputLine);
-      packageOutputs.set(packageKey, packageEntries);
-
-      if (testName !== undefined) {
-        const testEntries = testOutputs.get(testKey) ?? [];
-        testEntries.push(outputLine);
-        testOutputs.set(testKey, testEntries);
-      }
-    }
-
-    if (testName !== undefined && action === "pass") {
-      total += 1;
-      passed += 1;
-      continue;
-    }
-
-    if (testName !== undefined && action === "fail") {
-      total += 1;
-      failed += 1;
-      diagnostics.push(
-        createGoTestFailureDiagnostic(
-          testName,
-          testOutputs.get(testKey) ?? [],
-          cwd,
-          source,
-          fallbackFile,
-        ),
-      );
-      continue;
-    }
-
-    if (testName === undefined && action === "fail") {
-      diagnostics.push(
-        ...parseGoCompilerDiagnostics(
-          (packageOutputs.get(packageKey) ?? []).join("\n"),
-          cwd,
-          source,
-        ),
-      );
-    }
+    applyGoTestEvent(event, state, cwd, source, fallbackFile);
   }
 
-  const uniqueDiagnostics = deduplicateDiagnostics(diagnostics);
-  if (total === 0 && uniqueDiagnostics.length > 0) {
-    total = uniqueDiagnostics.length;
-    failed = uniqueDiagnostics.length;
-    passed = 0;
-  }
+  const uniqueDiagnostics = deduplicateDiagnostics(state.diagnostics);
+  const summary = readGoTestSummaryFromState(state, uniqueDiagnostics);
 
   return {
     diagnostics: uniqueDiagnostics,
-    summary: { failed, passed, total },
+    summary,
   };
+}
+
+function parseGoTestEvent(line: string, cwd: string): GoTestEvent | undefined {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return undefined;
+  }
+  if (typeof parsed !== "object" || parsed === null) {
+    return undefined;
+  }
+
+  const record = parsed as Record<string, unknown>;
+  const packageKey = readString(record, "Package") ?? cwd;
+  const testName = readString(record, "Test");
+  return {
+    action: readString(record, "Action"),
+    outputLine: readString(record, "Output")?.replace(/\r?\n$/u, ""),
+    packageKey,
+    testKey: `${packageKey}::${testName ?? ""}`,
+    testName,
+  };
+}
+
+function applyGoTestEvent(
+  event: GoTestEvent,
+  state: GoTestReportState,
+  cwd: string,
+  source: string,
+  fallbackFile: string,
+): void {
+  appendGoTestOutput(event, state);
+  if (event.testName !== undefined && event.action === "pass") {
+    state.total += 1;
+    state.passed += 1;
+    return;
+  }
+  if (event.testName !== undefined && event.action === "fail") {
+    appendGoTestFailure(event, state, cwd, source, fallbackFile);
+    return;
+  }
+  if (event.testName === undefined && event.action === "fail") {
+    state.diagnostics.push(
+      ...parseGoCompilerDiagnostics(
+        (state.packageOutputs.get(event.packageKey) ?? []).join("\n"),
+        cwd,
+        source,
+      ),
+    );
+  }
+}
+
+function appendGoTestOutput(event: GoTestEvent, state: GoTestReportState): void {
+  if (event.outputLine === undefined || event.outputLine.length === 0) {
+    return;
+  }
+
+  appendMapEntry(state.packageOutputs, event.packageKey, event.outputLine);
+  if (event.testName !== undefined) {
+    appendMapEntry(state.testOutputs, event.testKey, event.outputLine);
+  }
+}
+
+function appendMapEntry(map: Map<string, string[]>, key: string, value: string): void {
+  const entries = map.get(key) ?? [];
+  entries.push(value);
+  map.set(key, entries);
+}
+
+function appendGoTestFailure(
+  event: GoTestEvent,
+  state: GoTestReportState,
+  cwd: string,
+  source: string,
+  fallbackFile: string,
+): void {
+  state.total += 1;
+  state.failed += 1;
+  state.diagnostics.push(
+    createGoTestFailureDiagnostic(
+      event.testName ?? "",
+      state.testOutputs.get(event.testKey) ?? [],
+      cwd,
+      source,
+      fallbackFile,
+    ),
+  );
+}
+
+function readGoTestSummaryFromState(
+  state: GoTestReportState,
+  diagnostics: readonly Diagnostic[],
+): { failed: number; passed: number; total: number } {
+  return state.total === 0 && diagnostics.length > 0
+    ? { failed: diagnostics.length, passed: 0, total: diagnostics.length }
+    : { failed: state.failed, passed: state.passed, total: state.total };
 }
 
 export function createGoTestFailureDiagnostic(
@@ -198,29 +254,44 @@ export function parseGoOutputDiagnosticLine(
     return undefined;
   }
 
-  const file = resolveDiagnosticFile(match[1], cwd);
-  const startLine = readIntegerString(match[2]);
-  const startColumn = readIntegerString(match[3]) ?? 1;
-  const message = match[4]?.trim();
-  if (
-    file === undefined ||
-    startLine === undefined ||
-    message === undefined ||
-    message.length === 0
-  ) {
+  const parts = readGoDiagnosticLineMatchParts(match, cwd);
+  if (parts === undefined) {
     return undefined;
   }
 
   return {
-    file,
-    message,
+    file: parts.file,
+    message: parts.message,
     range: {
-      startColumn,
-      startLine,
+      startColumn: parts.startColumn,
+      startLine: parts.startLine,
     },
     severity: "error",
     source,
   };
+}
+
+function readGoDiagnosticLineMatchParts(
+  match: RegExpExecArray,
+  cwd: string,
+):
+  | {
+      file: string;
+      message: string;
+      startColumn: number;
+      startLine: number;
+    }
+  | undefined {
+  const file = resolveDiagnosticFile(match[1], cwd);
+  const startLine = readIntegerString(match[2]);
+  const startColumn = readIntegerString(match[3]) ?? 1;
+  const message = match[4]?.trim();
+  return file === undefined ||
+    startLine === undefined ||
+    message === undefined ||
+    message.length === 0
+    ? undefined
+    : { file, message, startColumn, startLine };
 }
 
 export function parseGoPosition(
