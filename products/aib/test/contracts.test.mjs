@@ -15,6 +15,7 @@ import {
   specChaptersForProject,
   validateWorkItemDraftOrder,
   validateSpecSections,
+  WorkItemQueueOrderError,
   workItemValidationForProject
 } from "../dist/index.js";
 
@@ -100,6 +101,10 @@ test("work item queue ordering validates blockers against sequence metadata", ()
   ]);
   assert.equal(invalid.ok, false);
   assert.match(invalid.conflicts.join("\n"), /blocked by draft-b/);
+
+  const error = new WorkItemQueueOrderError(invalid.conflicts);
+  assert.equal(error.name, "WorkItemQueueOrderError");
+  assert.match(error.message, /work item sequence conflicts/);
 });
 
 test("research profile uses evidence validation instead of coding gates", () => {

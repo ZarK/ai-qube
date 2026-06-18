@@ -68,9 +68,9 @@ This issue covers milestone planning as a distinct phase:
 
 ### Executor Queue Ordering
 
-Created issue: `#14 M6: Generate aie-aware queue ordering metadata`
+Generate Executor-compatible queue ordering metadata.
 
-This issue covers queue display metadata for generated work items:
+This section covers queue display metadata for generated work items:
 
 - generated drafts include stable `Sequence:` hints when the target workflow is Executor-compatible
 - GitHub and markdown renderers preserve `Blocked by:` dependency lines and `Sequence:` ordering hints

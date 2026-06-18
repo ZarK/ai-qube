@@ -34,7 +34,7 @@ import {
 } from "./state.js";
 import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 import type { SpecChapterId } from "./spec_chapters.js";
-import { createWorkItemDrafts, writeWorkItemDrafts } from "./work_items.js";
+import { createWorkItemDrafts, WorkItemQueueOrderError, writeWorkItemDrafts } from "./work_items.js";
 import type { WorkItemDraftResult } from "./work_items.js";
 
 let runtimeRegistry = bootstrapRegistry;
@@ -448,6 +448,17 @@ export const aibCli = createCli({
             ? createWorkItemDrafts(envelope.state, milestone, projectRoot)
             : writeWorkItemDrafts(envelope.state, milestone, projectRoot);
         } catch (error) {
+          if (error instanceof WorkItemQueueOrderError) {
+            throw createCliError({
+              command: "work-items generate",
+              kind: "work-item-order-invalid",
+              operation: "validate work-item queue ordering",
+              likelyCause: error.message,
+              suggestedNextAction: "Regenerate milestone/work-item drafts so Sequence and Blocked by ordering are consistent.",
+              category: "validation",
+              exitCode: 3
+            });
+          }
           const errno = typeof error === "object" && error !== null && "code" in error
             ? String((error as { code?: unknown }).code ?? "")
             : "";

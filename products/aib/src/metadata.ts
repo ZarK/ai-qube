@@ -565,6 +565,11 @@ export const workItemsGenerateCommand = defineCommand({
       exitCode: 3
     },
     {
+      kind: "work-item-order-invalid",
+      description: "Generated work-item sequence metadata conflicts with blocker ordering.",
+      exitCode: 3
+    },
+    {
       kind: "work-item-write-failed",
       description: "The work-item draft artifacts could not be written.",
       exitCode: 3

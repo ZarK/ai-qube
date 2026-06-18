@@ -18,6 +18,16 @@ export interface QueueOrderValidation {
   readonly conflicts: readonly string[];
 }
 
+export class WorkItemQueueOrderError extends Error {
+  readonly conflicts: readonly string[];
+
+  constructor(conflicts: readonly string[]) {
+    super(`work item sequence conflicts: ${conflicts.join("; ")}`);
+    this.name = "WorkItemQueueOrderError";
+    this.conflicts = conflicts;
+  }
+}
+
 export function createWorkItemDrafts(
   state: BootstrapState,
   milestoneSelector: string | undefined,
@@ -28,7 +38,7 @@ export function createWorkItemDrafts(
   const drafts = createDraftsForMilestone(state, milestone);
   const queueOrder = validateWorkItemDraftOrder(drafts);
   if (!queueOrder.ok) {
-    throw new TypeError(`work item sequence conflicts: ${queueOrder.conflicts.join("; ")}`);
+    throw new WorkItemQueueOrderError(queueOrder.conflicts);
   }
   const rendered = drafts.map((draft) => renderMarkdownWorkItemDraft(draft, issuesDir));
   return {
