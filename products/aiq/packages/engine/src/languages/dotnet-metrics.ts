@@ -19,6 +19,22 @@ export type DotNetMetricsProjectMetrics = {
   startedAt: string;
 };
 
+type DotNetScanMode = "blockComment" | "char" | "code" | "string" | "verbatimString";
+type CommentStripState = {
+  index: number;
+  mode: DotNetScanMode;
+  result: string;
+};
+type DotNetLiteralScanState = {
+  index: number;
+  mode: DotNetScanMode;
+};
+type TernaryBranchScanState = DotNetLiteralScanState & {
+  braceDepth: number;
+  bracketDepth: number;
+  parenDepth: number;
+};
+
 export async function getDotNetMetricsProjectMetrics(
   project: DotNetProject,
   runtime: DotNetRunnerRuntime,
@@ -129,281 +145,286 @@ async function readDotNetFileMetrics(source: string): Promise<DotNetMetricsFileM
 }
 
 function stripDotNetComments(source: string): string {
-  let result = "";
-  let index = 0;
-  let inBlockComment = false;
-  let inString = false;
-  let inVerbatimString = false;
-  let inChar = false;
+  let state: CommentStripState = { index: 0, mode: "code", result: "" };
 
-  while (index < source.length) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (inBlockComment) {
-      if (current === "*" && next === "/") {
-        inBlockComment = false;
-        index += 2;
-        continue;
-      }
-      if (current === "\n") {
-        result += "\n";
-      }
-      index += 1;
-      continue;
-    }
-    if (inString) {
-      result += current ?? "";
-      if (current === "\\") {
-        result += next ?? "";
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inString = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (inVerbatimString) {
-      result += current ?? "";
-      if (current === '"' && next === '"') {
-        result += next;
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inVerbatimString = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (inChar) {
-      result += current ?? "";
-      if (current === "\\") {
-        result += next ?? "";
-        index += 2;
-        continue;
-      }
-      if (current === "'") {
-        inChar = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (current === "@" && next === '"') {
-      result += '@"';
-      inVerbatimString = true;
-      index += 2;
-      continue;
-    }
-    if (current === '"') {
-      inString = true;
-      result += current;
-      index += 1;
-      continue;
-    }
-    if (current === "'") {
-      inChar = true;
-      result += current;
-      index += 1;
-      continue;
-    }
-    if (current === "/" && next === "*") {
-      inBlockComment = true;
-      index += 2;
-      continue;
-    }
-    if (current === "/" && next === "/") {
-      while (index < source.length && source[index] !== "\n") {
-        index += 1;
-      }
-      continue;
-    }
-    result += current ?? "";
-    index += 1;
+  while (state.index < source.length) {
+    state = readCommentStripStep(source, state);
   }
 
-  return result;
+  return state.result;
+}
+
+function readCommentStripStep(source: string, state: CommentStripState): CommentStripState {
+  switch (state.mode) {
+    case "blockComment":
+      return readBlockCommentStripStep(source, state);
+    case "char":
+    case "string":
+      return readEscapedLiteralStripStep(source, state);
+    case "verbatimString":
+      return readVerbatimStringStripStep(source, state);
+    case "code":
+      return readCodeCommentStripStep(source, state);
+  }
+}
+
+function readBlockCommentStripStep(source: string, state: CommentStripState): CommentStripState {
+  const current = source[state.index];
+  const next = source[state.index + 1];
+  if (current === "*" && next === "/") {
+    return { ...state, index: state.index + 2, mode: "code" };
+  }
+
+  return {
+    ...state,
+    index: state.index + 1,
+    result: state.result + (current === "\n" ? "\n" : ""),
+  };
+}
+
+function readEscapedLiteralStripStep(source: string, state: CommentStripState): CommentStripState {
+  const current = source[state.index];
+  const next = source[state.index + 1];
+  if (current === "\\") {
+    return {
+      ...state,
+      index: state.index + 2,
+      result: state.result + (current ?? "") + (next ?? ""),
+    };
+  }
+
+  return {
+    ...state,
+    index: state.index + 1,
+    mode: current === readLiteralTerminator(state.mode) ? "code" : state.mode,
+    result: state.result + (current ?? ""),
+  };
+}
+
+function readVerbatimStringStripStep(source: string, state: CommentStripState): CommentStripState {
+  const current = source[state.index];
+  const next = source[state.index + 1];
+  if (current === '"' && next === '"') {
+    return {
+      ...state,
+      index: state.index + 2,
+      result: state.result + current + next,
+    };
+  }
+
+  return {
+    ...state,
+    index: state.index + 1,
+    mode: current === '"' ? "code" : state.mode,
+    result: state.result + (current ?? ""),
+  };
+}
+
+function readCodeCommentStripStep(source: string, state: CommentStripState): CommentStripState {
+  const current = source[state.index];
+  const next = source[state.index + 1];
+  const literalStart = readLiteralStartMode(current, next);
+  if (literalStart !== undefined) {
+    return {
+      ...state,
+      index: state.index + literalStart.width,
+      mode: literalStart.mode,
+      result: state.result + literalStart.value,
+    };
+  }
+  if (current === "/" && next === "*") {
+    return { ...state, index: state.index + 2, mode: "blockComment" };
+  }
+  if (current === "/" && next === "/") {
+    return { ...state, index: skipDotNetLineComment(source, state.index) };
+  }
+
+  return { ...state, index: state.index + 1, result: state.result + (current ?? "") };
+}
+
+function readLiteralStartMode(
+  current: string | undefined,
+  next: string | undefined,
+): { mode: DotNetScanMode; value: string; width: number } | undefined {
+  if (current === "@" && next === '"') {
+    return { mode: "verbatimString", value: '@"', width: 2 };
+  }
+  if (current === '"') {
+    return { mode: "string", value: current, width: 1 };
+  }
+  if (current === "'") {
+    return { mode: "char", value: current, width: 1 };
+  }
+  return undefined;
+}
+
+function readLiteralTerminator(mode: DotNetScanMode): string {
+  return mode === "char" ? "'" : '"';
+}
+
+function skipDotNetLineComment(source: string, startIndex: number): number {
+  let index = startIndex;
+  while (index < source.length && source[index] !== "\n") {
+    index += 1;
+  }
+  return index;
 }
 
 function countDotNetTernaryOperators(source: string): number {
   let count = 0;
-  let index = 0;
-  let inString = false;
-  let inVerbatimString = false;
-  let inChar = false;
+  let state: DotNetLiteralScanState = { index: 0, mode: "code" };
 
-  while (index < source.length) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (inString) {
-      if (current === "\\") {
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inString = false;
-      }
-      index += 1;
+  while (state.index < source.length) {
+    const literalState = readDotNetLiteralScanStep(source, state);
+    if (literalState !== undefined) {
+      state = literalState;
       continue;
     }
-    if (inVerbatimString) {
-      if (current === '"' && next === '"') {
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inVerbatimString = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (inChar) {
-      if (current === "\\") {
-        index += 2;
-        continue;
-      }
-      if (current === "'") {
-        inChar = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (current === "@" && next === '"') {
-      inVerbatimString = true;
-      index += 2;
-      continue;
-    }
-    if (current === '"') {
-      inString = true;
-      index += 1;
-      continue;
-    }
-    if (current === "'") {
-      inChar = true;
-      index += 1;
-      continue;
-    }
+
+    const current = source[state.index];
+    const next = source[state.index + 1];
     if (
       current === "?" &&
       next !== "?" &&
       next !== "." &&
       next !== "[" &&
-      hasDotNetTernaryBranch(source, index)
+      hasDotNetTernaryBranch(source, state.index)
     ) {
       count += 1;
     }
-    index += 1;
+    state = { ...state, index: state.index + 1 };
   }
 
   return count;
 }
 
 function hasDotNetTernaryBranch(source: string, questionMarkIndex: number): boolean {
-  let parenDepth = 0;
-  let bracketDepth = 0;
-  let braceDepth = 0;
-  let index = questionMarkIndex + 1;
-  let inString = false;
-  let inVerbatimString = false;
-  let inChar = false;
+  let state: TernaryBranchScanState = {
+    braceDepth: 0,
+    bracketDepth: 0,
+    index: questionMarkIndex + 1,
+    mode: "code",
+    parenDepth: 0,
+  };
 
-  while (index < source.length) {
-    const current = source[index];
-    const next = source[index + 1];
-    if (inString) {
-      if (current === "\\") {
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inString = false;
-      }
-      index += 1;
+  while (state.index < source.length) {
+    const literalState = readDotNetLiteralScanStep(source, state);
+    if (literalState !== undefined) {
+      state = { ...state, ...literalState };
       continue;
     }
-    if (inVerbatimString) {
-      if (current === '"' && next === '"') {
-        index += 2;
-        continue;
-      }
-      if (current === '"') {
-        inVerbatimString = false;
-      }
-      index += 1;
-      continue;
+
+    const delimiter = readTernaryBranchDelimiter(source[state.index], state);
+    if (delimiter !== undefined) {
+      return delimiter;
     }
-    if (inChar) {
-      if (current === "\\") {
-        index += 2;
-        continue;
-      }
-      if (current === "'") {
-        inChar = false;
-      }
-      index += 1;
-      continue;
-    }
-    if (current === "@" && next === '"') {
-      inVerbatimString = true;
-      index += 2;
-      continue;
-    }
-    if (current === '"') {
-      inString = true;
-      index += 1;
-      continue;
-    }
-    if (current === "'") {
-      inChar = true;
-      index += 1;
-      continue;
-    }
-    if (current === "(") {
-      parenDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (current === ")") {
-      if (parenDepth === 0) return false;
-      parenDepth -= 1;
-      index += 1;
-      continue;
-    }
-    if (current === "[") {
-      bracketDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (current === "]") {
-      if (bracketDepth === 0) return false;
-      bracketDepth -= 1;
-      index += 1;
-      continue;
-    }
-    if (current === "{") {
-      braceDepth += 1;
-      index += 1;
-      continue;
-    }
-    if (current === "}") {
-      if (braceDepth === 0) return false;
-      braceDepth -= 1;
-      index += 1;
-      continue;
-    }
-    if (current === ":" && parenDepth === 0 && bracketDepth === 0 && braceDepth === 0) return true;
-    if (
-      (current === ";" || current === ",") &&
-      parenDepth === 0 &&
-      bracketDepth === 0 &&
-      braceDepth === 0
-    )
-      return false;
-    index += 1;
+    state = readTernaryBranchDepthStep(source[state.index], state);
   }
 
   return false;
+}
+
+function readDotNetLiteralScanStep(
+  source: string,
+  state: DotNetLiteralScanState,
+): DotNetLiteralScanState | undefined {
+  if (state.mode === "code") {
+    return readDotNetLiteralStartStep(source, state);
+  }
+  if (state.mode === "verbatimString") {
+    return readVerbatimStringScanStep(source, state);
+  }
+  return readEscapedLiteralScanStep(source, state);
+}
+
+function readDotNetLiteralStartStep(
+  source: string,
+  state: DotNetLiteralScanState,
+): DotNetLiteralScanState | undefined {
+  const literalStart = readLiteralStartMode(source[state.index], source[state.index + 1]);
+  return literalStart === undefined
+    ? undefined
+    : { index: state.index + literalStart.width, mode: literalStart.mode };
+}
+
+function readEscapedLiteralScanStep(
+  source: string,
+  state: DotNetLiteralScanState,
+): DotNetLiteralScanState {
+  const current = source[state.index];
+  const nextIndex = current === "\\" ? state.index + 2 : state.index + 1;
+  return {
+    index: nextIndex,
+    mode: current === readLiteralTerminator(state.mode) ? "code" : state.mode,
+  };
+}
+
+function readVerbatimStringScanStep(
+  source: string,
+  state: DotNetLiteralScanState,
+): DotNetLiteralScanState {
+  const current = source[state.index];
+  const next = source[state.index + 1];
+  if (current === '"' && next === '"') {
+    return { ...state, index: state.index + 2 };
+  }
+  return {
+    index: state.index + 1,
+    mode: current === '"' ? "code" : state.mode,
+  };
+}
+
+function readTernaryBranchDelimiter(
+  current: string | undefined,
+  state: TernaryBranchScanState,
+): boolean | undefined {
+  if (!isAtRootTernaryDepth(state)) {
+    return undefined;
+  }
+  if (current === ":") {
+    return true;
+  }
+  return current === ";" || current === "," || current === ")" || current === "]" || current === "}"
+    ? false
+    : undefined;
+}
+
+function readTernaryBranchDepthStep(
+  current: string | undefined,
+  state: TernaryBranchScanState,
+): TernaryBranchScanState {
+  const nextState = readTernaryBranchCloseDepthStep(current, state);
+  if (nextState !== undefined) {
+    return nextState;
+  }
+
+  return {
+    ...state,
+    braceDepth: current === "{" ? state.braceDepth + 1 : state.braceDepth,
+    bracketDepth: current === "[" ? state.bracketDepth + 1 : state.bracketDepth,
+    index: state.index + 1,
+    parenDepth: current === "(" ? state.parenDepth + 1 : state.parenDepth,
+  };
+}
+
+function readTernaryBranchCloseDepthStep(
+  current: string | undefined,
+  state: TernaryBranchScanState,
+): TernaryBranchScanState | undefined {
+  if (current === ")") {
+    return { ...state, index: state.index + 1, parenDepth: Math.max(0, state.parenDepth - 1) };
+  }
+  if (current === "]") {
+    return { ...state, bracketDepth: Math.max(0, state.bracketDepth - 1), index: state.index + 1 };
+  }
+  if (current === "}") {
+    return { ...state, braceDepth: Math.max(0, state.braceDepth - 1), index: state.index + 1 };
+  }
+  return undefined;
+}
+
+function isAtRootTernaryDepth(state: TernaryBranchScanState): boolean {
+  return state.parenDepth === 0 && state.bracketDepth === 0 && state.braceDepth === 0;
 }
 
 function countMatches(value: string, pattern: RegExp): number {
@@ -429,4 +450,3 @@ function rankMaintainabilityScore(score: number): string {
 function clampNumber(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
-
