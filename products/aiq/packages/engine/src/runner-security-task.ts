@@ -40,20 +40,7 @@ export async function runSharedSecurityTask(task: PlannedTask): Promise<StageRes
   try {
     for (const file of files) {
       currentFile = file;
-      const source = await readFile(file, "utf8");
-      for (const rule of sharedSecurityPatterns) {
-        rule.pattern.lastIndex = 0;
-        if (!rule.pattern.test(source)) {
-          continue;
-        }
-
-        diagnostics.push({
-          file,
-          message: rule.message,
-          severity: "error",
-          source: "aiq-security",
-        });
-      }
+      diagnostics.push(...(await scanSecurityFile(file)));
     }
   } catch (error) {
     throwIfAbortError(error);
@@ -74,12 +61,7 @@ export async function runSharedSecurityTask(task: PlannedTask): Promise<StageRes
   return {
     diagnostics,
     durationMs,
-    notes:
-      status === "passed"
-        ? ["Shared security scan passed."]
-        : [
-            `Shared security scan reported ${diagnostics.length} finding${diagnostics.length === 1 ? "" : "s"}.`,
-          ],
+    notes: readSharedSecurityNotes(status, diagnostics.length),
     stageId: task.stageId,
     status,
     toolRuns: [
@@ -96,3 +78,24 @@ export async function runSharedSecurityTask(task: PlannedTask): Promise<StageRes
   };
 }
 
+async function scanSecurityFile(file: string): Promise<Diagnostic[]> {
+  const source = await readFile(file, "utf8");
+  return sharedSecurityPatterns.flatMap((rule) => readSecurityRuleDiagnostic(file, source, rule));
+}
+
+function readSecurityRuleDiagnostic(
+  file: string,
+  source: string,
+  rule: { message: string; pattern: RegExp },
+): Diagnostic[] {
+  rule.pattern.lastIndex = 0;
+  return rule.pattern.test(source)
+    ? [{ file, message: rule.message, severity: "error", source: "aiq-security" }]
+    : [];
+}
+
+function readSharedSecurityNotes(status: StageResult["status"], diagnosticCount: number): string[] {
+  return status === "passed"
+    ? ["Shared security scan passed."]
+    : [`Shared security scan reported ${diagnosticCount} finding${diagnosticCount === 1 ? "" : "s"}.`];
+}

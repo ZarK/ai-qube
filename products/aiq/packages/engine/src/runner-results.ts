@@ -7,6 +7,40 @@ import type {
 } from "./contracts.js";
 import type { SharedMetricsMode } from "./languages/contracts.js";
 
+type SharedMetricsNoteArgs = [
+  string,
+  SharedMetricsMode,
+  number,
+  number,
+  number,
+  number,
+  string,
+  number,
+  string,
+  string,
+];
+
+type ToolRunResultArgs = [
+  string,
+  string[],
+  number,
+  number | undefined,
+  ToolRunStatus,
+  string?,
+  string?,
+  boolean?,
+];
+
+type ExecutionFailureStageArgs = [
+  StageId,
+  string,
+  string,
+  unknown,
+  number?,
+  Diagnostic[]?,
+  ToolRunResult[]?,
+];
+
 export function createNotImplementedStageResult(stageId: StageId, note?: string): StageResult {
   return {
     diagnostics: [],
@@ -22,18 +56,19 @@ export function createSharedMetricsNotImplementedNote(stageId: StageId): string 
   return `Stage '${stageId}' metrics are unsupported for the selected files. Select Python, JavaScript, TypeScript, C#, Go, Rust, Java, or Kotlin files, or adjust stage selection.`;
 }
 
-export function readSharedMetricsNote(
-  languageLabel: string,
-  mode: SharedMetricsMode,
-  fileCount: number,
-  totalSloc: number,
-  totalBlocks: number,
-  maxComplexity: number,
-  maxRank: string,
-  minMaintainability: number,
-  minMaintainabilityRank: string,
-  emptyBlockLabel: string,
-): string {
+export function readSharedMetricsNote(...values: SharedMetricsNoteArgs): string {
+  const [
+    languageLabel,
+    mode,
+    fileCount,
+    totalSloc,
+    totalBlocks,
+    maxComplexity,
+    maxRank,
+    minMaintainability,
+    minMaintainabilityRank,
+    emptyBlockLabel,
+  ] = values;
   if (mode === "sloc") {
     return `${languageLabel} SLOC: ${totalSloc} across ${fileCount} file${fileCount === 1 ? "" : "s"}.`;
   }
@@ -102,18 +137,19 @@ export function summarizeCombinedStageStatus(
   return "passed";
 }
 
-export function createToolRunResult(
-  tool: string,
-  args: string[],
-  durationMs: number,
-  exitCode: number | undefined,
-  status: ToolRunStatus,
-  finishedAt?: string,
-  startedAt?: string,
-  cacheHit = false,
-): ToolRunResult {
+export function createToolRunResult(...values: ToolRunResultArgs): ToolRunResult {
+  const [
+    tool,
+    toolArgs,
+    durationMs,
+    exitCode,
+    status,
+    finishedAt,
+    startedAt,
+    cacheHit = false,
+  ] = values;
   const result: ToolRunResult = {
-    args,
+    args: toolArgs,
     cacheHit,
     durationMs,
     ...(finishedAt === undefined ? {} : { finishedAt }),
@@ -129,15 +165,16 @@ export function createToolRunResult(
   return result;
 }
 
-export function createExecutionFailureStage(
-  stageId: StageId,
-  tool: string,
-  file: string,
-  error: unknown,
-  durationMs = 0,
-  diagnostics: Diagnostic[] = [],
-  toolRuns: ToolRunResult[] = [],
-): StageResult {
+export function createExecutionFailureStage(...values: ExecutionFailureStageArgs): StageResult {
+  const [
+    stageId,
+    tool,
+    file,
+    error,
+    durationMs = 0,
+    diagnostics = [],
+    toolRuns = [],
+  ] = values;
   const message = formatError(error);
 
   return {

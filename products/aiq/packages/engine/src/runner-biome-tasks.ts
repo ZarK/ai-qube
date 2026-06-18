@@ -18,6 +18,8 @@ import {
 import * as commands from "./tools/command-builders.js";
 import { findNearestBiomeConfig } from "./tools/native-config.js";
 
+type BiomeTaskKind = "format" | "lint";
+
 export async function runBiomeLintTask(
   task: PlannedTask,
   cwd: string,
@@ -42,25 +44,20 @@ export async function runBiomeLintTask(
       signal,
     );
     const diagnostics = parsers.parseBiomeDiagnostics(outcome.stdout, cwd);
-    const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        createProcessFailureDiagnostic(
-          files[0] ?? cwd,
-          "biome",
-          readProcessFailureMessage("Biome", outcome.stderr, outcome.stdout, outcome.exitCode),
-        ),
-      );
-    }
+    const status = readBiomeStatus(outcome.exitCode, diagnostics.length);
+    addMissingBiomeDiagnostic(diagnostics, {
+      cwd,
+      exitCode: outcome.exitCode,
+      files,
+      stderr: outcome.stderr,
+      stdout: outcome.stdout,
+      toolName: "Biome",
+    });
 
     return {
       diagnostics,
       durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? [configPath === undefined ? "Biome lint passed." : `Biome lint passed using ${configPath}.`]
-          : [`Biome reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}.`],
+      notes: readBiomeNotes("lint", status, configPath, diagnostics.length),
       stageId: task.stageId,
       status,
       toolRuns: [
@@ -108,30 +105,20 @@ export async function runBiomeFormatTask(
       signal,
     );
     const diagnostics = parsers.parseBiomeDiagnostics(outcome.stdout, cwd);
-    const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        createProcessFailureDiagnostic(
-          files[0] ?? cwd,
-          "biome",
-          readProcessFailureMessage(
-            "Biome format",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
+    const status = readBiomeStatus(outcome.exitCode, diagnostics.length);
+    addMissingBiomeDiagnostic(diagnostics, {
+      cwd,
+      exitCode: outcome.exitCode,
+      files,
+      stderr: outcome.stderr,
+      stdout: outcome.stdout,
+      toolName: "Biome format",
+    });
 
     return {
       diagnostics,
       durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? [configPath === undefined ? "Biome format passed." : `Biome format passed using ${configPath}.`]
-          : [`Biome reported ${diagnostics.length} formatting diagnostic${diagnostics.length === 1 ? "" : "s"}.`],
+      notes: readBiomeNotes("format", status, configPath, diagnostics.length),
       stageId: task.stageId,
       status,
       toolRuns: [
@@ -150,4 +137,58 @@ export async function runBiomeFormatTask(
     throwIfAbortError(error);
     return createExecutionFailureStage(task.stageId, "biome", files[0] ?? cwd, error);
   }
+}
+
+function readBiomeStatus(exitCode: number | undefined, diagnosticCount: number): StageResult["status"] {
+  return exitCode === 0 && diagnosticCount === 0 ? "passed" : "failed";
+}
+
+function addMissingBiomeDiagnostic(
+  diagnostics: ReturnType<typeof parsers.parseBiomeDiagnostics>,
+  options: {
+    cwd: string;
+    exitCode: number | undefined;
+    files: readonly string[];
+    stderr: string;
+    stdout: string;
+    toolName: string;
+  },
+): void {
+  if (options.exitCode === 0 || diagnostics.length > 0) {
+    return;
+  }
+
+  diagnostics.push(
+    createProcessFailureDiagnostic(
+      options.files[0] ?? options.cwd,
+      "biome",
+      readProcessFailureMessage(
+        options.toolName,
+        options.stderr,
+        options.stdout,
+        options.exitCode,
+      ),
+    ),
+  );
+}
+
+function readBiomeNotes(
+  kind: BiomeTaskKind,
+  status: StageResult["status"],
+  configPath: string | undefined,
+  diagnosticCount: number,
+): string[] {
+  return status === "passed"
+    ? [readBiomePassedNote(kind, configPath)]
+    : [readBiomeFailureNote(kind, diagnosticCount)];
+}
+
+function readBiomePassedNote(kind: BiomeTaskKind, configPath: string | undefined): string {
+  const label = kind === "lint" ? "Biome lint" : "Biome format";
+  return configPath === undefined ? `${label} passed.` : `${label} passed using ${configPath}.`;
+}
+
+function readBiomeFailureNote(kind: BiomeTaskKind, diagnosticCount: number): string {
+  const label = kind === "lint" ? "diagnostic" : "formatting diagnostic";
+  return `Biome reported ${diagnosticCount} ${label}${diagnosticCount === 1 ? "" : "s"}.`;
 }

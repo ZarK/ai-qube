@@ -56,6 +56,32 @@ const rustProjectConfigNames = ["Cargo.toml", "Cargo.lock"];
 const jvmBuildConfigNames = ["build.gradle.kts", "build.gradle", "pom.xml"];
 const jvmSettingsConfigNames = ["settings.gradle.kts", "settings.gradle"];
 const jvmTaskConfigNames = [...jvmBuildConfigNames, ...jvmSettingsConfigNames];
+type FileMatchContext = {
+  baseName: string;
+  extension: string;
+  file: string;
+  lowerBaseName: string;
+};
+
+const languageMatchers: Partial<Record<LanguageId, (context: FileMatchContext) => boolean>> = {
+  bash: ({ extension }) => bashExtensions.has(extension) || bashTestExtensions.has(extension),
+  css: ({ extension }) => cssExtensions.has(extension),
+  dotnet: ({ extension }) => dotNetExtensions.has(extension),
+  go: ({ file }) => isGoTaskFile(file),
+  html: ({ extension }) => htmlExtensions.has(extension),
+  java: ({ file }) => isJvmLanguageTaskFile(file),
+  javascript: ({ extension, lowerBaseName }) =>
+    javaScriptExtensions.has(extension) || javaScriptProjectConfigNames.includes(lowerBaseName),
+  kotlin: ({ file }) => isJvmLanguageTaskFile(file),
+  powershell: ({ extension }) => powerShellExtensions.has(extension),
+  python: ({ file }) => isPythonTaskFile(file),
+  rust: ({ file }) => isRustTaskFile(file),
+  sql: ({ extension }) => sqlExtensions.has(extension),
+  terraform: ({ file }) => isTerraformFile(file),
+  typescript: ({ extension, lowerBaseName }) =>
+    typeScriptExtensions.has(extension) || lowerBaseName === "tsconfig.json",
+  yaml: ({ extension }) => yamlExtensions.has(extension),
+};
 
 export const securityExtensions = new Set([
   ".bats",
@@ -207,41 +233,16 @@ function fileMatchesConfiguredBiomeLanguage(file: string, languageId: LanguageId
 
 function fileMatchesLanguage(file: string, languageId: LanguageId): boolean {
   const normalizedPath = path.resolve(file);
-  const extension = path.extname(normalizedPath).toLowerCase();
   const baseName = path.basename(normalizedPath);
-  const lowerBaseName = baseName.toLowerCase();
+  const context = {
+    baseName,
+    extension: path.extname(normalizedPath).toLowerCase(),
+    file,
+    lowerBaseName: baseName.toLowerCase(),
+  };
+  return (languageMatchers[languageId] ?? defaultLanguageMatcher)(context);
+}
 
-  switch (languageId) {
-    case "bash":
-      return bashExtensions.has(extension) || bashTestExtensions.has(extension);
-    case "css":
-      return cssExtensions.has(extension);
-    case "dotnet":
-      return dotNetExtensions.has(extension);
-    case "go":
-      return isGoTaskFile(file);
-    case "html":
-      return htmlExtensions.has(extension);
-    case "java":
-    case "kotlin":
-      return isJvmLanguageTaskFile(file);
-    case "javascript":
-      return javaScriptExtensions.has(extension) || javaScriptProjectConfigNames.includes(lowerBaseName);
-    case "powershell":
-      return powerShellExtensions.has(extension);
-    case "python":
-      return isPythonTaskFile(file);
-    case "rust":
-      return isRustTaskFile(file);
-    case "sql":
-      return sqlExtensions.has(extension);
-    case "terraform":
-      return isTerraformFile(file);
-    case "typescript":
-      return typeScriptExtensions.has(extension) || lowerBaseName === "tsconfig.json";
-    case "yaml":
-      return yamlExtensions.has(extension);
-    default:
-      return isHclFile(file) || isJavaScriptMetricsTaskFile(file);
-  }
+function defaultLanguageMatcher({ file }: FileMatchContext): boolean {
+  return isHclFile(file) || isJavaScriptMetricsTaskFile(file);
 }
