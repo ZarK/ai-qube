@@ -410,7 +410,7 @@ function formatMetricRemediationSummary(stage: StageResult, firstMessage: string
 
 function formatMetricRemediationGuidance(stageId: StageId): string {
   const common =
-    "Metric remediation is behavior-preserving: preserve public APIs, command behavior, tool selection, execution order, existing pathways, and repository conventions. Do not use metric failures as authorization for architecture rewrites or feature behavior changes.";
+    "Metric remediation is behavior-preserving: preserve public APIs, command behavior, tool selection, execution order, existing pathways, and repository conventions. Do not use metric failures as authorization for feature changes, command semantic changes, stage/language/tool boundary changes, or architecture rewrites.";
   const naming =
     "Use direct purpose-revealing names: active verbs for functions, direct nouns for values, plural nouns for collections, short scoped file/module names, and no vague helper/manager/processor names unless local convention requires them.";
 

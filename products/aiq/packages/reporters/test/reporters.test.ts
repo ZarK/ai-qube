@@ -153,7 +153,7 @@ describe("reporters", () => {
       "preserve public APIs, command behavior, tool selection, execution order, existing pathways",
     );
     expect(formatRunResultAsText(metricFailure)).toContain(
-      "Do not use metric failures as authorization for architecture rewrites",
+      "Do not use metric failures as authorization for feature changes, command semantic changes, stage/language/tool boundary changes, or architecture rewrites",
     );
     expect(formatRunResultAsText(metricFailure)).toContain("Use direct purpose-revealing names");
     expect(formatRunResultAsText(metricFailure)).toContain(
