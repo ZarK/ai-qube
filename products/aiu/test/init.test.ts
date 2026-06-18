@@ -67,7 +67,10 @@ describe("init planner", () => {
       assert.deepEqual(config.hosts.enabled, [tool], tool);
 
       if (tool === "opencode") {
-        assert.match(await readFile(path.join(target, file), "utf8"), /createAiuOpenCodePlugin/);
+        assert.match(
+          await readFile(path.join(target, file), "utf8"),
+          /createAiuOpenCodeServerPlugin/,
+        );
       } else if (tool === "codex") {
         const hooks = JSON.parse(await readFile(path.join(target, file), "utf8")) as {
           Stop: Array<{ hooks: Array<{ command: string; type: string }> }>;

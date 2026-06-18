@@ -103,6 +103,29 @@ export interface AiuOpenCodePluginOptions {
   readonly deliverPrompt?: AiuOpenCodePromptDeliverer;
 }
 
+export interface AiuOpenCodeServerPluginInput {
+  readonly directory?: string;
+}
+
+export interface AiuOpenCodeServerPluginEvent {
+  readonly type: string;
+  readonly payload?: unknown;
+  readonly properties?: unknown;
+}
+
+export interface AiuOpenCodeServerPluginEventInput {
+  readonly event: AiuOpenCodeServerPluginEvent;
+}
+
+export interface AiuOpenCodeServerPluginHooks {
+  readonly event: (input: AiuOpenCodeServerPluginEventInput) => Promise<void>;
+}
+
+export type AiuOpenCodeServerPlugin = (
+  input: AiuOpenCodeServerPluginInput,
+  options?: unknown,
+) => Promise<AiuOpenCodeServerPluginHooks>;
+
 const AIU_OPENCODE_RELEVANT_EVENTS = new Set([
   "idle",
   "session-idle",
@@ -128,6 +151,26 @@ export function createAiuOpenCodePlugin(options: AiuOpenCodePluginOptions = {}):
       return after(event, Object.freeze({ ...normalizedContext, previousResult: result }), async () => result);
     },
   });
+}
+
+export function createAiuOpenCodeServerPlugin(
+  options: AiuOpenCodePluginOptions = {},
+): AiuOpenCodeServerPlugin {
+  return async (input) => {
+    const plugin = createAiuOpenCodePlugin(options);
+    const cwd = input.directory;
+    return Object.freeze({
+      event: async ({ event }: AiuOpenCodeServerPluginEventInput) => {
+        await plugin.handle(
+          {
+            type: event.type,
+            payload: event.payload ?? event.properties,
+          },
+          cwd === undefined ? {} : { cwd },
+        );
+      },
+    });
+  };
 }
 
 export async function runAiuOpenCodeContinuation(event: AiuOpenCodeEvent, context: AiuOpenCodeContext = {}): Promise<AiuOpenCodeHandlerResult> {

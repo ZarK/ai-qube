@@ -42,9 +42,9 @@ describe("migration planner", () => {
     await writeFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), [
       "// Managed by @tjalve/aiu.",
       "// Compose custom behavior outside this package-managed file.",
-      "import { createAiuOpenCodePlugin } from \"@tjalve/aiu/opencode\";",
+      "import { createAiuOpenCodeServerPlugin } from \"@tjalve/aiu/opencode\";",
       "",
-      "export default createAiuOpenCodePlugin();",
+      "export default createAiuOpenCodeServerPlugin();",
       "",
     ].join("\n"), "utf8");
 
@@ -230,7 +230,10 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.ok, true);
     assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts" && item.action === "update"));
     assert.equal(parsed.migrate.recommendedNextCommand, "aiu doctor --json");
-    assert.match(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), /createAiuOpenCodePlugin/);
+    assert.match(
+      await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"),
+      /createAiuOpenCodeServerPlugin/,
+    );
   });
 
   it("does not partially apply force when non-managed cleanup candidates remain", async () => {

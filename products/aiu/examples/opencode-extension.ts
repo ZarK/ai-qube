@@ -1,5 +1,8 @@
 import { getDefaultAiuConfig, renderAiuPromptSection, type AiuPromptPolicy } from "@tjalve/aiu";
-import { createAiuOpenCodePlugin, type AiuOpenCodeHandler } from "@tjalve/aiu/opencode";
+import {
+  createAiuOpenCodeServerPlugin,
+  type AiuOpenCodeHandler,
+} from "@tjalve/aiu/opencode";
 
 const prompts: AiuPromptPolicy = {
   sections: {
@@ -21,6 +24,6 @@ export const customizedWorkPrompt = renderAiuPromptSection({
 
 const beforeUmpire: AiuOpenCodeHandler = async (_event, _context, next) => next();
 
-export default createAiuOpenCodePlugin({
+export default createAiuOpenCodeServerPlugin({
   before: [beforeUmpire],
 });

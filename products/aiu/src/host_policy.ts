@@ -92,9 +92,9 @@ const HOST_PROFILES: Readonly<Record<AiuHost, AiuHostCapabilityProfile>> = Objec
         content: [
           "// Managed by @tjalve/aiu.",
           "// Compose custom behavior outside this package-managed file.",
-          "import { createAiuOpenCodePlugin } from \"@tjalve/aiu/opencode\";",
+          "import { createAiuOpenCodeServerPlugin } from \"@tjalve/aiu/opencode\";",
           "",
-          "export default createAiuOpenCodePlugin();",
+          "export default createAiuOpenCodeServerPlugin();",
           "",
         ].join("\n"),
       }),

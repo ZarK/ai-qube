@@ -215,7 +215,10 @@ Prompt sections are limited to `work`, `planning`, `quality`, and `whip`. Reposi
 
 ```ts
 import { getDefaultAiuConfig, renderAiuPromptSection, type AiuPromptPolicy } from "@tjalve/aiu";
-import { createAiuOpenCodePlugin, type AiuOpenCodeHandler } from "@tjalve/aiu/opencode";
+import {
+  createAiuOpenCodeServerPlugin,
+  type AiuOpenCodeHandler,
+} from "@tjalve/aiu/opencode";
 
 const prompts: AiuPromptPolicy = {
   sections: {
@@ -233,7 +236,7 @@ export const workPrompt = renderAiuPromptSection({
 
 const beforeUmpire: AiuOpenCodeHandler = async (_event, _context, next) => next();
 
-export default createAiuOpenCodePlugin({ before: [beforeUmpire] });
+export default createAiuOpenCodeServerPlugin({ before: [beforeUmpire] });
 ```
 
 Extension points compose with the package-backed `aiu` command. They do not preserve old copied helper scripts or fallback runtime behavior.
