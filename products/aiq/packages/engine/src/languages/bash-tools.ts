@@ -26,45 +26,26 @@ export async function runBashLintLanguageTask(
     );
     const diagnostics = parsers.parseShellcheckDiagnostics(outcome.stdout, runtime.cwd);
     const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          task.files[0] ?? runtime.cwd,
-          "shellcheck",
-          runtime.readProcessFailureMessage(
-            "ShellCheck",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    return {
+    appendSilentBashToolFailureDiagnostic({
       diagnostics,
-      durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? ["ShellCheck passed."]
-          : [
-              `ShellCheck reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
-            ],
+      files: task.files,
+      label: "ShellCheck",
+      outcome,
+      runtime,
+      status,
+      tool: "shellcheck",
+    });
+
+    return createBashToolStageResult({
+      args,
+      diagnostics,
+      label: "ShellCheck",
+      outcome,
+      runtime,
       stageId: task.stageId,
       status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "shellcheck",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
+      tool: "shellcheck",
+    });
   } catch (error) {
     runtime.throwIfAbortError(error);
     return runtime.createExecutionFailureStage(
@@ -95,45 +76,26 @@ export async function runBashFormatLanguageTask(
     );
     const diagnostics = parsers.parseShellFormatDiagnostics(outcome.stdout, runtime.cwd);
     const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          task.files[0] ?? runtime.cwd,
-          "shfmt",
-          runtime.readProcessFailureMessage(
-            "shfmt",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    return {
+    appendSilentBashToolFailureDiagnostic({
       diagnostics,
-      durationMs: outcome.durationMs,
-      notes:
-        status === "passed"
-          ? ["shfmt passed."]
-          : [
-              `shfmt reported ${diagnostics.length} formatting diagnostic${diagnostics.length === 1 ? "" : "s"}.`,
-            ],
+      files: task.files,
+      label: "shfmt",
+      outcome,
+      runtime,
+      status,
+      tool: "shfmt",
+    });
+
+    return createBashToolStageResult({
+      args,
+      diagnostics,
+      label: "shfmt",
+      outcome,
+      runtime,
       stageId: task.stageId,
       status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "shfmt",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
+      tool: "shfmt",
+    });
   } catch (error) {
     runtime.throwIfAbortError(error);
     return runtime.createExecutionFailureStage(
@@ -143,6 +105,76 @@ export async function runBashFormatLanguageTask(
       error,
     );
   }
+}
+
+function appendSilentBashToolFailureDiagnostic(options: {
+  diagnostics: Diagnostic[];
+  files: readonly string[];
+  label: string;
+  outcome: Awaited<ReturnType<BashRunnerRuntime["runExecutable"]>>;
+  runtime: BashRunnerRuntime;
+  status: StageResult["status"];
+  tool: "shellcheck" | "shfmt";
+}): void {
+  if (options.status !== "failed" || options.diagnostics.length > 0) {
+    return;
+  }
+
+  options.diagnostics.push(
+    options.runtime.createProcessFailureDiagnostic(
+      options.files[0] ?? options.runtime.cwd,
+      options.tool,
+      options.runtime.readProcessFailureMessage(
+        options.label,
+        options.outcome.stderr,
+        options.outcome.stdout,
+        options.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function createBashToolStageResult(options: {
+  args: string[];
+  diagnostics: Diagnostic[];
+  label: string;
+  outcome: Awaited<ReturnType<BashRunnerRuntime["runExecutable"]>>;
+  runtime: BashRunnerRuntime;
+  stageId: StageResult["stageId"];
+  status: StageResult["status"];
+  tool: "shellcheck" | "shfmt";
+}): StageResult {
+  return {
+    diagnostics: options.diagnostics,
+    durationMs: options.outcome.durationMs,
+    notes: readBashToolNotes(options.label, options.status, options.diagnostics),
+    stageId: options.stageId,
+    status: options.status,
+    toolRuns: [
+      options.runtime.createToolRunResult(
+        options.tool,
+        options.args,
+        options.outcome.durationMs,
+        options.outcome.exitCode,
+        options.status,
+        options.outcome.finishedAt,
+        options.outcome.startedAt,
+      ),
+    ],
+  };
+}
+
+function readBashToolNotes(
+  label: string,
+  status: StageResult["status"],
+  diagnostics: readonly Diagnostic[],
+): string[] {
+  if (status === "passed") {
+    return [`${label} passed.`];
+  }
+
+  const kind = label === "shfmt" ? "formatting diagnostic" : "diagnostic";
+  return [`${label} reported ${diagnostics.length} ${kind}${diagnostics.length === 1 ? "" : "s"}.`];
 }
 
 export async function runBashTestLanguageTask(

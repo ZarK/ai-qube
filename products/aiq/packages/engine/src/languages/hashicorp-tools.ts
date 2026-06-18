@@ -199,50 +199,95 @@ export async function runTerraformFormatProject(
     parsers.parseTerraformFormatDiagnostics(outcome.stdout, project.projectRoot),
     project.terraformFiles,
   );
-
-  if (outcome.exitCode !== 0 && parsedDiagnostics.length === 0) {
-    parsedDiagnostics.push(
-      ...parsers.parseTerraformSyntaxDiagnostics(
-        joinOutputs(outcome.stderr, outcome.stdout),
-        project.terraformFiles[0] ?? project.projectRoot,
-        "terraform-fmt",
-      ),
-    );
-  }
-
-  if (outcome.exitCode !== 0 && parsedDiagnostics.length === 0) {
-    parsedDiagnostics.push(
-      runtime.createProcessFailureDiagnostic(
-        project.terraformFiles[0] ?? project.projectRoot,
-        "terraform-fmt",
-        runtime.readProcessFailureMessage(
-          "terraform fmt",
-          outcome.stderr,
-          outcome.stdout,
-          outcome.exitCode,
-        ),
-      ),
-    );
-  }
+  appendTerraformFormatFallbackDiagnostics(project, runtime, outcome, parsedDiagnostics);
 
   const status = outcome.exitCode === 0 && parsedDiagnostics.length === 0 ? "passed" : "failed";
 
-  return {
+  return createTerraformFormatProjectResult({
+    args,
     diagnostics: parsedDiagnostics,
-    durationMs: outcome.durationMs,
-    note:
-      status === "passed"
-        ? `terraform fmt passed for ${readProjectLabel(project.projectRoot)}.`
-        : `terraform fmt reported ${parsedDiagnostics.length} formatting diagnostic${parsedDiagnostics.length === 1 ? "" : "s"} for ${readProjectLabel(project.projectRoot)}.`,
+    outcome,
+    project,
+    runtime,
     status,
-    toolRun: runtime.createToolRunResult(
+  });
+}
+
+function appendTerraformFormatFallbackDiagnostics(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>,
+  diagnostics: Diagnostic[],
+): void {
+  if (outcome.exitCode === 0 || diagnostics.length > 0) {
+    return;
+  }
+
+  diagnostics.push(
+    ...parsers.parseTerraformSyntaxDiagnostics(
+      joinOutputs(outcome.stderr, outcome.stdout),
+      project.terraformFiles[0] ?? project.projectRoot,
       "terraform-fmt",
-      args,
-      outcome.durationMs,
-      outcome.exitCode,
-      status,
-      outcome.finishedAt,
-      outcome.startedAt,
+    ),
+  );
+  appendSilentTerraformFormatFailureDiagnostic(project, runtime, outcome, diagnostics);
+}
+
+function appendSilentTerraformFormatFailureDiagnostic(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>,
+  diagnostics: Diagnostic[],
+): void {
+  if (diagnostics.length > 0) {
+    return;
+  }
+
+  diagnostics.push(
+    runtime.createProcessFailureDiagnostic(
+      project.terraformFiles[0] ?? project.projectRoot,
+      "terraform-fmt",
+      runtime.readProcessFailureMessage(
+        "terraform fmt",
+        outcome.stderr,
+        outcome.stdout,
+        outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function createTerraformFormatProjectResult(options: {
+  args: string[];
+  diagnostics: Diagnostic[];
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>;
+  project: HashicorpProject;
+  runtime: HashicorpRunnerRuntime;
+  status: StageResult["status"];
+}): HashicorpProjectToolResult {
+  return {
+    diagnostics: options.diagnostics,
+    durationMs: options.outcome.durationMs,
+    note: readTerraformFormatNote(options.project, options.diagnostics, options.status),
+    status: options.status,
+    toolRun: options.runtime.createToolRunResult(
+      "terraform-fmt",
+      options.args,
+      options.outcome.durationMs,
+      options.outcome.exitCode,
+      options.status,
+      options.outcome.finishedAt,
+      options.outcome.startedAt,
     ),
   };
+}
+
+function readTerraformFormatNote(
+  project: HashicorpProject,
+  diagnostics: readonly Diagnostic[],
+  status: StageResult["status"],
+): string {
+  return status === "passed"
+    ? `terraform fmt passed for ${readProjectLabel(project.projectRoot)}.`
+    : `terraform fmt reported ${diagnostics.length} formatting diagnostic${diagnostics.length === 1 ? "" : "s"} for ${readProjectLabel(project.projectRoot)}.`;
 }
