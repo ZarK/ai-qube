@@ -69,6 +69,12 @@ test("schema exposes dry-run and mutation metadata", () => {
   assert.deepEqual(init.mutation.categories, ["local-config", "local-files"]);
   assert.equal(init.supplyChain.sensitive, false);
   assert.ok(init.errors.some((error) => error.kind === "init-write-failed"));
+
+  const render = schema.commands.find((command) => command.name === "work-items render");
+  assert.ok(render);
+  assert.equal(render.dryRun.supported, true);
+  assert.deepEqual(render.mutation.categories, ["local-files"]);
+  assert.ok(render.errors.some((error) => error.kind === "provider-mutation-unsupported"));
 });
 
 test("init dry-run returns agent-facing next action without mutating", () => {
@@ -637,6 +643,81 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.match(workItemDoc, /No placeholder commands, fake tests/);
   assert.match(workItemDoc, /## Spec anchors/);
   assert.doesNotMatch(workItemDoc, /## Source anchors/);
+
+  const githubPreview = parseJsonStdout(runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "github",
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(githubPreview.mutated, false);
+  assert.equal(githubPreview.provider, "github");
+  assert.equal(githubPreview.plannedIssues.length, 3);
+  assert.match(githubPreview.plannedIssues[0].body, /^Sequence: \d+/m);
+  assert.deepEqual(githubPreview.plannedIssues[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
+
+  const blockedGithubApply = runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "github",
+    "--json"
+  ]);
+  assert.equal(blockedGithubApply.status, 5);
+  assert.equal(JSON.parse(blockedGithubApply.stdout).error.kind, "provider-mutation-unsupported");
+
+  const markdownPreview = parseJsonStdout(runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "markdown",
+    "--output-dir",
+    "docs/review-issues",
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(markdownPreview.mutated, false);
+  assert.equal(markdownPreview.plannedWrites[0].path.replace(/\\/g, "/"), `docs/review-issues/${allowedWorkItems.drafts[0].draftId}.md`);
+  await assert.rejects(readFile(join(dir, "docs", "review-issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8"));
+
+  const unsafeMarkdownRender = runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "markdown",
+    "--output-dir",
+    "../outside-project",
+    "--json"
+  ]);
+  assert.notEqual(unsafeMarkdownRender.status, 0);
+  assert.equal(JSON.parse(unsafeMarkdownRender.stdout).error.kind, "work-item-render-failed");
+
+  const markdownRendered = parseJsonStdout(runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "markdown",
+    "--output-dir",
+    "docs/review-issues",
+    "--json"
+  ]));
+  assert.equal(markdownRendered.mutated, true);
+  assert.equal(markdownRendered.written.length, 3);
+  assert.equal(markdownRendered.state.planning.workItemDrafts[0].status, "rendered");
+  const renderedDoc = await readFile(join(dir, "docs", "review-issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
+  assert.match(renderedDoc, /^Sequence: \d+/m);
 
   const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
   assert.equal(status.artifacts.milestones.length, 3);

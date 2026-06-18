@@ -10,6 +10,7 @@ import {
   selectProjectProfile,
   selectSpecChapters,
   renderGitHubIssueDraft,
+  renderWorkItemDrafts,
   renderMarkdownWorkItemDraft,
   specAcceptanceStatus,
   specChaptersForProject,
@@ -85,6 +86,52 @@ test("GitHub rendering adapts canonical drafts at the provider edge", () => {
   assert.match(rendered.body, /^Blocked by: #1/m);
   assert.match(rendered.body, /^Sequence: 2/m);
   assert.equal(rendered.url, "https://github.com/example/repo/issues/2");
+});
+
+test("provider-neutral work item drafts render to GitHub previews and markdown exports", () => {
+  const state = {
+    version: 1,
+    phase: "work_item_generation",
+    project: {},
+    discovery: {
+      referencePaths: [],
+      inspectCurrentRepo: false,
+      inspectDocs: false,
+      inspectSiblingRepos: false,
+      inspectedSources: [],
+      knownDecisions: [],
+      unresolvedQuestions: []
+    },
+    agent: { questionBudget: 3 },
+    spec: {
+      acceptedSectionIds: [],
+      reopenedSectionIds: [],
+      unresolvedGaps: [],
+      revision: 0
+    },
+    assumptions: [],
+    artifacts: {
+      spec: { path: "docs/spec.md", status: "accepted" },
+      milestones: [],
+      workItems: []
+    },
+    planning: {
+      ...createInitialPlanningState(),
+      workItemDrafts: [sampleDraft]
+    }
+  };
+
+  const github = renderWorkItemDrafts(state, "github");
+  assert.equal(github.provider, "github");
+  assert.deepEqual(github.artifacts, []);
+  assert.equal(github.rendered[0].draftId, "draft-foundation");
+  assert.deepEqual(github.rendered[0].labels, ["P2-High", "S-Ready", "C-Architecture", "C-Data"]);
+
+  const markdown = renderWorkItemDrafts(state, "markdown", { outputDir: "review/issues" });
+  assert.equal(markdown.provider, "markdown");
+  assert.equal(markdown.artifacts[0].path, "review/issues/draft-foundation.md");
+  assert.equal(markdown.artifacts[0].status, "ready");
+  assert.match(markdown.rendered[0].content, /^Sequence: 2/m);
 });
 
 test("work item queue ordering validates blockers against sequence metadata", () => {

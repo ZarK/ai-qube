@@ -34,6 +34,8 @@ Core state does not require GitHub issue numbers, GitHub milestones, pull reques
 
 GitHub rendering can turn a `WorkItemDraft` into an issue title, body, labels, blocker lines, and URL metadata. Markdown rendering can export the same draft without GitHub authentication or network access.
 
+The CLI keeps generation and rendering separate. `work-items generate` records canonical drafts in planning state, while `work-items render` adapts those drafts to a selected provider. GitHub rendering is preview-only until a provider mutation adapter is implemented; markdown rendering writes local files and records the resulting artifacts.
+
 ## Capability Reports
 
 `CapabilityReport` records what an adapter can do without forcing the core workflow to assume that support exists.

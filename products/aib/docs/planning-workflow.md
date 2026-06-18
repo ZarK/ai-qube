@@ -181,6 +181,8 @@ When work items are generated for an Executor-compatible workflow, drafts should
 
 Generated sequence values must be topologically valid against any blockers that reference other generated drafts. If a draft is blocked by another generated draft with the same or later sequence, `aib` should report the conflict before mutating provider state or writing final rendered output.
 
+Rendering is a separate step from generation. `aib work-items render --provider github --dry-run --json` previews planned GitHub issue titles, bodies, labels, and blocker metadata before any provider mutation. `aib work-items render --provider markdown --json` writes reviewable local markdown drafts without network access. Provider-created IDs and URLs belong in planning state or adapter metadata after creation, not in product requirements or milestone docs.
+
 ### Output
 
 - canonical work item drafts

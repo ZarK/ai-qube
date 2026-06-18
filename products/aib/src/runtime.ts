@@ -17,7 +17,8 @@ import {
   specReopenCommand,
   specValidateCommand,
   statusCommand,
-  workItemsGenerateCommand
+  workItemsGenerateCommand,
+  workItemsRenderCommand
 } from "./metadata.js";
 import { createMilestoneDrafts, milestoneDocsExist, writeMilestoneDrafts } from "./milestones.js";
 import type { MilestoneDraftResult } from "./milestones.js";
@@ -34,8 +35,8 @@ import {
 } from "./state.js";
 import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 import type { SpecChapterId } from "./spec_chapters.js";
-import { createWorkItemDrafts, WorkItemQueueOrderError, writeWorkItemDrafts } from "./work_items.js";
-import type { WorkItemDraftResult } from "./work_items.js";
+import { createWorkItemDrafts, renderWorkItemDrafts, WorkItemQueueOrderError, writeRenderedMarkdownWorkItems, writeWorkItemDrafts } from "./work_items.js";
+import type { WorkItemDraftResult, WorkItemRenderProvider, WorkItemRenderResult } from "./work_items.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -522,6 +523,88 @@ export const aibCli = createCli({
         throw stateError("work-items generate", error);
       }
     }),
+    createCommand(workItemsRenderCommand, ({ flags }) => {
+      try {
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const projectRoot = projectRootForState(envelope.statePath);
+        const provider = flags.provider === "github" || flags.provider === "markdown" ? flags.provider : undefined;
+        if (!provider) {
+          throw createCliError({
+            command: "work-items render",
+            kind: "work-item-render-failed",
+            operation: "select work-item render provider",
+            likelyCause: "Provider must be one of github or markdown.",
+            suggestedNextAction: "Pass --provider github or --provider markdown.",
+            category: "validation",
+            exitCode: 3
+          });
+        }
+        const outputDir = typeof flags["output-dir"] === "string" ? flags["output-dir"] : undefined;
+        if (provider === "github" && flags["dry-run"] !== true) {
+          throw createCliError({
+            command: "work-items render",
+            kind: "provider-mutation-unsupported",
+            operation: "render GitHub work items",
+            likelyCause: "GitHub issue creation is not implemented in this provider adapter yet.",
+            suggestedNextAction: "Use --dry-run to review planned GitHub issues, or render markdown drafts for offline review.",
+            category: "safety",
+            exitCode: 5
+          });
+        }
+
+        let result: WorkItemRenderResult;
+        try {
+          result = flags["dry-run"] === true || provider === "github"
+            ? renderWorkItemDrafts(envelope.state, provider, { outputDir })
+            : writeRenderedMarkdownWorkItems(envelope.state, { outputDir, baseDir: projectRoot });
+        } catch (error) {
+          if (error instanceof WorkItemQueueOrderError) {
+            throw createCliError({
+              command: "work-items render",
+              kind: "work-item-order-invalid",
+              operation: "validate work-item queue ordering",
+              likelyCause: error.message,
+              suggestedNextAction: "Regenerate milestone/work-item drafts so Sequence and Blocked by ordering are consistent.",
+              category: "validation",
+              exitCode: 3
+            });
+          }
+          const missingDrafts = error instanceof TypeError && /no work item drafts/u.test(error.message);
+          throw createCliError({
+            command: "work-items render",
+            kind: missingDrafts ? "work-items-required" : "work-item-render-failed",
+            operation: "render work item drafts",
+            likelyCause: error instanceof Error ? error.message : "The work-item drafts could not be rendered.",
+            suggestedNextAction: missingDrafts
+              ? "Run aib work-items generate --milestone <milestone-id> --json before rendering provider outputs."
+              : "Check filesystem permissions, state contents, and render target options, then rerun the command.",
+            category: missingDrafts ? "validation" : "runtime",
+            exitCode: 3
+          });
+        }
+
+        if (flags["dry-run"] === true || provider === "github") {
+          return {
+            json: renderWorkItemJson(result, false, envelope.statePath),
+            human: `Dry run: rendered ${result.rendered.length} work items for ${provider}.\n`
+          };
+        }
+
+        const updated = withRenderedWorkItemState(envelope.state, result);
+        const written = writeBootstrapState(envelope.statePath, updated);
+        return {
+          json: {
+            ...renderWorkItemJson(result, true, written.statePath),
+            state: written.state,
+            nextAction: computeNextAction(written.state)
+          },
+          human: `Rendered ${result.rendered.length} markdown work items.\n`
+        };
+      } catch (error) {
+        if (isCliSpecError(error)) throw error;
+        throw stateError("work-items render", error);
+      }
+    }),
     createSchemaCommand({
       registry: () => runtimeRegistry,
       bin: "aib",
@@ -727,6 +810,53 @@ function withWorkItemDraftState(state: BootstrapState, result: WorkItemDraftResu
     }
   };
   return withPlanningNext(updated);
+}
+
+function withRenderedWorkItemState(state: BootstrapState, result: WorkItemRenderResult): BootstrapState {
+  const updated: BootstrapState = {
+    ...state,
+    phase: "work_item_generation",
+    artifacts: {
+      ...state.artifacts,
+      workItems: result.artifacts
+    },
+    planning: {
+      ...state.planning,
+      workItemDrafts: result.drafts.map((draft) => ({
+        ...draft,
+        status: "rendered" as const
+      }))
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function renderWorkItemJson(result: WorkItemRenderResult, mutated: boolean, statePath: string): {
+  readonly mutated: boolean;
+  readonly dryRun: boolean;
+  readonly statePath: string;
+  readonly provider: WorkItemRenderProvider;
+  readonly drafts: readonly unknown[];
+  readonly queueOrder: unknown;
+  readonly rendered: readonly unknown[];
+  readonly plannedIssues?: readonly unknown[];
+  readonly plannedWrites?: readonly unknown[];
+  readonly written?: readonly unknown[];
+} {
+  const markdown = result.rendered.filter((item) => "path" in item);
+  const github = result.rendered.filter((item) => "labels" in item);
+  return {
+    mutated,
+    dryRun: !mutated,
+    statePath,
+    provider: result.provider,
+    drafts: result.drafts,
+    queueOrder: result.queueOrder,
+    rendered: result.rendered,
+    ...(github.length > 0 ? { plannedIssues: github } : {}),
+    ...(markdown.length > 0 && !mutated ? { plannedWrites: markdown.map((item) => ({ path: item.path })) } : {}),
+    ...(markdown.length > 0 && mutated ? { written: markdown.map((item) => ({ path: item.path })) } : {})
+  };
 }
 
 function acceptOneSection(

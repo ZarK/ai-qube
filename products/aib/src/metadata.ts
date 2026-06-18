@@ -578,6 +578,101 @@ export const workItemsGenerateCommand = defineCommand({
   exitCodes: stateCommandExitCodes
 });
 
+export const workItemsRenderCommand = defineCommand({
+  kind: "command",
+  name: "work-items render",
+  description: "Render recorded provider-neutral work item drafts to GitHub previews or markdown files.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "state",
+      description: "Path to the bootstrap session JSON file.",
+      type: "string",
+      defaultValue: ".bootstrap/session.json"
+    }),
+    defineFlag({
+      name: "provider",
+      description: "Work item render target.",
+      type: "option",
+      options: ["github", "markdown"],
+      required: true
+    }),
+    defineFlag({
+      name: "dry-run",
+      description: "Preview rendered work items without provider mutation or file writes.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "output-dir",
+      description: "Markdown output directory, relative to the project root.",
+      type: "string"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Preview GitHub issues from recorded work item drafts.",
+      command: "aib work-items render --provider github --dry-run --json"
+    }),
+    defineExample({
+      description: "Write markdown work item drafts without network access.",
+      command: "aib work-items render --provider markdown --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: dryRunSupported(),
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
+  errors: [
+    ...stateCommandErrors,
+    {
+      kind: "work-items-required",
+      description: "Work item rendering is blocked until provider-neutral drafts exist in planning state.",
+      exitCode: 3
+    },
+    {
+      kind: "work-item-order-invalid",
+      description: "Generated work-item sequence metadata conflicts with blocker ordering.",
+      exitCode: 3
+    },
+    {
+      kind: "provider-mutation-unsupported",
+      description: "The selected provider cannot be mutated by this command yet.",
+      exitCode: 5
+    },
+    {
+      kind: "work-item-render-failed",
+      description: "The work-item drafts could not be rendered or written.",
+      exitCode: 3
+    }
+  ],
+  exitCodes: [
+    ...stateCommandExitCodes,
+    {
+      code: 5,
+      category: "safety",
+      description: "The command refused unsupported provider mutation."
+    }
+  ]
+});
+
 export const answerCommand = defineCommand({
   kind: "command",
   name: "answer",
@@ -674,6 +769,7 @@ export const bootstrapRegistry = createCommandRegistry({
     specAcceptCommand,
     specReopenCommand,
     milestonesGenerateCommand,
-    workItemsGenerateCommand
+    workItemsGenerateCommand,
+    workItemsRenderCommand
   ]
 });
