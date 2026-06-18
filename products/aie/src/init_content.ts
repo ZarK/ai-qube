@@ -211,7 +211,7 @@ function renderStageLines(config: Config): string[] {
   return [
     'branch-check: verify the current branch matches the active issue before shipping; create the issue branch when needed.',
     'implementation: implement the complete issue scope and update GitHub issue checkboxes or comments when they are the durable acceptance or planning record.',
-    'audit: run the configured manual UI audit with `aie audit ui <issue> --prepare` for user-facing UI changes, inspect the real running app with agent-browser first, keep evidence local, or record why no UI audit applies.',
+    'audit: run the configured manual UI audit with `aie audit ui <issue> --prepare` for user-facing UI changes, inspect the real running app with agent-browser first, capture screenshots for important states, write browser-observation.md and notes.md visual analysis, keep evidence local, or record why no UI audit applies.',
     reviewStage,
     'test: run configured quality gates plus the relevant build, typecheck, and test commands for changed code.',
     'PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
@@ -275,7 +275,7 @@ Repository policy:
 - Local base branch freshness checks before new issue work are ${yesNo(config.requireBaseBranchFreshness)}.
 - Autonomous shipping mode is ${yesNo(config.autonomousMode)}.
 - ${renderMilestoneText(config)}
-- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use \`aie audit ui <issue>\` for local evidence guidance.
+- Manual UI audit is ${yesNo(config.manualUiAudit)} when the issue touches user-facing UI; use \`aie audit ui <issue>\` for local evidence guidance, then inspect the real app, capture screenshots, and record browser-observed visual analysis.
 - Quality Control gate intent is ${yesNo(config.qualityControl)}.
 - ${renderReviewAgentText(config)}
 - ${renderQualityGateText(config)}
@@ -287,7 +287,7 @@ Work cycle:
 2. Keep at most one open issue in progress. ${renderPreStartText(config)}
 3. Start work with \`aie start next\` or \`aie start <issue>\`, then inspect context with \`aie view <issue>\`.
 4. Verify or create the issue branch with \`aie branch check <issue>\` or \`aie branch create <issue>\`.
-5. Implement the complete issue scope, run \`aie audit ui <issue>\` when user-facing UI changed, run \`aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
+5. Implement the complete issue scope, run \`aie audit ui <issue>\` when user-facing UI changed, inspect the real running app, capture screenshots, record browser-observation.md and notes.md visual analysis, run \`aie review gate <issue> --prompt\` for review-agent QA when configured or needed, add or update tests, and run the relevant build and verification commands.
 6. ${renderShippingStep(config)}
 7. ${renderMergeStep(config)}
 8. After merge, run \`aie complete <issue>\`, return to the configured base branch, pull the latest remote base branch, verify pre-start policy is still clear, and continue to the next ready issue.

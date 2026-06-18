@@ -584,10 +584,14 @@ describe('PR body service', () => {
     const home = mkdtempSync(join(tmpdir(), 'aie-pr-body-home-'));
     mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
     mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    mkdirSync(join(home, 'github-verification', safeRepoSegment(repo), '93'), { recursive: true });
+    const auditDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
+    const screenshotsDirectory = join(auditDirectory, 'screenshots');
+    mkdirSync(screenshotsDirectory, { recursive: true });
     writeFileSync(join(repo, '.aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
     writeFileSync(join(repo, '.aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'oracle found no blockers' }));
-    writeFileSync(join(home, 'github-verification', safeRepoSegment(repo), '93', 'notes.md'), 'audited running app\n');
+    writeFileSync(join(auditDirectory, 'browser-observation.md'), 'opened the real running app with agent-browser\n');
+    writeFileSync(join(auditDirectory, 'notes.md'), 'audited running app visual state\n');
+    writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
     const config = getDefaults();
     config.reviewAgents = ['@copilot', 'review-bot'];
     config.gates = [
@@ -624,7 +628,7 @@ describe('PR body service', () => {
     assert.match(result.body, /Closes #93/);
     assert.match(result.body, /passed: unit/);
     assert.match(result.body, /missing: pack/);
-    assert.match(result.body, /Manual UI audit: local-evidence-found/);
+    assert.match(result.body, /Manual UI audit: visual-analysis-recorded/);
     assert.match(result.body, /Review-agent gate: passed/);
     assert.match(result.body, /PR reviewer @copilot/);
     assert.match(result.body, /PR reviewer @review-bot/);
