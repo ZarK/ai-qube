@@ -563,6 +563,11 @@ export const workItemsGenerateCommand = defineCommand({
       kind: "milestone-required",
       description: "Work item generation is blocked until at least one milestone doc exists.",
       exitCode: 3
+    },
+    {
+      kind: "work-item-write-failed",
+      description: "The work-item draft artifacts could not be written.",
+      exitCode: 3
     }
   ],
   exitCodes: stateCommandExitCodes

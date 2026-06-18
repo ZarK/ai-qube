@@ -448,6 +448,21 @@ export const aibCli = createCli({
             ? createWorkItemDrafts(envelope.state, milestone, projectRoot)
             : writeWorkItemDrafts(envelope.state, milestone, projectRoot);
         } catch (error) {
+          const errno = typeof error === "object" && error !== null && "code" in error
+            ? String((error as { code?: unknown }).code ?? "")
+            : "";
+          const isMilestoneSelectionError = error instanceof TypeError || errno === "ENOENT";
+          if (!isMilestoneSelectionError) {
+            throw createCliError({
+              command: "work-items generate",
+              kind: "work-item-write-failed",
+              operation: "write work-item draft artifacts",
+              likelyCause: error instanceof Error ? error.message : "The work-item draft artifacts could not be written.",
+              suggestedNextAction: "Check filesystem permissions and output paths, then rerun aib work-items generate --json.",
+              category: "runtime",
+              exitCode: 3
+            });
+          }
           throw createCliError({
             command: "work-items generate",
             kind: "milestone-required",

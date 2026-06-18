@@ -625,10 +625,13 @@ test("milestones generate writes planning-depth docs before work items", async (
   const workItemDoc = await readFile(join(dir, "docs", "issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
   assert.match(workItemDoc, /## Stable selectors/);
   assert.match(workItemDoc, /draft:/);
+  assert.doesNotMatch(workItemDoc, /artifact:docs\//);
   assert.match(workItemDoc, /## Named E2E tests/);
   assert.match(workItemDoc, /e2e:/);
   assert.match(workItemDoc, /## Definition of done/);
   assert.match(workItemDoc, /No placeholder commands, fake tests/);
+  assert.match(workItemDoc, /## Spec anchors/);
+  assert.doesNotMatch(workItemDoc, /## Source anchors/);
 
   const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
   assert.equal(status.artifacts.milestones.length, 3);

@@ -69,8 +69,8 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
       sequence: baseSequence + index + 1,
       sourceAnchors: [
         {
-          artifact: milestone.path,
-          section: milestone.id
+          artifact: milestone.id,
+          section: "spec anchors"
         }
       ],
       bodySections: [
@@ -79,7 +79,6 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
         section("Blockers", blockedBy.length > 0 ? blockedBy.map((item) => `- ${item}`).join("\n") : "- None."),
         section("Stable selectors", [
           `- milestone:${milestone.id}`,
-          `- artifact:${milestone.path}`,
           `- draft:${draftId}`
         ].join("\n")),
         section("Named E2E tests", [
@@ -97,7 +96,7 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
           "- Do not add packages without explicit dependency intake.",
           "- Keep generated artifacts in product language."
         ].join("\n")),
-        section("Source anchors", milestone.specAnchors.map((anchor) => `- ${anchor}`).join("\n"))
+        section("Spec anchors", milestone.specAnchors.map((anchor) => `- ${anchor}`).join("\n"))
       ],
       providerMetadata: {
         markdown: {
