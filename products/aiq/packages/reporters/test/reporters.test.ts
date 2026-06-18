@@ -147,7 +147,13 @@ describe("reporters", () => {
     expect(formatRunResultAsText(qualityFailure)).not.toContain("aiq setup");
     expect(formatRunResultAsText(metricFailure)).toContain("metric diagnostic from lizard");
     expect(formatRunResultAsText(metricFailure)).toContain(
-      "Do not start broad refactors until stage 0 e2e passes",
+      "Metric remediation is behavior-preserving",
+    );
+    expect(formatRunResultAsText(metricFailure)).toContain(
+      "preserve public APIs, command behavior, tool selection, execution order, existing pathways",
+    );
+    expect(formatRunResultAsText(metricFailure)).toContain(
+      "Do not use metric failures as authorization for feature changes, command semantic changes, stage/language/tool boundary changes, or architecture rewrites",
     );
     expect(formatRunResultAsText(metricFailure)).toContain("Use direct purpose-revealing names");
     expect(formatRunResultAsText(metricFailure)).toContain(

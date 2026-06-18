@@ -277,6 +277,7 @@ export function formatSetupOutput(format: OutputFormat, output: SetupCommandOutp
   }
 
   const missing = output.missingPrerequisites;
+  const metricRemediation = formatSetupMetricRemediation(output.stages);
   return [
     "AIQ setup",
     output.summary,
@@ -304,8 +305,25 @@ export function formatSetupOutput(format: OutputFormat, output: SetupCommandOutp
     }),
     "Next:",
     ...output.nextCommands.map((command) => `  - ${command}`),
+    metricRemediation,
     "AIQ reports setup needs; it does not install tools or mutate the host environment.",
     "",
+  ]
+    .filter((line) => line !== undefined)
+    .join("\n");
+}
+
+function formatSetupMetricRemediation(stages: readonly string[]): string | undefined {
+  if (!stages.some((stage) => ["sloc", "complexity", "maintainability"].includes(stage))) {
+    return undefined;
+  }
+
+  return [
+    "Metric remediation:",
+    "  - Treat metric remediation as behavior-preserving work, not architecture redesign.",
+    "  - Preserve public APIs, command behavior, tool selection, execution order, existing pathways, and repository conventions.",
+    "  - Split oversized files or extract named decisions without changing observable behavior.",
+    "  - Do not use metric failures as authorization for feature changes, command semantic changes, boundary changes, or architecture rewrites.",
   ].join("\n");
 }
 

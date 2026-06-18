@@ -499,7 +499,13 @@ describe("CLI foundation", () => {
     expect(packageReadme).toContain("Default text output is compact");
     expect(packageReadme).toContain("Use `--verbose` for run metadata");
     expect(packageReadme).toContain("Use `--format json` for the complete machine-readable report");
-    expect(packageReadme).toContain("Before broad refactoring, make stage `0` e2e pass.");
+    expect(packageReadme).toContain(
+      "Treat metric remediation as behavior-preserving work, not architecture redesign.",
+    );
+    expect(packageReadme).toContain("Preserve public APIs, command behavior, tool selection");
+    expect(packageReadme).toContain(
+      "Do not use metric failures as authorization for feature changes",
+    );
     expect(packageReadme).toContain("direct purpose-revealing names");
   });
 
@@ -623,7 +629,13 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq status shows the current stage");
     expect(stdout.value).toContain("Metric remediation:");
     expect(stdout.value).toContain("Stages 5-7 enforce SLOC, complexity, maintainability");
-    expect(stdout.value).toContain("Do not start broad refactors until stage 0 e2e passes");
+    expect(stdout.value).toContain(
+      "Treat metric remediation as behavior-preserving work, not architecture redesign.",
+    );
+    expect(stdout.value).toContain("Preserve public APIs, command behavior, tool selection");
+    expect(stdout.value).toContain(
+      "Do not use metric failures as authorization for feature changes",
+    );
     expect(stdout.value).toContain("Use direct purpose-revealing names");
     expect(stdout.value).toContain("no vague helper/manager/processor names");
     expect(stdout.value).toContain("@tjalve/aiq/api exports the model, config, engine");
@@ -2003,6 +2015,29 @@ describe("CLI foundation", () => {
     } finally {
       process.env.PATH = originalPath;
     }
+  });
+
+  it("reports behavior-preserving metric remediation in setup text output", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-setup-metric-text-");
+    const stdout = new MemoryOutput();
+    const stderr = new MemoryOutput();
+
+    await runCli(["node", "aiq", "setup", "--stage", "sloc"], {
+      cwd: project.root,
+      stderr,
+      stdin: new MemoryInput(),
+      stdout,
+    });
+
+    expect(stderr.value).toBe("");
+    expect(stdout.value).toContain("Metric remediation:");
+    expect(stdout.value).toContain(
+      "Treat metric remediation as behavior-preserving work, not architecture redesign.",
+    );
+    expect(stdout.value).toContain("Preserve public APIs, command behavior, tool selection");
+    expect(stdout.value).toContain(
+      "Do not use metric failures as authorization for feature changes",
+    );
   });
 
   it("reports missing required native test config for selected JS/TS unit stages", async () => {
