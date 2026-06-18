@@ -12,17 +12,28 @@ import {
   resolveBashProjectTestFiles,
 } from "./script.js";
 
-export async function runBashProjectTestTask(
-  project: ScriptProject,
-  mode: "coverage" | "unit",
-  runtime: BashRunnerRuntime,
-): Promise<{
+type BashProjectTestResult = {
   diagnostics: Diagnostic[];
   durationMs: number;
   note: string;
   status: StageResult["status"];
   toolRuns: ToolRunResult[];
-}> {
+};
+type BashProjectTestResultContext = {
+  args: string[];
+  diagnostics: Diagnostic[];
+  note: string;
+  outcome: Awaited<ReturnType<BashRunnerRuntime["runExecutable"]>>;
+  runtime: BashRunnerRuntime;
+  status: StageResult["status"];
+  tool: "bats" | "kcov";
+};
+
+export async function runBashProjectTestTask(
+  project: ScriptProject,
+  mode: "coverage" | "unit",
+  runtime: BashRunnerRuntime,
+): Promise<BashProjectTestResult> {
   const testFiles = await resolveBashProjectTestFiles(project, runtime.findMatchingFiles);
   if (testFiles.length === 0) {
     return createBashTestSetupFailure(
@@ -45,65 +56,71 @@ export async function runBashProjectTestTask(
     );
   }
 
+  return mode === "unit"
+    ? runBashUnitProject(project, runtime, batsCommand, testFiles)
+    : runBashCoverageProject(project, runtime, batsCommand, testFiles);
+}
+
+async function runBashUnitProject(
+  project: ScriptProject,
+  runtime: BashRunnerRuntime,
+  batsCommand: string,
+  testFiles: string[],
+): Promise<BashProjectTestResult> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-bash-runner-"));
 
   try {
     const junitPath = path.join(tempDir, "report.xml");
     const relativeTestFiles = testFiles.map((file) => path.relative(project.projectRoot, file));
+    const args = ["--report-formatter", "junit", "--output", tempDir, ...relativeTestFiles];
+    const outcome = await runtime.runExecutable(
+      batsCommand,
+      args,
+      project.projectRoot,
+      runtime.signal,
+    );
+    const report = await parsers.parseJvmJunitReports(
+      [junitPath],
+      testFiles[0] ?? project.projectRoot,
+      readOptionalTextFile,
+    );
+    const diagnostics = readBashDiagnostics(report.diagnostics);
+    const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
+    appendSilentBashFailureDiagnostic({
+      diagnostics,
+      outcome,
+      project,
+      runtime,
+      testFiles,
+      tool: "bats",
+      status,
+    });
 
-    if (mode === "unit") {
-      const args = ["--report-formatter", "junit", "--output", tempDir, ...relativeTestFiles];
-      const outcome = await runtime.runExecutable(
-        batsCommand,
-        args,
-        project.projectRoot,
-        runtime.signal,
-      );
-      const report = await parsers.parseJvmJunitReports(
-        [junitPath],
-        testFiles[0] ?? project.projectRoot,
-        readOptionalTextFile,
-      );
-      const diagnostics: Diagnostic[] = report.diagnostics.map((diagnostic) => ({
-        ...diagnostic,
-        source: "bats",
-      }));
-      const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
+    return createBashProjectTestResult({
+      args,
+      diagnostics,
+      note: readBashUnitNote(report.summary),
+      outcome,
+      runtime,
+      status,
+      tool: "bats",
+    });
+  } finally {
+    await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
+  }
+}
 
-      if (status === "failed" && diagnostics.length === 0) {
-        diagnostics.push(
-          runtime.createProcessFailureDiagnostic(
-            testFiles[0] ?? project.projectRoot,
-            "bats",
-            runtime.readProcessFailureMessage(
-              "bats",
-              outcome.stderr,
-              outcome.stdout,
-              outcome.exitCode,
-            ),
-          ),
-        );
-      }
+async function runBashCoverageProject(
+  project: ScriptProject,
+  runtime: BashRunnerRuntime,
+  batsCommand: string,
+  testFiles: string[],
+): Promise<BashProjectTestResult> {
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-bash-runner-"));
 
-      return {
-        diagnostics,
-        durationMs: outcome.durationMs,
-        note: readBashUnitNote(report.summary),
-        status,
-        toolRuns: [
-          runtime.createToolRunResult(
-            "bats",
-            args,
-            outcome.durationMs,
-            outcome.exitCode,
-            status,
-            outcome.finishedAt,
-            outcome.startedAt,
-          ),
-        ],
-      };
-    }
-
+  try {
+    const junitPath = path.join(tempDir, "report.xml");
+    const relativeTestFiles = testFiles.map((file) => path.relative(project.projectRoot, file));
     const kcovCommand = await runtime.resolveBinaryIfAvailable(
       process.platform === "win32" ? ["kcov.exe", "kcov"] : ["kcov"],
     );
@@ -135,7 +152,12 @@ export async function runBashProjectTestTask(
       runtime.signal,
     );
 
-    if (runtime.isMissingCommandOutcome(outcome.stderr, outcome.stdout, outcome.exitCode)) {
+    const missingCommand = runtime.isMissingCommandOutcome(
+      outcome.stderr,
+      outcome.stdout,
+      outcome.exitCode,
+    );
+    if (missingCommand) {
       return createBashTestSetupFailure(
         project,
         "kcov",
@@ -156,10 +178,7 @@ export async function runBashProjectTestTask(
       testFiles[0] ?? project.projectRoot,
       readOptionalTextFile,
     );
-    const diagnostics: Diagnostic[] = report.diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      source: "bats",
-    }));
+    const diagnostics = readBashDiagnostics(report.diagnostics);
     const coverageReportPath =
       (await runtime.findFirstFile(
         coverageDirectory,
@@ -169,42 +188,82 @@ export async function runBashProjectTestTask(
       await readOptionalTextFile(coverageReportPath),
     );
     const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          testFiles[0] ?? project.projectRoot,
-          "kcov",
-          runtime.readProcessFailureMessage(
-            "kcov",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    return {
+    appendSilentBashFailureDiagnostic({
       diagnostics,
-      durationMs: outcome.durationMs,
-      note: readBashCoverageNote(report.summary, coveragePercent),
+      outcome,
+      project,
+      runtime,
+      testFiles,
+      tool: "kcov",
       status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "kcov",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
+    });
+
+    return createBashProjectTestResult({
+      args,
+      diagnostics,
+      note: readBashCoverageNote(report.summary, coveragePercent),
+      outcome,
+      runtime,
+      status,
+      tool: "kcov",
+    });
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function readBashDiagnostics(diagnostics: readonly Diagnostic[]): Diagnostic[] {
+  return diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    source: "bats",
+  }));
+}
+
+function appendSilentBashFailureDiagnostic(context: {
+  diagnostics: Diagnostic[];
+  outcome: Awaited<ReturnType<BashRunnerRuntime["runExecutable"]>>;
+  project: ScriptProject;
+  runtime: BashRunnerRuntime;
+  status: StageResult["status"];
+  testFiles: readonly string[];
+  tool: "bats" | "kcov";
+}): void {
+  if (context.status !== "failed" || context.diagnostics.length > 0) {
+    return;
+  }
+
+  context.diagnostics.push(
+    context.runtime.createProcessFailureDiagnostic(
+      context.testFiles[0] ?? context.project.projectRoot,
+      context.tool,
+      context.runtime.readProcessFailureMessage(
+        context.tool,
+        context.outcome.stderr,
+        context.outcome.stdout,
+        context.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function createBashProjectTestResult(context: BashProjectTestResultContext): BashProjectTestResult {
+  return {
+    diagnostics: context.diagnostics,
+    durationMs: context.outcome.durationMs,
+    note: context.note,
+    status: context.status,
+    toolRuns: [
+      context.runtime.createToolRunResult(
+        context.tool,
+        context.args,
+        context.outcome.durationMs,
+        context.outcome.exitCode,
+        context.status,
+        context.outcome.finishedAt,
+        context.outcome.startedAt,
+      ),
+    ],
+  };
 }
 
 function createBashTestSetupFailure(

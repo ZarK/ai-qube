@@ -14,17 +14,28 @@ import {
   resolvePowerShellProjectTestFiles,
 } from "./script.js";
 
-export async function runPowerShellProjectTestTask(
-  project: ScriptProject,
-  mode: "coverage" | "unit",
-  runtime: PowerShellRunnerRuntime,
-): Promise<{
+type PowerShellProjectTestResult = {
   diagnostics: Diagnostic[];
   durationMs: number;
   note: string;
   status: StageResult["status"];
   toolRuns: ToolRunResult[];
-}> {
+};
+type PowerShellTestSummary = { failed: number; passed: number; total: number };
+type PowerShellTestExecutionContext = {
+  coverageFiles: string[];
+  mode: "coverage" | "unit";
+  pesterModulePath: string;
+  project: ScriptProject;
+  runtime: PowerShellRunnerRuntime;
+  testFiles: string[];
+};
+
+export async function runPowerShellProjectTestTask(
+  project: ScriptProject,
+  mode: "coverage" | "unit",
+  runtime: PowerShellRunnerRuntime,
+): Promise<PowerShellProjectTestResult> {
   const testFiles = await resolvePowerShellProjectTestFiles(project, runtime.findMatchingFiles);
   if (testFiles.length === 0) {
     return createPowerShellTestSetupFailure(
@@ -55,108 +66,191 @@ export async function runPowerShellProjectTestTask(
     );
   }
 
+  return runPesterProject({ coverageFiles, mode, pesterModulePath, project, runtime, testFiles });
+}
+
+async function runPesterProject(
+  context: PowerShellTestExecutionContext,
+): Promise<PowerShellProjectTestResult> {
   const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-powershell-runner-"));
 
   try {
     const junitPath = path.join(tempDir, "junit.xml");
     const coveragePath = path.join(tempDir, "coverage.xml");
-    const args = [
-      "Invoke-Pester",
-      "-Path",
-      ...testFiles,
-      ...(mode === "coverage" ? ["-CodeCoverage", ...coverageFiles] : []),
-    ];
-    const outcome = await runtime.runPowerShellScript(
-      [
-        "$ErrorActionPreference = 'Stop'",
-        `Import-Module -Name ${toPowerShellStringLiteral(pesterModulePath)} -Force`,
-        "$configuration = New-PesterConfiguration",
-        `$configuration.Run.Path = @(${testFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-        "$configuration.Run.PassThru = $true",
-        "$configuration.Run.Exit = $false",
-        "$configuration.Output.Verbosity = 'None'",
-        "$configuration.TestResult.Enabled = $true",
-        `$configuration.TestResult.OutputPath = ${toPowerShellStringLiteral(junitPath)}`,
-        "$configuration.TestResult.OutputFormat = 'JUnitXml'",
-        ...(mode === "coverage"
-          ? [
-              "$configuration.CodeCoverage.Enabled = $true",
-              `$configuration.CodeCoverage.Path = @(${coverageFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
-              `$configuration.CodeCoverage.OutputPath = ${toPowerShellStringLiteral(coveragePath)}`,
-              "$configuration.CodeCoverage.OutputFormat = 'Cobertura'",
-            ]
-          : []),
-        "$result = Invoke-Pester -Configuration $configuration",
-        "[pscustomobject]@{",
-        "  TotalCount = $result.TotalCount",
-        "  PassedCount = $result.PassedCount",
-        "  FailedCount = $result.FailedCount",
-        "} | ConvertTo-Json -Compress",
-        "",
-      ].join("\n"),
-      project.projectRoot,
-      runtime.signal,
+    const args = createPesterArgs(context);
+    const outcome = await context.runtime.runPowerShellScript(
+      createPesterScript(context, junitPath, coveragePath),
+      context.project.projectRoot,
+      context.runtime.signal,
     );
-
     const report = await parsers.parseJvmJunitReports(
       [junitPath],
-      testFiles[0] ?? project.projectRoot,
+      context.testFiles[0] ?? context.project.projectRoot,
       readOptionalTextFile,
     );
-    const diagnostics: Diagnostic[] = report.diagnostics.map((diagnostic) => ({
-      ...diagnostic,
-      source: "pester",
-    }));
+    const diagnostics = readPesterDiagnostics(report.diagnostics);
     const summary = parsers.parsePowerShellTestSummary(outcome.stdout) ?? report.summary;
-    const coveragePercent =
-      mode === "coverage"
-        ? parsers.readCoberturaLineRate(await readOptionalTextFile(coveragePath))
-        : undefined;
-    const status =
-      outcome.exitCode === 0 && diagnostics.length === 0 && summary.failed === 0
-        ? "passed"
-        : "failed";
+    const coveragePercent = await readPowerShellCoveragePercent(context.mode, coveragePath);
+    const status = readPesterStatus(outcome.exitCode, diagnostics, summary);
+    appendSilentPesterFailureDiagnostic({ context, diagnostics, outcome, status, summary });
 
-    if (status === "failed" && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          testFiles[0] ?? project.projectRoot,
-          "pester",
-          summary.failed > 0
-            ? `Pester reported ${summary.failed} failing test${summary.failed === 1 ? "" : "s"}.`
-            : runtime.readProcessFailureMessage(
-                "Pester",
-                outcome.stderr,
-                outcome.stdout,
-                outcome.exitCode,
-              ),
-        ),
-      );
-    }
-
-    return {
+    return createPowerShellProjectTestResult({
+      args,
+      coveragePercent,
       diagnostics,
-      durationMs: outcome.durationMs,
-      note:
-        mode === "coverage"
-          ? readPowerShellCoverageNote(summary, coveragePercent)
-          : readPowerShellUnitNote(summary),
+      outcome,
+      runtime: context.runtime,
       status,
-      toolRuns: [
-        runtime.createToolRunResult(
-          "pester",
-          args,
-          outcome.durationMs,
-          outcome.exitCode,
-          status,
-          outcome.finishedAt,
-          outcome.startedAt,
-        ),
-      ],
-    };
+      summary,
+      mode: context.mode,
+    });
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+function createPesterArgs(context: PowerShellTestExecutionContext): string[] {
+  return [
+    "Invoke-Pester",
+    "-Path",
+    ...context.testFiles,
+    ...(context.mode === "coverage" ? ["-CodeCoverage", ...context.coverageFiles] : []),
+  ];
+}
+
+function createPesterScript(
+  context: PowerShellTestExecutionContext,
+  junitPath: string,
+  coveragePath: string,
+): string {
+  return [
+    "$ErrorActionPreference = 'Stop'",
+    `Import-Module -Name ${toPowerShellStringLiteral(context.pesterModulePath)} -Force`,
+    "$configuration = New-PesterConfiguration",
+    `$configuration.Run.Path = @(${context.testFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
+    "$configuration.Run.PassThru = $true",
+    "$configuration.Run.Exit = $false",
+    "$configuration.Output.Verbosity = 'None'",
+    "$configuration.TestResult.Enabled = $true",
+    `$configuration.TestResult.OutputPath = ${toPowerShellStringLiteral(junitPath)}`,
+    "$configuration.TestResult.OutputFormat = 'JUnitXml'",
+    ...createPesterCoverageScriptLines(context.mode, context.coverageFiles, coveragePath),
+    "$result = Invoke-Pester -Configuration $configuration",
+    "[pscustomobject]@{",
+    "  TotalCount = $result.TotalCount",
+    "  PassedCount = $result.PassedCount",
+    "  FailedCount = $result.FailedCount",
+    "} | ConvertTo-Json -Compress",
+    "",
+  ].join("\n");
+}
+
+function createPesterCoverageScriptLines(
+  mode: "coverage" | "unit",
+  coverageFiles: readonly string[],
+  coveragePath: string,
+): string[] {
+  if (mode !== "coverage") {
+    return [];
+  }
+
+  return [
+    "$configuration.CodeCoverage.Enabled = $true",
+    `$configuration.CodeCoverage.Path = @(${coverageFiles.map((file) => toPowerShellStringLiteral(file)).join(", ")})`,
+    `$configuration.CodeCoverage.OutputPath = ${toPowerShellStringLiteral(coveragePath)}`,
+    "$configuration.CodeCoverage.OutputFormat = 'Cobertura'",
+  ];
+}
+
+function readPesterDiagnostics(diagnostics: readonly Diagnostic[]): Diagnostic[] {
+  return diagnostics.map((diagnostic) => ({
+    ...diagnostic,
+    source: "pester",
+  }));
+}
+
+async function readPowerShellCoveragePercent(
+  mode: "coverage" | "unit",
+  coveragePath: string,
+): Promise<number | undefined> {
+  return mode === "coverage"
+    ? parsers.readCoberturaLineRate(await readOptionalTextFile(coveragePath))
+    : undefined;
+}
+
+function readPesterStatus(
+  exitCode: number | undefined,
+  diagnostics: readonly Diagnostic[],
+  summary: PowerShellTestSummary,
+): StageResult["status"] {
+  return exitCode === 0 && diagnostics.length === 0 && summary.failed === 0 ? "passed" : "failed";
+}
+
+function appendSilentPesterFailureDiagnostic(options: {
+  context: PowerShellTestExecutionContext;
+  diagnostics: Diagnostic[];
+  outcome: Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>;
+  status: StageResult["status"];
+  summary: PowerShellTestSummary;
+}): void {
+  if (options.status !== "failed" || options.diagnostics.length > 0) {
+    return;
+  }
+
+  options.diagnostics.push(
+    options.context.runtime.createProcessFailureDiagnostic(
+      options.context.testFiles[0] ?? options.context.project.projectRoot,
+      "pester",
+      readPesterFailureMessage(options.context.runtime, options.outcome, options.summary),
+    ),
+  );
+}
+
+function readPesterFailureMessage(
+  runtime: PowerShellRunnerRuntime,
+  outcome: Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>,
+  summary: PowerShellTestSummary,
+): string {
+  return summary.failed > 0
+    ? `Pester reported ${summary.failed} failing test${summary.failed === 1 ? "" : "s"}.`
+    : runtime.readProcessFailureMessage(
+        "Pester",
+        outcome.stderr,
+        outcome.stdout,
+        outcome.exitCode,
+      );
+}
+
+function createPowerShellProjectTestResult(options: {
+  args: string[];
+  coveragePercent: number | undefined;
+  diagnostics: Diagnostic[];
+  mode: "coverage" | "unit";
+  outcome: Awaited<ReturnType<PowerShellRunnerRuntime["runPowerShellScript"]>>;
+  runtime: PowerShellRunnerRuntime;
+  status: StageResult["status"];
+  summary: PowerShellTestSummary;
+}): PowerShellProjectTestResult {
+  return {
+    diagnostics: options.diagnostics,
+    durationMs: options.outcome.durationMs,
+    note:
+      options.mode === "coverage"
+        ? readPowerShellCoverageNote(options.summary, options.coveragePercent)
+        : readPowerShellUnitNote(options.summary),
+    status: options.status,
+    toolRuns: [
+      options.runtime.createToolRunResult(
+        "pester",
+        options.args,
+        options.outcome.durationMs,
+        options.outcome.exitCode,
+        options.status,
+        options.outcome.finishedAt,
+        options.outcome.startedAt,
+      ),
+    ],
+  };
 }
 
 function createPowerShellTestSetupFailure(
