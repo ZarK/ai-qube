@@ -209,10 +209,7 @@ export async function runRustLintTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createRustProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -288,7 +285,9 @@ export async function runRustLintTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles));
+    const message = createRustProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createRustProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -296,12 +295,7 @@ export async function runRustLintTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -326,10 +320,7 @@ export async function runRustFormatTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createRustProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -404,7 +395,9 @@ export async function runRustFormatTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles));
+    const message = createRustProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createRustProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -412,12 +405,7 @@ export async function runRustFormatTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -445,10 +433,7 @@ export async function runRustTypecheckTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createRustProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -525,7 +510,9 @@ export async function runRustTypecheckTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles));
+    const message = createRustProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createRustProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -533,12 +520,7 @@ export async function runRustTypecheckTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -710,7 +692,6 @@ async function runRustTestStage(
   const notes: string[] = [];
   const toolRuns: ToolRunResult[] = [];
   let totalDurationMs = 0;
-  let notImplementedProjectCount = 0;
   let unsupportedFiles: string[] = [];
 
   try {
@@ -718,10 +699,7 @@ async function runRustTestStage(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createRustProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) =>
@@ -733,7 +711,6 @@ async function runRustTestStage(
       diagnostics.push(...projectResult.diagnostics);
       notes.push(projectResult.note);
       toolRuns.push(projectResult.toolRun);
-      notImplementedProjectCount += projectResult.notImplemented ? 1 : 0;
     }
   } catch (error) {
     runtime.throwIfAbortError(error);
@@ -749,7 +726,9 @@ async function runRustTestStage(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedRustRunnerNote(task.stageId, unsupportedFiles));
+    const message = createRustProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createRustProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -757,12 +736,7 @@ async function runRustTestStage(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0 || notImplementedProjectCount > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -923,6 +897,43 @@ async function resolveRustProjects(
       .sort((left, right) => left.manifestPath.localeCompare(right.manifestPath)),
     unsupportedFiles: [...unsupportedFiles].sort((left, right) => left.localeCompare(right)),
   };
+}
+
+function createRustProjectResolutionFailureStage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): StageResult {
+  const message = createRustProjectResolutionMessage(stageId, files);
+  return {
+    diagnostics: createRustProjectResolutionDiagnostics(files, message),
+    durationMs: 0,
+    notes: [message],
+    stageId,
+    status: "failed",
+    toolRuns: [
+      { args: [], cacheHit: false, durationMs: 0, status: "failed", tool: "rust-unavailable" },
+    ],
+  };
+}
+
+function createRustProjectResolutionDiagnostics(
+  files: readonly string[],
+  message: string,
+): Diagnostic[] {
+  return files.map((file) => ({
+    file,
+    message,
+    severity: "error",
+    source: "rust-unavailable",
+  }));
+}
+
+function createRustProjectResolutionMessage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): string {
+  const baseMessage = createUnsupportedRustRunnerNote(stageId, files);
+  return `${baseMessage} Add a Cargo.toml file for the selected Rust source, select files inside an existing Cargo package, or disable Rust ${stageId}.`;
 }
 
 async function findNearestRustProject(filePath: string): Promise<RustProject | undefined> {

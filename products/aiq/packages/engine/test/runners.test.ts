@@ -127,6 +127,25 @@ function expectJvmSetupFailure(
   expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool });
 }
 
+function expectProjectResolutionFailure(
+  result: Awaited<ReturnType<typeof runPlannedTask>>,
+  options: { artifact: string; file: string; source: string; tool?: string },
+): void {
+  expect(JSON.stringify(result)).not.toContain("not_implemented");
+  expect(result.status).toBe("failed");
+  expect(result.diagnostics).toEqual([
+    expect.objectContaining({
+      file: options.file,
+      severity: "error",
+      source: options.source,
+    }),
+  ]);
+  expect(result.notes.join(" ")).toContain(options.artifact);
+  if (options.tool !== undefined) {
+    expect(result.toolRuns[0]).toMatchObject({ status: "failed", tool: options.tool });
+  }
+}
+
 async function createDotNetFixtureProject(
   prefix: string,
 ): Promise<{ root: string; solutionFile: string; sourceFile: string; testFile: string }> {
@@ -5760,6 +5779,206 @@ describe("engine runners", () => {
       ]),
     );
     expect(JSON.stringify(result)).not.toContain("not_implemented");
+  });
+
+  it.each([
+    {
+      artifact: "go.mod",
+      content: "package main\n\nfunc main() {}\n",
+      extension: "go",
+      language: "Go",
+      source: "go-unavailable",
+      stages: ["lint", "format", "typecheck", "unit", "coverage"] as const,
+      tool: "go-unavailable",
+    },
+    {
+      artifact: "Cargo.toml",
+      content: "fn main() {}\n",
+      extension: "rs",
+      language: "Rust",
+      source: "rust-unavailable",
+      stages: ["lint", "format", "typecheck", "unit", "coverage"] as const,
+      tool: "rust-unavailable",
+    },
+    {
+      artifact: ".csproj",
+      content: "public static class Greeter {}\n",
+      extension: "cs",
+      language: ".NET",
+      source: "dotnet-unavailable",
+      stages: ["lint", "format", "typecheck", "unit", "coverage"] as const,
+      tool: "dotnet-unavailable",
+    },
+  ])("reports $language files without projects as setup diagnostics", async (entry) => {
+    const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-project-resolution-"));
+    tempDirs.push(tempDir);
+
+    const sourceFile = path.join(tempDir, `Orphan.${entry.extension}`);
+    await writeFile(sourceFile, entry.content, "utf8");
+
+    for (const stageId of entry.stages) {
+      const result = await runPlannedTask(
+        {
+          fileCount: 1,
+          files: [sourceFile],
+          id: `test:1:${stageId}-${entry.language.toLowerCase()}-no-project`,
+          stageId,
+        },
+        process.cwd(),
+      );
+
+      expectProjectResolutionFailure(result, {
+        artifact: entry.artifact,
+        file: sourceFile,
+        source: entry.source,
+        tool: entry.tool,
+      });
+      expect(result.notes.join(" ")).toContain(`disable ${entry.language}`);
+    }
+  });
+
+  it("keeps supported Go typecheck while reporting unsupported selected Go files", async () => {
+    const project = await createGoFixtureProject("aiq-mixed-go-resolution-");
+    const unsupportedRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-go-no-module-"));
+    tempDirs.push(unsupportedRoot);
+    const unsupportedFile = path.join(unsupportedRoot, "orphan.go");
+    await writeFile(unsupportedFile, "package orphan\n", "utf8");
+
+    const toolRunner = new ToolRunner();
+    vi.spyOn(toolRunner, "resolveInstalledBinary").mockResolvedValue("go");
+    vi.spyOn(toolRunner, "run").mockResolvedValue({
+      durationMs: 5,
+      exitCode: 0,
+      finishedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      stderr: "",
+      stdout: "",
+    });
+
+    const engineContext = withToolRunnerOverride(
+      await buildEngineContext({
+        context: "cli",
+        manifest: { files: [project.sourceFile, unsupportedFile], source: "direct" },
+        mode: "check",
+        outDir: project.root,
+        stages: ["typecheck"],
+      }),
+      toolRunner,
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 2,
+        files: [project.sourceFile, unsupportedFile],
+        id: "test:1:typecheck-go-mixed-resolution",
+        stageId: "typecheck",
+      },
+      engineContext,
+    );
+
+    expectProjectResolutionFailure(result, {
+      artifact: "go.mod",
+      file: unsupportedFile,
+      source: "go-unavailable",
+    });
+    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "go-build" });
+    expect(result.notes.join(" ")).toContain("go build passed");
+  });
+
+  it("keeps supported Rust typecheck while reporting unsupported selected Rust files", async () => {
+    const project = await createRustFixtureProject("aiq-mixed-rust-resolution-");
+    const unsupportedRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-rust-no-manifest-"));
+    tempDirs.push(unsupportedRoot);
+    const unsupportedFile = path.join(unsupportedRoot, "orphan.rs");
+    await writeFile(unsupportedFile, "fn orphan() {}\n", "utf8");
+
+    const toolRunner = new ToolRunner();
+    vi.spyOn(toolRunner, "resolveInstalledBinary").mockResolvedValue("cargo");
+    vi.spyOn(toolRunner, "createRustProcessEnv").mockResolvedValue({});
+    vi.spyOn(toolRunner, "run").mockResolvedValue({
+      durationMs: 5,
+      exitCode: 0,
+      finishedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      stderr: "",
+      stdout: "",
+    });
+
+    const engineContext = withToolRunnerOverride(
+      await buildEngineContext({
+        context: "cli",
+        manifest: { files: [project.sourceFile, unsupportedFile], source: "direct" },
+        mode: "check",
+        outDir: project.root,
+        stages: ["typecheck"],
+      }),
+      toolRunner,
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 2,
+        files: [project.sourceFile, unsupportedFile],
+        id: "test:1:typecheck-rust-mixed-resolution",
+        stageId: "typecheck",
+      },
+      engineContext,
+    );
+
+    expectProjectResolutionFailure(result, {
+      artifact: "Cargo.toml",
+      file: unsupportedFile,
+      source: "rust-unavailable",
+    });
+    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "cargo-check" });
+    expect(result.notes.join(" ")).toContain("cargo check passed");
+  });
+
+  it("keeps supported .NET typecheck while reporting unsupported selected C# files", async () => {
+    const project = await createDotNetFixtureProject("aiq-mixed-dotnet-resolution-");
+    const unsupportedRoot = await mkdtemp(path.join(os.tmpdir(), "aiq-dotnet-no-project-"));
+    tempDirs.push(unsupportedRoot);
+    const unsupportedFile = path.join(unsupportedRoot, "Orphan.cs");
+    await writeFile(unsupportedFile, "public static class Orphan {}\n", "utf8");
+
+    const toolRunner = new ToolRunner();
+    vi.spyOn(toolRunner, "run").mockResolvedValue({
+      durationMs: 5,
+      exitCode: 0,
+      finishedAt: new Date().toISOString(),
+      startedAt: new Date().toISOString(),
+      stderr: "",
+      stdout: "",
+    });
+
+    const engineContext = withToolRunnerOverride(
+      await buildEngineContext({
+        context: "cli",
+        manifest: { files: [project.sourceFile, unsupportedFile], source: "direct" },
+        mode: "check",
+        outDir: project.root,
+        stages: ["typecheck"],
+      }),
+      toolRunner,
+    );
+
+    const result = await runPlannedTask(
+      {
+        fileCount: 2,
+        files: [project.sourceFile, unsupportedFile],
+        id: "test:1:typecheck-dotnet-mixed-resolution",
+        stageId: "typecheck",
+      },
+      engineContext,
+    );
+
+    expectProjectResolutionFailure(result, {
+      artifact: ".csproj",
+      file: unsupportedFile,
+      source: "dotnet-unavailable",
+    });
+    expect(result.toolRuns[0]).toMatchObject({ status: "passed", tool: "dotnet-build" });
+    expect(result.notes.join(" ")).toContain("dotnet build passed");
   });
 
   it("keeps generic script config selections out of Bash and PowerShell unit planning", async () => {
