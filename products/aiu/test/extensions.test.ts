@@ -109,6 +109,38 @@ describe("extension API", () => {
     assert.equal(result.metadata?.repoCustom, true);
   });
 
+  it("exports a callable OpenCode server plugin with event hooks", async () => {
+    const { createAiuOpenCodeServerPlugin } = await import(pathToFileURL(path.join(repoRoot, "dist/src/opencode.js")).href) as typeof AiuOpenCode;
+    const target = await mkdtemp(path.join(tmpdir(), "aiu-opencode-server-plugin-"));
+    try {
+      let observed:
+        | { cwd: string | undefined; payload: unknown; type: string }
+        | undefined;
+      const before: AiuOpenCode.AiuOpenCodeHandler = (event, context) => {
+        observed = {
+          cwd: context.cwd,
+          payload: event.payload,
+          type: event.type,
+        };
+        return { handled: true };
+      };
+      const plugin = createAiuOpenCodeServerPlugin({ before: [before] });
+
+      assert.equal(typeof plugin, "function");
+      const hooks = await plugin({ directory: target });
+      assert.equal(typeof hooks.event, "function");
+      await hooks.event({ event: { type: "idle", properties: { sessionId: "abc123" } } });
+
+      assert.deepEqual(observed, {
+        cwd: target,
+        payload: { sessionId: "abc123" },
+        type: "idle",
+      });
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
   it("rejects handlers that call next more than once", async () => {
     const { composeAiuOpenCodeHandlers } = await import(pathToFileURL(path.join(repoRoot, "dist/src/opencode.js")).href) as typeof AiuOpenCode;
     const invalid: AiuOpenCode.AiuOpenCodeHandler = async (_event, _context, next) => {

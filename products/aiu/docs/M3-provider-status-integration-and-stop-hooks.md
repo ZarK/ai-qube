@@ -6,7 +6,7 @@ M3 connects the M2 decision engine to real host integrations. OpenCode should re
 
 This milestone wires the M2 decision engine into supported hosts. Older repo-local hooks are handled by migration tooling, not by runtime compatibility paths in the host adapters.
 
-Repositories can compose OpenCode behavior through the public `@tjalve/aiu/opencode` subpath. Managed host files should stay package-owned; custom wrappers import `createAiuOpenCodePlugin` and compose before/after handlers around the package command delegate.
+Repositories can compose OpenCode behavior through the public `@tjalve/aiu/opencode` subpath. Managed host files should stay package-owned; custom wrappers import `createAiuOpenCodeServerPlugin` and compose before/after handlers around the package command delegate.
 
 M3 delivers five things:
 

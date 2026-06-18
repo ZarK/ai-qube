@@ -168,7 +168,7 @@ const LOCAL_CHECKOUT_PATTERN = /(?:file:|link:|workspace:|(?:\.\.\/)+)[:./\\\w-]
 const AIU_TEXT_PATTERN = /\b(?:aiu|ai-umpire|umpire)\b/i;
 const PACKAGE_BACKED_COMMANDS: readonly AiuMigrationPackageCommand[] = Object.freeze([
   Object.freeze({ id: "aiu", command: "pnpm exec aiu", reason: "Package-backed CLI entrypoint for repository commands." }),
-  Object.freeze({ id: "opencode-plugin", command: "import { createAiuOpenCodePlugin } from \"@tjalve/aiu/opencode\"", host: "opencode", reason: "Package-backed OpenCode plugin wrapper import." }),
+  Object.freeze({ id: "opencode-plugin", command: "import { createAiuOpenCodeServerPlugin } from \"@tjalve/aiu/opencode\"", host: "opencode", reason: "Package-backed OpenCode plugin wrapper import." }),
   Object.freeze({ id: "codex-stop-hook", command: "pnpm exec aiu hook-stop --tool codex", host: "codex", reason: "Package-backed Codex Stop hook command." }),
   Object.freeze({ id: "claude-code-stop-hook", command: "pnpm exec aiu hook-stop --tool claude-code", host: "claude-code", reason: "Package-backed Claude Code Stop hook command." }),
 ]);
