@@ -519,6 +519,11 @@ export const workItemsGenerateCommand = defineCommand({
       defaultValue: ".bootstrap/session.json"
     }),
     defineFlag({
+      name: "dry-run",
+      description: "Preview work-item drafts without writing docs or updating the session file.",
+      type: "boolean"
+    }),
+    defineFlag({
       name: "milestone",
       description: "Milestone id or path to use for work-item drafting.",
       type: "string"
@@ -536,15 +541,32 @@ export const workItemsGenerateCommand = defineCommand({
   },
   interactions: {
     json: true,
+    dryRun: dryRunSupported(),
     noColor: true,
     nonInteractive: true,
     ttyPrompt: false
   },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  }),
+  supplyChain: {
+    sensitive: false
+  },
   errors: [
     ...stateCommandErrors,
     {
+      kind: "spec-not-accepted",
+      description: "Work item generation is blocked until all required spec sections are accepted.",
+      exitCode: 3
+    },
+    {
       kind: "milestone-required",
       description: "Work item generation is blocked until at least one milestone doc exists.",
+      exitCode: 3
+    },
+    {
+      kind: "work-item-write-failed",
+      description: "The work-item draft artifacts could not be written.",
       exitCode: 3
     }
   ],

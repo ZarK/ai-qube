@@ -34,6 +34,8 @@ import {
 } from "./state.js";
 import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 import type { SpecChapterId } from "./spec_chapters.js";
+import { createWorkItemDrafts, writeWorkItemDrafts } from "./work_items.js";
+import type { WorkItemDraftResult } from "./work_items.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -415,6 +417,19 @@ export const aibCli = createCli({
       try {
         const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
         const projectRoot = projectRootForState(envelope.statePath);
+        const validation = validateSpecFile(envelope.state, projectRoot);
+        const spec = computeSpecStatus(envelope.state);
+        if (!validation.ok || !spec.canGenerateMilestones || envelope.state.artifacts.spec.status !== "accepted") {
+          throw createCliError({
+            command: "work-items generate",
+            kind: "spec-not-accepted",
+            operation: "guard work-item generation",
+            likelyCause: `Spec validation ok: ${validation.ok}. Missing accepted sections: ${spec.missingRequiredAcceptance.join(", ") || "none"}.`,
+            suggestedNextAction: "Run aib spec validate --json, accept required sections, then generate milestone docs.",
+            category: "validation",
+            exitCode: 3
+          });
+        }
         if (!milestoneDocsExist(envelope.state, projectRoot)) {
           throw createCliError({
             command: "work-items generate",
@@ -426,19 +441,68 @@ export const aibCli = createCli({
             exitCode: 3
           });
         }
+        const milestone = typeof flags.milestone === "string" ? flags.milestone : undefined;
+        let result: WorkItemDraftResult;
+        try {
+          result = flags["dry-run"] === true
+            ? createWorkItemDrafts(envelope.state, milestone, projectRoot)
+            : writeWorkItemDrafts(envelope.state, milestone, projectRoot);
+        } catch (error) {
+          const errno = typeof error === "object" && error !== null && "code" in error
+            ? String((error as { code?: unknown }).code ?? "")
+            : "";
+          const isMilestoneSelectionError = error instanceof TypeError || errno === "ENOENT";
+          if (!isMilestoneSelectionError) {
+            throw createCliError({
+              command: "work-items generate",
+              kind: "work-item-write-failed",
+              operation: "write work-item draft artifacts",
+              likelyCause: error instanceof Error ? error.message : "The work-item draft artifacts could not be written.",
+              suggestedNextAction: "Check filesystem permissions and output paths, then rerun aib work-items generate --json.",
+              category: "runtime",
+              exitCode: 3
+            });
+          }
+          throw createCliError({
+            command: "work-items generate",
+            kind: "milestone-required",
+            operation: "select milestone for work-item generation",
+            likelyCause: error instanceof Error ? error.message : "The requested milestone could not be selected.",
+            suggestedNextAction: "Run aib status --json and choose one of planning.milestoneDrafts by id or path.",
+            category: "validation",
+            exitCode: 3
+          });
+        }
+        const updated = withWorkItemDraftState(envelope.state, result);
+        if (flags["dry-run"] === true) {
+          return {
+            json: {
+              mutated: false,
+              dryRun: true,
+              allowed: true,
+              statePath: envelope.statePath,
+              milestone: result.milestone,
+              drafts: result.drafts,
+              plannedWrites: result.rendered.map((item) => ({ path: item.path })),
+              state: updated,
+              nextAction: computeNextAction(updated)
+            },
+            human: `Dry run: would draft ${result.drafts.length} work items from ${result.milestone.id}.\n`
+          };
+        }
+        const written = writeBootstrapState(envelope.statePath, updated);
         return {
           json: {
+            mutated: true,
             allowed: true,
-            statePath: envelope.statePath,
-            milestone: typeof flags.milestone === "string" ? flags.milestone : undefined,
-            milestones: envelope.state.planning.milestoneDrafts,
-            nextAction: {
-              kind: "generate_artifacts",
-              actor: "agent",
-              summary: "Milestone docs exist. Work-item drafting can proceed from a selected milestone."
-            }
+            statePath: written.statePath,
+            milestone: result.milestone,
+            drafts: result.drafts,
+            written: result.rendered.map((item) => ({ path: item.path })),
+            state: written.state,
+            nextAction: computeNextAction(written.state)
           },
-          human: "Milestone docs exist. Work-item generation may proceed.\n"
+          human: `Drafted ${result.drafts.length} work items from ${result.milestone.id}.\n`
         };
       } catch (error) {
         if (isCliSpecError(error)) throw error;
@@ -631,6 +695,22 @@ function withMilestoneDraftState(state: BootstrapState, result: MilestoneDraftRe
     planning: {
       ...state.planning,
       milestoneDrafts: result.milestones
+    }
+  };
+  return withPlanningNext(updated);
+}
+
+function withWorkItemDraftState(state: BootstrapState, result: WorkItemDraftResult): BootstrapState {
+  const updated: BootstrapState = {
+    ...state,
+    phase: "work_item_generation",
+    artifacts: {
+      ...state.artifacts,
+      workItems: result.artifacts
+    },
+    planning: {
+      ...state.planning,
+      workItemDrafts: result.drafts
     }
   };
   return withPlanningNext(updated);

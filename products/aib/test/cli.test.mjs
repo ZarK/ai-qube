@@ -557,6 +557,10 @@ test("milestones generate writes planning-depth docs before work items", async (
   };
   await writeFile(init.statePath, JSON.stringify(state), "utf8");
   parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  const unacceptedWorkItems = runAib(["work-items", "generate", "--state", init.statePath, "--json"]);
+  assert.notEqual(unacceptedWorkItems.status, 0);
+  assert.equal(JSON.parse(unacceptedWorkItems.stdout).error.kind, "spec-not-accepted");
+
   parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "all", "--json"]));
 
   const blockedWorkItems = runAib(["work-items", "generate", "--state", init.statePath, "--json"]);
@@ -585,8 +589,53 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.match(firstDoc, /Do not include production code/);
   assert.doesNotMatch(firstDoc, /\bfunction\s+\w+\(|interface\s+\w+\s*\{/);
 
-  const allowedWorkItems = parseJsonStdout(runAib(["work-items", "generate", "--state", init.statePath, "--json"]));
+  const workItemDryRun = parseJsonStdout(runAib([
+    "work-items",
+    "generate",
+    "--state",
+    init.statePath,
+    "--milestone",
+    generated.milestones[0].id,
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(workItemDryRun.mutated, false);
+  assert.equal(workItemDryRun.drafts.length, 3);
+  assert.ok(workItemDryRun.plannedWrites.every((item) => item.path.includes("docs/issues/")));
+  await assert.rejects(readFile(join(dir, "docs", "issues", `${workItemDryRun.drafts[0].draftId}.md`), "utf8"));
+
+  const allowedWorkItems = parseJsonStdout(runAib([
+    "work-items",
+    "generate",
+    "--state",
+    init.statePath,
+    "--milestone",
+    generated.milestones[0].id,
+    "--json"
+  ]));
   assert.equal(allowedWorkItems.allowed, true);
+  assert.equal(allowedWorkItems.mutated, true);
+  assert.equal(allowedWorkItems.state.artifacts.workItems.length, 3);
+  assert.equal(allowedWorkItems.state.planning.workItemDrafts.length, 3);
+  assert.equal(allowedWorkItems.drafts[0].priority, "high");
+  assert.equal(allowedWorkItems.drafts[0].status, "ready");
+  assert.deepEqual(allowedWorkItems.drafts[0].components, ["aib"]);
+  assert.ok(allowedWorkItems.drafts[1].blockedBy.includes(allowedWorkItems.drafts[0].draftId));
+
+  const workItemDoc = await readFile(join(dir, "docs", "issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
+  assert.match(workItemDoc, /## Stable selectors/);
+  assert.match(workItemDoc, /draft:/);
+  assert.doesNotMatch(workItemDoc, /artifact:docs\//);
+  assert.match(workItemDoc, /## Named E2E tests/);
+  assert.match(workItemDoc, /e2e:/);
+  assert.match(workItemDoc, /## Definition of done/);
+  assert.match(workItemDoc, /No placeholder commands, fake tests/);
+  assert.match(workItemDoc, /## Spec anchors/);
+  assert.doesNotMatch(workItemDoc, /## Source anchors/);
+
+  const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
+  assert.equal(status.artifacts.milestones.length, 3);
+  assert.equal(status.artifacts.workItems.length, 3);
 });
 
 test("milestones distinguish sequential foundations from independent features", async () => {
