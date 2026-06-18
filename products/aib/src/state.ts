@@ -627,8 +627,11 @@ function parseSpec(value: Readonly<Record<string, unknown>> | undefined): Bootst
 
 function parseSpecValidation(value: unknown): NonNullable<BootstrapState["spec"]["validation"]> {
   const record = requireRecord(value, "spec.validation");
+  if (typeof record.ok !== "boolean") {
+    throw new TypeError("bootstrap state spec.validation.ok must be a boolean.");
+  }
   return {
-    ok: record.ok === true,
+    ok: record.ok,
     missingRequiredSections: parseStringArray(record.missingRequiredSections),
     placeholderSections: parseStringArray(record.placeholderSections)
   };

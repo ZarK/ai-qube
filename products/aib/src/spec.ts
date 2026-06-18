@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 
 import type { BootstrapState } from "./state.js";
 import {
+  DYNAMIC_SPEC_CHAPTERS,
   REQUIRED_SPEC_CHAPTERS,
   selectSpecChapters,
   validateSpecSections,
@@ -209,7 +210,7 @@ function renderChapterBody(
   if (id === "research_evidence_plan") return "Describe the evidence needed to make decisions and how sources will be validated.";
   if (id === "hardware_local_runtime") return "Describe local runtime, hardware, offline, and deployment constraints.";
   if (id === "documentation_content_structure") return "Describe document structure, audience flow, review path, and handoff format.";
-  return "Draft this section from accepted discovery before milestone generation.";
+  throw new TypeError(`Unsupported spec chapter id: ${id}`);
 }
 
 function missingProjectGaps(state: BootstrapState): readonly string[] {
@@ -232,5 +233,5 @@ function missingProjectGaps(state: BootstrapState): readonly string[] {
 }
 
 function isSpecChapterId(value: string): value is SpecChapterId {
-  return selectSpecChapters().some((chapter) => chapter.id === value);
+  return [...REQUIRED_SPEC_CHAPTERS, ...DYNAMIC_SPEC_CHAPTERS].some((chapter) => chapter.id === value);
 }

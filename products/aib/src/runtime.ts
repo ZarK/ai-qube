@@ -433,8 +433,11 @@ function withSpecDraftState(state: BootstrapState, unresolvedGaps: readonly stri
     phase: "spec_acceptance",
     spec: {
       ...state.spec,
+      acceptedSectionIds: [],
+      reopenedSectionIds: [],
       unresolvedGaps,
-      revision: state.spec.revision + 1
+      revision: state.spec.revision + 1,
+      validation: undefined
     },
     artifacts: {
       ...state.artifacts,
@@ -516,6 +519,17 @@ function withReopenedSpecState(state: BootstrapState, section: string): Bootstra
       operation: "reopen spec section",
       likelyCause: `Spec section "${section}" is not a selected required section.`,
       suggestedNextAction: "Run aib status --json and choose one of spec.chapters where required is true.",
+      category: "validation",
+      exitCode: 3
+    });
+  }
+  if (!state.spec.acceptedSectionIds.includes(section)) {
+    throw createCliError({
+      command: "spec reopen",
+      kind: "spec-section-invalid",
+      operation: "reopen spec section",
+      likelyCause: `Spec section "${section}" is not currently accepted.`,
+      suggestedNextAction: "Accept the section first with aib spec accept --section <id> --json.",
       category: "validation",
       exitCode: 3
     });

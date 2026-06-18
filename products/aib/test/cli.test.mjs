@@ -415,7 +415,7 @@ test("spec draft writes a self-contained artifact and enters acceptance", async 
 
   const spec = await readFile(join(dir, "docs", "spec.md"), "utf8");
   assert.match(spec, /Turn discovery into accepted specs/);
-  assert.doesNotMatch(spec, /private-consumer-repo/);
+  assert.doesNotMatch(spec, /AppData|aib-spec-draft/);
 });
 
 test("spec validate rejects placeholder sections before acceptance", async () => {
@@ -499,6 +499,16 @@ test("spec accept and reopen preserve section-aware acceptance", async () => {
   const blockedAgain = runAib(["milestones", "generate", "--state", init.statePath, "--json"]);
   assert.notEqual(blockedAgain.status, 0);
   assert.equal(JSON.parse(blockedAgain.stdout).error.kind, "spec-not-accepted");
+
+  const reopenAgain = runAib(["spec", "reopen", "--state", init.statePath, "--section", "purpose", "--json"]);
+  assert.notEqual(reopenAgain.status, 0);
+  assert.equal(JSON.parse(reopenAgain.stdout).error.kind, "spec-section-invalid");
+
+  parseJsonStdout(runAib(["spec", "accept", "--state", init.statePath, "--section", "purpose", "--json"]));
+  const redraft = parseJsonStdout(runAib(["spec", "draft", "--state", init.statePath, "--json"]));
+  assert.deepEqual(redraft.state.spec.acceptedSectionIds, []);
+  assert.deepEqual(redraft.state.spec.reopenedSectionIds, []);
+  assert.equal(redraft.state.spec.validation, undefined);
 });
 
 test("configured references request context inspection before human questions", async () => {
@@ -678,6 +688,17 @@ test("state validation checks question budget bounds and artifact structure", as
   assert.equal(JSON.parse(nine.stdout).error.kind, "state-invalid");
 
   state.agent.questionBudget = 3;
+  state.spec.validation = {
+    ok: "yes",
+    missingRequiredSections: [],
+    placeholderSections: []
+  };
+  await writeFile(init.statePath, JSON.stringify(state), "utf8");
+  const invalidValidation = runAib(["status", "--state", init.statePath, "--json"]);
+  assert.notEqual(invalidValidation.status, 0);
+  assert.match(JSON.parse(invalidValidation.stdout).error.likelyCause, /spec\.validation\.ok/);
+
+  state.spec.validation = undefined;
   delete state.artifacts.spec.path;
   await writeFile(init.statePath, JSON.stringify(state), "utf8");
   const missingPath = runAib(["status", "--state", init.statePath, "--json"]);
