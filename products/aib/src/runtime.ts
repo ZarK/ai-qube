@@ -483,6 +483,7 @@ export const aibCli = createCli({
               statePath: envelope.statePath,
               milestone: result.milestone,
               drafts: result.drafts,
+              queueOrder: result.queueOrder,
               plannedWrites: result.rendered.map((item) => ({ path: item.path })),
               state: updated,
               nextAction: computeNextAction(updated)
@@ -498,6 +499,7 @@ export const aibCli = createCli({
             statePath: written.statePath,
             milestone: result.milestone,
             drafts: result.drafts,
+            queueOrder: result.queueOrder,
             written: result.rendered.map((item) => ({ path: item.path })),
             state: written.state,
             nextAction: computeNextAction(written.state)

@@ -601,6 +601,7 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(workItemDryRun.mutated, false);
   assert.equal(workItemDryRun.drafts.length, 3);
+  assert.equal(workItemDryRun.queueOrder.ok, true);
   assert.ok(workItemDryRun.plannedWrites.every((item) => item.path.includes("docs/issues/")));
   await assert.rejects(readFile(join(dir, "docs", "issues", `${workItemDryRun.drafts[0].draftId}.md`), "utf8"));
 
@@ -617,12 +618,16 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.equal(allowedWorkItems.mutated, true);
   assert.equal(allowedWorkItems.state.artifacts.workItems.length, 3);
   assert.equal(allowedWorkItems.state.planning.workItemDrafts.length, 3);
+  assert.equal(allowedWorkItems.queueOrder.ok, true);
   assert.equal(allowedWorkItems.drafts[0].priority, "high");
   assert.equal(allowedWorkItems.drafts[0].status, "ready");
   assert.deepEqual(allowedWorkItems.drafts[0].components, ["aib"]);
   assert.ok(allowedWorkItems.drafts[1].blockedBy.includes(allowedWorkItems.drafts[0].draftId));
+  assert.equal(allowedWorkItems.drafts[0].providerMetadata.executor.sequence, allowedWorkItems.drafts[0].sequence);
+  assert.deepEqual(allowedWorkItems.drafts[1].providerMetadata.executor.blockedBy, [allowedWorkItems.drafts[0].draftId]);
 
   const workItemDoc = await readFile(join(dir, "docs", "issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
+  assert.match(workItemDoc, /^Sequence: \d+/m);
   assert.match(workItemDoc, /## Stable selectors/);
   assert.match(workItemDoc, /draft:/);
   assert.doesNotMatch(workItemDoc, /artifact:docs\//);

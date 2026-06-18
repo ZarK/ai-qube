@@ -13,6 +13,7 @@ import {
   renderMarkdownWorkItemDraft,
   specAcceptanceStatus,
   specChaptersForProject,
+  validateWorkItemDraftOrder,
   validateSpecSections,
   workItemValidationForProject
 } from "../dist/index.js";
@@ -61,6 +62,7 @@ test("markdown work item rendering does not require GitHub auth or IDs", () => {
   const rendered = renderMarkdownWorkItemDraft(sampleDraft, "planning/issues");
   assert.equal(rendered.path, "planning/issues/draft-foundation.md");
   assert.match(rendered.content, /^Blocked by: draft-package/m);
+  assert.match(rendered.content, /^Sequence: 2/m);
   assert.match(rendered.content, /# Build neutral contracts/);
   assert.doesNotMatch(rendered.content, /github/i);
   assert.doesNotMatch(rendered.content, /https:\/\/github\.com/i);
@@ -80,7 +82,24 @@ test("GitHub rendering adapts canonical drafts at the provider edge", () => {
   assert.deepEqual(rendered.blockedBy, [1]);
   assert.deepEqual(rendered.labels, ["P2-High", "S-Ready", "C-Architecture", "C-Data"]);
   assert.match(rendered.body, /^Blocked by: #1/m);
+  assert.match(rendered.body, /^Sequence: 2/m);
   assert.equal(rendered.url, "https://github.com/example/repo/issues/2");
+});
+
+test("work item queue ordering validates blockers against sequence metadata", () => {
+  const valid = validateWorkItemDraftOrder([
+    { ...sampleDraft, draftId: "draft-package", blockedBy: [], sequence: 1 },
+    sampleDraft
+  ]);
+  assert.equal(valid.ok, true);
+  assert.deepEqual(valid.conflicts, []);
+
+  const invalid = validateWorkItemDraftOrder([
+    { ...sampleDraft, draftId: "draft-a", blockedBy: ["draft-b"], sequence: 2 },
+    { ...sampleDraft, draftId: "draft-b", blockedBy: [], sequence: 3 }
+  ]);
+  assert.equal(invalid.ok, false);
+  assert.match(invalid.conflicts.join("\n"), /blocked by draft-b/);
 });
 
 test("research profile uses evidence validation instead of coding gates", () => {

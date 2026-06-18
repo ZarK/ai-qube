@@ -8,8 +8,14 @@ import type { BootstrapState } from "./state.js";
 export interface WorkItemDraftResult {
   readonly milestone: MilestoneDraft;
   readonly drafts: readonly WorkItemDraft[];
+  readonly queueOrder: QueueOrderValidation;
   readonly rendered: readonly MarkdownWorkItem[];
   readonly artifacts: readonly PlanningArtifact[];
+}
+
+export interface QueueOrderValidation {
+  readonly ok: boolean;
+  readonly conflicts: readonly string[];
 }
 
 export function createWorkItemDrafts(
@@ -20,10 +26,15 @@ export function createWorkItemDrafts(
   const milestone = selectMilestone(state, milestoneSelector, baseDir);
   const issuesDir = `${dirname(state.artifacts.spec.path)}/issues`;
   const drafts = createDraftsForMilestone(state, milestone);
+  const queueOrder = validateWorkItemDraftOrder(drafts);
+  if (!queueOrder.ok) {
+    throw new TypeError(`work item sequence conflicts: ${queueOrder.conflicts.join("; ")}`);
+  }
   const rendered = drafts.map((draft) => renderMarkdownWorkItemDraft(draft, issuesDir));
   return {
     milestone,
     drafts,
+    queueOrder,
     rendered,
     artifacts: rendered.map((item) => ({
       path: item.path,
@@ -44,6 +55,38 @@ export function writeWorkItemDrafts(
     writeFileSync(path, item.content);
   }
   return result;
+}
+
+export function validateWorkItemDraftOrder(drafts: readonly WorkItemDraft[]): QueueOrderValidation {
+  const conflicts: string[] = [];
+  const sequenceById = new Map<string, number>();
+  const seenSequences = new Map<number, string>();
+  for (const draft of drafts) {
+    if (draft.sequence === undefined || !Number.isSafeInteger(draft.sequence)) {
+      conflicts.push(`${draft.draftId} is missing a stable sequence.`);
+      continue;
+    }
+    const previous = seenSequences.get(draft.sequence);
+    if (previous) {
+      conflicts.push(`${draft.draftId} and ${previous} both use Sequence: ${draft.sequence}.`);
+    }
+    seenSequences.set(draft.sequence, draft.draftId);
+    sequenceById.set(draft.draftId, draft.sequence);
+  }
+
+  for (const draft of drafts) {
+    if (draft.sequence === undefined) continue;
+    for (const blocker of draft.blockedBy ?? []) {
+      const blockerSequence = sequenceById.get(blocker);
+      if (blockerSequence !== undefined && blockerSequence >= draft.sequence) {
+        conflicts.push(`${draft.draftId} has Sequence: ${draft.sequence} but is blocked by ${blocker} at Sequence: ${blockerSequence}.`);
+      }
+    }
+  }
+  return {
+    ok: conflicts.length === 0,
+    conflicts
+  };
 }
 
 function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDraft): readonly WorkItemDraft[] {
@@ -101,6 +144,10 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
       providerMetadata: {
         markdown: {
           sourceMilestone: milestone.id
+        },
+        executor: {
+          sequence: baseSequence + index + 1,
+          blockedBy
         }
       }
     };

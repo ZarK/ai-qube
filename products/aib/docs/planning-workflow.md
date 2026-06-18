@@ -175,6 +175,12 @@ Work items should be provider-neutral first, then rendered:
 - Linear issues
 - other configured provider
 
+### Queue Ordering Metadata
+
+When work items are generated for an Executor-compatible workflow, drafts should include stable `Sequence:` metadata. `Sequence:` is an ordering hint for queue display and review ergonomics. `Blocked by:` remains the dependency source of truth.
+
+Generated sequence values must be topologically valid against any blockers that reference other generated drafts. If a draft is blocked by another generated draft with the same or later sequence, `aib` should report the conflict before mutating provider state or writing final rendered output.
+
 ### Output
 
 - canonical work item drafts
