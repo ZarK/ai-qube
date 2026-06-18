@@ -194,44 +194,16 @@ export async function runDotNetProjectTestTask(
       await readOptionalTextFile(trxPath),
       project.projectRoot,
     );
-    const coverageReportPath =
-      mode === "coverage"
-        ? await findFirstFile(tempDir, (filePath) => filePath.endsWith("coverage.cobertura.xml"))
-        : undefined;
-    const coveragePercent =
-      mode === "coverage"
-        ? parsers.readCoberturaLineRate(
-            coverageReportPath === undefined
-              ? undefined
-              : await readOptionalTextFile(coverageReportPath),
-          )
-        : undefined;
+    const coveragePercent = await readDotNetTestCoveragePercent(mode, tempDir);
     const status = outcome.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
-
-    if (status === "failed" && report.diagnostics.length === 0) {
-      report.diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          project.files[0] ?? project.targetPath,
-          "dotnet-test",
-          runtime.readProcessFailureMessage(
-            "dotnet test",
-            outcome.stderr,
-            outcome.stdout,
-            outcome.exitCode,
-          ),
-        ),
-      );
-    }
+    appendSilentDotNetTestFailureDiagnostic({ outcome, project, report, runtime, status });
 
     return {
       diagnostics: report.diagnostics,
       durationMs: outcome.durationMs,
-      note:
-        mode === "coverage"
-          ? readDotNetCoverageNote(report.summary, coveragePercent)
-          : readDotNetUnitNote(report.summary),
+      note: readDotNetTestNote(mode, report.summary, coveragePercent),
       toolRun: runtime.createToolRunResult(
-        mode === "coverage" ? "dotnet-test-coverage" : "dotnet-test",
+        readDotNetTestTool(mode),
         args,
         outcome.durationMs,
         outcome.exitCode,
@@ -243,4 +215,59 @@ export async function runDotNetProjectTestTask(
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+async function readDotNetTestCoveragePercent(
+  mode: "coverage" | "unit",
+  tempDir: string,
+): Promise<number | undefined> {
+  if (mode !== "coverage") {
+    return undefined;
+  }
+
+  const coverageReportPath = await findFirstFile(tempDir, (filePath) =>
+    filePath.endsWith("coverage.cobertura.xml"),
+  );
+  return parsers.readCoberturaLineRate(
+    coverageReportPath === undefined ? undefined : await readOptionalTextFile(coverageReportPath),
+  );
+}
+
+function appendSilentDotNetTestFailureDiagnostic(options: {
+  outcome: Awaited<ReturnType<DotNetRunnerRuntime["runExecutable"]>>;
+  project: DotNetProject;
+  report: ReturnType<typeof parsers.parseDotNetTrxReport>;
+  runtime: DotNetRunnerRuntime;
+  status: "failed" | "passed";
+}): void {
+  if (options.status !== "failed" || options.report.diagnostics.length > 0) {
+    return;
+  }
+
+  options.report.diagnostics.push(
+    options.runtime.createProcessFailureDiagnostic(
+      options.project.files[0] ?? options.project.targetPath,
+      "dotnet-test",
+      options.runtime.readProcessFailureMessage(
+        "dotnet test",
+        options.outcome.stderr,
+        options.outcome.stdout,
+        options.outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function readDotNetTestNote(
+  mode: "coverage" | "unit",
+  summary: Parameters<typeof readDotNetCoverageNote>[0],
+  coveragePercent: number | undefined,
+): string {
+  return mode === "coverage"
+    ? readDotNetCoverageNote(summary, coveragePercent)
+    : readDotNetUnitNote(summary);
+}
+
+function readDotNetTestTool(mode: "coverage" | "unit"): "dotnet-test" | "dotnet-test-coverage" {
+  return mode === "coverage" ? "dotnet-test-coverage" : "dotnet-test";
 }

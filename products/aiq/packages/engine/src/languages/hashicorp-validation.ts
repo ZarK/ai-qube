@@ -32,106 +32,183 @@ export async function runTerraformProjectValidateTask(
       TF_DATA_DIR: path.join(tempDir, ".terraform-data"),
       TF_IN_AUTOMATION: "1",
     };
-    const initArgs = commands.createTerraformInitArgs({ disableBackend: true, disableInput: true });
-    const initOutcome = await runtime.runExecutable(
-      terraformBinary,
-      initArgs,
-      tempProjectRoot,
-      runtime.signal,
-      env,
-    );
-    const initStatus = initOutcome.exitCode === 0 ? "passed" : "failed";
-    const toolRuns = [
-      runtime.createToolRunResult(
-        "terraform-init",
-        initArgs,
-        initOutcome.durationMs,
-        initOutcome.exitCode,
-        initStatus,
-        initOutcome.finishedAt,
-        initOutcome.startedAt,
-      ),
-    ];
+    const initResult = await runTerraformInit(project, runtime, terraformBinary, tempProjectRoot, env);
 
-    if (initOutcome.exitCode !== 0) {
-      return {
-        diagnostics: [
-          runtime.createProcessFailureDiagnostic(
-            project.terraformFiles[0] ?? project.projectRoot,
-            "terraform-init",
-            runtime.readProcessFailureMessage(
-              "terraform init",
-              initOutcome.stderr,
-              initOutcome.stdout,
-              initOutcome.exitCode,
-            ),
-          ),
-        ],
-        durationMs: initOutcome.durationMs,
-        note: `terraform init failed for ${readProjectLabel(project.projectRoot)}.`,
-        status: "failed",
-        toolRuns,
-      };
+    if (initResult.outcome.exitCode !== 0) {
+      return createTerraformInitFailureResult(project, runtime, initResult);
     }
 
-    const validateArgs = commands.createTerraformValidateArgs();
-    const validateOutcome = await runtime.runExecutable(
-      terraformBinary,
-      validateArgs,
-      tempProjectRoot,
-      runtime.signal,
-      env,
-    );
-    const diagnostics = normalizeDiagnosticsToSelection(
-      parsers.parseTerraformValidateDiagnostics(
-        validateOutcome.stdout,
-        project.projectRoot,
-        project.terraformFiles[0] ?? project.projectRoot,
-      ),
-      project.terraformFiles,
-    );
-
-    if (validateOutcome.exitCode !== 0 && diagnostics.length === 0) {
-      diagnostics.push(
-        runtime.createProcessFailureDiagnostic(
-          project.terraformFiles[0] ?? project.projectRoot,
-          "terraform-validate",
-          runtime.readProcessFailureMessage(
-            "terraform validate",
-            validateOutcome.stderr,
-            validateOutcome.stdout,
-            validateOutcome.exitCode,
-          ),
-        ),
-      );
-    }
-
-    const status = validateOutcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
-    toolRuns.push(
-      runtime.createToolRunResult(
-        "terraform-validate",
-        validateArgs,
-        validateOutcome.durationMs,
-        validateOutcome.exitCode,
-        status,
-        validateOutcome.finishedAt,
-        validateOutcome.startedAt,
-      ),
-    );
-
-    return {
-      diagnostics: deduplicateDiagnostics(diagnostics),
-      durationMs: initOutcome.durationMs + validateOutcome.durationMs,
-      note:
-        status === "passed"
-          ? `terraform validate passed for ${readProjectLabel(project.projectRoot)}.`
-          : `terraform validate reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"} for ${readProjectLabel(project.projectRoot)}.`,
-      status,
-      toolRuns,
-    };
+    const validateResult = await runTerraformValidate(project, runtime, terraformBinary, tempProjectRoot, env);
+    return createTerraformValidateResult(project, initResult, validateResult);
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
   }
+}
+
+type TerraformCommandResult = {
+  args: string[];
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>;
+  toolRun: ReturnType<HashicorpRunnerRuntime["createToolRunResult"]>;
+};
+type TerraformValidateResult = TerraformCommandResult & {
+  diagnostics: Diagnostic[];
+  status: "failed" | "passed";
+};
+
+async function runTerraformInit(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  terraformBinary: string,
+  tempProjectRoot: string,
+  env: Record<string, string>,
+): Promise<TerraformCommandResult> {
+  const args = commands.createTerraformInitArgs({ disableBackend: true, disableInput: true });
+  const outcome = await runtime.runExecutable(
+    terraformBinary,
+    args,
+    tempProjectRoot,
+    runtime.signal,
+    env,
+  );
+  const status = outcome.exitCode === 0 ? "passed" : "failed";
+  return {
+    args,
+    outcome,
+    toolRun: runtime.createToolRunResult(
+      "terraform-init",
+      args,
+      outcome.durationMs,
+      outcome.exitCode,
+      status,
+      outcome.finishedAt,
+      outcome.startedAt,
+    ),
+  };
+}
+
+function createTerraformInitFailureResult(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  result: TerraformCommandResult,
+): TerraformValidationProjectResult {
+  return {
+    diagnostics: [
+      runtime.createProcessFailureDiagnostic(
+        project.terraformFiles[0] ?? project.projectRoot,
+        "terraform-init",
+        runtime.readProcessFailureMessage(
+          "terraform init",
+          result.outcome.stderr,
+          result.outcome.stdout,
+          result.outcome.exitCode,
+        ),
+      ),
+    ],
+    durationMs: result.outcome.durationMs,
+    note: `terraform init failed for ${readProjectLabel(project.projectRoot)}.`,
+    status: "failed",
+    toolRuns: [result.toolRun],
+  };
+}
+
+async function runTerraformValidate(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  terraformBinary: string,
+  tempProjectRoot: string,
+  env: Record<string, string>,
+): Promise<TerraformValidateResult> {
+  const args = commands.createTerraformValidateArgs();
+  const outcome = await runtime.runExecutable(
+    terraformBinary,
+    args,
+    tempProjectRoot,
+    runtime.signal,
+    env,
+  );
+  const diagnostics = readTerraformValidateDiagnostics(project, runtime, outcome);
+  const status = outcome.exitCode === 0 && diagnostics.length === 0 ? "passed" : "failed";
+  return {
+    args,
+    diagnostics,
+    outcome,
+    status,
+    toolRun: runtime.createToolRunResult(
+      "terraform-validate",
+      args,
+      outcome.durationMs,
+      outcome.exitCode,
+      status,
+      outcome.finishedAt,
+      outcome.startedAt,
+    ),
+  };
+}
+
+function readTerraformValidateDiagnostics(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>,
+): Diagnostic[] {
+  const diagnostics = normalizeDiagnosticsToSelection(
+    parsers.parseTerraformValidateDiagnostics(
+      outcome.stdout,
+      project.projectRoot,
+      project.terraformFiles[0] ?? project.projectRoot,
+    ),
+    project.terraformFiles,
+  );
+  appendSilentTerraformValidateFailureDiagnostic(project, runtime, outcome, diagnostics);
+  return diagnostics;
+}
+
+function appendSilentTerraformValidateFailureDiagnostic(
+  project: HashicorpProject,
+  runtime: HashicorpRunnerRuntime,
+  outcome: Awaited<ReturnType<HashicorpRunnerRuntime["runExecutable"]>>,
+  diagnostics: Diagnostic[],
+): void {
+  if (outcome.exitCode === 0 || diagnostics.length > 0) {
+    return;
+  }
+
+  diagnostics.push(
+    runtime.createProcessFailureDiagnostic(
+      project.terraformFiles[0] ?? project.projectRoot,
+      "terraform-validate",
+      runtime.readProcessFailureMessage(
+        "terraform validate",
+        outcome.stderr,
+        outcome.stdout,
+        outcome.exitCode,
+      ),
+    ),
+  );
+}
+
+function createTerraformValidateResult(
+  project: HashicorpProject,
+  initResult: TerraformCommandResult,
+  validateResult: TerraformValidateResult,
+): TerraformValidationProjectResult {
+  const diagnostics = deduplicateDiagnostics(validateResult.diagnostics);
+  return {
+    diagnostics,
+    durationMs: initResult.outcome.durationMs + validateResult.outcome.durationMs,
+    note: readTerraformValidateNote(project, diagnostics, validateResult.status),
+    status: validateResult.status,
+    toolRuns: [initResult.toolRun, validateResult.toolRun],
+  };
+}
+
+function readTerraformValidateNote(
+  project: HashicorpProject,
+  diagnostics: readonly Diagnostic[],
+  status: "failed" | "passed",
+): string {
+  return status === "passed"
+    ? `terraform validate passed for ${readProjectLabel(project.projectRoot)}.`
+    : `terraform validate reported ${diagnostics.length} diagnostic${diagnostics.length === 1 ? "" : "s"} for ${readProjectLabel(project.projectRoot)}.`;
 }
 
 export async function resolveTerraformValidationFiles(projectRoot: string): Promise<string[]> {
