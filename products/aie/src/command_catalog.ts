@@ -333,7 +333,7 @@ const COMMAND_DEFINITIONS = [
     mutationTargets: ['github'],
     supportsJson: true,
     supportsDryRun: true,
-    externalServices: ['github', 'github-copilot', 'cubic', 'coderabbit', 'custom-pr-reviewer'],
+    externalServices: ['github', 'github-copilot', 'cubic', 'comfyrabbitai', 'custom-pr-reviewer'],
     stableErrorKinds: ['parse-error', 'config-error', 'github-error', 'review-state-unavailable', ...CONFIG_ERROR_KINDS],
     reviewAgentValues: PR_REVIEW_AGENT_VALUES,
     examples: ['aie pr gate 12 --dry-run', 'aie pr gate 12 --json', 'aie pr gate 12'],

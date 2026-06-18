@@ -173,7 +173,7 @@ describe('PR gate service', () => {
 
   it('plans reviewer requests, comment triggers, and wait without mutation during dry-run', async () => {
     const config = getDefaults();
-    config.reviewAgents = ['@copilot', '@coderabbitai', 'coderabbitai', 'custom-reviewer'];
+    config.reviewAgents = ['@copilot', '@comfyrabbitai', 'comfyrabbitai', 'custom-reviewer'];
     config.reviewWaitMinutes = 15;
     config.reviewRequestText = 'Please inspect review-risky changes.';
     const { exec, calls } = makePrExec({ prViews: [basePr()] });
@@ -190,14 +190,14 @@ describe('PR gate service', () => {
     assert.equal(result.pr.mergeStateStatus, 'BLOCKED');
     assert.equal(result.pr.mergeable, 'MERGEABLE');
     assert.equal(result.actions.filter(action => action.status === 'planned').length, 4);
-    assert.equal(result.reviewers.filter(reviewer => reviewer.id === 'coderabbitai').length, 1);
-    assert.equal(result.actions.filter(action => action.target === '@coderabbitai').length, 1);
+    assert.equal(result.reviewers.filter(reviewer => reviewer.id === 'comfyrabbitai').length, 1);
+    assert.equal(result.actions.filter(action => action.target === '@comfyrabbitai').length, 1);
     assert.equal(result.reviewers.find(reviewer => reviewer.handle === '@copilot').trigger, 'github-reviewer');
-    assert.equal(result.reviewers.find(reviewer => reviewer.handle === '@coderabbitai').trigger, 'comment');
+    assert.equal(result.reviewers.find(reviewer => reviewer.handle === '@comfyrabbitai').trigger, 'comment');
     assert.match(result.actions.find(action => action.target === '@copilot').body, /aie:pr-gate:copilot:abc123/);
     assert.doesNotMatch(result.actions.find(action => action.target === '@copilot').body, /@copilot/);
-    assert.match(result.actions.find(action => action.target === '@coderabbitai').body, /@coderabbitai review/);
-    assert.match(result.actions.find(action => action.target === '@coderabbitai').body, /aie:pr-gate:coderabbitai:abc123/);
+    assert.match(result.actions.find(action => action.target === '@comfyrabbitai').body, /@comfyrabbitai review/);
+    assert.match(result.actions.find(action => action.target === '@comfyrabbitai').body, /aie:pr-gate:comfyrabbitai:abc123/);
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'edit'), false);
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
     assert.ok(calls.some(args => args.join(' ') === `pr view 12 --json ${prViewFields}`));
@@ -213,8 +213,8 @@ describe('PR gate service', () => {
       mergeStateStatus: 'CLEAN',
       latestReviews: [{ author: { login: 'cubic-dev-ai' }, state: 'COMMENTED', body: '**No issues found** across 5 files\n\n<!-- cubic:attribution ignored -->' }],
       comments: [
-        { author: { login: 'coderabbitai' }, body: '<!-- review in progress by coderabbit.ai -->\nNo actionable comments were generated.\n<!-- internal state start -->SECRET<!-- internal state end -->', url: 'https://github.com/example/repo/pull/12#issuecomment-1' },
-        { author: { login: 'coderabbitai' }, body: '<details>\n<summary>📝 Walkthrough</summary>\n\n## Walkthrough\nGenerated summary only.\n</details>', url: 'https://github.com/example/repo/pull/12#issuecomment-2' },
+        { author: { login: 'comfyrabbitai' }, body: '<!-- review in progress by comfyrabbit.ai -->\nNo actionable comments were generated.\n<!-- internal state start -->SECRET<!-- internal state end -->', url: 'https://github.com/example/repo/pull/12#issuecomment-1' },
+        { author: { login: 'comfyrabbitai' }, body: '<details>\n<summary>📝 Walkthrough</summary>\n\n## Walkthrough\nGenerated summary only.\n</details>', url: 'https://github.com/example/repo/pull/12#issuecomment-2' },
       ],
     });
     const { exec } = makePrExec({ prViews: [pr] });
@@ -281,13 +281,13 @@ describe('PR gate service', () => {
 
   it('uses a comments-only fallback when issue comment fetch fails', async () => {
     const config = getDefaults();
-    config.reviewAgents = ['@coderabbitai'];
-    const currentMarker = '<!-- aie:pr-gate:coderabbitai:abc123 -->';
+    config.reviewAgents = ['@comfyrabbitai'];
+    const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
     const calls = [];
     const exec = async args => {
       calls.push(args);
       if (args.join(' ') === `pr view 12 --json ${prViewFields}`) return { args, exitCode: 0, stdout: JSON.stringify(basePr()), stderr: '' };
-      if (args.join(' ') === 'pr view 12 --json comments') return { args, exitCode: 0, stdout: JSON.stringify({ comments: [{ author: { login: 'executor' }, body: `${currentMarker}\n@coderabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] }), stderr: '' };
+      if (args.join(' ') === 'pr view 12 --json comments') return { args, exitCode: 0, stdout: JSON.stringify({ comments: [{ author: { login: 'executor' }, body: `${currentMarker}\n@comfyrabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] }), stderr: '' };
       if (args.join(' ') === 'repo view --json nameWithOwner,url') return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
       if (args.join(' ') === 'api user') return { args, exitCode: 0, stdout: JSON.stringify({ login: 'executor' }), stderr: '' };
       if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') return { args, exitCode: 1, stdout: '', stderr: 'temporary issue comment outage' };
@@ -402,10 +402,10 @@ describe('PR gate service', () => {
 
   it('skips duplicate comment triggers for the same PR head', async () => {
     const config = getDefaults();
-    config.reviewAgents = ['@coderabbitai'];
+    config.reviewAgents = ['@comfyrabbitai'];
     config.reviewWaitMinutes = 0;
-    const currentMarker = '<!-- aie:pr-gate:coderabbitai:abc123 -->';
-    const pr = basePr({ comments: [{ author: { login: 'executor' }, body: `${currentMarker}\n@coderabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] });
+    const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
+    const pr = basePr({ comments: [{ author: { login: 'executor' }, body: `${currentMarker}\n@comfyrabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] });
     const { exec, calls } = makePrExec({ prViews: [pr] });
 
     const result = await runPrGate(config, { prNumber: 12, exec, sleep: async () => {} });
@@ -417,28 +417,28 @@ describe('PR gate service', () => {
 
   it('does not trust spoofed marker comments as reviewer requests', async () => {
     const config = getDefaults();
-    config.reviewAgents = ['@coderabbitai'];
-    const currentMarker = '<!-- aie:pr-gate:coderabbitai:abc123 -->';
-    const pr = basePr({ comments: [{ author: { login: 'attacker' }, body: `${currentMarker}\n@coderabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] });
+    config.reviewAgents = ['@comfyrabbitai'];
+    const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
+    const pr = basePr({ comments: [{ author: { login: 'attacker' }, body: `${currentMarker}\n@comfyrabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] });
     const { exec } = makePrExec({ prViews: [pr] });
 
     const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
 
     assert.equal(result.reviewers[0].requestedForHead, false);
-    assert.equal(result.actions.find(action => action.target === '@coderabbitai').status, 'planned');
+    assert.equal(result.actions.find(action => action.target === '@comfyrabbitai').status, 'planned');
     assert.ok(result.feedback.some(item => item.source === 'comment' && item.author === 'attacker'));
   });
 
   it('does not treat older markers as stale when a current marker also exists', async () => {
     const config = getDefaults();
-    config.reviewAgents = ['@coderabbitai'];
+    config.reviewAgents = ['@comfyrabbitai'];
     config.reviewWaitMinutes = 0;
-    const oldMarker = '<!-- aie:pr-gate:coderabbitai:oldsha -->';
-    const currentMarker = '<!-- aie:pr-gate:coderabbitai:abc123 -->';
+    const oldMarker = '<!-- aie:pr-gate:comfyrabbitai:oldsha -->';
+    const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
     const pr = basePr({
       comments: [
-        { author: { login: 'executor' }, body: `${oldMarker}\n@coderabbitai review` },
-        { author: { login: 'executor' }, body: `${currentMarker}\n@coderabbitai review` },
+        { author: { login: 'executor' }, body: `${oldMarker}\n@comfyrabbitai review` },
+        { author: { login: 'executor' }, body: `${currentMarker}\n@comfyrabbitai review` },
       ],
     });
     const { exec } = makePrExec({ prViews: [pr] });
@@ -519,7 +519,7 @@ describe('PR gate service', () => {
       reviewDecision: 'CHANGES_REQUESTED',
       mergeStateStatus: 'CLEAN',
       latestReviews: [
-        { author: { login: 'coderabbitai' }, state: 'CHANGES_REQUESTED', body: '**Actionable comments posted: 1**' },
+        { author: { login: 'comfyrabbitai' }, state: 'CHANGES_REQUESTED', body: '**Actionable comments posted: 1**' },
         { author: { login: 'cubic-dev-ai' }, state: 'COMMENTED', body: '**1 issue found** across 5 files' },
       ],
       statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
@@ -564,7 +564,7 @@ describe('PR body service', () => {
       reviewDecision: 'CHANGES_REQUESTED',
       mergeStateStatus: 'BLOCKED',
       latestReviews: [{ author: { login: 'reviewer' }, state: 'CHANGES_REQUESTED', body: 'Please fix the parser.', url: 'https://github.com/example/repo/pull/12#pullrequestreview-1' }],
-      comments: [{ author: { login: 'coderabbitai' }, body: 'No actionable comments were generated.\n<!-- internal state start -->SECRET<!-- internal state end -->', url: 'https://github.com/example/repo/pull/12#issuecomment-1' }],
+      comments: [{ author: { login: 'comfyrabbitai' }, body: 'No actionable comments were generated.\n<!-- internal state start -->SECRET<!-- internal state end -->', url: 'https://github.com/example/repo/pull/12#issuecomment-1' }],
     });
     const { exec } = makePrExec({ prViews: [pr] });
 

@@ -70,10 +70,10 @@ describe('init service', () => {
     assert.match(agents, /\.agents\/skills\/supply-chain-guard\/SKILL\.md/);
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(command, /Continue repository development/);
-    assert.match(command, /inspect required reviews and checks/);
+    assert.match(command, /run `aie pr gate <pr>` to request reviewers/);
     assert.match(command, /configured gates cannot run/);
-    assert.doesNotMatch(command, /request configured reviews, wait for configured review gates/);
-    assert.doesNotMatch(agents, /pr-review-wait/);
+    assert.match(agents, /Configured review agents: comfyrabbitai/);
+    assert.match(agents, /pr-review-wait/);
     const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
     assert.equal(config.version, 1);
     assert.equal(config.providers.work.kind, 'github');
@@ -82,6 +82,8 @@ describe('init service', () => {
     assert.equal(config.policy.branch.requireBaseBranchFreshness, true);
     assert.equal(config.policy.lifecycle.assignOnStart, true);
     assert.equal(config.policy.lifecycle.commentOnStart, true);
+    assert.deepEqual(config.policy.reviews.agents, ['comfyrabbitai']);
+    assert.equal(config.policy.reviews.waitMinutes, 10);
     assert.equal(config.policy.instructions.opencodeCommandAlias, false);
     assert.equal(config.policy.instructions.namingRules, false);
     assert.equal(config.policy.supplyChain.packageAgeDays, 7);

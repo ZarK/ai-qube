@@ -222,7 +222,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-10-001 | Executor supports optional PR review agents: GitHub Copilot, Cubic, CodeRabbit, and custom PR comment reviewers. | Required |
+| FR-10-001 | Executor supports optional PR review agents: GitHub Copilot, Cubic, ComfyRabbitAI, and custom PR comment reviewers. | Required |
 | FR-10-002 | PR review agents are strongly recommended but not hard dependencies. | Required |
 | FR-10-003 | Initialization lets the user choose which PR review agents are enabled for the repository. | Required |
 | FR-10-004 | Initialization lets the user configure custom reviewer names and PR comment text. | Required |

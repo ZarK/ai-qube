@@ -32,6 +32,7 @@ function cleanConfig() {
 describe('review gate model', () => {
   it('renders the Oracle-style default prompt when no reviewer is configured', () => {
     const config = getDefaults();
+    config.reviewAgents = [];
 
     const result = runReviewGate(config, { issueNumber: 93, repoRoot: makeGitRepo(), dryRun: true, promptOnly: true });
 
