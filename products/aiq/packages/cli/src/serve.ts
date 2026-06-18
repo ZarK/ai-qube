@@ -7,10 +7,7 @@ import {
   resolveAiqProgressStageIds,
 } from "@tjalve/aiq/config";
 import { resolveRunRequest, runEngine } from "@tjalve/aiq/engine";
-import {
-  type RunRequest,
-  type StageId,
-} from "@tjalve/aiq/model";
+import type { RunRequest, StageId } from "@tjalve/aiq/model";
 
 import { writeServeListeningOutput } from "./output.js";
 import {
@@ -48,7 +45,6 @@ interface PreparedServeRun {
   progress?: LoadedAiqProgress;
   request: RunRequest;
 }
-
 
 export async function runServeCommand(
   parsed: ParsedArgs,
@@ -288,7 +284,6 @@ function writeJsonResponse(response: ServerResponse, statusCode: number, payload
   response.setHeader("content-type", "application/json; charset=utf-8");
   response.end(`${JSON.stringify(payload)}\n`);
 }
-
 
 async function listenServer(server: Server, host: string, port: number): Promise<AddressInfo> {
   await new Promise<void>((resolve, reject) => {

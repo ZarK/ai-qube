@@ -171,7 +171,11 @@ export function createPythonProjectExecutionKey(project: PythonProject): string 
   return `${project.projectRoot}:${[...project.files].sort().join("|")}`;
 }
 
-export function readPythonUnitNote(summary: { failed: number; passed: number; total: number }): string {
+export function readPythonUnitNote(summary: {
+  failed: number;
+  passed: number;
+  total: number;
+}): string {
   if (summary.total === 0) {
     return "Pytest found no tests.";
   }

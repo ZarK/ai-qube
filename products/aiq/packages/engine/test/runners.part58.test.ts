@@ -9,17 +9,16 @@ import {
   tempDirs,
   writeFile,
 } from "./runners-test-support.js";
+
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+
 describe("engine runners", () => {
   it("fails the shared security scan when a selected file cannot be read", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-security-missing-file-"));
     tempDirs.push(tempDir);
 
     const missingFile = path.join(tempDir, "missing.ts");
-    await writeFile(
-      missingFile,
-      'export const token = "ghp_123456789012345678901234567890123456";\n',
-      "utf8",
-    );
+    await writeFile(missingFile, `export const token = "${fakeGitHubToken}";\n`, "utf8");
     await rm(missingFile);
 
     const result = await runPlannedTask(

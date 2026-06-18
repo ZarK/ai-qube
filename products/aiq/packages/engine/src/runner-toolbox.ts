@@ -115,9 +115,7 @@ export async function resolvePowerShellModuleManifest(
   return getRunnerToolRunner().resolvePowerShellModuleManifest(moduleName);
 }
 
-export async function resolveRequiredPowerShellModuleManifest(
-  moduleName: string,
-): Promise<string> {
+export async function resolveRequiredPowerShellModuleManifest(moduleName: string): Promise<string> {
   return getRunnerToolRunner().resolveRequiredPowerShellModuleManifest(moduleName);
 }
 

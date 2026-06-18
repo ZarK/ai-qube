@@ -4,7 +4,15 @@ import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../con
 import type { JvmRunnerRuntime } from "./contracts.js";
 import { resolveJvmLintOrFormatCommand } from "./jvm-tools.js";
 import type { JvmProject } from "./jvm-projects.js";
-import { createJvmSetupDiagnostics, createJvmSetupFailureStage, createUnsupportedJvmCommandMessage, createUnsupportedJvmSetupMessage, filterJvmFiles, resolveJvmProjects, runProjectBatches } from "./jvm-projects.js";
+import {
+  createJvmSetupDiagnostics,
+  createJvmSetupFailureStage,
+  createUnsupportedJvmCommandMessage,
+  createUnsupportedJvmSetupMessage,
+  filterJvmFiles,
+  resolveJvmProjects,
+  runProjectBatches,
+} from "./jvm-projects.js";
 
 export async function runJvmLintTask(
   task: PlannedTask,

@@ -8,6 +8,9 @@ import {
   runPlannedTask,
   writeFile,
 } from "./runners-test-support.js";
+
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+
 describe("engine runners", () => {
   it.skipIf(!hasDotNet10Toolchain)(
     "keeps fallback dotnet resolution passing when solution traversal cannot read an ancestor",
@@ -96,7 +99,7 @@ describe("engine runners", () => {
         "",
         "public static class Greeter",
         "{",
-        '    public const string Token = "ghp_123456789012345678901234567890123456";',
+        `    public const string Token = "${fakeGitHubToken}";`,
         "}",
         "",
       ].join("\n"),

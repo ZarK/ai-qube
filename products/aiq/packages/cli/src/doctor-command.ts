@@ -211,7 +211,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-
 function validateDoctorPrerequisiteVersion(prerequisite: DoctorPrerequisite): string | undefined {
   if (prerequisite.minimumMajor === undefined) {
     return undefined;
@@ -293,5 +292,3 @@ async function runCommand(
     return { exitCode: 1, stdout: "" };
   }
 }
-
-

@@ -18,7 +18,6 @@ export interface ServeRunRequestBody {
   stages?: string[];
 }
 
-
 export class ServeRequestValidationError extends Error {
   constructor(message: string) {
     super(message);
@@ -46,7 +45,10 @@ export class ServeRequestCancelledError extends Error {
   }
 }
 
-export async function readJsonRequest(request: IncomingMessage, signal?: AbortSignal): Promise<unknown> {
+export async function readJsonRequest(
+  request: IncomingMessage,
+  signal?: AbortSignal,
+): Promise<unknown> {
   const contentLength = request.headers["content-length"];
   const declaredBodyBytes = typeof contentLength === "string" ? Number(contentLength) : undefined;
   const declaredTooLarge =
@@ -248,7 +250,10 @@ export function parseProfile(value: string, source: string): AiqProfileName {
   return value as AiqProfileName;
 }
 
-export function destroyRequestAfterResponse(request: IncomingMessage, response: ServerResponse): void {
+export function destroyRequestAfterResponse(
+  request: IncomingMessage,
+  response: ServerResponse,
+): void {
   const destroyRequest = (): void => {
     if (!request.destroyed) {
       request.destroy();
@@ -262,5 +267,3 @@ export function destroyRequestAfterResponse(request: IncomingMessage, response: 
 
   response.once("finish", destroyRequest);
 }
-
-

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { IncomingHttpHeaders } from "./cli-test-support.js";
 import {
-  IncomingHttpHeaders,
   MemoryInput,
   MemoryOutput,
   createTypeScriptFixtureProject,

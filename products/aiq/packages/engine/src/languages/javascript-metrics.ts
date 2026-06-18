@@ -18,7 +18,12 @@ import type {
   JavaScriptMetricsProjectMetrics,
   JavaScriptProject,
 } from "./javascript-projects.js";
-import { filterJavaScriptMetricsFiles, isJavaScriptMetricsTaskFile, resolveJavaScriptMetricsFiles, resolveJavaScriptMetricsProjects } from "./javascript-projects.js";
+import {
+  filterJavaScriptMetricsFiles,
+  isJavaScriptMetricsTaskFile,
+  resolveJavaScriptMetricsFiles,
+  resolveJavaScriptMetricsProjects,
+} from "./javascript-projects.js";
 import {
   addCachedMetricDuration,
   addLizardFileMetrics,

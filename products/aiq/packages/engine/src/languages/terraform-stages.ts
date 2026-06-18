@@ -3,8 +3,17 @@ import path from "node:path";
 import type { StageId, StageResult } from "../contracts.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import type { HashicorpRunnerRuntime } from "./contracts.js";
-import { getTerraformValidationProjectResult, runGenericHclFormatFile, runGenericHclLintFile, runTerraformFormatProject } from "./hashicorp-tools.js";
-import { filterHashicorpTaskFiles, filterTerraformFiles, resolveHashicorpProjects } from "./hashicorp.js";
+import {
+  getTerraformValidationProjectResult,
+  runGenericHclFormatFile,
+  runGenericHclLintFile,
+  runTerraformFormatProject,
+} from "./hashicorp-tools.js";
+import {
+  filterHashicorpTaskFiles,
+  filterTerraformFiles,
+  resolveHashicorpProjects,
+} from "./hashicorp.js";
 import type { TerraformTask } from "./terraform.js";
 
 export async function runGenericHclFormatStage(

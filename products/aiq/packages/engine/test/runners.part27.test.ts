@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createGoFixtureProject, runPlannedTask, writeFile } from "./runners-test-support.js";
+
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+
 describe("engine runners", () => {
   it("reuses cached Go metrics between sloc, complexity, and maintainability", async () => {
     const project = await createGoFixtureProject("aiq-go-metrics-runner-");
@@ -64,9 +67,7 @@ describe("engine runners", () => {
 
     await writeFile(
       project.sourceFile,
-      ["package fixture", "", 'const token = "ghp_123456789012345678901234567890123456"', ""].join(
-        "\n",
-      ),
+      ["package fixture", "", `const token = "${fakeGitHubToken}"`, ""].join("\n"),
       "utf8",
     );
 

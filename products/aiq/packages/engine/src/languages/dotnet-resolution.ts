@@ -106,16 +106,37 @@ async function readDotNetSolutionProjectPaths(solutionPath: string): Promise<str
   const extension = path.extname(solutionPath).toLowerCase();
   const matches =
     extension === ".slnx"
-      ? [...contents.matchAll(/<Project\b[^>]*\bPath="([^"]+\.csproj)"/gu)].flatMap((match) =>
-          typeof match[1] === "string" ? [match[1]] : [],
-        )
-      : [...contents.matchAll(/Project\([^)]*\)\s*=\s*"[^"]*",\s*"([^"]+\.csproj)"/gu)].flatMap(
-          (match) => (typeof match[1] === "string" ? [match[1]] : []),
-        );
+      ? readSlnxProjectReferences(contents)
+      : readSlnProjectReferences(contents);
 
+  return normalizeDotNetSolutionProjectPaths(solutionRoot, matches);
+}
+
+function readSlnxProjectReferences(contents: string): string[] {
+  return readRegexCaptureValues(contents, /<Project\b[^>]*\bPath="([^"]+\.csproj)"/gu);
+}
+
+function readSlnProjectReferences(contents: string): string[] {
+  return readRegexCaptureValues(contents, /Project\([^)]*\)\s*=\s*"[^"]*",\s*"([^"]+\.csproj)"/gu);
+}
+
+function readRegexCaptureValues(contents: string, pattern: RegExp): string[] {
+  return [...contents.matchAll(pattern)].flatMap((match) =>
+    typeof match[1] === "string" ? [match[1]] : [],
+  );
+}
+
+function normalizeDotNetSolutionProjectPaths(
+  solutionRoot: string,
+  matches: readonly string[],
+): string[] {
   return [
-    ...new Set(matches.map((match) => path.resolve(solutionRoot, match.replace(/\\/gu, path.sep)))),
+    ...new Set(matches.map((match) => resolveDotNetSolutionProjectPath(solutionRoot, match))),
   ].sort((left, right) => left.localeCompare(right));
+}
+
+function resolveDotNetSolutionProjectPath(solutionRoot: string, projectPath: string): string {
+  return path.resolve(solutionRoot, projectPath.replace(/\\/gu, path.sep));
 }
 
 async function readOptionalTextFile(filePath: string | undefined): Promise<string | undefined> {

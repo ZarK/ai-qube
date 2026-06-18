@@ -139,7 +139,10 @@ export async function runBiomeFormatTask(
   }
 }
 
-function readBiomeStatus(exitCode: number | undefined, diagnosticCount: number): StageResult["status"] {
+function readBiomeStatus(
+  exitCode: number | undefined,
+  diagnosticCount: number,
+): StageResult["status"] {
   return exitCode === 0 && diagnosticCount === 0 ? "passed" : "failed";
 }
 
@@ -162,12 +165,7 @@ function addMissingBiomeDiagnostic(
     createProcessFailureDiagnostic(
       options.files[0] ?? options.cwd,
       "biome",
-      readProcessFailureMessage(
-        options.toolName,
-        options.stderr,
-        options.stdout,
-        options.exitCode,
-      ),
+      readProcessFailureMessage(options.toolName, options.stderr, options.stdout, options.exitCode),
     ),
   );
 }

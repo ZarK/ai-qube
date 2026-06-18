@@ -1,7 +1,13 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 
-import type { Diagnostic, ProjectDescriptor, ProjectGraph, ProjectMetadata, StageResult } from "../contracts.js";
+import type {
+  Diagnostic,
+  ProjectDescriptor,
+  ProjectGraph,
+  ProjectMetadata,
+  StageResult,
+} from "../contracts.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { pathExists } from "../utils/path-utils.js";
 import { createUnsupportedDotNetRunnerNote } from "./dotnet-tools.js";

@@ -301,9 +301,16 @@ async function runRustProjectTestTask(
       tool,
     });
 
-    const status =
-      coverage.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
-    appendSilentRustTestFailureDiagnostic({ mode, outcome, project, report, runtime, status, tool });
+    const status = coverage.exitCode === 0 && report.diagnostics.length === 0 ? "passed" : "failed";
+    appendSilentRustTestFailureDiagnostic({
+      mode,
+      outcome,
+      project,
+      report,
+      runtime,
+      status,
+      tool,
+    });
 
     return {
       diagnostics: report.diagnostics,
@@ -344,7 +351,11 @@ function readMissingRustCoverageToolResult(
     "Rust coverage requires the cargo-llvm-cov subcommand. Install it with `cargo install cargo-llvm-cov`, or disable Rust coverage.";
   return {
     diagnostics: [
-      runtime.createProcessFailureDiagnostic(project.files[0] ?? project.manifestPath, tool, message),
+      runtime.createProcessFailureDiagnostic(
+        project.files[0] ?? project.manifestPath,
+        tool,
+        message,
+      ),
     ],
     durationMs: outcome.durationMs,
     notImplemented: false,
@@ -384,7 +395,7 @@ async function readRustCoverageResult(context: RustCoverageContext): Promise<Rus
 }
 
 function appendSilentRustTestFailureDiagnostic(context: {
-  mode: "coverage" | "unit",
+  mode: "coverage" | "unit";
   outcome: RustCommandOutcome;
   project: RustProject;
   report: RustTestReport;

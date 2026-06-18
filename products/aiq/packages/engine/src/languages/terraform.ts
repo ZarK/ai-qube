@@ -2,8 +2,7 @@ import path from "node:path";
 
 import type { PlannedTask, StageId, StageResult } from "../contracts.js";
 import type { HashicorpRunnerRuntime } from "./contracts.js";
-import {
-} from "./hashicorp-tools.js";
+import {} from "./hashicorp-tools.js";
 import {
   discoverHashicorpProjects,
   filterHashicorpTaskFiles,

@@ -115,7 +115,9 @@ export async function readJsonValue(filePath: string): Promise<unknown> {
   }
 }
 
-export async function readOptionalTextFile(filePath: string | undefined): Promise<string | undefined> {
+export async function readOptionalTextFile(
+  filePath: string | undefined,
+): Promise<string | undefined> {
   if (filePath === undefined || !(await pathExists(filePath))) {
     return undefined;
   }

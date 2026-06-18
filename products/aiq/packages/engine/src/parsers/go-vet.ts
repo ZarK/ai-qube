@@ -1,8 +1,5 @@
 import type { Diagnostic } from "../contracts.js";
-import {
-  deduplicateDiagnostics,
-  readString,
-} from "./utils.js";
+import { deduplicateDiagnostics, readString } from "./utils.js";
 import { parseGoPosition } from "./go.js";
 
 export function parseGoVetDiagnostics(stderr: string, stdout: string, cwd: string): Diagnostic[] {
@@ -202,11 +199,5 @@ function readDirectGoVetDiagnostic(
 }
 
 function isIgnoredGoVetNestedKey(key: string): boolean {
-  return [
-    "message",
-    "posn",
-    "position",
-    "suggestedFixes",
-    "suggested_fixes",
-  ].includes(key);
+  return ["message", "posn", "position", "suggestedFixes", "suggested_fixes"].includes(key);
 }

@@ -2,12 +2,7 @@
   "continuation": {
     "allowBackgroundScheduling": false,
     "allowProviderMutation": false,
-    "modes": [
-      "continue",
-      "repair",
-      "wait",
-      "stop"
-    ],
+    "modes": ["continue", "repair", "wait", "stop"],
     "stopOnSupplyChainApprovalBlock": true,
     "stopOnUnknownState": true,
     "stopOnUnsafeState": true,
@@ -40,24 +35,11 @@
         "userActivity": true
       }
     },
-    "enabled": [
-      "opencode",
-      "codex",
-      "claude-code"
-    ],
+    "enabled": ["opencode", "codex", "claude-code"],
     "modes": {
-      "claude-code": [
-        "stop"
-      ],
-      "codex": [
-        "stop"
-      ],
-      "opencode": [
-        "continue",
-        "repair",
-        "wait",
-        "stop"
-      ]
+      "claude-code": ["stop"],
+      "codex": ["stop"],
+      "opencode": ["continue", "repair", "wait", "stop"]
     }
   },
   "paths": {
@@ -74,13 +56,7 @@
   },
   "trustedStateCommands": {
     "quality": {
-      "argv": [
-        "node",
-        "packages/cli/dist/bin/aiq.js",
-        "evidence",
-        "--format",
-        "json"
-      ],
+      "argv": ["node", "packages/cli/dist/bin/aiq.js", "evidence", "--format", "json"],
       "maxOutputBytes": 1048576,
       "timeoutMs": 30000
     }

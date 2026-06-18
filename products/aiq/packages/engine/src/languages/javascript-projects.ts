@@ -9,9 +9,19 @@ import type {
 } from "../contracts.js";
 import type { LizardMetricsFileMetrics } from "../parsers/lizard.js";
 import { findNearestLizardConfig } from "../tools/native-config.js";
-import { type JavaScriptTestExecutionMode, type JavaScriptTestRunner, detectJavaScriptTestRunner, findNearestPackageJson, hasPackageDependency, javaScriptMetricsSourceExtensions, readPackageJson, resolveJavaScriptTestExecutionMode } from "../utils/node-utils.js";
+import {
+  type JavaScriptTestExecutionMode,
+  type JavaScriptTestRunner,
+  findNearestPackageJson,
+  hasPackageDependency,
+  javaScriptMetricsSourceExtensions,
+  readPackageJson,
+  resolveJavaScriptTestExecutionMode,
+} from "../utils/node-utils.js";
 import type { JavaScriptRunnerRuntime } from "./contracts.js";
 import { readPackageScript, readProjectName } from "./javascript-utils.js";
+import { findConfiguredJavaScriptTestProject } from "./javascript-workspaces.js";
+export { packageJsonCoversWorkspaceProject } from "./javascript-workspaces.js";
 
 type JavaScriptPackageProjectDescriptor = ProjectDescriptor & {
   metadata: ProjectMetadata & {
@@ -187,8 +197,8 @@ export async function resolveSelectedJavaScriptProjects(packageProjects: {
 
   const projects = await Promise.all(
     packageProjects.projects.map(async (project) => {
-      const runner = await detectJavaScriptTestRunner(project.projectRoot);
-      if (runner === undefined) {
+      const configuredProject = await findConfiguredJavaScriptTestProject(project);
+      if (configuredProject === undefined) {
         unsupportedProjects.set(
           project.projectRoot,
           await createUnsupportedJavaScriptTestProject(project),
@@ -197,22 +207,46 @@ export async function resolveSelectedJavaScriptProjects(packageProjects: {
       }
 
       return {
-        executionMode: await resolveJavaScriptTestExecutionMode(project.projectRoot, runner),
-        files: project.files,
-        projectRoot: project.projectRoot,
-        runner,
+        executionMode: await resolveJavaScriptTestExecutionMode(
+          configuredProject.projectRoot,
+          configuredProject.runner,
+        ),
+        files: configuredProject.files,
+        projectRoot: configuredProject.projectRoot,
+        runner: configuredProject.runner,
       };
     }),
   );
 
   return {
-    projects: projects
-      .filter((project): project is JavaScriptProject => project !== undefined)
-      .sort((left, right) => left.projectRoot.localeCompare(right.projectRoot)),
+    projects: mergeJavaScriptProjects(
+      projects.filter((project): project is JavaScriptProject => project !== undefined),
+    ),
     unsupportedProjects: [...unsupportedProjects.values()].sort((left, right) =>
       left.projectRoot.localeCompare(right.projectRoot),
     ),
   };
+}
+
+function mergeJavaScriptProjects(projects: readonly JavaScriptProject[]): JavaScriptProject[] {
+  const mergedProjects = new Map<string, JavaScriptProject>();
+
+  for (const project of projects) {
+    const key = `${project.projectRoot}\0${project.runner}\0${project.executionMode}`;
+    const existingProject = mergedProjects.get(key);
+    if (existingProject === undefined) {
+      mergedProjects.set(key, { ...project, files: [...project.files] });
+      continue;
+    }
+
+    existingProject.files = [...new Set([...existingProject.files, ...project.files])].sort(
+      (left, right) => left.localeCompare(right),
+    );
+  }
+
+  return [...mergedProjects.values()].sort((left, right) =>
+    left.projectRoot.localeCompare(right.projectRoot),
+  );
 }
 
 export async function createUnsupportedJavaScriptTestProject(
@@ -259,62 +293,6 @@ export async function resolveJavaScriptMetricsProjects(
   }
 
   return resolvePackageProjectsFromFiles(files, isJavaScriptMetricsTaskFile);
-}
-
-export async function packageJsonCoversWorkspaceProject(
-  packageJsonPath: string,
-  projectRoot: string,
-): Promise<boolean> {
-  const packageJson = await readPackageJson(packageJsonPath);
-  const workspacePatterns = readWorkspacePatterns(packageJson);
-  if (workspacePatterns.length === 0) {
-    return false;
-  }
-
-  const root = path.dirname(packageJsonPath);
-  const relativeProjectRoot = path.relative(root, projectRoot).replace(/\\/gu, "/");
-  if (relativeProjectRoot.length === 0 || relativeProjectRoot.startsWith("../")) {
-    return false;
-  }
-
-  return workspacePatterns.some((pattern) =>
-    workspacePatternMatchesProject(pattern, relativeProjectRoot),
-  );
-}
-
-export function readWorkspacePatterns(packageJson: Record<string, unknown>): string[] {
-  const workspaces = packageJson.workspaces;
-  if (Array.isArray(workspaces)) {
-    return workspaces.filter((entry): entry is string => typeof entry === "string");
-  }
-
-  if (typeof workspaces === "object" && workspaces !== null) {
-    const packages = (workspaces as Record<string, unknown>).packages;
-    return Array.isArray(packages)
-      ? packages.filter((entry): entry is string => typeof entry === "string")
-      : [];
-  }
-
-  return [];
-}
-
-export function workspacePatternMatchesProject(pattern: string, relativeProjectRoot: string): boolean {
-  const normalizedPattern = pattern.replace(/\\/gu, "/").replace(/\/+$/u, "");
-  if (normalizedPattern.endsWith("/**")) {
-    const prefix = normalizedPattern.slice(0, -"/**".length);
-    return relativeProjectRoot === prefix || relativeProjectRoot.startsWith(`${prefix}/`);
-  }
-
-  if (normalizedPattern.endsWith("/*")) {
-    const prefix = normalizedPattern.slice(0, -"/*".length);
-    if (!relativeProjectRoot.startsWith(`${prefix}/`)) {
-      return false;
-    }
-
-    return !relativeProjectRoot.slice(prefix.length + 1).includes("/");
-  }
-
-  return relativeProjectRoot === normalizedPattern;
 }
 
 export async function resolvePackageProjectsFromFiles(

@@ -137,7 +137,12 @@ export async function runJavaScriptE2eTask(
       resolvedProjects.projects,
       runtime,
     );
-    appendUnsupportedJavaScriptE2eFiles(resolvedProjects.unsupportedFiles, runtime, diagnostics, notes);
+    appendUnsupportedJavaScriptE2eFiles(
+      resolvedProjects.unsupportedFiles,
+      runtime,
+      diagnostics,
+      notes,
+    );
 
     if (projects.length === 0) {
       return createNoJavaScriptE2eProjectsStageResult(

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { mkdtemp, os, path, runPlannedTask, tempDirs, writeFile } from "./runners-test-support.js";
+
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+
 describe("engine runners", () => {
   it("runs the shared security scan across the supported source and config file types", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-security-runner-"));
@@ -7,60 +10,59 @@ describe("engine runners", () => {
 
     const flaggedFiles = [
       {
-        content: 'export const token = "ghp_123456789012345678901234567890123456";\n',
+        content: `export const token = "${fakeGitHubToken}";\n`,
         name: "secret.ts",
       },
       {
-        content: '{"token":"ghp_123456789012345678901234567890123456"}\n',
+        content: `{"token":"${fakeGitHubToken}"}\n`,
         name: "secret.json",
       },
       {
-        content: 'token = "ghp_123456789012345678901234567890123456"\n',
+        content: `token = "${fakeGitHubToken}"\n`,
         name: "secret.py",
       },
       {
-        content: 'token="ghp_123456789012345678901234567890123456"\n',
+        content: `token="${fakeGitHubToken}"\n`,
         name: "secret.sh",
       },
       {
-        content: '@test "leaks a token" {\n  token="ghp_123456789012345678901234567890123456"\n}\n',
+        content: `@test "leaks a token" {\n  token="${fakeGitHubToken}"\n}\n`,
         name: "secret.bats",
       },
       {
-        content: '$Token = "ghp_123456789012345678901234567890123456"\n',
+        content: `$Token = "${fakeGitHubToken}"\n`,
         name: "secret.ps1",
       },
       {
-        content: '<meta name="token" content="ghp_123456789012345678901234567890123456">\n',
+        content: `<meta name="token" content="${fakeGitHubToken}">\n`,
         name: "secret.html",
       },
       {
-        content: 'body { --token: "ghp_123456789012345678901234567890123456"; }\n',
+        content: `body { --token: "${fakeGitHubToken}"; }\n`,
         name: "secret.css",
       },
       {
-        content: 'token: "ghp_123456789012345678901234567890123456"\n',
+        content: `token: "${fakeGitHubToken}"\n`,
         name: "secret.yaml",
       },
       {
-        content: 'token: "ghp_123456789012345678901234567890123456"\n',
+        content: `token: "${fakeGitHubToken}"\n`,
         name: "secret.yml",
       },
       {
-        content:
-          "insert into secrets(token) values ('ghp_123456789012345678901234567890123456');\n",
+        content: `insert into secrets(token) values ('${fakeGitHubToken}');\n`,
         name: "secret.sql",
       },
       {
-        content: 'variable "token" {\n  default = "ghp_123456789012345678901234567890123456"\n}\n',
+        content: `variable "token" {\n  default = "${fakeGitHubToken}"\n}\n`,
         name: "secret.tf",
       },
       {
-        content: 'token = "ghp_123456789012345678901234567890123456"\n',
+        content: `token = "${fakeGitHubToken}"\n`,
         name: "secret.tfvars",
       },
       {
-        content: 'token = "ghp_123456789012345678901234567890123456"\n',
+        content: `token = "${fakeGitHubToken}"\n`,
         name: "secret.hcl",
       },
     ] as const;

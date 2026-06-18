@@ -78,10 +78,7 @@ export function addPythonFileMetrics(
   }
 }
 
-function addLizardMetricFile(
-  totals: SharedMetricTotals,
-  fileMetrics: LizardLikeFileMetrics,
-): void {
+function addLizardMetricFile(totals: SharedMetricTotals, fileMetrics: LizardLikeFileMetrics): void {
   totals.totalSloc += fileMetrics.raw.sloc;
   totals.totalBlocks += fileMetrics.blockCount;
   if (fileMetrics.maxComplexity.score > totals.maxComplexity) {
@@ -94,10 +91,7 @@ function addLizardMetricFile(
   }
 }
 
-function addPythonMetricFile(
-  totals: SharedMetricTotals,
-  fileMetrics: PythonLikeFileMetrics,
-): void {
+function addPythonMetricFile(totals: SharedMetricTotals, fileMetrics: PythonLikeFileMetrics): void {
   totals.totalSloc += fileMetrics.raw.sloc;
   totals.totalBlocks += fileMetrics.cc.length;
   for (const block of fileMetrics.cc) {

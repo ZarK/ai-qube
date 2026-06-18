@@ -2,7 +2,11 @@ import { readFile } from "node:fs/promises";
 
 import type { Diagnostic, PlannedTask, StageResult } from "./contracts.js";
 import { securityExtensions } from "./runner-file-rules.js";
-import { createExecutionFailureStage, createNoopStageResult, createToolRunResult } from "./runner-results.js";
+import {
+  createExecutionFailureStage,
+  createNoopStageResult,
+  createToolRunResult,
+} from "./runner-results.js";
 import { filterFiles, throwIfAbortError } from "./runner-toolbox.js";
 
 const sharedSecurityPatterns: Array<{ message: string; pattern: RegExp }> = [
@@ -97,5 +101,7 @@ function readSecurityRuleDiagnostic(
 function readSharedSecurityNotes(status: StageResult["status"], diagnosticCount: number): string[] {
   return status === "passed"
     ? ["Shared security scan passed."]
-    : [`Shared security scan reported ${diagnosticCount} finding${diagnosticCount === 1 ? "" : "s"}.`];
+    : [
+        `Shared security scan reported ${diagnosticCount} finding${diagnosticCount === 1 ? "" : "s"}.`,
+      ];
 }

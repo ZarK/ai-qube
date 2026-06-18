@@ -360,32 +360,44 @@ function computeLocBand(loc: number): BenchmarkScaleBand {
 }
 
 function resolveScenarioOutDir(baseOutDir: string, scenarioId: string): string {
-  if (
-    scenarioId.trim().length === 0 ||
-    scenarioId === "." ||
-    scenarioId === ".." ||
-    scenarioId.includes(path.posix.sep) ||
-    scenarioId.includes(path.win32.sep)
-  ) {
-    throw new Error(
-      `Invalid benchmark scenario id '${scenarioId}'. Scenario ids must not be empty or contain path separators.`,
-    );
-  }
+  assertValidScenarioId(scenarioId);
 
   const resolvedBaseOutDir = path.resolve(baseOutDir);
   const scenarioOutDir = path.resolve(resolvedBaseOutDir, scenarioId);
   const relativeScenarioOutDir = path.relative(resolvedBaseOutDir, scenarioOutDir);
-  if (
-    relativeScenarioOutDir.length === 0 ||
-    relativeScenarioOutDir === "." ||
-    relativeScenarioOutDir === ".." ||
-    relativeScenarioOutDir.startsWith(`..${path.sep}`) ||
-    path.isAbsolute(relativeScenarioOutDir)
-  ) {
+  if (!isRelativeScenarioOutDirSafe(relativeScenarioOutDir)) {
     throw new Error(`Invalid benchmark scenario id '${scenarioId}'.`);
   }
 
   return scenarioOutDir;
+}
+
+function assertValidScenarioId(scenarioId: string): void {
+  if (!isValidScenarioId(scenarioId)) {
+    throw new Error(
+      `Invalid benchmark scenario id '${scenarioId}'. Scenario ids must not be empty or contain path separators.`,
+    );
+  }
+}
+
+function isValidScenarioId(scenarioId: string): boolean {
+  return (
+    scenarioId.trim().length > 0 &&
+    scenarioId !== "." &&
+    scenarioId !== ".." &&
+    !scenarioId.includes(path.posix.sep) &&
+    !scenarioId.includes(path.win32.sep)
+  );
+}
+
+function isRelativeScenarioOutDirSafe(relativeScenarioOutDir: string): boolean {
+  return (
+    relativeScenarioOutDir.length > 0 &&
+    relativeScenarioOutDir !== "." &&
+    relativeScenarioOutDir !== ".." &&
+    !relativeScenarioOutDir.startsWith(`..${path.sep}`) &&
+    !path.isAbsolute(relativeScenarioOutDir)
+  );
 }
 
 export function formatError(error: unknown): string {

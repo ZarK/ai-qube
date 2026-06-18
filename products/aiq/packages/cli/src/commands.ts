@@ -64,7 +64,6 @@ export { runDoctorCommand, runSetupCommand } from "./doctor-command.js";
 export { runStatusCommand } from "./status-command.js";
 import { loadOptionalRunProgress } from "./status-command.js";
 
-
 export async function runBenchCommand(parsed: ParsedArgs, io: CliIo): Promise<number> {
   try {
     const { report } = await runBenchmarkSuite({
@@ -156,7 +155,6 @@ export async function runPlanCommand(parsed: ParsedArgs, io: CliIo): Promise<num
     return 1;
   }
 }
-
 
 export function runSetupGuidanceCommand(parsed: ParsedArgs, io: CliIo): number {
   const command = parsed.command as SetupGuidanceCommand;

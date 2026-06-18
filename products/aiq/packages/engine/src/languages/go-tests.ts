@@ -3,17 +3,14 @@ import os from "node:os";
 import path from "node:path";
 
 import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../contracts.js";
-import { createLizardMetricsDiagnostics } from "../metrics-thresholds.js";
 import * as commands from "../tools/command-builders.js";
-import type { GoRunnerRuntime, SharedMetricsMode } from "./contracts.js";
+import type { GoRunnerRuntime } from "./contracts.js";
 import {
-  getGoMetricsProjectMetrics,
   parseGoCoveragePercent,
   parseGoTestReport,
   readGoCoverageNote,
   readGoUnitNote,
   resolveGoBinary,
-  resolveGoProjectSourceFiles,
 } from "./go-tools.js";
 import type { GoProject } from "./go-projects.js";
 import {
@@ -22,19 +19,10 @@ import {
   createGoProjectResolutionMessage,
   filterGoFiles,
   findFileExists,
-  isGoTaskFile,
   resolveGoProjects,
   runProjectBatches,
 } from "./go-projects.js";
-import {
-  appendUnsupportedSharedMetricsIssue,
-  collectUnsupportedSharedMetricsFiles,
-} from "./shared-metrics-support.js";
-import {
-  addCachedMetricDuration,
-  addLizardFileMetrics,
-  createSharedMetricTotals,
-} from "./shared-metrics-accumulator.js";
+export { runGoMetricsTask } from "./go-metrics-task.js";
 
 type GoCommandOutcome = Awaited<ReturnType<GoRunnerRuntime["runExecutable"]>>;
 type GoTestReport = ReturnType<typeof parseGoTestReport>;
@@ -67,115 +55,6 @@ export async function runGoCoverageTask(
   runtime: GoRunnerRuntime,
 ): Promise<StageResult> {
   return runGoTestStage(task, runtime, "coverage");
-}
-
-export async function runGoMetricsTask(
-  task: PlannedTask,
-  runtime: GoRunnerRuntime,
-  mode: SharedMetricsMode,
-): Promise<StageResult> {
-  const files = filterGoFiles(task.files);
-  if (files.length === 0) {
-    return runtime.createNoopStageResult(
-      task.stageId,
-      `No Go files were selected for ${task.stageId}.`,
-    );
-  }
-
-  const diagnostics: Diagnostic[] = [];
-  const notes: string[] = [];
-  const toolRuns: ToolRunResult[] = [];
-  const totals = createSharedMetricTotals();
-  let unsupportedFiles: string[] = [];
-
-  try {
-    const resolvedProjects = await resolveGoProjects(runtime.graph, files);
-    unsupportedFiles = resolvedProjects.unsupportedFiles;
-    const projects = await Promise.all(
-      resolvedProjects.projects.map(async (project) => ({
-        ...project,
-        files: await resolveGoProjectSourceFiles(project, runtime),
-      })),
-    );
-
-    for (const project of projects) {
-      if (project.files.length === 0) {
-        continue;
-      }
-
-      const cachedMetrics = await getGoMetricsProjectMetrics(project, runtime);
-      addCachedMetricDuration(totals, cachedMetrics);
-      addLizardFileMetrics(totals, cachedMetrics.metrics.files);
-      toolRuns.push(
-        runtime.createToolRunResult(
-          "lizard",
-          cachedMetrics.metrics.args,
-          cachedMetrics.cacheHit ? 0 : cachedMetrics.metrics.durationMs,
-          cachedMetrics.metrics.exitCode,
-          "passed",
-          cachedMetrics.metrics.finishedAt,
-          cachedMetrics.metrics.startedAt,
-          cachedMetrics.cacheHit,
-        ),
-      );
-
-      diagnostics.push(
-        ...createLizardMetricsDiagnostics(cachedMetrics.metrics.files, mode, "lizard"),
-      );
-    }
-  } catch (error) {
-    runtime.throwIfAbortError(error);
-    return runtime.createExecutionFailureStage(
-      task.stageId,
-      "lizard",
-      files[0] ?? runtime.cwd,
-      error,
-      totals.totalDurationMs,
-      diagnostics,
-      toolRuns,
-    );
-  }
-
-  notes.push(
-    runtime.readSharedMetricsNote(
-      "Go",
-      mode,
-      totals.scannedFileCount,
-      totals.totalSloc,
-      totals.totalBlocks,
-      totals.maxComplexity,
-      totals.maxRank,
-      totals.minMaintainability,
-      totals.minMaintainabilityRank,
-      "functions",
-    ),
-  );
-
-  if (toolRuns.some((toolRun) => toolRun.cacheHit)) {
-    notes.push("Reused cached Go metrics for this file batch.");
-  }
-
-  unsupportedFiles = collectUnsupportedSharedMetricsFiles(unsupportedFiles, task.files, (file) => {
-    return isGoTaskFile(file) || runtime.isSharedMetricsCompanionFile(file);
-  });
-  appendUnsupportedSharedMetricsIssue({
-    createProcessFailureDiagnostic: runtime.createProcessFailureDiagnostic,
-    diagnostics,
-    languageLabel: "Go",
-    notes,
-    stageId: task.stageId,
-    supportedFileDescription: "Go files or Go project files",
-    unsupportedFiles,
-  });
-
-  return {
-    diagnostics,
-    durationMs: totals.totalDurationMs,
-    notes,
-    stageId: task.stageId,
-    status: diagnostics.length > 0 ? "failed" : "passed",
-    toolRuns,
-  };
 }
 
 async function runGoTestStage(
@@ -309,7 +188,10 @@ async function runGoProjectTestTask(
   }
 }
 
-function createGoTestExecution(outcome: GoCommandOutcome, args: readonly string[]): GoTestExecution {
+function createGoTestExecution(
+  outcome: GoCommandOutcome,
+  args: readonly string[],
+): GoTestExecution {
   return {
     coveragePercent: undefined,
     durationMs: outcome.durationMs,
@@ -338,7 +220,9 @@ async function readGoCoverageExecution(context: GoCoverageContext): Promise<GoTe
   return execution;
 }
 
-async function readGoCoverageProfileExecution(context: GoCoverageContext): Promise<GoTestExecution> {
+async function readGoCoverageProfileExecution(
+  context: GoCoverageContext,
+): Promise<GoTestExecution> {
   const coverageArgs = commands.createGoCoverageArgs({ func: context.coveragePath });
   const coverageOutcome = await context.runtime.runExecutable(
     context.goCommand,
@@ -385,7 +269,7 @@ function appendGoCoverageFailureDiagnostic(
 }
 
 function appendSilentGoTestFailureDiagnostic(context: {
-  mode: "coverage" | "unit",
+  mode: "coverage" | "unit";
   outcome: GoCommandOutcome;
   project: GoProject;
   report: GoTestReport;

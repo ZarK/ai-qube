@@ -63,6 +63,18 @@ interface ResolvedHookSelection {
   workflow?: AiqProgressRunSelection;
 }
 
+interface ResolvedHookAdapterDependencies {
+  cwd: string;
+  diffFilter: string;
+  gitBinary: string;
+  listStagedFilesImpl: ListStagedFilesImpl;
+  profile: AiqProfileName | undefined;
+  resolveConfigImpl: typeof resolveAiqConfig;
+  runEngineImpl: typeof runEngine;
+  stages: readonly StageId[] | undefined;
+  writeArtifacts: boolean;
+}
+
 export class AiqHookCancelledError extends Error {
   constructor(message = "AIQ hook run cancelled.") {
     super(message);
@@ -90,15 +102,16 @@ export class AiqHookAdapter {
   private readonly writeArtifacts: boolean;
 
   constructor(options: AiqHookAdapterOptions = {}) {
-    this.cwd = path.resolve(options.cwd ?? process.cwd());
-    this.diffFilter = options.diffFilter ?? defaultGitDiffFilter;
-    this.gitBinary = options.gitBinary ?? "git";
-    this.listStagedFilesImpl = options.listStagedFilesImpl ?? listStagedFiles;
-    this.stages = options.stages;
-    this.profile = options.profile;
-    this.resolveConfigImpl = options.resolveConfigImpl ?? resolveAiqConfig;
-    this.runEngineImpl = options.runEngineImpl ?? runEngine;
-    this.writeArtifacts = options.writeArtifacts ?? true;
+    const dependencies = resolveHookAdapterDependencies(options);
+    this.cwd = dependencies.cwd;
+    this.diffFilter = dependencies.diffFilter;
+    this.gitBinary = dependencies.gitBinary;
+    this.listStagedFilesImpl = dependencies.listStagedFilesImpl;
+    this.stages = dependencies.stages;
+    this.profile = dependencies.profile;
+    this.resolveConfigImpl = dependencies.resolveConfigImpl;
+    this.runEngineImpl = dependencies.runEngineImpl;
+    this.writeArtifacts = dependencies.writeArtifacts;
   }
 
   async run(options: AiqHookRunOptions = {}): Promise<AiqHookRunResult> {
@@ -191,6 +204,26 @@ export class AiqHookAdapter {
 
 export function createAiqHookAdapter(options?: AiqHookAdapterOptions): AiqHookAdapter {
   return new AiqHookAdapter(options);
+}
+
+function resolveHookAdapterDependencies(
+  options: AiqHookAdapterOptions,
+): ResolvedHookAdapterDependencies {
+  return {
+    cwd: path.resolve(withDefault(options.cwd, process.cwd())),
+    diffFilter: withDefault(options.diffFilter, defaultGitDiffFilter),
+    gitBinary: withDefault(options.gitBinary, "git"),
+    listStagedFilesImpl: withDefault(options.listStagedFilesImpl, listStagedFiles),
+    profile: options.profile,
+    resolveConfigImpl: withDefault(options.resolveConfigImpl, resolveAiqConfig),
+    runEngineImpl: withDefault(options.runEngineImpl, runEngine),
+    stages: options.stages,
+    writeArtifacts: withDefault(options.writeArtifacts, true),
+  };
+}
+
+function withDefault<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
 }
 
 export async function runAiqHook(

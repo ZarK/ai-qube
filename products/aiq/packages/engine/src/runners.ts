@@ -90,10 +90,7 @@ import { runTypeScriptTypecheckTask as runTypeScriptTypecheckLanguageTask } from
 import * as parsers from "./parsers/index.js";
 import { type Registry, createRegistry } from "./registries.js";
 import { runBiomeFormatTask, runBiomeLintTask } from "./runner-biome-tasks.js";
-import {
-  runPrettierDocumentFormatTask,
-  runSqlFormatTask,
-} from "./runner-document-format-tasks.js";
+import { runPrettierDocumentFormatTask, runSqlFormatTask } from "./runner-document-format-tasks.js";
 import {
   runCssLintTask,
   runHtmlLintTask,

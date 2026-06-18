@@ -29,6 +29,16 @@ import type {
   ResolvedMcpSelection,
 } from "./types.js";
 
+interface ResolvedMcpAdapterDependencies {
+  cwd: string;
+  profile: AiqProfileName | undefined;
+  readFileImpl: typeof readFile;
+  resolveConfigImpl: typeof resolveAiqConfig;
+  runEngineImpl: typeof runEngine;
+  stages: readonly StageId[] | undefined;
+  writeArtifacts: boolean;
+}
+
 export class AiqMcpAdapter {
   private readonly cwd: string;
 
@@ -45,13 +55,14 @@ export class AiqMcpAdapter {
   private readonly writeArtifacts: boolean;
 
   constructor(options: AiqMcpServerOptions = {}) {
-    this.cwd = path.resolve(options.cwd ?? process.cwd());
-    this.stages = options.stages;
-    this.profile = options.profile;
-    this.readFileImpl = options.readFileImpl ?? readFile;
-    this.resolveConfigImpl = options.resolveConfigImpl ?? resolveAiqConfig;
-    this.runEngineImpl = options.runEngineImpl ?? runEngine;
-    this.writeArtifacts = options.writeArtifacts ?? false;
+    const dependencies = resolveMcpAdapterDependencies(options);
+    this.cwd = dependencies.cwd;
+    this.stages = dependencies.stages;
+    this.profile = dependencies.profile;
+    this.readFileImpl = dependencies.readFileImpl;
+    this.resolveConfigImpl = dependencies.resolveConfigImpl;
+    this.runEngineImpl = dependencies.runEngineImpl;
+    this.writeArtifacts = dependencies.writeArtifacts;
   }
 
   async check(options: AiqMcpCheckOptions): Promise<AiqMcpCheckResult> {
@@ -230,6 +241,24 @@ export class AiqMcpAdapter {
         : { workflow: createAiqProgressRunSelection(progress, resolved.stages) }),
     };
   }
+}
+
+function resolveMcpAdapterDependencies(
+  options: AiqMcpServerOptions,
+): ResolvedMcpAdapterDependencies {
+  return {
+    cwd: path.resolve(withDefault(options.cwd, process.cwd())),
+    profile: options.profile,
+    readFileImpl: withDefault(options.readFileImpl, readFile),
+    resolveConfigImpl: withDefault(options.resolveConfigImpl, resolveAiqConfig),
+    runEngineImpl: withDefault(options.runEngineImpl, runEngine),
+    stages: options.stages,
+    writeArtifacts: withDefault(options.writeArtifacts, false),
+  };
+}
+
+function withDefault<T>(value: T | undefined, fallback: T): T {
+  return value === undefined ? fallback : value;
 }
 
 export async function runAiqMcpCheck(

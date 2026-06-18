@@ -2,7 +2,10 @@ import path from "node:path";
 
 import type { LanguageId, RunStageConfiguration } from "./contracts.js";
 import { isJvmTaskFile as isJvmLanguageTaskFile } from "./languages/jvm.js";
-import { pythonTaskConfigNames, pythonTaskExtensions as pythonExtensions } from "./languages/python.js";
+import {
+  pythonTaskConfigNames,
+  pythonTaskExtensions as pythonExtensions,
+} from "./languages/python.js";
 import { isHclFile, isTerraformFile } from "./languages/terraform.js";
 
 export const biomeExtensions = new Set([
@@ -148,22 +151,34 @@ export function shouldSkipScriptProjectDirectory(directoryPath: string): boolean
 
 function isPythonTaskFile(file: string): boolean {
   const extension = path.extname(file).toLowerCase();
-  return pythonExtensions.has(extension) || pythonTaskConfigNames.includes(path.basename(file).toLowerCase());
+  return (
+    pythonExtensions.has(extension) ||
+    pythonTaskConfigNames.includes(path.basename(file).toLowerCase())
+  );
 }
 
 function isJavaScriptMetricsTaskFile(file: string): boolean {
   const extension = path.extname(file).toLowerCase();
-  return javaScriptMetricsSourceExtensions.has(extension) || path.basename(file).toLowerCase() === "package.json";
+  return (
+    javaScriptMetricsSourceExtensions.has(extension) ||
+    path.basename(file).toLowerCase() === "package.json"
+  );
 }
 
 function isGoTaskFile(file: string): boolean {
   const extension = path.extname(file).toLowerCase();
-  return goSourceExtensions.has(extension) || goProjectConfigNames.includes(path.basename(file).toLowerCase());
+  return (
+    goSourceExtensions.has(extension) ||
+    goProjectConfigNames.includes(path.basename(file).toLowerCase())
+  );
 }
 
 function isRustTaskFile(file: string): boolean {
   const extension = path.extname(file).toLowerCase();
-  return rustSourceExtensions.has(extension) || rustProjectConfigNames.includes(path.basename(file).toLowerCase());
+  return (
+    rustSourceExtensions.has(extension) ||
+    rustProjectConfigNames.includes(path.basename(file).toLowerCase())
+  );
 }
 
 export function isSharedMetricsSupportedFile(filePath: string): boolean {
@@ -180,6 +195,14 @@ export function isSharedMetricsSupportedFile(filePath: string): boolean {
     kotlinSourceExtensions.has(extension) ||
     jvmTaskConfigNames.includes(basename)
   );
+}
+
+export function isSharedMetricsCompanionFile(filePath: string): boolean {
+  return path.basename(filePath).toLowerCase() === "tsconfig.json";
+}
+
+export function isSharedMetricsSelectionFile(filePath: string): boolean {
+  return isSharedMetricsSupportedFile(filePath) || isSharedMetricsCompanionFile(filePath);
 }
 
 export function groupConfiguredStageLanguages(
@@ -199,9 +222,15 @@ export function filterFilesForConfiguredLanguages(
   languageId: LanguageId,
   toolId: string,
 ): string[] {
-  return toolId === "biome"
-    ? files.filter((file) => fileMatchesConfiguredBiomeLanguage(file, languageId))
-    : files.filter((file) => fileMatchesLanguage(file, languageId));
+  if (toolId === "biome") {
+    return files.filter((file) => fileMatchesConfiguredBiomeLanguage(file, languageId));
+  }
+
+  if (toolId === "javascript") {
+    return files.filter((file) => fileMatchesConfiguredJavaScriptRunnerLanguage(file, languageId));
+  }
+
+  return files.filter((file) => fileMatchesLanguage(file, languageId));
 }
 
 export function filterFilesForConfiguredToolLanguages(
@@ -228,6 +257,18 @@ function fileMatchesConfiguredBiomeLanguage(file: string, languageId: LanguageId
   if (lowerBaseName === "tsconfig.json") {
     return languageId === "typescript";
   }
+  return fileMatchesLanguage(file, languageId);
+}
+
+function fileMatchesConfiguredJavaScriptRunnerLanguage(
+  file: string,
+  languageId: LanguageId,
+): boolean {
+  const lowerBaseName = path.basename(path.resolve(file)).toLowerCase();
+  if (lowerBaseName === "package.json") {
+    return languageId === "javascript" || languageId === "typescript";
+  }
+
   return fileMatchesLanguage(file, languageId);
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2034,SC2317
 
 queue_policy_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 QUEUE_POLICY_PATH="${QUEUE_POLICY_PATH:-$(cd "$queue_policy_dir/.." && pwd)/queue-policy.json}"

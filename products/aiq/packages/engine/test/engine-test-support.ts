@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AiqEngineCancelledError,
+  type RunResult,
   createRunPlan,
   normalizeFileManifest,
   resolveRunRequest,
@@ -268,6 +269,50 @@ export async function createTerraformHclFixtureProject(
 }
 
 export const tempDirs: string[] = [];
+
+export interface CanonicalArtifactPaths {
+  metricsPath: string;
+  planPath: string;
+  reportPath: string;
+}
+
+export interface MetricsEvent {
+  cacheHit?: boolean;
+  event: string;
+  stageId?: string;
+  tool?: string;
+}
+
+export function expectSuccessfulCanonicalRun(result: RunResult, stageCount: number): void {
+  expect(result.ok).toBe(true);
+  expect(result.artifacts.metricsPath).toBeDefined();
+  expect(result.artifacts.planPath).toBeDefined();
+  expect(result.artifacts.reportPath).toBeDefined();
+  expect(result.summary.diagnosticCount).toBe(0);
+  expect(result.summary.notImplementedStageCount).toBe(0);
+  expect(result.summary.status).toBe("passed");
+  expect(result.stages).toHaveLength(stageCount);
+}
+
+export function requireCanonicalArtifactPaths(result: RunResult): CanonicalArtifactPaths {
+  const { metricsPath, planPath, reportPath } = result.artifacts;
+  if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
+    throw new Error("Expected plan, report, and metrics artifacts to be written.");
+  }
+
+  return { metricsPath, planPath, reportPath };
+}
+
+export async function readJsonArtifact<T>(filePath: string): Promise<T> {
+  return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+export async function readMetricsEvents(metricsPath: string): Promise<MetricsEvent[]> {
+  return (await readFile(metricsPath, "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as MetricsEvent);
+}
 
 afterEach(async () => {
   vi.restoreAllMocks();

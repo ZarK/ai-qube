@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
+import type { LanguageId } from "./runners-test-support.js";
 import {
-  LanguageId,
   buildEngineContext,
   createSingleLanguageStageConfiguration,
   fixtureFile,

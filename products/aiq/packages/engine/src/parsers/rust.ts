@@ -1,114 +1,19 @@
 import type { Diagnostic, DiagnosticRange } from "../contracts.js";
 import {
   deduplicateDiagnostics,
-  normalizeRustSeverity,
   readIntegerString,
-  readNestedRecord,
-  readNestedString,
-  readNumber,
-  readRecordArrayFromValue,
-  readString,
   resolveDiagnosticFile,
   stripAnsiEscapes,
 } from "./utils.js";
+import { parseCargoJsonDiagnostics } from "./rust-cargo-json.js";
 
-export function parseCargoJsonDiagnostics(
-  output: string,
-  cwd: string,
-  source: string,
-): Diagnostic[] {
-  const diagnostics: Diagnostic[] = [];
+export { parseCargoJsonDiagnostics } from "./rust-cargo-json.js";
 
-  for (const line of output.split(/\r?\n/u)) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0) {
-      continue;
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(trimmed);
-    } catch {
-      continue;
-    }
-
-    if (typeof parsed !== "object" || parsed === null) {
-      continue;
-    }
-
-    const record = parsed as Record<string, unknown>;
-    if (readString(record, "reason") !== "compiler-message") {
-      continue;
-    }
-
-    const message = readNestedRecord(record, ["message"]);
-    if (message === undefined) {
-      continue;
-    }
-
-    const file = readRustDiagnosticFile(message, cwd);
-    if (file === undefined) {
-      continue;
-    }
-
-    const rustDiagnostic: Diagnostic = {
-      file,
-      message:
-        readString(message, "message") ??
-        readString(message, "rendered") ??
-        "Rust compiler reported a diagnostic.",
-      severity: normalizeRustSeverity(readString(message, "level")),
-      source,
-    };
-    const code = readNestedString(message, ["code", "code"]);
-    if (code !== undefined) {
-      rustDiagnostic.code = code;
-    }
-
-    const range = readRustDiagnosticRange(message);
-    if (range !== undefined) {
-      rustDiagnostic.range = range;
-    }
-
-    diagnostics.push(rustDiagnostic);
-  }
-
-  return deduplicateDiagnostics(diagnostics);
-}
-
-export function readRustDiagnosticFile(
-  message: Record<string, unknown>,
-  cwd: string,
-): string | undefined {
-  const spans = readRecordArrayFromValue(message.spans);
-  const primarySpan = spans.find((span) => span.is_primary === true) ?? spans[0];
-  return resolveDiagnosticFile(readString(primarySpan ?? {}, "file_name"), cwd);
-}
-
-export function readRustDiagnosticRange(
-  message: Record<string, unknown>,
-): DiagnosticRange | undefined {
-  const spans = readRecordArrayFromValue(message.spans);
-  const primarySpan = spans.find((span) => span.is_primary === true) ?? spans[0];
-  if (primarySpan === undefined) {
-    return undefined;
-  }
-
-  const startLine = readNumber(primarySpan.line_start);
-  const startColumn = readNumber(primarySpan.column_start);
-  const endLine = readNumber(primarySpan.line_end);
-  const endColumn = readNumber(primarySpan.column_end);
-  if (startLine === undefined || startColumn === undefined) {
-    return undefined;
-  }
-
-  return {
-    ...(endColumn === undefined ? {} : { endColumn }),
-    ...(endLine === undefined ? {} : { endLine }),
-    startColumn,
-    startLine,
-  };
-}
+const rustLocationPatterns = [
+  /^(.*?\.rs):(\d+):(\d+)$/u,
+  /panicked at (.+?\.rs):(\d+):(\d+)(?::|$)/u,
+  /(?:^|\s)([^\s:][^:\n]*?\.rs):(\d+):(\d+)(?::|$)/u,
+];
 
 export function parseRustFormatDiagnostics(output: string, cwd: string): Diagnostic[] {
   const diagnostics: Diagnostic[] = [];
@@ -179,32 +84,9 @@ export function parseRustTestFailureDiagnostics(
       continue;
     }
 
-    const testName = blockStart[1] ?? "Rust test failure";
-    const blockLines: string[] = [];
-    index += 1;
-    while (index < lines.length) {
-      const trimmed = lines[index]?.trim() ?? "";
-      if (/^----\s+.+\s+stdout\s+----$/u.test(trimmed) || trimmed === "failures:") {
-        index -= 1;
-        break;
-      }
-      blockLines.push(lines[index] ?? "");
-      index += 1;
-    }
-
-    const location = blockLines
-      .map((line) => parseRustLocationLine(line, cwd))
-      .find((value) => value !== undefined);
-    diagnostics.push({
-      file: location?.file ?? fallbackFile,
-      message:
-        blockLines.filter((line) => line.trim().length > 0).length > 0
-          ? `${testName}\n${blockLines.filter((line) => line.trim().length > 0).join("\n")}`
-          : `${testName} failed.`,
-      ...(location?.range === undefined ? {} : { range: location.range }),
-      severity: "error",
-      source,
-    });
+    const block = readRustTestFailureBlock(lines, index, blockStart[1]);
+    index = block.endIndex;
+    diagnostics.push(createRustTestFailureDiagnostic(block, cwd, source, fallbackFile));
   }
 
   if (diagnostics.length > 0) {
@@ -212,6 +94,64 @@ export function parseRustTestFailureDiagnostics(
   }
 
   return deduplicateDiagnostics(parseRustCompilerTextDiagnostics(output, cwd, source));
+}
+
+function readRustTestFailureBlock(
+  lines: readonly string[],
+  startIndex: number,
+  testName: string | undefined,
+): { endIndex: number; lines: string[]; testName: string } {
+  const blockLines: string[] = [];
+  let index = startIndex + 1;
+  while (index < lines.length) {
+    const trimmed = lines[index]?.trim() ?? "";
+    if (isRustTestFailureBlockTerminator(trimmed)) {
+      return createRustTestFailureBlock(blockLines, index - 1, testName);
+    }
+
+    blockLines.push(lines[index] ?? "");
+    index += 1;
+  }
+
+  return createRustTestFailureBlock(blockLines, index, testName);
+}
+
+function isRustTestFailureBlockTerminator(line: string): boolean {
+  return /^----\s+.+\s+stdout\s+----$/u.test(line) || line === "failures:";
+}
+
+function createRustTestFailureBlock(
+  lines: string[],
+  endIndex: number,
+  testName: string | undefined,
+): { endIndex: number; lines: string[]; testName: string } {
+  return {
+    endIndex,
+    lines,
+    testName: testName ?? "Rust test failure",
+  };
+}
+
+function createRustTestFailureDiagnostic(
+  block: { lines: string[]; testName: string },
+  cwd: string,
+  source: string,
+  fallbackFile: string,
+): Diagnostic {
+  const location = block.lines
+    .map((line) => parseRustLocationLine(line, cwd))
+    .find((value) => value !== undefined);
+  const messageLines = block.lines.filter((line) => line.trim().length > 0);
+  return {
+    file: location?.file ?? fallbackFile,
+    message:
+      messageLines.length > 0
+        ? `${block.testName}\n${messageLines.join("\n")}`
+        : `${block.testName} failed.`,
+    ...(location?.range === undefined ? {} : { range: location.range }),
+    severity: "error",
+    source,
+  };
 }
 
 export function parseRustCompilerTextDiagnostics(
@@ -225,13 +165,9 @@ export function parseRustCompilerTextDiagnostics(
 
   for (let index = 0; index < lines.length; index += 1) {
     const trimmed = lines[index]?.trim() ?? "";
-    const headerMatch = /^(error|warning)(?:\[([^\]]+)\])?:\s+(.+)$/u.exec(trimmed);
-    if (headerMatch !== null) {
-      current = {
-        ...(headerMatch[2] === undefined ? {} : { code: headerMatch[2] }),
-        message: headerMatch[3] ?? "Rust compiler reported a diagnostic.",
-        severity: headerMatch[1] === "warning" ? "warning" : "error",
-      };
+    const header = parseRustCompilerHeader(trimmed);
+    if (header !== undefined) {
+      current = header;
       continue;
     }
 
@@ -239,28 +175,53 @@ export function parseRustCompilerTextDiagnostics(
       continue;
     }
 
-    const locationMatch = /^-->\s+(.+)$/u.exec(trimmed);
-    if (locationMatch === null) {
+    const diagnostic = createRustCompilerTextDiagnostic(trimmed, cwd, source, current);
+    if (diagnostic === undefined) {
       continue;
     }
 
-    const location = parseRustLocationLine(locationMatch[1] ?? "", cwd);
-    if (location === undefined) {
-      continue;
-    }
-
-    diagnostics.push({
-      ...(current.code === undefined ? {} : { code: current.code }),
-      file: location.file,
-      message: current.message,
-      ...(location.range === undefined ? {} : { range: location.range }),
-      severity: current.severity,
-      source,
-    });
+    diagnostics.push(diagnostic);
     current = undefined;
   }
 
   return diagnostics;
+}
+
+function parseRustCompilerHeader(
+  line: string,
+): { code?: string; message: string; severity: Diagnostic["severity"] } | undefined {
+  const headerMatch = /^(error|warning)(?:\[([^\]]+)\])?:\s+(.+)$/u.exec(line);
+  if (headerMatch === null) {
+    return undefined;
+  }
+
+  return {
+    ...(headerMatch[2] === undefined ? {} : { code: headerMatch[2] }),
+    message: headerMatch[3] ?? "Rust compiler reported a diagnostic.",
+    severity: headerMatch[1] === "warning" ? "warning" : "error",
+  };
+}
+
+function createRustCompilerTextDiagnostic(
+  line: string,
+  cwd: string,
+  source: string,
+  current: { code?: string; message: string; severity: Diagnostic["severity"] },
+): Diagnostic | undefined {
+  const locationMatch = /^-->\s+(.+)$/u.exec(line);
+  const location = parseRustLocationLine(locationMatch?.[1] ?? "", cwd);
+  if (location === undefined) {
+    return undefined;
+  }
+
+  return {
+    ...(current.code === undefined ? {} : { code: current.code }),
+    file: location.file,
+    message: current.message,
+    ...(location.range === undefined ? {} : { range: location.range }),
+    severity: current.severity,
+    source,
+  };
 }
 
 export function parseRustLocationLine(
@@ -268,10 +229,7 @@ export function parseRustLocationLine(
   cwd: string,
 ): { file: string; range?: DiagnosticRange } | undefined {
   const trimmed = line.trim();
-  const match =
-    /^(.*?\.rs):(\d+):(\d+)$/u.exec(trimmed) ??
-    /panicked at (.+?\.rs):(\d+):(\d+)(?::|$)/u.exec(trimmed) ??
-    /(?:^|\s)([^\s:][^:\n]*?\.rs):(\d+):(\d+)(?::|$)/u.exec(trimmed);
+  const match = readRustLocationMatch(trimmed);
   if (match === null) {
     return undefined;
   }
@@ -290,6 +248,17 @@ export function parseRustLocationLine(
       startLine,
     },
   };
+}
+
+function readRustLocationMatch(line: string): RegExpExecArray | null {
+  for (const pattern of rustLocationPatterns) {
+    const match = pattern.exec(line);
+    if (match !== null) {
+      return match;
+    }
+  }
+
+  return null;
 }
 
 export function readRustTestSummary(

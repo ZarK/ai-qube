@@ -30,69 +30,7 @@ describe("MCP adapter", () => {
     );
     const adapter = new AiqMcpAdapter({
       cwd: repoDir,
-      runEngineImpl: async (request) => ({
-        artifactType: "report",
-        artifactVersion: 1,
-        artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
-        context: "mcp",
-        durationMs: 1,
-        engineVersion: "0.0.0",
-        finishedAt: "2026-03-23T00:00:00.000Z",
-        mode: "check",
-        ok: true,
-        stages: [],
-        plan: {
-          artifactType: "plan",
-          artifactVersion: 1,
-          artifacts: { outDir: path.join(repoDir, ".aiq", "out") },
-          context: "mcp",
-          createdAt: "2026-03-23T00:00:00.000Z",
-          engineVersion: "0.0.0",
-          input: {
-            entries: [],
-            files: [],
-            root: repoDir,
-            source: "direct",
-            summary: { fileCount: 1 },
-          },
-          stages: [...(request.stages ?? [])],
-          profile: request.profile ?? "fast",
-          runId: "run_123",
-          summary: { fileCount: 1, stageCount: request.stages?.length ?? 0, taskCount: 0 },
-          tasks: [],
-        },
-        request: {
-          context: "mcp",
-          cwd: repoDir,
-          manifest: {
-            entries: [],
-            files: [],
-            root: repoDir,
-            source: "direct",
-            summary: { fileCount: 1 },
-          },
-          mode: "check",
-          outDir: path.join(repoDir, ".aiq", "out"),
-          selection: { stages: [...(request.stages ?? [])], profile: request.profile ?? "fast" },
-          writeArtifacts: false,
-        },
-        runId: "run_123",
-        startedAt: "2026-03-23T00:00:00.000Z",
-        summary: {
-          cacheHitCount: 0,
-          cacheHitRate: 0,
-          cacheMissCount: 0,
-          diagnosticCount: 0,
-          durationMs: 1,
-          fileCount: 1,
-          notImplementedStageCount: 0,
-          stageCount: request.stages?.length ?? 0,
-          status: "passed",
-          taskCount: 0,
-          toolDurationMs: 0,
-          toolRunCount: 0,
-        },
-      }),
+      runEngineImpl: async (request) => createMcpProgressReport(repoDir, request),
     });
 
     const check = await adapter.check({ files: ["index.ts"] });
@@ -152,6 +90,101 @@ describe("MCP adapter", () => {
     });
   });
 });
+
+function createMcpProgressReport(
+  repoDir: string,
+  request: { profile?: "fast"; stages?: readonly StageId[] },
+): RunResult {
+  const stages = [...(request.stages ?? [])];
+  const profile = request.profile ?? "fast";
+  const outDir = path.join(repoDir, ".aiq", "out");
+
+  return {
+    artifactType: "report",
+    artifactVersion: 1,
+    artifacts: { outDir },
+    context: "mcp",
+    durationMs: 1,
+    engineVersion: "0.0.0",
+    finishedAt: "2026-03-23T00:00:00.000Z",
+    mode: "check",
+    ok: true,
+    stages: [],
+    plan: createMcpProgressPlan(repoDir, outDir, stages, profile),
+    request: createMcpProgressRequest(repoDir, outDir, stages, profile),
+    runId: "run_123",
+    startedAt: "2026-03-23T00:00:00.000Z",
+    summary: createProgressSummary(stages.length),
+  };
+}
+
+function createMcpProgressPlan(
+  repoDir: string,
+  outDir: string,
+  stages: readonly StageId[],
+  profile: "fast",
+): RunResult["plan"] {
+  return {
+    artifactType: "plan",
+    artifactVersion: 1,
+    artifacts: { outDir },
+    context: "mcp",
+    createdAt: "2026-03-23T00:00:00.000Z",
+    engineVersion: "0.0.0",
+    input: {
+      entries: [],
+      files: [],
+      root: repoDir,
+      source: "direct",
+      summary: { fileCount: 1 },
+    },
+    stages: [...stages],
+    profile,
+    runId: "run_123",
+    summary: { fileCount: 1, stageCount: stages.length, taskCount: 0 },
+    tasks: [],
+  };
+}
+
+function createMcpProgressRequest(
+  repoDir: string,
+  outDir: string,
+  stages: readonly StageId[],
+  profile: "fast",
+): RunResult["request"] {
+  return {
+    context: "mcp",
+    cwd: repoDir,
+    manifest: {
+      entries: [],
+      files: [],
+      root: repoDir,
+      source: "direct",
+      summary: { fileCount: 1 },
+    },
+    mode: "check",
+    outDir,
+    selection: { stages: [...stages], profile },
+    writeArtifacts: false,
+  };
+}
+
+function createProgressSummary(stageCount: number): RunResult["summary"] {
+  return {
+    cacheHitCount: 0,
+    cacheHitRate: 0,
+    cacheMissCount: 0,
+    diagnosticCount: 0,
+    durationMs: 1,
+    fileCount: 1,
+    notImplementedStageCount: 0,
+    stageCount,
+    status: "passed",
+    taskCount: 0,
+    toolDurationMs: 0,
+    toolRunCount: 0,
+  };
+}
 
 async function createWorkspace(contents: string): Promise<string> {
   const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-mcp-"));

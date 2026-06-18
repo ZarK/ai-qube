@@ -270,4 +270,3 @@ function usesAnyLanguage(
 ): boolean {
   return candidates.some((language) => languages.has(language));
 }
-

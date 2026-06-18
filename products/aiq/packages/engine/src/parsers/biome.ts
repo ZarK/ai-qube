@@ -123,13 +123,17 @@ export function readOffsetRange(value: unknown): { end: number; start: number } 
   return readObjectOffsetRange(value as Record<string, unknown>);
 }
 
-function readArrayOffsetRange(value: readonly unknown[]): { end: number; start: number } | undefined {
+function readArrayOffsetRange(
+  value: readonly unknown[],
+): { end: number; start: number } | undefined {
   const start = readNumber(value[0]);
   const end = readNumber(value[1]);
   return start === undefined || end === undefined ? undefined : { end, start };
 }
 
-function readObjectOffsetRange(record: Record<string, unknown>): { end: number; start: number } | undefined {
+function readObjectOffsetRange(
+  record: Record<string, unknown>,
+): { end: number; start: number } | undefined {
   const start = readNumber(record.start ?? record.startOffset ?? record.offset);
   const end = readNumber(record.end ?? record.endOffset);
   if (start === undefined || end === undefined) {

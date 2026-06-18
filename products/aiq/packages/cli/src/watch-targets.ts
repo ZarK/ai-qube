@@ -110,7 +110,10 @@ function addWatchTarget(targets: Map<string, Set<string>>, cwd: string, filePath
   targets.set(dir, names);
 }
 
-export function sameWatchTargets(left: WatchDirectoryTarget[], right: WatchDirectoryTarget[]): boolean {
+export function sameWatchTargets(
+  left: WatchDirectoryTarget[],
+  right: WatchDirectoryTarget[],
+): boolean {
   if (left.length !== right.length) {
     return false;
   }
@@ -164,4 +167,3 @@ export function resolveWatchTrigger(
 
   return path.join(dir, filename.toString());
 }
-

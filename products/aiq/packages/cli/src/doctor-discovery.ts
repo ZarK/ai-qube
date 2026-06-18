@@ -165,4 +165,3 @@ export function formatDetectedLanguages(languages: ReadonlySet<LanguageId>): str
     .filter((language) => languages.has(language))
     .map((language) => doctorLanguageLabels[language]);
 }
-

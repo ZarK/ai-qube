@@ -138,16 +138,8 @@ export function summarizeCombinedStageStatus(
 }
 
 export function createToolRunResult(...values: ToolRunResultArgs): ToolRunResult {
-  const [
-    tool,
-    toolArgs,
-    durationMs,
-    exitCode,
-    status,
-    finishedAt,
-    startedAt,
-    cacheHit = false,
-  ] = values;
+  const [tool, toolArgs, durationMs, exitCode, status, finishedAt, startedAt, cacheHit = false] =
+    values;
   const result: ToolRunResult = {
     args: toolArgs,
     cacheHit,
@@ -166,15 +158,7 @@ export function createToolRunResult(...values: ToolRunResultArgs): ToolRunResult
 }
 
 export function createExecutionFailureStage(...values: ExecutionFailureStageArgs): StageResult {
-  const [
-    stageId,
-    tool,
-    file,
-    error,
-    durationMs = 0,
-    diagnostics = [],
-    toolRuns = [],
-  ] = values;
+  const [stageId, tool, file, error, durationMs = 0, diagnostics = [], toolRuns = []] = values;
   const message = formatError(error);
 
   return {

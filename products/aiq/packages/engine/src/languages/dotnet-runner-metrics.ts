@@ -8,7 +8,12 @@ import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,
 } from "./shared-metrics-support.js";
-import { dotNetExtensions, filterDotNetFiles, resolveDotNetMetricsFiles, resolveDotNetProjects } from "./dotnet-projects.js";
+import {
+  dotNetExtensions,
+  filterDotNetFiles,
+  resolveDotNetMetricsFiles,
+  resolveDotNetProjects,
+} from "./dotnet-projects.js";
 import {
   addCachedMetricDuration,
   addLizardFileMetrics,

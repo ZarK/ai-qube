@@ -8,7 +8,15 @@ import type { PythonRunnerRuntime } from "./contracts.js";
 import type { PythonProjectExecution } from "./python-tools.js";
 import { executePytestProjectTask } from "./python-tools.js";
 import type { PythonProject } from "./python-projects.js";
-import { createPythonProjectExecutionKey, filterPythonTaskFiles, readPythonCoverageNote, readPythonUnitNote, resolvePythonProjects, resolvePythonSourceProject, runProjectBatches } from "./python-projects.js";
+import {
+  createPythonProjectExecutionKey,
+  filterPythonTaskFiles,
+  readPythonCoverageNote,
+  readPythonUnitNote,
+  resolvePythonProjects,
+  resolvePythonSourceProject,
+  runProjectBatches,
+} from "./python-projects.js";
 
 export async function runPythonUnitTask(
   task: PlannedTask,
@@ -113,6 +121,29 @@ async function runPythonProjectTestTask(
     projectIndex,
   );
 
+  cacheReusablePythonExecution(runtime, cacheKey, execution, allowCoverageReuse, preferredMode);
+
+  if (shouldFallbackToPlainPythonUnit(preferCoverageExecution, execution)) {
+    const unitExecution = await executePytestProjectTask(
+      project,
+      runtime,
+      "unit",
+      stageTempDir,
+      projectIndex,
+    );
+    return materializePythonProjectStageResult(unitExecution, "unit", false);
+  }
+
+  return materializePythonProjectStageResult(execution, mode, false);
+}
+
+function cacheReusablePythonExecution(
+  runtime: PythonRunnerRuntime,
+  cacheKey: string,
+  execution: PythonProjectExecution,
+  allowCoverageReuse: boolean,
+  preferredMode: "coverage" | "unit",
+): void {
   if (
     allowCoverageReuse &&
     execution.coverageSummaryError === undefined &&
@@ -121,16 +152,6 @@ async function runPythonProjectTestTask(
   ) {
     runtime.setRunScopedValue("python:test-execution", cacheKey, execution);
   }
-
-  if (shouldFallbackToPlainPythonUnit(preferCoverageExecution, execution)) {
-    return materializePythonProjectStageResult(
-      await executePytestProjectTask(project, runtime, "unit", stageTempDir, projectIndex),
-      "unit",
-      false,
-    );
-  }
-
-  return materializePythonProjectStageResult(execution, mode, false);
 }
 
 function materializePythonProjectStageResult(

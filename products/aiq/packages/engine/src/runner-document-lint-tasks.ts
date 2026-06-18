@@ -7,8 +7,17 @@ import { parseAllDocuments } from "yaml";
 
 import type { PlannedTask, StageResult } from "./contracts.js";
 import * as parsers from "./parsers/index.js";
-import { cssExtensions, htmlExtensions, sqlExtensions, yamlExtensions } from "./runner-file-rules.js";
-import { createExecutionFailureStage, createNoopStageResult, createToolRunResult } from "./runner-results.js";
+import {
+  cssExtensions,
+  htmlExtensions,
+  sqlExtensions,
+  yamlExtensions,
+} from "./runner-file-rules.js";
+import {
+  createExecutionFailureStage,
+  createNoopStageResult,
+  createToolRunResult,
+} from "./runner-results.js";
 import {
   createMissingStylelintConfigDiagnostics,
   createMissingStylelintConfigNote,
@@ -310,4 +319,3 @@ export async function runSqlLintTask(task: PlannedTask, cwd: string): Promise<St
     return createExecutionFailureStage(task.stageId, "node-sql-parser", files[0] ?? cwd, error);
   }
 }
-

@@ -7,7 +7,11 @@ import * as prettier from "prettier";
 import type { PlannedTask, StageResult } from "./contracts.js";
 import * as parsers from "./parsers/index.js";
 import { prettierDocumentExtensions, sqlExtensions } from "./runner-file-rules.js";
-import { createExecutionFailureStage, createNoopStageResult, createToolRunResult } from "./runner-results.js";
+import {
+  createExecutionFailureStage,
+  createNoopStageResult,
+  createToolRunResult,
+} from "./runner-results.js";
 import {
   createFormattingDiagnostic,
   createPrettierDiagnostic,
@@ -28,7 +32,10 @@ const require = createRequire(import.meta.url);
 const { Parser: SqlParser } = require("node-sql-parser") as SqlParserModule;
 const { format: formatSql } = require("sql-formatter") as SqlFormatterModule;
 
-export async function runPrettierDocumentFormatTask(task: PlannedTask, cwd: string): Promise<StageResult> {
+export async function runPrettierDocumentFormatTask(
+  task: PlannedTask,
+  cwd: string,
+): Promise<StageResult> {
   const files = filterFiles(task.files, prettierDocumentExtensions);
   if (files.length === 0) {
     return createNoopStageResult(
@@ -162,4 +169,3 @@ export async function runSqlFormatTask(task: PlannedTask, cwd: string): Promise<
     return createExecutionFailureStage(task.stageId, "sql-formatter", files[0] ?? cwd, error);
   }
 }
-

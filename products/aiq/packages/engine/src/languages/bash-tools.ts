@@ -3,9 +3,7 @@ import * as parsers from "../parsers/index.js";
 import * as commands from "../tools/command-builders.js";
 import type { BashRunnerRuntime } from "./contracts.js";
 import { runBashProjectTestTask, summarizeProjectStageStatus } from "./bash-test.js";
-import {
-  resolveScriptProjects,
-} from "./script.js";
+import { resolveScriptProjects } from "./script.js";
 
 export async function runBashLintLanguageTask(
   task: { files: string[]; stageId: StageResult["stageId"] },

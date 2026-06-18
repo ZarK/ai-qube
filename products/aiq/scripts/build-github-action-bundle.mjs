@@ -6,19 +6,13 @@ import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
 const workspaceRoot = fileURLToPath(new URL("../", import.meta.url));
-const engineRequire = createRequire(
-  path.join(workspaceRoot, "packages", "engine", "package.json"),
-);
+const engineRequire = createRequire(path.join(workspaceRoot, "packages", "engine", "package.json"));
 const entryPoint = path.join(workspaceRoot, "packages", "github-action", "src", "main.ts");
 const outfile = path.join(workspaceRoot, "packages", "github-action", "dist", "main.mjs");
 const stylelintPackageJsonPath = engineRequire.resolve("stylelint/package.json");
 const stylelintRequire = createRequire(stylelintPackageJsonPath);
 const cssTreePackageJsonPath = stylelintRequire.resolve("css-tree/package.json");
-const cssTreePatchSource = path.join(
-  path.dirname(cssTreePackageJsonPath),
-  "data",
-  "patch.json",
-);
+const cssTreePatchSource = path.join(path.dirname(cssTreePackageJsonPath), "data", "patch.json");
 const cssTreePatchTarget = path.join(
   workspaceRoot,
   "packages",

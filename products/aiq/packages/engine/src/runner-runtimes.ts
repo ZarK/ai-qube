@@ -19,7 +19,10 @@ import {
   getRunnerSelectedStages,
   setRunnerRunScopedValue,
 } from "./runner-context.js";
-import { isSharedMetricsSupportedFile, shouldSkipScriptProjectDirectory } from "./runner-file-rules.js";
+import {
+  isSharedMetricsSelectionFile,
+  shouldSkipScriptProjectDirectory,
+} from "./runner-file-rules.js";
 import {
   createExecutionFailureStage,
   createNoopStageResult,
@@ -83,7 +86,7 @@ export function createJavaScriptRunnerRuntime(cwd: string, signal: AbortSignal |
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     readUnsupportedRunnerNote: createUnsupportedJavaScriptRunnerNote,
@@ -113,7 +116,7 @@ export function createPythonRunnerRuntime(
     getCachedValue: getCachedRunnerValue,
     getRunScopedValue: getRunnerRunScopedValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveBinaryIfAvailable,
@@ -149,7 +152,10 @@ export function createHashicorpRunnerRuntime(
   };
 }
 
-export function createGoRunnerRuntime(cwd: string, signal: AbortSignal | undefined): GoRunnerRuntime {
+export function createGoRunnerRuntime(
+  cwd: string,
+  signal: AbortSignal | undefined,
+): GoRunnerRuntime {
   return {
     createExecutionFailureStage,
     createNoopStageResult,
@@ -161,7 +167,7 @@ export function createGoRunnerRuntime(cwd: string, signal: AbortSignal | undefin
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
@@ -172,7 +178,10 @@ export function createGoRunnerRuntime(cwd: string, signal: AbortSignal | undefin
   };
 }
 
-export function createBashRunnerRuntime(cwd: string, signal: AbortSignal | undefined): BashRunnerRuntime {
+export function createBashRunnerRuntime(
+  cwd: string,
+  signal: AbortSignal | undefined,
+): BashRunnerRuntime {
   return {
     createExecutionFailureStage,
     createNoopStageResult,
@@ -215,7 +224,10 @@ export function createPowerShellRunnerRuntime(
   };
 }
 
-export function createRustRunnerRuntime(cwd: string, signal: AbortSignal | undefined): RustRunnerRuntime {
+export function createRustRunnerRuntime(
+  cwd: string,
+  signal: AbortSignal | undefined,
+): RustRunnerRuntime {
   return {
     createExecutionFailureStage,
     createNoopStageResult,
@@ -228,7 +240,7 @@ export function createRustRunnerRuntime(cwd: string, signal: AbortSignal | undef
     findMatchingFiles,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveInstalledBinary,
@@ -239,7 +251,10 @@ export function createRustRunnerRuntime(cwd: string, signal: AbortSignal | undef
   };
 }
 
-export function createJvmRunnerRuntime(cwd: string, signal: AbortSignal | undefined): JvmRunnerRuntime {
+export function createJvmRunnerRuntime(
+  cwd: string,
+  signal: AbortSignal | undefined,
+): JvmRunnerRuntime {
   return {
     createExecutionFailureStage,
     createJvmProcessEnv,
@@ -254,7 +269,7 @@ export function createJvmRunnerRuntime(cwd: string, signal: AbortSignal | undefi
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
     isMissingCommandOutcome,
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readProcessFailureMessage,
     readSharedMetricsNote,
     resolveGradleCommand,
@@ -281,7 +296,7 @@ export function createDotNetRunnerRuntime(
     cwd,
     getCachedValue: getCachedRunnerValue,
     graph: getRunnerGraph(),
-    isSharedMetricsCompanionFile: isSharedMetricsSupportedFile,
+    isSharedMetricsCompanionFile: isSharedMetricsSelectionFile,
     readFileText: (filePath) => readFile(filePath, "utf8"),
     readProcessFailureMessage,
     readSharedMetricsNote,
@@ -291,4 +306,3 @@ export function createDotNetRunnerRuntime(
     throwIfAbortError,
   };
 }
-

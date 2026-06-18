@@ -32,13 +32,25 @@ export async function runTerraformProjectValidateTask(
       TF_DATA_DIR: path.join(tempDir, ".terraform-data"),
       TF_IN_AUTOMATION: "1",
     };
-    const initResult = await runTerraformInit(project, runtime, terraformBinary, tempProjectRoot, env);
+    const initResult = await runTerraformInit(
+      project,
+      runtime,
+      terraformBinary,
+      tempProjectRoot,
+      env,
+    );
 
     if (initResult.outcome.exitCode !== 0) {
       return createTerraformInitFailureResult(project, runtime, initResult);
     }
 
-    const validateResult = await runTerraformValidate(project, runtime, terraformBinary, tempProjectRoot, env);
+    const validateResult = await runTerraformValidate(
+      project,
+      runtime,
+      terraformBinary,
+      tempProjectRoot,
+      env,
+    );
     return createTerraformValidateResult(project, initResult, validateResult);
   } finally {
     await rm(tempDir, { force: true, recursive: true }).catch(() => undefined);
@@ -374,7 +386,10 @@ function shouldSkipTerraformValidationDirectory(directoryPath: string): boolean 
   );
 }
 
-export async function writeGenericHclTerraformFile(file: string, directory: string): Promise<string> {
+export async function writeGenericHclTerraformFile(
+  file: string,
+  directory: string,
+): Promise<string> {
   const tempFile = path.join(
     directory,
     `${path.basename(file, path.extname(file)) || "config"}.tf`,

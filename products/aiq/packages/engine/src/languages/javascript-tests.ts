@@ -6,7 +6,11 @@ import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../con
 import * as parsers from "../parsers/index.js";
 import { createJavaScriptTestCommand } from "../tools/node.js";
 import type { JavaScriptRunnerRuntime } from "./contracts.js";
-import type { JavaScriptProject, JavaScriptProjectExecution, UnsupportedJavaScriptTestProject } from "./javascript-projects.js";
+import type {
+  JavaScriptProject,
+  JavaScriptProjectExecution,
+  UnsupportedJavaScriptTestProject,
+} from "./javascript-projects.js";
 import { filterJavaScriptTestFiles, resolveJavaScriptProjects } from "./javascript-projects.js";
 import {
   createUnsupportedJavaScriptTestDiagnostics,

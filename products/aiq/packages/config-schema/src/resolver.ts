@@ -132,10 +132,7 @@ function applySurfaceOverrides(merged: AiqConfig, override: AiqConfigFile): void
   for (const surfaceId of aiqSurfaceIds) {
     const surfaceOverride = override.surfaces?.[surfaceId];
     if (surfaceOverride !== undefined) {
-      merged.surfaces[surfaceId] = mergeSurfaceConfig(
-        merged.surfaces[surfaceId],
-        surfaceOverride,
-      );
+      merged.surfaces[surfaceId] = mergeSurfaceConfig(merged.surfaces[surfaceId], surfaceOverride);
     }
   }
 }

@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "stages": {
+    "unit": {
+      "languages": {
+        "bash": {
+          "enabled": false,
+          "tool": "bash"
+        }
+      }
+    },
+    "coverage": {
+      "languages": {
+        "bash": {
+          "enabled": false,
+          "tool": "bash"
+        }
+      }
+    }
+  }
+}

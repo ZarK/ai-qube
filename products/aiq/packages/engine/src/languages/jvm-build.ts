@@ -5,9 +5,27 @@ import path from "node:path";
 import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../contracts.js";
 import * as parsers from "../parsers/index.js";
 import type { JvmRunnerRuntime } from "./contracts.js";
-import { findJvmCoverageReport, findJvmJunitReports, parseJvmCompilerDiagnostics, readJacocoLineRate, readJvmCoverageNote, readJvmUnitNote, resolveJvmExecutionCommand } from "./jvm-tools.js";
+import {
+  findJvmCoverageReport,
+  findJvmJunitReports,
+  parseJvmCompilerDiagnostics,
+  readJacocoLineRate,
+  readJvmCoverageNote,
+  readJvmUnitNote,
+  resolveJvmExecutionCommand,
+} from "./jvm-tools.js";
 import type { JvmProject } from "./jvm-projects.js";
-import { createJvmSetupDiagnostics, createJvmSetupFailureStage, createMissingJvmCommandMessage, createUnsupportedJvmSetupMessage, filterJvmFiles, joinOutputs, readOptionalTextFile, resolveJvmProjects, runProjectBatches } from "./jvm-projects.js";
+import {
+  createJvmSetupDiagnostics,
+  createJvmSetupFailureStage,
+  createMissingJvmCommandMessage,
+  createUnsupportedJvmSetupMessage,
+  filterJvmFiles,
+  joinOutputs,
+  readOptionalTextFile,
+  resolveJvmProjects,
+  runProjectBatches,
+} from "./jvm-projects.js";
 
 export async function runJvmTypecheckTask(
   task: PlannedTask,

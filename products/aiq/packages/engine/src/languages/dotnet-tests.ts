@@ -1,7 +1,14 @@
 import type { Diagnostic, PlannedTask, StageResult, ToolRunResult } from "../contracts.js";
 import type { DotNetRunnerRuntime } from "./contracts.js";
 import { runDotNetProjectTestTask } from "./dotnet-tools.js";
-import { createDotNetProjectResolutionDiagnostics, createDotNetProjectResolutionFailureStage, createDotNetProjectResolutionMessage, filterDotNetFiles, resolveDotNetProjects, runProjectBatches } from "./dotnet-projects.js";
+import {
+  createDotNetProjectResolutionDiagnostics,
+  createDotNetProjectResolutionFailureStage,
+  createDotNetProjectResolutionMessage,
+  filterDotNetFiles,
+  resolveDotNetProjects,
+  runProjectBatches,
+} from "./dotnet-projects.js";
 
 export async function runDotNetUnitTask(
   task: PlannedTask,

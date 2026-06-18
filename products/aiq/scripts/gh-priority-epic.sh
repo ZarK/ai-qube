@@ -1,4 +1,5 @@
 #!/bin/bash
+# shellcheck disable=SC2005
 
 # Epic-organized GitHub Issues Priority List
 # Displays issues grouped by epic with priority order

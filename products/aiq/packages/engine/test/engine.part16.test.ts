@@ -1,14 +1,39 @@
 import { describe, expect, it } from "vitest";
 import {
+  expectSuccessfulCanonicalRun,
   fixtureFile,
   fixtureJavaScriptFile,
   mkdtemp,
   os,
   path,
-  readFile,
+  readJsonArtifact,
+  readMetricsEvents,
+  requireCanonicalArtifactPaths,
   runEngine,
   tempDirs,
 } from "./engine-test-support.js";
+
+type PlanArtifact = {
+  input: { files: string[] };
+  stages: string[];
+};
+
+type ReportArtifact = {
+  stages: Array<{
+    notes: string[];
+    stageId: string;
+    toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
+  }>;
+  summary: {
+    cacheHitCount: number;
+    cacheMissCount: number;
+    diagnosticCount: number;
+    status: string;
+  };
+};
+
+type EngineRunResult = Awaited<ReturnType<typeof runEngine>>;
+
 describe("engine foundation", () => {
   it("runs shared metrics stages against JavaScript and TypeScript fixtures", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-engine-js-metrics-"));
@@ -25,88 +50,16 @@ describe("engine foundation", () => {
       stages: ["sloc", "complexity", "maintainability"],
     });
 
-    expect(result.ok).toBe(true);
+    expectSuccessfulCanonicalRun(result, 3);
     expect(result.summary.cacheHitCount).toBe(4);
     expect(result.summary.cacheMissCount).toBe(2);
-    expect(result.summary.diagnosticCount).toBe(0);
-    expect(result.summary.notImplementedStageCount).toBe(0);
-    expect(result.summary.status).toBe("passed");
-    expect(result.stages).toHaveLength(3);
 
-    const slocStage = result.stages.find((stage) => stage.stageId === "sloc");
-    const complexityStage = result.stages.find((stage) => stage.stageId === "complexity");
-    const maintainabilityStage = result.stages.find((stage) => stage.stageId === "maintainability");
-    const slocLizardRuns =
-      slocStage?.toolRuns.filter(
-        (toolRun) =>
-          toolRun.cacheHit === false &&
-          toolRun.exitCode === 0 &&
-          toolRun.status === "passed" &&
-          toolRun.tool === "lizard",
-      ) ?? [];
-    const complexityLizardRuns =
-      complexityStage?.toolRuns.filter(
-        (toolRun) =>
-          toolRun.cacheHit === true &&
-          toolRun.exitCode === 0 &&
-          toolRun.status === "passed" &&
-          toolRun.tool === "lizard",
-      ) ?? [];
-    const maintainabilityLizardRuns =
-      maintainabilityStage?.toolRuns.filter(
-        (toolRun) =>
-          toolRun.cacheHit === true &&
-          toolRun.exitCode === 0 &&
-          toolRun.status === "passed" &&
-          toolRun.tool === "lizard",
-      ) ?? [];
+    expectSharedJavaScriptMetricsStages(result);
 
-    expect(slocStage?.notes[0]).toContain("JavaScript/TypeScript SLOC:");
-    expect(slocLizardRuns).toHaveLength(2);
-    expect(complexityStage?.notes[0]).toContain("Shared metrics observed");
-    expect(complexityStage?.notes.join(" ")).toContain(
-      "Reused cached JavaScript/TypeScript metrics",
-    );
-    expect(complexityLizardRuns).toHaveLength(2);
-    expect(maintainabilityStage?.notes.join(" ")).toContain(
-      "Reused cached JavaScript/TypeScript metrics",
-    );
-    expect(maintainabilityLizardRuns).toHaveLength(2);
-
-    const { metricsPath, planPath, reportPath } = result.artifacts;
-    if (planPath === undefined || reportPath === undefined || metricsPath === undefined) {
-      throw new Error("Expected plan, report, and metrics artifacts to be written.");
-    }
-
-    const planJson = JSON.parse(await readFile(planPath, "utf8")) as {
-      input: { files: string[] };
-      stages: string[];
-    };
-    const reportJson = JSON.parse(await readFile(reportPath, "utf8")) as {
-      stages: Array<{
-        notes: string[];
-        stageId: string;
-        toolRuns: Array<{ cacheHit?: boolean; tool: string }>;
-      }>;
-      summary: {
-        cacheHitCount: number;
-        cacheMissCount: number;
-        diagnosticCount: number;
-        status: string;
-      };
-    };
-    const metricsEvents = (await readFile(metricsPath, "utf8"))
-      .trim()
-      .split("\n")
-      .map(
-        (line) =>
-          JSON.parse(line) as {
-            cacheHit?: boolean;
-            event: string;
-            stageId?: string;
-            tool?: string;
-          },
-      );
+    const { metricsPath, planPath, reportPath } = requireCanonicalArtifactPaths(result);
+    const planJson = await readJsonArtifact<PlanArtifact>(planPath);
+    const reportJson = await readJsonArtifact<ReportArtifact>(reportPath);
+    const metricsEvents = await readMetricsEvents(metricsPath);
 
     expect(planJson.input.files).toEqual([fixtureJavaScriptFile, fixtureFile]);
     expect(planJson.stages).toEqual(["sloc", "complexity", "maintainability"]);
@@ -135,3 +88,34 @@ describe("engine foundation", () => {
     );
   });
 });
+
+function expectSharedJavaScriptMetricsStages(result: EngineRunResult): void {
+  const slocStage = result.stages.find((stage) => stage.stageId === "sloc");
+  const complexityStage = result.stages.find((stage) => stage.stageId === "complexity");
+  const maintainabilityStage = result.stages.find((stage) => stage.stageId === "maintainability");
+
+  expect(slocStage?.notes[0]).toContain("JavaScript/TypeScript SLOC:");
+  expect(filterLizardRuns(slocStage, false)).toHaveLength(2);
+  expect(complexityStage?.notes[0]).toContain("Shared metrics observed");
+  expect(complexityStage?.notes.join(" ")).toContain("Reused cached JavaScript/TypeScript metrics");
+  expect(filterLizardRuns(complexityStage, true)).toHaveLength(2);
+  expect(maintainabilityStage?.notes.join(" ")).toContain(
+    "Reused cached JavaScript/TypeScript metrics",
+  );
+  expect(filterLizardRuns(maintainabilityStage, true)).toHaveLength(2);
+}
+
+function filterLizardRuns(
+  stage: EngineRunResult["stages"][number] | undefined,
+  cacheHit: boolean,
+): EngineRunResult["stages"][number]["toolRuns"] {
+  return (
+    stage?.toolRuns.filter(
+      (toolRun) =>
+        toolRun.cacheHit === cacheHit &&
+        toolRun.exitCode === 0 &&
+        toolRun.status === "passed" &&
+        toolRun.tool === "lizard",
+    ) ?? []
+  );
+}

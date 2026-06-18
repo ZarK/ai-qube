@@ -35,7 +35,6 @@ import {
   usesWatchProgressDefaults,
 } from "./watch-targets.js";
 
-
 interface WatchPreparedRun {
   cadence?: PreparedWatchExecution;
   cadenceMs?: number;
@@ -164,11 +163,7 @@ export async function runWatchCommand(
       return;
     }
 
-    const runKind = resolveNextWatchRunKind(
-      pendingContinuousTrigger,
-      cadenceRequested,
-      timer,
-    );
+    const runKind = resolveNextWatchRunKind(pendingContinuousTrigger, cadenceRequested, timer);
     if (runKind === undefined) {
       return;
     }
@@ -421,4 +416,3 @@ function resolveNextWatchRunKind(
 
   return cadenceRequested ? "cadence" : undefined;
 }
-

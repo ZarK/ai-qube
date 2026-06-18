@@ -1,7 +1,12 @@
 import type { PlannedTask, StageResult } from "../contracts.js";
 import type { PythonRunnerRuntime } from "./contracts.js";
 import { runRuffCheckProject, runRuffFormatProject, runTyCheckProject } from "./python-tools.js";
-import { filterPythonTaskFiles, resolvePythonProjects, resolvePythonSourceProject, runProjectBatches } from "./python-projects.js";
+import {
+  filterPythonTaskFiles,
+  resolvePythonProjects,
+  resolvePythonSourceProject,
+  runProjectBatches,
+} from "./python-projects.js";
 
 export async function runPythonLintTask(
   task: PlannedTask,

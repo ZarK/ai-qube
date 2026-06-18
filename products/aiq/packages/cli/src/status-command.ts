@@ -55,7 +55,6 @@ export async function runStatusCommand(parsed: ParsedArgs, io: CliIo): Promise<n
   }
 }
 
-
 type StatusLastRun = Parameters<typeof formatStatusOutput>[1]["lastRun"];
 
 async function readStatusReport(reportPath: string): Promise<{
@@ -216,5 +215,3 @@ function isStageId(value: string | undefined): value is StageId {
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
-
-

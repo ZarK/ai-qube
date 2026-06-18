@@ -213,12 +213,7 @@ function readPesterFailureMessage(
 ): string {
   return summary.failed > 0
     ? `Pester reported ${summary.failed} failing test${summary.failed === 1 ? "" : "s"}.`
-    : runtime.readProcessFailureMessage(
-        "Pester",
-        outcome.stderr,
-        outcome.stdout,
-        outcome.exitCode,
-      );
+    : runtime.readProcessFailureMessage("Pester", outcome.stderr, outcome.stdout, outcome.exitCode);
 }
 
 function createPowerShellProjectTestResult(options: {

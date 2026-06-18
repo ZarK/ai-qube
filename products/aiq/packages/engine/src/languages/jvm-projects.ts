@@ -1,7 +1,13 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
 
-import type { Diagnostic, ProjectDescriptor, ProjectGraph, ProjectMetadata, StageResult } from "../contracts.js";
+import type {
+  Diagnostic,
+  ProjectDescriptor,
+  ProjectGraph,
+  ProjectMetadata,
+  StageResult,
+} from "../contracts.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { pathExists } from "../utils/path-utils.js";
 import type { JvmRunnerRuntime } from "./contracts.js";
@@ -217,7 +223,10 @@ export function createMissingJvmCommandMessage(
   return `${label} is required for JVM ${mode} in ${project.projectRoot}. Add ${expected}, install ${label}, or disable JVM ${mode}.`;
 }
 
-export function createUnsupportedJvmCommandMessage(project: JvmProject, mode: "format" | "lint"): string {
+export function createUnsupportedJvmCommandMessage(
+  project: JvmProject,
+  mode: "format" | "lint",
+): string {
   return `No supported JVM ${mode} command was detected for ${project.projectRoot}. Configure a supported Maven or Gradle ${mode} plugin, or disable JVM ${mode}.`;
 }
 
@@ -349,11 +358,12 @@ export async function runProjectBatches<TProject, TResult>(
   return results;
 }
 
-export async function readOptionalTextFile(filePath: string | undefined): Promise<string | undefined> {
+export async function readOptionalTextFile(
+  filePath: string | undefined,
+): Promise<string | undefined> {
   if (filePath === undefined || !(await pathExists(filePath))) {
     return undefined;
   }
 
   return readFile(filePath, "utf8");
 }
-

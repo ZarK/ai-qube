@@ -2,7 +2,12 @@ import type { Diagnostic, PlannedTask, StageResult } from "../contracts.js";
 import { createPythonMetricsDiagnostics } from "../metrics-thresholds.js";
 import type { PythonRunnerRuntime, SharedMetricsMode } from "./contracts.js";
 import { getPythonMetricsProjectMetrics } from "./python-tools.js";
-import { filterPythonTaskFiles, isPythonTaskFile, resolvePythonProjects, resolvePythonSourceProject } from "./python-projects.js";
+import {
+  filterPythonTaskFiles,
+  isPythonTaskFile,
+  resolvePythonProjects,
+  resolvePythonSourceProject,
+} from "./python-projects.js";
 import {
   appendUnsupportedSharedMetricsIssue,
   collectUnsupportedSharedMetricsFiles,

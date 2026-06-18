@@ -109,7 +109,9 @@ function readRecord(value: unknown): Record<string, unknown> {
 }
 
 function readOptionalRecord(value: unknown): Record<string, unknown> | undefined {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
+  return typeof value === "object" && value !== null
+    ? (value as Record<string, unknown>)
+    : undefined;
 }
 
 export function readOutputSnippet(output: string): string {

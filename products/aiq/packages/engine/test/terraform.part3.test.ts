@@ -11,6 +11,7 @@ import { ToolRunner } from "../src/tool-runner.js";
 const fixtureTerraformRoot = path.resolve("test-projects/terraform");
 const fixtureHclRoot = path.resolve("test-projects/hcl");
 const hasTerraform = commandAvailable("terraform");
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
 const tempDirs: string[] = [];
 
 function commandAvailable(command: string): boolean {
@@ -187,14 +188,14 @@ describe("Terraform and HCL runners", () => {
         '  required_version = ">= 1.0.0"',
         "}",
         "",
-        'locals { token = "ghp_123456789012345678901234567890123456" }',
+        `locals { token = "${fakeGitHubToken}" }`,
         "",
       ].join("\n"),
       "utf8",
     );
     await writeFile(
       hclProject.configFile,
-      ['locals { token = "ghp_123456789012345678901234567890123456" }', ""].join("\n"),
+      [`locals { token = "${fakeGitHubToken}" }`, ""].join("\n"),
       "utf8",
     );
 

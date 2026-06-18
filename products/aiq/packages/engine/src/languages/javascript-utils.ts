@@ -289,7 +289,10 @@ export function readPackageScripts(packageJson: Record<string, unknown>): Map<st
   );
 }
 
-export function readPackageScript(packageJson: Record<string, unknown>, name: string): string | undefined {
+export function readPackageScript(
+  packageJson: Record<string, unknown>,
+  name: string,
+): string | undefined {
   return readPackageScripts(packageJson).get(name);
 }
 

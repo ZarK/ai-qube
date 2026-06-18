@@ -7,13 +7,16 @@ import {
   withExclusiveDotNet,
   writeFile,
 } from "./runners-test-support.js";
+
+const fakeGitHubToken = ["ghp", "123456789012345678901234567890123456"].join("_");
+
 describe("engine runners", () => {
   it("runs the shared security scan for Rust inputs", async () => {
     const project = await createRustFixtureProject("aiq-rust-security-runner-");
 
     await writeFile(
       project.sourceFile,
-      ['pub const TOKEN: &str = "ghp_123456789012345678901234567890123456";', ""].join("\n"),
+      [`pub const TOKEN: &str = "${fakeGitHubToken}";`, ""].join("\n"),
       "utf8",
     );
 

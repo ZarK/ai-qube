@@ -290,7 +290,9 @@ function appendTyDiagnosticRange(
     return;
   }
 
-  const endLine = readNumber(readNestedValue(positions as Record<string, unknown>, ["end", "line"]));
+  const endLine = readNumber(
+    readNestedValue(positions as Record<string, unknown>, ["end", "line"]),
+  );
   const endColumn = readNumber(
     readNestedValue(positions as Record<string, unknown>, ["end", "column"]),
   );

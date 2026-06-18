@@ -82,7 +82,10 @@ export function deduplicateDiagnostics(diagnostics: readonly Diagnostic[]): Diag
   return uniqueDiagnostics;
 }
 
-export function createMissingStylelintConfigNote(stageId: StageId, files: readonly string[]): string {
+export function createMissingStylelintConfigNote(
+  stageId: StageId,
+  files: readonly string[],
+): string {
   if (files.length === 0) {
     return `No Stylelint configuration was detected for ${stageId}.`;
   }

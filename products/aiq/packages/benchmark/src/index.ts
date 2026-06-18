@@ -88,32 +88,83 @@ export function filterBenchmarkScenarios(
 export async function runBenchmarkSuite(
   options: RunBenchmarkSuiteOptions = {},
 ): Promise<RunBenchmarkSuiteResult> {
-  const cwd = path.resolve(options.cwd ?? process.cwd());
-  const corpusRoot = path.resolve(options.corpusRoot ?? cwd);
-  const outDir = path.resolve(cwd, options.outDir ?? defaultBenchmarkOutDir);
-  const allScenarios = [...(options.scenarios ?? createDefaultBenchmarkCorpus(corpusRoot))];
+  const resolvedOptions = resolveBenchmarkSuiteOptions(options);
+  const allScenarios = [
+    ...(options.scenarios ?? createDefaultBenchmarkCorpus(resolvedOptions.corpusRoot)),
+  ];
   const scenarios = filterBenchmarkScenarios(allScenarios, options);
+  const scenarioResults = await runBenchmarkScenarios(scenarios, resolvedOptions.outDir);
+
+  const summary = summarizeBenchmarkReport(scenarioResults);
+  const report = createBenchmarkReport(resolvedOptions.cwd, scenarioResults, summary, options);
+
+  return writeBenchmarkSuiteResult(report, resolvedOptions.outDir, options);
+}
+
+function resolveBenchmarkSuiteOptions(options: RunBenchmarkSuiteOptions): {
+  corpusRoot: string;
+  cwd: string;
+  outDir: string;
+} {
+  const cwd = path.resolve(options.cwd ?? process.cwd());
+  return {
+    corpusRoot: path.resolve(options.corpusRoot ?? cwd),
+    cwd,
+    outDir: path.resolve(cwd, options.outDir ?? defaultBenchmarkOutDir),
+  };
+}
+
+async function runBenchmarkScenarios(
+  scenarios: readonly BenchmarkScenario[],
+  outDir: string,
+): Promise<BenchmarkScenarioResult[]> {
   const scenarioResults: BenchmarkScenarioResult[] = [];
 
   for (const scenario of scenarios) {
-    try {
-      scenarioResults.push(await runBenchmarkScenario(scenario, outDir));
-    } catch (error) {
-      throw new Error(`Benchmark scenario '${scenario.id}' failed: ${formatError(error)}`);
-    }
+    scenarioResults.push(await runBenchmarkScenarioWithContext(scenario, outDir));
   }
 
-  const summary = summarizeBenchmarkReport(scenarioResults);
-  const report: BenchmarkReport = {
+  return scenarioResults;
+}
+
+async function runBenchmarkScenarioWithContext(
+  scenario: BenchmarkScenario,
+  outDir: string,
+): Promise<BenchmarkScenarioResult> {
+  try {
+    return await runBenchmarkScenario(scenario, outDir);
+  } catch (error) {
+    throw new Error(`Benchmark scenario '${scenario.id}' failed: ${formatError(error)}`);
+  }
+}
+
+async function writeBenchmarkSuiteResult(
+  report: BenchmarkReport,
+  outDir: string,
+  options: RunBenchmarkSuiteOptions,
+): Promise<RunBenchmarkSuiteResult> {
+  if (options.writeArtifact === false) {
+    return { report };
+  }
+
+  return {
+    artifactPath: await writeBenchmarkReportArtifact(report, outDir),
+    report,
+  };
+}
+
+function createBenchmarkReport(
+  cwd: string,
+  scenarioResults: BenchmarkScenarioResult[],
+  summary: BenchmarkReport["summary"],
+  options: RunBenchmarkSuiteOptions,
+): BenchmarkReport {
+  return {
     artifactType: "benchmark",
     artifactVersion: benchmarkArtifactVersion,
     cwd,
     engineVersion,
-    environment: {
-      arch: os.arch(),
-      nodeVersion: process.version,
-      platform: process.platform,
-    },
+    environment: createBenchmarkEnvironment(),
     generatedAt: new Date().toISOString(),
     primaryMetric: {
       field: "summary.totalDurationMs",
@@ -122,21 +173,29 @@ export async function runBenchmarkSuite(
       value: summary.totalDurationMs,
     },
     scenarios: scenarioResults,
-    selection: {
-      kinds: normalizeKinds(options.kinds),
-      matchedScenarioCount: scenarioResults.length,
-      scenarioIds: normalizeStrings(options.scenarioIds),
-      tags: normalizeStrings(options.tags),
-    },
+    selection: createBenchmarkSelection(scenarioResults, options),
     summary,
   };
+}
 
-  if (options.writeArtifact === false) {
-    return { report };
-  }
+function createBenchmarkEnvironment(): BenchmarkReport["environment"] {
+  return {
+    arch: os.arch(),
+    nodeVersion: process.version,
+    platform: process.platform,
+  };
+}
 
-  const artifactPath = await writeBenchmarkReportArtifact(report, outDir);
-  return { artifactPath, report };
+function createBenchmarkSelection(
+  scenarioResults: readonly BenchmarkScenarioResult[],
+  options: RunBenchmarkSuiteOptions,
+): BenchmarkReport["selection"] {
+  return {
+    kinds: normalizeKinds(options.kinds),
+    matchedScenarioCount: scenarioResults.length,
+    scenarioIds: normalizeStrings(options.scenarioIds),
+    tags: normalizeStrings(options.tags),
+  };
 }
 
 export async function runBenchmarkSuiteAndEnforceBudgets(

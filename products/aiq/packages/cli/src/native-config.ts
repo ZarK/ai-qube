@@ -46,12 +46,42 @@ const pythonQualityConfigNames = new Set([
   "tox.ini",
 ]);
 const nativeConfigSetters: ReadonlyMap<string, (configs: NativeConfigDetection) => void> = new Map([
-  ["biome.json", (configs) => (configs.biome = true)],
-  ["biome.jsonc", (configs) => (configs.biome = true)],
-  [".lizard", (configs) => (configs.lizard = true)],
-  [".lizardrc", (configs) => (configs.lizard = true)],
-  ["lizard.conf", (configs) => (configs.lizard = true)],
-  ["tsconfig.json", (configs) => (configs.tsconfig = true)],
+  [
+    "biome.json",
+    (configs) => {
+      configs.biome = true;
+    },
+  ],
+  [
+    "biome.jsonc",
+    (configs) => {
+      configs.biome = true;
+    },
+  ],
+  [
+    ".lizard",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    ".lizardrc",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    "lizard.conf",
+    (configs) => {
+      configs.lizard = true;
+    },
+  ],
+  [
+    "tsconfig.json",
+    (configs) => {
+      configs.tsconfig = true;
+    },
+  ],
 ]);
 
 export async function detectNativeConfigs(cwd: string): Promise<NativeConfigDetection> {
@@ -246,10 +276,7 @@ async function addPackageNativeConfig(
   }
 }
 
-function hasPackageJsTestConfig(
-  packageJson: Record<string, unknown>,
-  testScript: string,
-): boolean {
+function hasPackageJsTestConfig(packageJson: Record<string, unknown>, testScript: string): boolean {
   return (
     testScript.includes("vitest") ||
     testScript.includes("jest") ||

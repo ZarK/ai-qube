@@ -1,9 +1,8 @@
 import { describe, expect, it } from "vitest";
+import type { RunRequest, RunResult } from "./cli-test-support.js";
 import {
   MemoryInput,
   MemoryOutput,
-  RunRequest,
-  RunResult,
   createRunWorkflowOutput,
   createTypeScriptFixtureProject,
   mkdir,

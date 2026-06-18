@@ -1,7 +1,13 @@
 import { realpathSync } from "node:fs";
 import path from "node:path";
 
-import type { Diagnostic, ProjectDescriptor, ProjectGraph, ProjectMetadata, StageResult } from "../contracts.js";
+import type {
+  Diagnostic,
+  ProjectDescriptor,
+  ProjectGraph,
+  ProjectMetadata,
+  StageResult,
+} from "../contracts.js";
 import { resolveProjectConcurrencyLimit } from "../runtime-tunables.js";
 import { findNearestConfig, pathExists } from "../utils/path-utils.js";
 import { createUnsupportedRustRunnerNote } from "./rust-tools.js";
@@ -335,4 +341,3 @@ function tryRealpath(filePath: string): string | undefined {
 export function joinOutputs(...values: string[]): string {
   return values.filter((value) => value.length > 0).join("\n");
 }
-
