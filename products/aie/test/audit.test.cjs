@@ -77,8 +77,8 @@ describe('manual UI audit model', () => {
     assert.equal(checked.evidence.reasonCode, 'manual-audit-incomplete');
     assert.equal(checked.evidence.verified, false);
     assert.equal(checked.evidence.gateEvidence.result, 'unknown');
-    assert.deepEqual(checked.evidence.missing, ['browser-observation.md or local screenshots']);
-    assert.match(checked.nextAction, /browser-observed or screenshot evidence/);
+    assert.deepEqual(checked.evidence.missing, ['browser-observation.md', 'local screenshots']);
+    assert.match(checked.nextAction, /browser-observation\.md, capture local screenshots/);
   });
 
   it('distinguishes browser visits, screenshots, and visual analysis evidence states', () => {
@@ -92,13 +92,13 @@ describe('manual UI audit model', () => {
 
     const metadataOnly = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
     assert.equal(metadataOnly.evidence.state, 'metadata-only');
-    assert.deepEqual(metadataOnly.evidence.missing, ['browser-observation.md or local screenshots', 'notes.md visual analysis']);
+    assert.deepEqual(metadataOnly.evidence.missing, ['browser-observation.md', 'local screenshots', 'notes.md visual analysis']);
 
     writeFileSync(join(evidenceDirectory, 'browser-observation.md'), 'Opened http://localhost:3000/settings at desktop width.\n');
     const browserVisited = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
     assert.equal(browserVisited.evidence.state, 'browser-visited');
     assert.equal(browserVisited.evidence.browserObservationFound, true);
-    assert.deepEqual(browserVisited.evidence.missing, ['notes.md visual analysis']);
+    assert.deepEqual(browserVisited.evidence.missing, ['local screenshots', 'notes.md visual analysis']);
 
     writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
     const screenshotsCaptured = runUiAudit(config, { issueNumber: 97, repoRoot: repo, homeDirectory: home, prepare: true });
@@ -109,7 +109,7 @@ describe('manual UI audit model', () => {
     assert.equal(screenshotsCaptured.prepare, true);
     assert.equal(screenshotsOnly.evidence.state, 'screenshots-captured');
     assert.equal(screenshotsOnly.evidence.screenshotCount, 1);
-    assert.deepEqual(screenshotsOnly.evidence.missing, ['notes.md visual analysis']);
+    assert.deepEqual(screenshotsOnly.evidence.missing, ['browser-observation.md', 'notes.md visual analysis']);
 
     writeFileSync(join(evidenceDirectory, 'notes.md'), 'Visible outcome matched the expected settings UI at desktop width.\n');
     const visualAnalysis = runUiAudit(config, { issueNumber: 96, repoRoot: repo, homeDirectory: home, check: true });
@@ -253,8 +253,8 @@ describe('manual UI audit CLI', () => {
     assert.equal(result.status, 0);
     assert.equal(parsed.evidence.state, 'metadata-only');
     assert.equal(parsed.evidence.reasonCode, 'manual-audit-incomplete');
-    assert.deepEqual(parsed.evidence.missing, ['browser-observation.md or local screenshots', 'notes.md visual analysis']);
-    assert.match(parsed.nextAction, /browser-observed or screenshot evidence/);
+    assert.deepEqual(parsed.evidence.missing, ['browser-observation.md', 'local screenshots', 'notes.md visual analysis']);
+    assert.match(parsed.nextAction, /browser-observation\.md, capture local screenshots/);
   });
 
   it('fails audit commands on malformed trusted config', () => {

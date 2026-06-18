@@ -139,8 +139,8 @@ function countScreenshots(path: string): number {
 
 function auditSummary(state: UiAuditEvidenceState): string {
   if (state === 'disabled') return 'Manual UI audit is disabled by repository config.';
-  if (state === 'visual-analysis-recorded') return 'Browser or screenshot evidence plus visual analysis notes were found. Executor reports evidence presence only and cannot certify audit pass/fail.';
-  if (state === 'screenshots-captured') return 'Local screenshots were found, but visual analysis notes are still missing.';
+  if (state === 'visual-analysis-recorded') return 'Browser observation, local screenshots, and visual analysis notes were found. Executor reports evidence presence only and cannot certify audit pass/fail.';
+  if (state === 'screenshots-captured') return 'Local screenshots were found, but browser observation and/or visual analysis notes are still missing.';
   if (state === 'browser-visited') return 'A browser observation note was found, but screenshots or visual analysis notes are still missing.';
   if (state === 'metadata-only') return 'Manual UI audit evidence directory exists, but browser/screenshot evidence and visual analysis are missing.';
   return 'No manual UI audit evidence is recorded for this issue.';
@@ -207,11 +207,12 @@ function readEvidence(directory: string, issueNumber: number): UiAuditEvidence {
   const screenshotCount = countScreenshots(screenshotsDirectory);
   const missing: string[] = [];
   if (!directoryExists) missing.push('local evidence directory');
-  if (directoryExists && !browserObservationFound && screenshotCount === 0) missing.push('browser-observation.md or local screenshots');
+  if (directoryExists && !browserObservationFound) missing.push('browser-observation.md');
+  if (directoryExists && screenshotCount === 0) missing.push('local screenshots');
   if (directoryExists && !notesFound) missing.push('notes.md visual analysis');
   const state: UiAuditEvidenceState = !directoryExists
     ? 'missing'
-    : notesFound && (browserObservationFound || screenshotCount > 0)
+    : notesFound && browserObservationFound && screenshotCount > 0
       ? 'visual-analysis-recorded'
       : screenshotCount > 0
         ? 'screenshots-captured'
@@ -248,7 +249,7 @@ function buildWarnings(config: Config): string[] {
     'Executor never claims a UI audit passed from generated instructions, screenshots, browser observations, or local notes alone.',
   ];
   if (!config.uiAuditAppLaunch || !config.uiAuditTarget) {
-    warnings.push('No app launch command or audit target URL is configured yet; use the repository-specific run command and record the real URL in notes.md.');
+    warnings.push('No app launch command or audit target URL is configured yet; use the repository-specific run command and record the real URL in browser-observation.md.');
   }
   if (!config.manualUiAudit) warnings.unshift('Manual UI audit is disabled by repository config.');
   return warnings;
@@ -259,7 +260,7 @@ function nextAction(result: Pick<UiAuditResult, 'required' | 'prepare' | 'check'
   if (result.prepare && !result.dryRun) return 'Run the real application, audit it with agent-browser first, capture screenshots for important states, and write browser-observation.md plus notes.md visual analysis.';
   if (result.check) return result.evidence.state === 'visual-analysis-recorded'
     ? 'Inspect the local evidence yourself; Executor reports browser/screenshot evidence plus visual-analysis presence only and cannot certify that the audit passed.'
-    : 'Create browser-observed or screenshot evidence plus notes.md visual analysis, then rerun `aie audit ui <issue> --check`.';
+    : 'Create browser-observation.md, capture local screenshots, add notes.md visual analysis, then rerun `aie audit ui <issue> --check`.';
   return 'Run `aie audit ui <issue> --prepare`, audit the real running app with agent-browser first, capture screenshots, and record browser-observation.md plus notes.md visual analysis.';
 }
 
@@ -311,10 +312,10 @@ export function formatUiAudit(result: UiAuditResult): string {
   lines.push(`Fallback: ${result.fallbackBrowserAutomation}`);
   lines.push(result.appLaunch
     ? `App launch: ${result.appLaunch}`
-    : 'App launch: not configured; start the real application with the repository-specific command and record it in notes.md.');
+    : 'App launch: not configured; start the real application with the repository-specific command and record it in browser-observation.md.');
   lines.push(result.auditTarget
     ? `Audit target: ${result.auditTarget}`
-    : 'Audit target: not configured; open the changed UI route in the real running app and record the URL in notes.md.');
+    : 'Audit target: not configured; open the changed UI route in the real running app and record the URL in browser-observation.md.');
   lines.push('Checklist:');
   for (const item of result.checklist) {
     lines.push(`- ${item.title}: ${item.action}`);

@@ -196,7 +196,7 @@ function githubReviewDecisionBlocks(pr: PrBodyPullRequest | null): boolean {
 function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyReadinessItem[] {
   const pending: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
-  if (audit.required && audit.evidence.state !== 'visual-analysis-recorded') pending.push(readinessItem(audit.evidence.reasonCode, 'Record browser-observed or screenshot UI audit evidence plus visual analysis notes for the real running app.', audit.evidence.source, audit.evidence.trust));
+  if (audit.required && audit.evidence.state !== 'visual-analysis-recorded') pending.push(readinessItem(audit.evidence.reasonCode, 'Record browser-observation evidence, capture screenshots, and add visual analysis notes for the real running app.', audit.evidence.source, audit.evidence.trust));
   if (reviewEvidencePending(review.evidence)) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
   if (!pr) pending.push(readinessItem('missing-pr', 'Create a non-draft, ready-for-review pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
   else {
