@@ -173,8 +173,10 @@ Operational checks:
 
 Metric remediation:
   Stages 5-7 enforce SLOC, complexity, maintainability, and readability defaults for source and test code.
-  Do not start broad refactors until stage 0 e2e passes.
-  Keep refactors small and behavior-preserving; preserve public APIs and repository conventions.
+  Treat metric remediation as behavior-preserving work, not architecture redesign.
+  Allowed changes: split oversized files, extract existing code blocks into named functions, improve local names, and reduce local complexity without changing observable behavior.
+  Preserve public APIs, command behavior, tool selection, execution order, existing pathways, and repository conventions.
+  Do not use metric failures as authorization for feature changes, command semantic changes, stage/language/tool boundary changes, or architecture rewrites.
   Use direct purpose-revealing names: active verbs for functions, direct nouns for values, plural nouns for collections, short scoped file/module names, and no vague helper/manager/processor names unless local convention requires them.
 
 Package surface:
