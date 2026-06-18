@@ -1,5 +1,5 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { existsSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { AgentHostKind } from "./contracts.js";
 
@@ -29,18 +29,48 @@ export function createAgentAssetPlan(host: AgentHostKind | undefined): readonly 
 
 export function writeAgentAssetFiles(target: string, files: readonly AgentAssetFile[]): readonly { readonly path: string }[] {
   const baseDir = resolve(target);
+  mkdirSync(baseDir, { recursive: true });
+  const realBaseDir = realpathSync(baseDir);
   const written: { path: string }[] = [];
   for (const file of files) {
-    const path = resolve(baseDir, file.path);
-    const relativePath = relative(baseDir, path);
-    if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
-      throw new TypeError(`refusing to write agent asset outside target: ${file.path}`);
-    }
+    const path = safeAssetPath(realBaseDir, file.path);
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, file.body);
     written.push({ path });
   }
   return written;
+}
+
+function safeAssetPath(realBaseDir: string, assetPath: string): string {
+  if (isAbsolute(assetPath)) {
+    throw new TypeError(`refusing to write absolute agent asset path: ${assetPath}`);
+  }
+  const segments = assetPath.split(/[\\/]+/u).filter((segment) => segment.length > 0 && segment !== ".");
+  if (segments.length === 0 || segments.some((segment) => segment === "..")) {
+    throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
+  }
+  let current = realBaseDir;
+  for (const segment of segments.slice(0, -1)) {
+    const next = resolve(current, segment);
+    if (!inside(realBaseDir, next)) {
+      throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
+    }
+    if (!existsSync(next)) mkdirSync(next);
+    current = realpathSync(next);
+    if (!inside(realBaseDir, current)) {
+      throw new TypeError(`refusing to follow agent asset directory outside target: ${assetPath}`);
+    }
+  }
+  const path = resolve(current, basename(assetPath));
+  if (!inside(realBaseDir, path)) {
+    throw new TypeError(`refusing to write agent asset outside target: ${assetPath}`);
+  }
+  return path;
+}
+
+function inside(realBaseDir: string, path: string): boolean {
+  const relativePath = relative(realBaseDir, path);
+  return relativePath !== "" && !relativePath.startsWith("..") && !isAbsolute(relativePath);
 }
 
 function instruction(host: AgentHostKind, path: string, body: string): AgentAssetFile {

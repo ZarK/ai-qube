@@ -77,8 +77,8 @@ export const aibCli = createCli({
 
       try {
         if (flags["dry-run"] !== true) {
-          const written = writeBootstrapState(plan.sessionPath, plan.state);
           const writtenAgentAssets = writeAgentAssetFiles(plan.target, plan.agentAssets);
+          const written = writeBootstrapState(plan.sessionPath, plan.state);
           const nextAction = computeNextAction(written.state);
           return {
             json: {

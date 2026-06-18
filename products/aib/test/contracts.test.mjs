@@ -18,6 +18,7 @@ import {
   validateWorkItemDraftOrder,
   validateSpecSections,
   WorkItemQueueOrderError,
+  writeAgentAssetFiles,
   workItemValidationForProject
 } from "../dist/index.js";
 
@@ -75,6 +76,19 @@ test("agent asset plans cover supported host instruction surfaces", () => {
 
   const gemini = createAgentAssetPlan("gemini");
   assert.deepEqual(gemini.map((file) => file.path), ["GEMINI.md"]);
+});
+
+test("agent asset writes reject paths outside the target", () => {
+  assert.throws(
+    () => writeAgentAssetFiles(".", [{
+      id: "bad",
+      host: "codex",
+      path: "../outside.md",
+      kind: "instruction",
+      body: "bad"
+    }]),
+    /outside target/
+  );
 });
 
 test("markdown work item rendering does not require GitHub auth or IDs", () => {
