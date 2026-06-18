@@ -36,6 +36,8 @@ export { createSpecDraft, parseSpecMarkdownSections, requiredSpecSectionIds, res
 export type { SpecDraftResult, SpecValidationReport } from "./spec.js";
 export { createMilestoneDrafts, milestoneDocsExist, writeMilestoneDrafts } from "./milestones.js";
 export type { MilestoneDraftResult } from "./milestones.js";
+export { createWorkItemDrafts, writeWorkItemDrafts } from "./work_items.js";
+export type { WorkItemDraftResult } from "./work_items.js";
 export { aibCli, runAibCli } from "./runtime.js";
 export { createInitialSession } from "./session.js";
 export type { BootstrapSession } from "./session.js";
