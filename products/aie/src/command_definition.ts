@@ -15,7 +15,7 @@ interface ExecutorFlagExtensions extends MetadataExtensions {
   readonly legacyForms?: readonly string[];
 }
 
-interface ExecutorCommandDefinition {
+export interface ExecutorCommandDefinition {
   name: string;
   description: string;
   args: string[];
@@ -129,6 +129,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'deps blockers',
     'deps blocking',
     'deps chain',
+    'run start',
     'view',
   ]);
   const defaultDescriptions: Record<string, string> = {
@@ -136,10 +137,11 @@ function toArgumentMetadata(commandName: string, argument: string) {
     pr: 'Pull request number, for example 12 or #12',
     target: 'Target path or selector for the command',
   };
+  const required = commandName === 'run start' ? argument === 'command' : requiredArgCommands.has(commandName);
   return {
     name: argument,
     description: descriptions[commandName]?.[argument] ?? defaultDescriptions[argument] ?? `Argument ${argument} for aie ${commandName}`,
-    required: requiredArgCommands.has(commandName),
+    required,
   };
 }
 

@@ -1,123 +1,41 @@
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { basename, resolve, join } from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { setTimeout as delay } from 'node:timers/promises';
+import type {
+  RunMetadata,
+  RunNameOptions,
+  RunPaths,
+  RunStartOptions,
+  RunStartResult,
+  RunStatusResult,
+  RunStatusState,
+  RunStopOptions,
+  RunStopResult,
+  RunWaitOptions,
+  RunWaitResult,
+  SpawnPlan,
+} from './local_app_runner_types.js';
+export { formatRunResult } from './local_app_runner_format.js';
+export type {
+  RunCommand,
+  RunMetadata,
+  RunNameOptions,
+  RunPaths,
+  RunStartOptions,
+  RunStartResult,
+  RunStatusResult,
+  RunStatusState,
+  RunStopOptions,
+  RunStopResult,
+  RunWaitOptions,
+  RunWaitResult,
+  SpawnPlan,
+} from './local_app_runner_types.js';
 
-export type RunCommand = 'run start' | 'run wait' | 'run status' | 'run stop';
-export type RunStatusState = 'missing' | 'running' | 'stopped' | 'unknown';
-
-export interface RunMetadata {
-  version: 1;
-  name: string;
-  pid: number;
-  command: string[];
-  cwd: string;
-  startedAt: string;
-  platform: NodeJS.Platform;
-  stdoutPath: string;
-  stderrPath: string;
-  metadataPath: string;
-}
-
-export interface RunPaths {
-  directory: string;
-  metadataPath: string;
-  stdoutPath: string;
-  stderrPath: string;
-}
-
-export interface SpawnPlan {
-  command: string;
-  args: string[];
-  cwd: string;
-  detached: boolean;
-  windowsHide: boolean;
-  stdoutPath: string;
-  stderrPath: string;
-}
-
-export interface RunStartResult {
-  ok: boolean;
-  command: 'run start';
-  dryRun: boolean;
-  name: string;
-  commandLine: string[];
-  cwd: string;
-  pid: number | null;
-  paths: RunPaths;
-  spawnPlan: SpawnPlan;
-  status: RunStatusState;
-  nextAction: string;
-  error?: string;
-}
-
-export interface RunStatusResult {
-  ok: boolean;
-  command: 'run status';
-  name: string;
-  status: RunStatusState;
-  metadata: RunMetadata | null;
-  paths: RunPaths;
-  logTail: { stdout: string[]; stderr: string[] };
-  nextAction: string;
-  error?: string;
-}
-
-export interface RunWaitResult {
-  ok: boolean;
-  command: 'run wait';
-  name: string;
-  url: string;
-  timeoutSeconds: number;
-  elapsedMs: number;
-  attempts: number;
-  status: 'ready' | 'timeout' | 'missing-run' | 'stopped' | 'request-failed';
-  httpStatus: number | null;
-  paths: RunPaths;
-  logTail: { stdout: string[]; stderr: string[] };
-  nextAction: string;
-  error?: string;
-}
-
-export interface RunStopResult {
-  ok: boolean;
-  command: 'run stop';
-  dryRun: boolean;
-  name: string;
-  status: RunStatusState;
-  pid: number | null;
-  paths: RunPaths;
-  logTail: { stdout: string[]; stderr: string[] };
-  nextAction: string;
-  error?: string;
-}
-
-export interface RunStartOptions {
-  repoRoot: string;
-  name: string;
-  cwd?: string;
-  command: string[];
-  dryRun?: boolean;
-  now?: Date;
-  platform?: NodeJS.Platform;
-}
-
-export interface RunNameOptions {
-  repoRoot: string;
-  name: string;
-}
-
-export interface RunWaitOptions extends RunNameOptions {
-  url: string;
-  timeoutSeconds?: number;
-  pollIntervalMs?: number;
-  fetchImpl?: typeof fetch;
-  now?: () => number;
-}
-
-export interface RunStopOptions extends RunNameOptions {
-  dryRun?: boolean;
-  platform?: NodeJS.Platform;
+interface ProcessIdentity {
+  state: RunStatusState;
+  commandLine: string | null;
 }
 
 const DEFAULT_TIMEOUT_SECONDS = 30;
@@ -189,7 +107,7 @@ export function readRunMetadata(repoRoot: string, name: string): RunMetadata | n
   return parsed as unknown as RunMetadata;
 }
 
-function processState(pid: number): RunStatusState {
+function pidState(pid: number): RunStatusState {
   try {
     process.kill(pid, 0);
     return 'running';
@@ -199,8 +117,42 @@ function processState(pid: number): RunStatusState {
   }
 }
 
+function normalizeExecutableName(value: string): string {
+  return basename(value).toLowerCase().replace(/\.(cmd|exe|ps1|bat)$/i, '');
+}
+
+function commandLineForPid(pid: number, platform: NodeJS.Platform): string | null {
+  if (pid === process.pid) return [process.execPath, ...process.argv].join(' ');
+  if (platform === 'win32') {
+    const script = `(Get-CimInstance Win32_Process -Filter "ProcessId = ${pid}" | Select-Object -ExpandProperty CommandLine)`;
+    const result = spawnSync('powershell.exe', ['-NoProfile', '-Command', script], { encoding: 'utf8', timeout: 2000, windowsHide: true });
+    const output = result.stdout.trim();
+    return result.status === 0 && output ? output : null;
+  }
+  if (platform === 'linux') {
+    try {
+      const output = readFileSync(`/proc/${pid}/cmdline`, 'utf8').replace(/\0/g, ' ').trim();
+      return output || null;
+    } catch {
+      return null;
+    }
+  }
+  const result = spawnSync('ps', ['-p', String(pid), '-o', 'command='], { encoding: 'utf8', timeout: 2000 });
+  const output = result.stdout.trim();
+  return result.status === 0 && output ? output : null;
+}
+
+function processIdentity(metadata: RunMetadata, platform = process.platform): ProcessIdentity {
+  const state = pidState(metadata.pid);
+  if (state !== 'running') return { state, commandLine: null };
+  const commandLine = commandLineForPid(metadata.pid, platform);
+  if (!commandLine) return { state: 'unknown', commandLine: null };
+  const expected = normalizeExecutableName(metadata.command[0] ?? '');
+  return expected && commandLine.toLowerCase().includes(expected) ? { state: 'running', commandLine } : { state: 'unknown', commandLine };
+}
+
 function statusFromMetadata(metadata: RunMetadata | null): RunStatusState {
-  return metadata ? processState(metadata.pid) : 'missing';
+  return metadata ? processIdentity(metadata).state : 'missing';
 }
 
 function tail(path: string, maxLines = LOG_TAIL_LINES): string[] {
@@ -324,9 +276,28 @@ export function runStart(options: RunStartOptions): RunStartResult {
         error: 'The app process did not expose a PID after spawn.',
       };
     }
-    child.unref();
     const metadata = metadataFromPlan(options, paths, plan, child.pid, options.platform ?? process.platform);
-    writeFileSync(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+    try {
+      writeFileSync(paths.metadataPath, `${JSON.stringify(metadata, null, 2)}\n`);
+    } catch (err: unknown) {
+      child.kill();
+      const error = err instanceof Error ? err.message : String(err);
+      return {
+        ok: false,
+        command: 'run start',
+        dryRun: false,
+        name: validateName(options.name),
+        commandLine: [plan.command, ...plan.args],
+        cwd: plan.cwd,
+        pid: child.pid,
+        paths,
+        spawnPlan: plan,
+        status: 'unknown',
+        nextAction: 'Fix runner metadata storage, verify no child process remains, then retry once.',
+        error: `Failed to write runner metadata: ${error}`,
+      };
+    }
+    child.unref();
     return {
       ok: true,
       command: 'run start',
@@ -370,6 +341,18 @@ async function fetchReady(fetchImpl: typeof fetch, url: string): Promise<{ ready
   }
 }
 
+function isLocalReadinessUrl(input: string): boolean {
+  try {
+    const parsed = new URL(input);
+    if (parsed.protocol === 'file:') return true;
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return false;
+    const host = parsed.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === '0.0.0.0';
+  } catch {
+    return false;
+  }
+}
+
 export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
   const paths = runPaths(options.repoRoot, options.name);
   const metadata = readRunMetadata(options.repoRoot, options.name);
@@ -377,6 +360,23 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
   const pollIntervalMs = Math.max(100, Math.trunc(options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS));
   const clock = options.now ?? (() => Date.now());
   const started = clock();
+  if (!isLocalReadinessUrl(options.url)) {
+    return {
+      ok: false,
+      command: 'run wait',
+      name: validateName(options.name),
+      url: options.url,
+      timeoutSeconds,
+      elapsedMs: 0,
+      attempts: 0,
+      status: 'request-failed',
+      httpStatus: null,
+      paths,
+      logTail: logTail(paths),
+      nextAction: 'Use a local readiness URL such as http://127.0.0.1:3000 or http://localhost:5173.',
+      error: `Refusing non-local readiness URL: ${options.url}`,
+    };
+  }
   if (!metadata) {
     return {
       ok: false,
@@ -398,7 +398,7 @@ export async function runWait(options: RunWaitOptions): Promise<RunWaitResult> {
   let lastStatus: number | null = null;
   let lastError: string | undefined;
   while (clock() - started <= timeoutSeconds * 1000) {
-    if (processState(metadata.pid) !== 'running') {
+    if (processIdentity(metadata).state !== 'running') {
       return {
         ok: false,
         command: 'run wait',
@@ -475,7 +475,7 @@ function killProcessTree(pid: number, platform: NodeJS.Platform): boolean {
 export function runStop(options: RunStopOptions): RunStopResult {
   const paths = runPaths(options.repoRoot, options.name);
   const metadata = readRunMetadata(options.repoRoot, options.name);
-  const status = statusFromMetadata(metadata);
+  const status = metadata ? processIdentity(metadata, options.platform ?? process.platform).state : 'missing';
   if (!metadata) {
     return {
       ok: true,
@@ -502,7 +502,7 @@ export function runStop(options: RunStopOptions): RunStopResult {
       nextAction: `Rerun without --dry-run to stop PID ${metadata.pid} and remove metadata.`,
     };
   }
-  const stopped = status !== 'running' || killProcessTree(metadata.pid, options.platform ?? process.platform);
+  const stopped = status === 'stopped' || (status === 'running' && killProcessTree(metadata.pid, options.platform ?? process.platform));
   if (stopped) {
     rmSync(paths.metadataPath, { force: true });
   }
@@ -518,36 +518,4 @@ export function runStop(options: RunStopOptions): RunStopResult {
     nextAction: stopped ? 'Runner metadata was removed. Inspect logs if startup or audit behavior needs review.' : 'Stop the process manually, then remove stale runner metadata.',
     ...(stopped ? {} : { error: `Failed to stop PID ${metadata.pid}.` }),
   };
-}
-
-export function formatRunResult(result: RunStartResult | RunStatusResult | RunWaitResult | RunStopResult): string {
-  const lines: string[] = [];
-  if (result.command === 'run start') {
-    lines.push(`Run start ${result.name}: ${result.ok ? (result.dryRun ? 'planned' : 'started') : 'blocked'}.`);
-    lines.push(`Command: ${result.commandLine.join(' ')}`);
-    lines.push(`Working directory: ${result.cwd}`);
-    if (result.pid) lines.push(`PID: ${result.pid}`);
-    lines.push(`Logs: ${result.paths.stdoutPath} / ${result.paths.stderrPath}`);
-  } else if (result.command === 'run status') {
-    lines.push(`Run status ${result.name}: ${result.status}.`);
-    if (result.metadata) {
-      lines.push(`PID: ${result.metadata.pid}`);
-      lines.push(`Command: ${result.metadata.command.join(' ')}`);
-      lines.push(`Working directory: ${result.metadata.cwd}`);
-    }
-  } else if (result.command === 'run wait') {
-    lines.push(`Run wait ${result.name}: ${result.status}.`);
-    lines.push(`URL: ${result.url}`);
-    lines.push(`Attempts: ${result.attempts}; elapsed: ${result.elapsedMs}ms; HTTP: ${result.httpStatus ?? 'none'}`);
-  } else {
-    lines.push(`Run stop ${result.name}: ${result.status}.`);
-    if (result.pid) lines.push(`PID: ${result.pid}`);
-  }
-  if ('error' in result && result.error) lines.push(`Error: ${result.error}`);
-  if ('logTail' in result) {
-    if (result.logTail.stdout.length > 0) lines.push('stdout tail:', ...result.logTail.stdout.map(line => `  ${line}`));
-    if (result.logTail.stderr.length > 0) lines.push('stderr tail:', ...result.logTail.stderr.map(line => `  ${line}`));
-  }
-  lines.push(`Next action: ${result.nextAction}`);
-  return `${lines.join('\n')}\n`;
 }

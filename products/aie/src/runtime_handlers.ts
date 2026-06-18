@@ -10,15 +10,11 @@ import { branchCommandError, formatBranchResult, parseBranchIssue, shouldShowBra
 import { commandDescription, commandExamples, isHelpToken } from './command_metadata.js';
 import { completeIssue } from './complete/index.js';
 import { getDefaults, loadConfig, loadConfigFile, type ValidationError } from './config/index.js';
-import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
 import { buildDoctorDiagnostics } from './doctor.js';
 import { buildGatePlan, buildGateStatus, formatGatePlan, formatGateStatus, isGateStage } from './gates/index.js';
 import { runInit } from './init/index.js';
-import { formatRunResult, runStart, runStatus, runStop, runWait } from './local_app_runner.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';
 import { buildMigrationMap, formatMigrationMap, formatMigrationPlan, runMigration } from './migrate/index.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
-import { githubIssueNumber } from './providers/github/github_work_codec.js';
 import { computeQueue, getNextIssue } from './queue/index.js';
 import { buildRepoPrimePlan } from './repo/index.js';
 import { formatDoctorHuman } from './renderers/doctor_renderer.js';
@@ -34,17 +30,12 @@ import { viewIssue } from './view.js';
 import { commandFailure, commandResult, numberFlag, readBooleanFlag, stringArg, stringFlag, stringListFlag } from './runtime_result.js';
 import { policyFromRuntimeFlags } from './runtime_init_policy.js';
 import { handleDepsFix } from './runtime_deps_fix.js';
+import { handleDepsBlocked, handleDepsBlockers, handleDepsBlocking, handleDepsChain, handleDepsGraph, handleDepsReady } from './runtime_deps_handlers.js';
 import { handleLabelsSetup } from './runtime_labels_setup.js';
 import { handleSchema } from './runtime_schema.js';
-
-function formatConfigErrors(errors: ValidationError[]): string {
-  return errors.map(error => `${error.path}: ${error.message}`).join('\n');
-}
-
-function lineOutput(lines: string[]): string {
-  return `${lines.join('\n')}\n`;
-}
-
+import { handleRunStart, handleRunStatus, handleRunStop, handleRunWait } from './runtime_run_handlers.js';
+function formatConfigErrors(errors: ValidationError[]): string { return errors.map(error => `${error.path}: ${error.message}`).join('\n'); }
+function lineOutput(lines: string[]): string { return `${lines.join('\n')}\n`; }
 function parseIssueNumber(input: string | undefined, command: string, role = 'issue'): number {
   if (!input || isHelpToken(input)) throw new Error(`Missing ${role} number.`);
   const cleaned = input.replace(/^#/, '').trim();
@@ -65,7 +56,6 @@ function usageResult(context: Parameters<RuntimeCommandHandler>[0], command: str
 function configLoadFailure(context: Parameters<RuntimeCommandHandler>[0], command: string, loaded: { errors: ValidationError[] }, nextAction: string) {
   return commandFailure(context, { ok: false, command, errors: loaded.errors, nextAction }, `Failed to load trusted Executor config:\n${formatConfigErrors(loaded.errors)}\nNext action: ${nextAction}`);
 }
-
 async function handleStart(context: Parameters<RuntimeCommandHandler>[0]) {
   const issue = stringArg(context, 'issue');
   const examples = commandExamples('start');
@@ -427,94 +417,6 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
-const RUN_COMMAND_ARG_NAMES = ['command', ...Array.from({ length: 12 }, (_, index) => `commandArg${index + 1}`)];
-
-function runName(context: Parameters<RuntimeCommandHandler>[0]): string {
-  return stringFlag(context, 'name') ?? 'ui-audit';
-}
-
-function readRunCommand(context: Parameters<RuntimeCommandHandler>[0]): string[] {
-  const separatorIndex = context.argv.indexOf('--');
-  const tokens = separatorIndex >= 0
-    ? context.argv.slice(separatorIndex + 1)
-    : RUN_COMMAND_ARG_NAMES.map(name => stringArg(context, name)).filter((value): value is string => typeof value === 'string' && value.length > 0);
-  return tokens.filter(token => token.length > 0);
-}
-
-async function handleRunStart(context: Parameters<RuntimeCommandHandler>[0]) {
-  if (isHelpToken(stringArg(context, 'command'))) return usageResult(context, 'run start', 'aie run start --name <name> [--cwd <path>] -- <command...>', [
-    'Usage: aie run start --name <name> [--cwd <path>] -- <command...>',
-    '',
-    'Start a long-running local app with hidden Windows-safe spawn options, persistent metadata, and deterministic logs.',
-    'Examples:',
-    ...commandExamples('run start').map(example => `  ${example}`),
-  ]);
-  const commandLine = readRunCommand(context);
-  if (commandLine.length === 0) {
-    const message = 'Failed to run `aie run start`: missing app command after `--`. Likely cause: no server command was provided. Next action: run `aie run start --name ui-audit -- npm run dev`.';
-    return commandFailure(context, { ok: false, command: 'run start', error: message }, message);
-  }
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix aie.config.json, then start the local app runner again.');
-  try {
-    const result = runStart({
-      repoRoot: loaded.root,
-      name: runName(context),
-      cwd: stringFlag(context, 'cwd'),
-      command: commandLine,
-      dryRun: readBooleanFlag(context, 'dry-run'),
-    });
-    return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
-  } catch (err: unknown) {
-    const cause = err instanceof Error ? err.message : String(err);
-    const message = `Failed to run \`aie run start\`. Likely cause: ${cause}. Next action: fix the --name, --cwd, or app command and rerun with --dry-run first.`;
-    return commandFailure(context, { ok: false, command: 'run start', error: message }, message);
-  }
-}
-
-async function handleRunWait(context: Parameters<RuntimeCommandHandler>[0]) {
-  const url = stringFlag(context, 'url');
-  if (!url) {
-    const message = 'Failed to run `aie run wait`: missing --url. Likely cause: no readiness endpoint was provided. Next action: run `aie run wait --name ui-audit --url http://127.0.0.1:3000 --timeout 30`.';
-    return commandFailure(context, { ok: false, command: 'run wait', error: message }, message);
-  }
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run wait', loaded, 'Fix aie.config.json, then wait for the local app runner again.');
-  try {
-    const result = await runWait({
-      repoRoot: loaded.root,
-      name: runName(context),
-      url,
-      timeoutSeconds: numberFlag(context, 'timeout'),
-    });
-    return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
-  } catch (err: unknown) {
-    const cause = err instanceof Error ? err.message : String(err);
-    const message = `Failed to run \`aie run wait\`. Likely cause: ${cause}. Next action: inspect runner status and logs with \`aie run status --name ${runName(context)}\`, then retry one bounded wait.`;
-    return commandFailure(context, { ok: false, command: 'run wait', error: message }, message);
-  }
-}
-
-async function handleRunStatus(context: Parameters<RuntimeCommandHandler>[0]) {
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run status', loaded, 'Fix aie.config.json, then inspect the local app runner again.');
-  const result = runStatus({ repoRoot: loaded.root, name: runName(context) });
-  return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
-}
-
-async function handleRunStop(context: Parameters<RuntimeCommandHandler>[0]) {
-  const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'run stop', loaded, 'Fix aie.config.json, then stop the local app runner again.');
-  try {
-    const result = runStop({ repoRoot: loaded.root, name: runName(context), dryRun: readBooleanFlag(context, 'dry-run') });
-    return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
-  } catch (err: unknown) {
-    const cause = err instanceof Error ? err.message : String(err);
-    const message = `Failed to run \`aie run stop\`. Likely cause: ${cause}. Next action: inspect runner status and stop the process manually if metadata is stale.`;
-    return commandFailure(context, { ok: false, command: 'run stop', error: message }, message);
-  }
-}
-
 export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> = {
   audit: topic(['Use `aie audit ui <issue> --dry-run`, `aie audit ui <issue> --prepare`, or `aie audit ui <issue> --check --json`.', 'Audit helpers render manual guidance and local evidence paths; they never upload screenshots or claim pass/fail from instructions alone.']),
   'audit ui': context => handleConfigCommand(context, 'audit ui'),
@@ -530,36 +432,13 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const diagnostics = await buildDoctorDiagnostics();
     return commandResult(context, diagnostics, formatDoctorHuman(diagnostics));
   },
-  'deps blocked': async context => {
-    const blocked = await getAllBlockedIssues();
-    return commandResult(context, { ok: true, command: 'deps blocked', blocked }, lineOutput(['Blocked open issues:', ...(blocked.length === 0 ? ['  None.'] : blocked.map(item => `  #${item.number} "${item.title}" (${item.state}) blocked by: ${item.blockers.map(blocker => `#${blocker.number} (${blocker.state})`).join(', ')}`))]));
-  },
-  'deps blockers': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps blockers');
-    const workItem = await createGitHubWorkProvider().getWorkItem({ providerId: 'github', id: String(issueNumber) });
-    const issue = { number: githubIssueNumber(workItem), title: workItem.title, state: workItem.state === 'open' ? 'OPEN' : 'CLOSED' };
-    const blockers = await getDirectBlockers(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps blockers', issue, blockers }, lineOutput([`Direct blockers for #${issue.number} "${issue.title}" (${issue.state}):`, ...(blockers.length === 0 ? ['  None declared.'] : blockers.map(blocker => `  #${blocker.number} "${blocker.title}" (${blocker.state})`))]));
-  },
-  'deps blocking': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps blocking');
-    const blocked = await getIssuesBlockedBy(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps blocking', issue: issueNumber, blocked }, lineOutput([`Open issues blocked by #${issueNumber}:`, ...(blocked.length === 0 ? ['  None.'] : blocked.map(item => `  #${item.number} "${item.title}" (${item.state})`))]));
-  },
-  'deps chain': async context => {
-    const issueNumber = parseIssueNumber(stringArg(context, 'issue'), 'deps chain');
-    const chain = await getDependencyChain(issueNumber);
-    return commandResult(context, { ok: true, command: 'deps chain', issue: issueNumber, chain }, lineOutput([`Dependency chain for #${issueNumber}:`, ...chain.map(item => `  #${item.number} "${item.title}" (${item.state})`)]));
-  },
+  'deps blocked': handleDepsBlocked,
+  'deps blockers': handleDepsBlockers,
+  'deps blocking': handleDepsBlocking,
+  'deps chain': handleDepsChain,
   'deps fix': handleDepsFix,
-  'deps graph': async context => {
-    const graph = await getDependencyGraph();
-    return commandResult(context, { ok: true, command: 'deps graph', nodes: graph.nodes, blockers: graph.blockers, cycles: graph.cycles }, lineOutput(['Dependency graph (nodes + blockers):', ...graph.nodes.map(node => `  #${node.number} "${node.title}" (${node.state})${(graph.blockers[node.number] || []).length > 0 ? ' blocked by: ' + (graph.blockers[node.number] || []).map(issue => `#${issue}`).join(', ') : ''}`), ...(graph.cycles.length > 0 ? ['Cycles:', ...graph.cycles.map(cycle => `  ${cycle.map(issue => `#${issue}`).join(' -> ')}`)] : [])]));
-  },
-  'deps ready': async context => {
-    const ready = await getReadyIssues();
-    return commandResult(context, { ok: true, command: 'deps ready', ready }, lineOutput(['Ready issues (no open blockers):', ...(ready.length === 0 ? ['  None.'] : ready.map(item => `  #${item.number} "${item.title}" (${item.state})`))]));
-  },
+  'deps graph': handleDepsGraph,
+  'deps ready': handleDepsReady,
   gates: topic(['Use `aie gates plan --dry-run`, `aie gates plan --stage pre-pr --json`, or `aie gates status --json`.', 'Gate commands are read from trusted repository config and are never executed by Executor.']),
   'gates plan': async context => {
     const loaded = await loadConfigFile();

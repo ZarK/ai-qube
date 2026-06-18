@@ -105,7 +105,7 @@ describe('schema command', () => {
     assert.equal(prView.dryRun.supported, false);
     assert.equal(flag(prView, 'json').type, 'boolean');
     assert.deepEqual(argument(prGate, 'pr'), { name: 'pr', description: 'Pull request number for the PR review gate, for example 12 or #12', required: true, multiple: false });
-    assert.deepEqual(argument(runStart, 'command'), { name: 'command', description: 'App command executable after --, for example npm in `aie run start -- npm run dev`', required: false, multiple: false });
+    assert.deepEqual(argument(runStart, 'command'), { name: 'command', description: 'App command executable after --, for example npm in `aie run start -- npm run dev`', required: true, multiple: false });
     assert.equal(flag(runStart, 'name').type, 'string');
     assert.equal(flag(runStart, 'cwd').type, 'string');
     assert.deepEqual(runStart.mutation.categories, ['local-files', 'local-process']);

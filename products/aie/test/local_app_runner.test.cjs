@@ -59,7 +59,7 @@ describe('local app runner service', () => {
       version: 1,
       name: 'ui-audit',
       pid: process.pid,
-      command: ['npm', 'run', 'dev'],
+      command: [process.execPath],
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
@@ -85,7 +85,7 @@ describe('local app runner service', () => {
       version: 1,
       name: 'ui-audit',
       pid: process.pid,
-      command: ['npm', 'run', 'dev'],
+      command: [process.execPath],
       cwd: root,
       startedAt: '2026-06-18T00:00:00.000Z',
       platform: process.platform,
@@ -110,6 +110,27 @@ describe('local app runner service', () => {
     assert.equal(result.status, 'timeout');
     assert.match(result.error, /connection refused|Timed out/);
     assert.deepEqual(result.logTail.stderr, ['port already in use']);
+  });
+
+  it('rejects non-local readiness URLs before probing', async () => {
+    const { runWait } = await import('../dist/local_app_runner.js');
+    const root = repo();
+    let probed = false;
+
+    const result = await runWait({
+      repoRoot: root,
+      name: 'ui-audit',
+      url: 'https://example.com/health',
+      fetchImpl: async () => {
+        probed = true;
+        throw new Error('should not probe');
+      },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.status, 'request-failed');
+    assert.equal(probed, false);
+    assert.match(result.error, /Refusing non-local readiness URL/);
   });
 });
 
