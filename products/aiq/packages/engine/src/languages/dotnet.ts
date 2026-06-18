@@ -357,10 +357,7 @@ export async function runDotNetTypecheckTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createDotNetProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(
@@ -389,7 +386,9 @@ export async function runDotNetTypecheckTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles));
+    const message = createDotNetProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createDotNetProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -397,12 +396,7 @@ export async function runDotNetTypecheckTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -587,10 +581,7 @@ async function runDotNetFormatSubcommandTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createDotNetProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(
@@ -619,7 +610,9 @@ async function runDotNetFormatSubcommandTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles));
+    const message = createDotNetProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createDotNetProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -627,12 +620,7 @@ async function runDotNetFormatSubcommandTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -661,10 +649,7 @@ async function runDotNetTestStage(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createDotNetProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(
@@ -693,7 +678,9 @@ async function runDotNetTestStage(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedDotNetRunnerNote(task.stageId, unsupportedFiles));
+    const message = createDotNetProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createDotNetProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -701,12 +688,7 @@ async function runDotNetTestStage(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -749,6 +731,43 @@ async function resolveDotNetProjects(
       .sort((left, right) => left.targetPath.localeCompare(right.targetPath)),
     unsupportedFiles: [...unsupportedFiles].sort((left, right) => left.localeCompare(right)),
   };
+}
+
+function createDotNetProjectResolutionFailureStage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): StageResult {
+  const message = createDotNetProjectResolutionMessage(stageId, files);
+  return {
+    diagnostics: createDotNetProjectResolutionDiagnostics(files, message),
+    durationMs: 0,
+    notes: [message],
+    stageId,
+    status: "failed",
+    toolRuns: [
+      { args: [], cacheHit: false, durationMs: 0, status: "failed", tool: "dotnet-unavailable" },
+    ],
+  };
+}
+
+function createDotNetProjectResolutionDiagnostics(
+  files: readonly string[],
+  message: string,
+): Diagnostic[] {
+  return files.map((file) => ({
+    file,
+    message,
+    severity: "error",
+    source: "dotnet-unavailable",
+  }));
+}
+
+function createDotNetProjectResolutionMessage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): string {
+  const baseMessage = createUnsupportedDotNetRunnerNote(stageId, files);
+  return `${baseMessage} Add a .csproj, .sln, or .slnx target for the selected C# source, select files inside an existing .NET project, or disable .NET ${stageId}.`;
 }
 
 async function findNearestDotNetTarget(

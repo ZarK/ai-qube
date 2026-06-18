@@ -195,10 +195,7 @@ export async function runGoLintTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createGoProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -270,7 +267,9 @@ export async function runGoLintTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles));
+    const message = createGoProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createGoProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -278,12 +277,7 @@ export async function runGoLintTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -308,10 +302,7 @@ export async function runGoFormatTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createGoProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -391,7 +382,9 @@ export async function runGoFormatTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles));
+    const message = createGoProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createGoProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -399,12 +392,7 @@ export async function runGoFormatTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -429,10 +417,7 @@ export async function runGoTypecheckTask(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createGoProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) => {
@@ -508,7 +493,9 @@ export async function runGoTypecheckTask(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles));
+    const message = createGoProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createGoProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -516,12 +503,7 @@ export async function runGoTypecheckTask(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -700,10 +682,7 @@ async function runGoTestStage(
     unsupportedFiles = resolvedProjects.unsupportedFiles;
 
     if (resolvedProjects.projects.length === 0) {
-      return runtime.createNotImplementedStageResult(
-        task.stageId,
-        createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles),
-      );
+      return createGoProjectResolutionFailureStage(task.stageId, files);
     }
 
     const projectResults = await runProjectBatches(resolvedProjects.projects, async (project) =>
@@ -730,7 +709,9 @@ async function runGoTestStage(
   }
 
   if (unsupportedFiles.length > 0) {
-    notes.push(createUnsupportedGoRunnerNote(task.stageId, unsupportedFiles));
+    const message = createGoProjectResolutionMessage(task.stageId, unsupportedFiles);
+    diagnostics.push(...createGoProjectResolutionDiagnostics(unsupportedFiles, message));
+    notes.push(message);
   }
 
   return {
@@ -738,12 +719,7 @@ async function runGoTestStage(
     durationMs: totalDurationMs,
     notes,
     stageId: task.stageId,
-    status:
-      diagnostics.length > 0
-        ? "failed"
-        : unsupportedFiles.length > 0
-          ? "not_implemented"
-          : "passed",
+    status: diagnostics.length > 0 ? "failed" : "passed",
     toolRuns,
   };
 }
@@ -904,6 +880,43 @@ async function resolveGoProjects(
       .sort((left, right) => left.moduleFilePath.localeCompare(right.moduleFilePath)),
     unsupportedFiles: [...unsupportedFiles].sort((left, right) => left.localeCompare(right)),
   };
+}
+
+function createGoProjectResolutionFailureStage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): StageResult {
+  const message = createGoProjectResolutionMessage(stageId, files);
+  return {
+    diagnostics: createGoProjectResolutionDiagnostics(files, message),
+    durationMs: 0,
+    notes: [message],
+    stageId,
+    status: "failed",
+    toolRuns: [
+      { args: [], cacheHit: false, durationMs: 0, status: "failed", tool: "go-unavailable" },
+    ],
+  };
+}
+
+function createGoProjectResolutionDiagnostics(
+  files: readonly string[],
+  message: string,
+): Diagnostic[] {
+  return files.map((file) => ({
+    file,
+    message,
+    severity: "error",
+    source: "go-unavailable",
+  }));
+}
+
+function createGoProjectResolutionMessage(
+  stageId: StageResult["stageId"],
+  files: readonly string[],
+): string {
+  const baseMessage = createUnsupportedGoRunnerNote(stageId, files);
+  return `${baseMessage} Add a go.mod file for the selected Go source, select files inside an existing Go module, or disable Go ${stageId}.`;
 }
 
 async function findNearestGoProject(filePath: string): Promise<GoProject | undefined> {
