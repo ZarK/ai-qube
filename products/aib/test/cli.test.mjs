@@ -685,8 +685,22 @@ test("milestones generate writes planning-depth docs before work items", async (
     "--json"
   ]));
   assert.equal(markdownPreview.mutated, false);
-  assert.equal(markdownPreview.plannedWrites[0].path, `docs/review-issues/${allowedWorkItems.drafts[0].draftId}.md`);
+  assert.equal(markdownPreview.plannedWrites[0].path.replace(/\\/g, "/"), `docs/review-issues/${allowedWorkItems.drafts[0].draftId}.md`);
   await assert.rejects(readFile(join(dir, "docs", "review-issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8"));
+
+  const unsafeMarkdownRender = runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "markdown",
+    "--output-dir",
+    "../outside-project",
+    "--json"
+  ]);
+  assert.notEqual(unsafeMarkdownRender.status, 0);
+  assert.equal(JSON.parse(unsafeMarkdownRender.stdout).error.kind, "work-item-render-failed");
 
   const markdownRendered = parseJsonStdout(runAib([
     "work-items",

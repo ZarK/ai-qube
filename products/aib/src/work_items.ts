@@ -1,5 +1,5 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, resolve } from "node:path";
+import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
 import { renderGitHubIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type MarkdownWorkItem } from "./renderers.js";
@@ -135,9 +135,14 @@ export function writeRenderedMarkdownWorkItems(
   options: { readonly outputDir?: string; readonly baseDir?: string } = {}
 ): WorkItemRenderResult {
   const result = renderWorkItemDrafts(state, "markdown", options);
+  const baseDir = resolve(options.baseDir ?? process.cwd());
   for (const item of result.rendered) {
     if (!("path" in item)) continue;
-    const path = resolve(options.baseDir ?? process.cwd(), item.path);
+    const path = resolve(baseDir, item.path);
+    const relativePath = relative(baseDir, path);
+    if (relativePath === "" || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      throw new TypeError(`refusing to write work item outside project root: ${item.path}`);
+    }
     mkdirSync(dirname(path), { recursive: true });
     writeFileSync(path, item.content);
   }
