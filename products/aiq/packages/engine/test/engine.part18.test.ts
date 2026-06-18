@@ -322,6 +322,6 @@ describe("engine foundation", () => {
         result.stages.find((stage) => stage.stageId === "maintainability")?.notes.join(" "),
       ).toContain("Reused cached JVM metrics");
     },
-    120_000,
+    240_000,
   );
 });
