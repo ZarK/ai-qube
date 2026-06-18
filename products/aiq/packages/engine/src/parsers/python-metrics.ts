@@ -19,77 +19,97 @@ export function parsePythonMetrics(output: string): Record<string, PythonMetrics
 
   const results: Record<string, PythonMetricsFileMetrics> = {};
   for (const [file, value] of Object.entries(parsed as Record<string, unknown>)) {
-    if (typeof value !== "object" || value === null) {
+    const metrics = readPythonMetricsFileMetrics(value);
+    if (metrics === undefined) {
       continue;
     }
 
-    const record = value as Record<string, unknown>;
-    const ccEntries = Array.isArray(record.cc)
-      ? record.cc.flatMap((entry) => {
-          if (typeof entry !== "object" || entry === null) {
-            return [];
-          }
-
-          const block = entry as Record<string, unknown>;
-          const complexity = readNumber(block.complexity);
-          const endline = readNumber(block.endline);
-          const lineno = readNumber(block.lineno);
-          const name = readString(block, "name");
-          const rank = readString(block, "rank");
-          const type = readString(block, "type");
-          if (
-            complexity === undefined ||
-            endline === undefined ||
-            lineno === undefined ||
-            name === undefined ||
-            rank === undefined ||
-            type === undefined
-          ) {
-            return [];
-          }
-
-          return [{ complexity, endline, lineno, name, rank, type }];
-        })
-      : [];
-    const rawRecord =
-      typeof record.raw === "object" && record.raw !== null
-        ? (record.raw as Record<string, unknown>)
-        : {};
-    const miRecord =
-      typeof record.mi === "object" && record.mi !== null
-        ? (record.mi as Record<string, unknown>)
-        : {};
-    const readabilityRecord =
-      typeof record.readability === "object" && record.readability !== null
-        ? (record.readability as Record<string, unknown>)
-        : undefined;
-
-    results[file] = {
-      cc: ccEntries,
-      mi: {
-        rank: readString(miRecord, "rank") ?? "A",
-        score: readNumber(miRecord.score) ?? 0,
-      },
-      raw: {
-        blank: readNumber(rawRecord.blank) ?? 0,
-        comments: readNumber(rawRecord.comments) ?? 0,
-        lloc: readNumber(rawRecord.lloc) ?? 0,
-        loc: readNumber(rawRecord.loc) ?? 0,
-        multi: readNumber(rawRecord.multi) ?? 0,
-        singleComments: readNumber(rawRecord.singleComments) ?? 0,
-        sloc: readNumber(rawRecord.sloc) ?? 0,
-      },
-      ...(readabilityRecord === undefined
-        ? {}
-        : {
-            readability: {
-              score: readNumber(readabilityRecord.score) ?? 0,
-            },
-          }),
-    };
+    results[file] = metrics;
   }
 
   return results;
+}
+
+function readPythonMetricsFileMetrics(value: unknown): PythonMetricsFileMetrics | undefined {
+  if (typeof value !== "object" || value === null) {
+    return undefined;
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    cc: readPythonComplexityEntries(record.cc),
+    mi: readPythonMaintainabilityMetrics(record.mi),
+    raw: readPythonRawMetrics(record.raw),
+    ...readPythonReadabilityMetrics(record.readability),
+  };
+}
+
+function readPythonMaintainabilityMetrics(value: unknown): PythonMetricsFileMetrics["mi"] {
+  const miRecord = readRecord(value);
+  return {
+    rank: readString(miRecord, "rank") ?? "A",
+    score: readNumber(miRecord.score) ?? 0,
+  };
+}
+
+function readPythonRawMetrics(value: unknown): PythonMetricsFileMetrics["raw"] {
+  const rawRecord = readRecord(value);
+  return {
+    blank: readMetricNumber(rawRecord, "blank"),
+    comments: readMetricNumber(rawRecord, "comments"),
+    lloc: readMetricNumber(rawRecord, "lloc"),
+    loc: readMetricNumber(rawRecord, "loc"),
+    multi: readMetricNumber(rawRecord, "multi"),
+    singleComments: readMetricNumber(rawRecord, "singleComments"),
+    sloc: readMetricNumber(rawRecord, "sloc"),
+  };
+}
+
+function readMetricNumber(record: Record<string, unknown>, key: string): number {
+  return readNumber(record[key]) ?? 0;
+}
+
+function readPythonReadabilityMetrics(
+  value: unknown,
+): Pick<PythonMetricsFileMetrics, "readability"> {
+  const readabilityRecord = readOptionalRecord(value);
+  return readabilityRecord === undefined
+    ? {}
+    : { readability: { score: readNumber(readabilityRecord.score) ?? 0 } };
+}
+
+function readPythonComplexityEntries(value: unknown): PythonMetricsFileMetrics["cc"] {
+  return Array.isArray(value) ? value.flatMap((entry) => readPythonComplexityEntry(entry)) : [];
+}
+
+function readPythonComplexityEntry(entry: unknown): PythonMetricsFileMetrics["cc"] {
+  if (typeof entry !== "object" || entry === null) {
+    return [];
+  }
+
+  const block = entry as Record<string, unknown>;
+  const complexity = readNumber(block.complexity);
+  const endline = readNumber(block.endline);
+  const lineno = readNumber(block.lineno);
+  const name = readString(block, "name");
+  const rank = readString(block, "rank");
+  const type = readString(block, "type");
+  return complexity === undefined ||
+    endline === undefined ||
+    lineno === undefined ||
+    name === undefined ||
+    rank === undefined ||
+    type === undefined
+    ? []
+    : [{ complexity, endline, lineno, name, rank, type }];
+}
+
+function readRecord(value: unknown): Record<string, unknown> {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
+}
+
+function readOptionalRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : undefined;
 }
 
 export function readOutputSnippet(output: string): string {

@@ -156,48 +156,61 @@ export function parseTyGitlabDiagnostics(output: string, cwd: string): Diagnosti
     return [];
   }
 
-  return parsed.flatMap((entry) => {
-    if (typeof entry !== "object" || entry === null) {
-      return [];
-    }
+  return parsed.flatMap((entry) => parseTyGitlabDiagnosticEntry(entry, cwd));
+}
 
-    const record = entry as Record<string, unknown>;
-    const file = resolveDiagnosticFile(readNestedString(record, ["location", "path"]), cwd);
-    if (file === undefined) {
-      return [];
-    }
+function parseTyGitlabDiagnosticEntry(entry: unknown, cwd: string): Diagnostic[] {
+  if (typeof entry !== "object" || entry === null) {
+    return [];
+  }
 
-    const startLine = readNumber(
-      readNestedValue(record, ["location", "positions", "begin", "line"]),
-    );
-    const startColumn = readNumber(
-      readNestedValue(record, ["location", "positions", "begin", "column"]),
-    );
-    const endLine = readNumber(readNestedValue(record, ["location", "positions", "end", "line"]));
-    const endColumn = readNumber(
-      readNestedValue(record, ["location", "positions", "end", "column"]),
-    );
-    const diagnostic: Diagnostic = {
-      file,
-      message: readString(record, "description") ?? "ty reported a diagnostic.",
-      severity: normalizeTySeverity(readString(record, "severity")),
-      source: "ty",
-    };
-    const code = readString(record, "check_name") ?? readTyDiagnosticCode(diagnostic.message);
-    if (code !== undefined) {
-      diagnostic.code = code;
-    }
-    if (startLine !== undefined && startColumn !== undefined) {
-      diagnostic.range = {
-        ...(endColumn === undefined ? {} : { endColumn }),
-        ...(endLine === undefined ? {} : { endLine }),
-        startColumn,
-        startLine,
-      };
-    }
+  const record = entry as Record<string, unknown>;
+  const file = resolveDiagnosticFile(readNestedString(record, ["location", "path"]), cwd);
+  if (file === undefined) {
+    return [];
+  }
 
-    return [diagnostic];
-  });
+  const diagnostic: Diagnostic = {
+    file,
+    message: readString(record, "description") ?? "ty reported a diagnostic.",
+    severity: normalizeTySeverity(readString(record, "severity")),
+    source: "ty",
+  };
+  appendTyGitlabDiagnosticCode(diagnostic, record);
+  appendTyGitlabDiagnosticRange(diagnostic, record);
+  return [diagnostic];
+}
+
+function appendTyGitlabDiagnosticCode(
+  diagnostic: Diagnostic,
+  record: Record<string, unknown>,
+): void {
+  const code = readString(record, "check_name") ?? readTyDiagnosticCode(diagnostic.message);
+  if (code !== undefined) {
+    diagnostic.code = code;
+  }
+}
+
+function appendTyGitlabDiagnosticRange(
+  diagnostic: Diagnostic,
+  record: Record<string, unknown>,
+): void {
+  const startLine = readNumber(readNestedValue(record, ["location", "positions", "begin", "line"]));
+  const startColumn = readNumber(
+    readNestedValue(record, ["location", "positions", "begin", "column"]),
+  );
+  if (startLine === undefined || startColumn === undefined) {
+    return;
+  }
+
+  const endLine = readNumber(readNestedValue(record, ["location", "positions", "end", "line"]));
+  const endColumn = readNumber(readNestedValue(record, ["location", "positions", "end", "column"]));
+  diagnostic.range = {
+    ...(endColumn === undefined ? {} : { endColumn }),
+    ...(endLine === undefined ? {} : { endLine }),
+    startColumn,
+    startLine,
+  };
 }
 
 function readTyDiagnosticCode(message: string): string | undefined {
@@ -222,66 +235,69 @@ export function parseTyDiagnostics(output: string, cwd: string): Diagnostic[] {
     return [];
   }
 
-  return parsed.flatMap((entry) => {
-    if (typeof entry !== "object" || entry === null) {
-      return [];
-    }
-
-    const record = entry as Record<string, unknown>;
-    const location = readNestedValue(record, ["location"]);
-    if (typeof location !== "object" || location === null) {
-      return [];
-    }
-
-    const locationRecord = location as Record<string, unknown>;
-    const filePath = readString(locationRecord, "path");
-    if (filePath === undefined) {
-      return [];
-    }
-
-    const file = resolveDiagnosticFile(filePath, cwd);
-    if (file === undefined) {
-      return [];
-    }
-
-    const positions = readNestedValue(locationRecord, ["positions"]);
-    const startLine = readNumber(
-      readNestedValue(positions as Record<string, unknown>, ["begin", "line"]),
-    );
-    const startColumn = readNumber(
-      readNestedValue(positions as Record<string, unknown>, ["begin", "column"]),
-    );
-    const endLine = readNumber(
-      readNestedValue(positions as Record<string, unknown>, ["end", "line"]),
-    );
-    const endColumn = readNumber(
-      readNestedValue(positions as Record<string, unknown>, ["end", "column"]),
-    );
-    const severity = readString(record, "severity");
-    const message = readString(record, "description") ?? "ty reported a diagnostic.";
-    const code = readString(record, "check_name");
-
-    const diagnostic: Diagnostic = {
-      file,
-      message,
-      severity: severity === "error" ? "error" : "warning",
-      source: "ty",
-    };
-
-    if (code !== undefined) {
-      diagnostic.code = code;
-    }
-
-    if (startLine !== undefined && startColumn !== undefined) {
-      diagnostic.range = {
-        ...(endColumn === undefined ? {} : { endColumn }),
-        ...(endLine === undefined ? {} : { endLine }),
-        startColumn,
-        startLine,
-      };
-    }
-
-    return [diagnostic];
-  });
+  return parsed.flatMap((entry) => parseTyDiagnosticEntry(entry, cwd));
 }
 
+function parseTyDiagnosticEntry(entry: unknown, cwd: string): Diagnostic[] {
+  if (typeof entry !== "object" || entry === null) {
+    return [];
+  }
+
+  const record = entry as Record<string, unknown>;
+  const locationRecord = readTyLocationRecord(record);
+  const file = resolveDiagnosticFile(readString(locationRecord, "path"), cwd);
+  if (file === undefined) {
+    return [];
+  }
+
+  const diagnostic: Diagnostic = {
+    file,
+    message: readString(record, "description") ?? "ty reported a diagnostic.",
+    severity: readString(record, "severity") === "error" ? "error" : "warning",
+    source: "ty",
+  };
+  appendTyDiagnosticCode(diagnostic, record);
+  appendTyDiagnosticRange(diagnostic, locationRecord);
+  return [diagnostic];
+}
+
+function readTyLocationRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const location = readNestedValue(record, ["location"]);
+  return typeof location === "object" && location !== null
+    ? (location as Record<string, unknown>)
+    : {};
+}
+
+function appendTyDiagnosticCode(diagnostic: Diagnostic, record: Record<string, unknown>): void {
+  const code = readString(record, "check_name");
+  if (code !== undefined) {
+    diagnostic.code = code;
+  }
+}
+
+function appendTyDiagnosticRange(
+  diagnostic: Diagnostic,
+  locationRecord: Record<string, unknown>,
+): void {
+  const positions = readNestedValue(locationRecord, ["positions"]);
+  const startLine = readNumber(
+    readNestedValue(positions as Record<string, unknown>, ["begin", "line"]),
+  );
+  const startColumn = readNumber(
+    readNestedValue(positions as Record<string, unknown>, ["begin", "column"]),
+  );
+  if (startLine === undefined || startColumn === undefined) {
+    return;
+  }
+
+  const endLine = readNumber(readNestedValue(positions as Record<string, unknown>, ["end", "line"]));
+  const endColumn = readNumber(
+    readNestedValue(positions as Record<string, unknown>, ["end", "column"]),
+  );
+  diagnostic.range = {
+    ...(endColumn === undefined ? {} : { endColumn }),
+    ...(endLine === undefined ? {} : { endLine }),
+    startColumn,
+    startLine,
+  };
+}
