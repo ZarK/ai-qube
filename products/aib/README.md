@@ -1,179 +1,70 @@
 # ai-bootstrap
 
-Bring an idea, not a design document.
+`@tjalve/aib` turns a fuzzy idea into durable planning state, an accepted spec, milestone plans, and provider-neutral work item drafts that an execution agent can pick up later.
 
-This repo is a discovery-first bootstrap kit for AI coding agents. Its canonical source lives in `.agent/`, and bootstrap scripts project that source into the tool-specific layout your agent expects.
-
-`aib` is an agent-operated CLI, not a human wizard. Humans talk to their agent; the agent calls `aib` to inspect schema, preview state changes, and decide which small set of questions to ask next.
-
-OpenCode is the first-class MVP target. Claude Code, Codex, and Gemini get best-effort projections built from the same source, and those mirrors are intentionally lossy when a tool does not support the same features.
-
-The source repo stays projection-clean. Run bootstrap into a real target project or a disposable `test-harness/` project instead of projecting into this repo root.
+The human talks to an AI agent. The agent operates `aib` with JSON commands, asks the human the returned questions, records answers, and advances the state machine. Human-readable output exists for setup and debugging; structured JSON is the product contract.
 
 ## Quick Start
 
-1. Clone this repo somewhere stable, for example `~/src/ai-bootstrap`.
-2. Pick the tool you want to bootstrap with.
-3. Install a global `/bootstrap` command using the prompt below.
-4. Run `/bootstrap I want to build a local AI DJ music generator`.
-5. Answer the discovery questions in small batches.
-6. Review and accept `docs/spec.md`.
-7. Generate milestones, issues, and the final harness.
-
-## Package CLI
-
-The package entrypoint is `aib`. Use exact package versions when installing from a registry, for example `npm install -g @tjalve/aib@0.1.0` after that version is published. Do not install floating `latest` versions into agent workflows.
-
-For local development in this repo:
+From this repository:
 
 ```bash
 corepack enable
 pnpm install --frozen-lockfile --ignore-scripts
-node bin/run --help
-node bin/run schema --json
-node bin/run init --dry-run --json
+pnpm --filter @tjalve/aib run verify
 ```
 
-`aib init --dry-run --json` is the safe baseline for agents: it returns the planned local bootstrap state and next action without writing files. The legacy `scripts/bootstrap-init.sh` path remains available until later milestones replace it.
-
-## OpenCode (recommended)
-
-OpenCode documentation has historically shown both `command/` and `commands/`. For the safest setup, install the same prompt into both:
-
-- `~/.config/opencode/commands/bootstrap.md`
-- `~/.config/opencode/command/bootstrap.md`
-
-Use this prompt as the file contents:
-
-```md
----
-description: Bootstrap a new project from a fuzzy idea
----
-
-Use `~/src/ai-bootstrap` as the bootstrap brain. If it does not exist yet, clone the `ai-bootstrap` repository there.
-
-When this command is run:
-- treat `~/src/ai-bootstrap/.agent/` as the source of truth
-- run `~/src/ai-bootstrap/scripts/bootstrap-init.sh --tool opencode --target "$PWD" --idea "$ARGUMENTS"`
-- continue the local bootstrap workflow from the target repo
-
-Bootstrap workflow:
-1. run discovery in small batches
-2. write or revise `docs/spec.md`
-3. get section-by-section spec acceptance
-4. generate milestone docs
-5. generate issue drafts or GitHub issues
-6. finalize the tool projection and project harness
-
-Rules:
-- prefer `AGENTS.md` as the shared instruction file
-- keep `.agent/` canonical and regenerate projections instead of editing generated files first
-- support OpenCode natively, and use best effort for other agent tool layouts when asked
-```
-
-## Claude Code
-
-Create a global `bootstrap.md` command under your Claude Code commands directory and use this prompt:
-
-```md
-Use `~/src/ai-bootstrap` as the bootstrap brain. If it is missing, clone the `ai-bootstrap` repository there.
-
-When invoked, run:
-`~/src/ai-bootstrap/scripts/bootstrap-init.sh --tool claude --target "$PWD" --idea "$ARGUMENTS"`
-
-Then continue the discovery-first bootstrap flow inside the target repo:
-- discovery interview
-- `docs/spec.md` draft
-- spec acceptance
-- milestones
-- issues
-- harness finalization
-
-Treat `.agent/` as the canonical source and regenerate projections after editing it.
-```
-
-## Codex CLI / Codex App
-
-Codex already works well with `AGENTS.md`, so the MVP path is simple: save a global bootstrap prompt in your preferred command wrapper and use this content:
-
-```md
-Use `~/src/ai-bootstrap` as the bootstrap brain. If it is missing, clone the `ai-bootstrap` repository there.
-
-When invoked, run:
-`~/src/ai-bootstrap/scripts/bootstrap-init.sh --tool codex --target "$PWD" --idea "$ARGUMENTS"`
-
-Then continue the local bootstrap workflow from the target repo using `AGENTS.md` plus the projected best-effort Codex assets.
-```
-
-## Gemini CLI
-
-Save a global bootstrap prompt in your Gemini commands directory and use this content:
-
-```md
-Use `~/src/ai-bootstrap` as the bootstrap brain. If it is missing, clone the `ai-bootstrap` repository there.
-
-When invoked, run:
-`~/src/ai-bootstrap/scripts/bootstrap-init.sh --tool gemini --target "$PWD" --idea "$ARGUMENTS"`
-
-Then continue the discovery-first bootstrap workflow from the target repo. Prefer the projected `GEMINI.md` and `AGENTS.md` files, and keep `.agent/` as the source of truth.
-```
-
-## Bootstrap Flow
-
-The bootstrap system follows this order:
-
-1. idea
-2. discovery interview
-3. dry spec draft
-4. spec revision and acceptance
-5. milestones
-6. issues
-7. harness and tool projection
-
-Milestones start only after the spec is accepted. Issues start only after milestones exist.
-
-## Initialize A Repo Manually
-
-If you want to seed a repo without the global command, run one of these from this repo:
+Start a local planning session in a target project:
 
 ```bash
-./scripts/bootstrap-init.sh --tool opencode --target /path/to/project --idea "I want to build a local AI DJ music generator"
-./scripts/bootstrap-init.sh --tool claude --target /path/to/project --idea "I want to build a local AI DJ music generator"
-./scripts/bootstrap-init.sh --tool gemini --target /path/to/project --idea "I want to build a local AI DJ music generator"
-./scripts/bootstrap-init.sh --tool codex --target /path/to/project --idea "I want to build a local AI DJ music generator"
+node products/aib/bin/run init C:\path\to\project --agent codex --idea "Build a local field notes CLI" --json
+node products/aib/bin/run next --state C:\path\to\project\.bootstrap\session.json --json
 ```
 
-For a disposable local smoke test, run:
+For package installation after publication, pin the exact version:
 
 ```bash
-./scripts/test-harness.sh opencode
+npm install -g @tjalve/aib@0.1.0 --ignore-scripts
 ```
 
-## What Gets Seeded
+Do not install floating `latest` versions into agent workflows.
 
-Bootstrap copies or updates:
+## Codex Flow
 
-- `.agent/` source assets
-- `AGENTS.md`
-- tool-specific projections such as `.opencode/commands/` and `.opencode/plugins/`
-- `.bootstrap/session.yaml`
-- `.bootstrap/discovery-log.md`
-- `.bootstrap/assumptions.md`
-- `docs/spec.md`
+1. The human asks Codex to use `aib` for a project idea.
+2. Codex runs `aib init --agent codex --idea "<idea>" --json`.
+3. Codex runs `aib next --json`, asks the returned questions, and records answers with `aib answer --field <field> --value <answer> --json`.
+4. Codex drafts and validates the spec with `aib spec draft --json` and `aib spec validate --json`.
+5. After section-aware acceptance, Codex runs `aib milestones generate --json`.
+6. Codex generates and renders work items with `aib work-items generate --json` and `aib work-items render --provider markdown|github --dry-run --json`.
 
-## Canonical Layout
+`aib init --agent codex --dry-run --json` reports planned files before mutation.
 
-```text
-.agent/
-  commands/
-  plugins/
-  rules/
-  skills/
-  templates/
-scripts/
-  bootstrap-init.sh
-  project_assets.py
-AGENTS.md
+## OpenCode Flow
+
+Use local projected assets instead of global command installation:
+
+```bash
+aib init . --agent opencode --dry-run --json
+aib init . --agent opencode --json
 ```
 
-Edit `.agent/` first, then regenerate projections.
+This writes local instructions and `.opencode/commands/aib-bootstrap.md` in the target project. It does not install global skills, global commands, hooks, package managers, or provider credentials.
+
+## Supported MVP Surfaces
+
+- Stable MVP: local JSON CLI state machine, Codex instructions, OpenCode local command asset, markdown work item rendering.
+- Best effort: Claude Code and Gemini instruction files.
+- Future provider work: direct GitHub issue creation and additional work trackers. Current GitHub rendering is a dry-run preview.
+
+## Release And Safety
+
+Local gate:
+
+```bash
+pnpm --filter @tjalve/aib run verify
+```
+
+This runs typecheck, unit/E2E tests, build, and pack dry-run. The package uses exact dependency versions in `package.json` and should be installed with lockfile and lifecycle-script controls in automation. New dependencies require supply-chain intake before they are added.
+
+Migration note: legacy bootstrap scripts remain as reference material while the CLI-backed flow becomes the product path. New docs and agent assets should point to `aib init`, `aib next`, and the structured command flow above.
