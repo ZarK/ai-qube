@@ -278,7 +278,7 @@ M5 implements `aie pr gate <pr>`.
 
 - GitHub Copilot through GitHub reviewer request when enabled
 - Cubic through configured PR comment text when enabled
-- CodeRabbit through configured PR comment text when enabled
+- ComfyRabbitAI through configured PR comment text when enabled
 - custom PR comment reviewers through configured reviewer text
 
 Reviewer requests must be idempotent per PR head commit. Comment-triggered reviewers should use product-generic hidden markers keyed by reviewer id and head SHA so reruns do not spam duplicate requests for the same commit.

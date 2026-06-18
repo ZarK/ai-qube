@@ -150,7 +150,7 @@ describe('schema command', () => {
     assert.ok(reviewGate.extensions.reviewAgentValues.includes('oracle'));
     assert.ok(reviewGate.extensions.reviewAgentValues.includes('custom'));
     assert.ok(serviceNames(prBody).includes('github'));
-    assert.ok(prBody.extensions.reviewAgentValues.includes('coderabbit'));
+    assert.ok(prBody.extensions.reviewAgentValues.includes('comfyrabbit'));
     assert.ok(serviceNames(prGate).includes('github-copilot'));
     assert.ok(serviceNames(prGate).includes('custom-pr-reviewer'));
     assert.ok(errorKinds(prGate).includes('review-state-unavailable'));
