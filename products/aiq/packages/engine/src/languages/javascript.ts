@@ -275,9 +275,9 @@ export async function runJavaScriptMetricsTask(
 
   try {
     const resolvedProjects = await resolveJavaScriptMetricsProjects(runtime.graph, files);
-    unsupportedFiles = resolvedProjects.unsupportedFiles.sort((left, right) =>
-      left.localeCompare(right),
-    );
+    unsupportedFiles = resolvedProjects.unsupportedFiles
+      .filter((file) => !runtime.isSharedMetricsCompanionFile(file))
+      .sort((left, right) => left.localeCompare(right));
 
     const projects = await Promise.all(
       resolvedProjects.projects.map(async (project) => ({

@@ -68,15 +68,17 @@ export async function parseLizardMetrics(
   const files = await Promise.all(
     selectedFiles.map(async (file) => {
       const source = await readFile(file, "utf8");
-      const sloc = source
+      const fileSloc = source
         .split(/\r?\n/u)
         .map((line) => line.trim())
         .filter((line) => line.length > 0).length;
       const blocks = rowMetrics.get(file) ?? [];
+      const blockNloc = blocks.reduce((sum, block) => sum + block.nloc, 0);
+      const sloc = blocks.length > 0 ? blockNloc : fileSloc;
       const maxComplexity = blocks.reduce((max, block) => Math.max(max, block.complexity), 0);
       const maintainabilityScore = clampNumber(
         100 -
-          Math.log(sloc + 1) * 12 -
+          Math.log(fileSloc + 1) * 12 -
           Math.max(1, maxComplexity) * 5 -
           Math.max(0, blocks.length - 1) * 1.5,
         0,

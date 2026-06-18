@@ -530,8 +530,10 @@ function isRustTaskFile(file: string): boolean {
 
 function isSharedMetricsSupportedFile(filePath: string): boolean {
   const extension = path.extname(filePath).toLowerCase();
+  const lowerBaseName = path.basename(filePath).toLowerCase();
   return (
     isJavaScriptMetricsTaskFile(filePath) ||
+    lowerBaseName === "tsconfig.json" ||
     isPythonTaskFile(filePath) ||
     dotNetExtensions.has(extension) ||
     isGoTaskFile(filePath) ||
