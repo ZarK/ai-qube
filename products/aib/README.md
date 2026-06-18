@@ -67,4 +67,4 @@ pnpm --filter @tjalve/aib run verify
 
 This runs typecheck, unit/E2E tests, build, and pack dry-run. The package uses exact dependency versions in `package.json` and should be installed with lockfile and lifecycle-script controls in automation. New dependencies require supply-chain intake before they are added.
 
-Migration note: legacy `scripts/bootstrap-init.sh` and resource projection files remain in the repository as reference material while the CLI-backed flow becomes the product path. New docs and agent assets should point to `aib init`, `aib next`, and the structured command flow above.
+Migration note: legacy bootstrap scripts remain as reference material while the CLI-backed flow becomes the product path. New docs and agent assets should point to `aib init`, `aib next`, and the structured command flow above.

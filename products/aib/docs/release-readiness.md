@@ -58,4 +58,4 @@ aib work-items generate --json
 aib work-items render --provider markdown --json
 ```
 
-Do not point new quick starts at `scripts/bootstrap-init.sh` except as a migration note for older users.
+Do not point new quick starts at legacy bootstrap scripts except as a migration note for older users.
