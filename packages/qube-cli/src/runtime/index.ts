@@ -297,8 +297,11 @@ async function parseCommandArgs(
   }
 
   try {
+    const parserArguments = variadicArgs
+      ? (command.arguments ?? []).filter((argument) => argument !== variadicArgs.argument)
+      : command.arguments ?? [];
     const parsed = await Parser.parse([...(variadicArgs?.argv ?? argv)], {
-      args: createOclifArgs(command.arguments ?? []),
+      args: createOclifArgs(parserArguments),
       flags: createOclifFlags(command.flags ?? []),
       strict: true
     });
@@ -358,7 +361,8 @@ function extractVariadicArguments(
     };
   }
 
-  const split = splitVariadicArgv(command, argv);
+  const fixedPositionalCount = Math.max(0, (command.arguments ?? []).indexOf(argument));
+  const split = splitVariadicArgv(command, argv, fixedPositionalCount);
   if (argument.required === true && split.values.length === 0) {
     return {
       result: renderErrorResult(
@@ -380,10 +384,12 @@ function extractVariadicArguments(
 
 function splitVariadicArgv(
   command: CommandMetadata,
-  argv: readonly string[]
+  argv: readonly string[],
+  fixedPositionalCount: number
 ): { readonly argv: readonly string[]; readonly values: readonly string[] } {
   const parserArgv: string[] = [];
   const values: string[] = [];
+  let consumedFixedPositionals = 0;
   const longFlags = new Map<string, FlagMetadata>();
   const shortFlags = new Map<string, FlagMetadata>();
   for (const flag of command.flags ?? []) {
@@ -403,7 +409,14 @@ function splitVariadicArgv(
     }
 
     if (token === "--") {
-      values.push(...argv.slice(index + 1));
+      for (const rest of argv.slice(index + 1)) {
+        if (consumedFixedPositionals < fixedPositionalCount) {
+          parserArgv.push(rest);
+          consumedFixedPositionals += 1;
+        } else {
+          values.push(rest);
+        }
+      }
       break;
     }
 
@@ -420,7 +433,12 @@ function splitVariadicArgv(
       continue;
     }
 
-    values.push(token);
+    if (consumedFixedPositionals < fixedPositionalCount) {
+      parserArgv.push(token);
+      consumedFixedPositionals += 1;
+    } else {
+      values.push(token);
+    }
   }
 
   return { argv: parserArgv, values };

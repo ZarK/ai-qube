@@ -52,7 +52,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--print-config");
     expect(stdout.value).toContain("--set-stage <0-9>");
     expect(stdout.value).toContain("--up-to <0-9>");
-    expect(stdout.value).toContain("--verbose, -v");
+    expect(stdout.value).toContain("--verbose");
     expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
     expect(stdout.value).toContain("Default text output is compact");
     expect(stdout.value).toContain("--verbose adds run metadata");

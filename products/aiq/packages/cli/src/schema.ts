@@ -126,7 +126,6 @@ export const aiqCommandMetadata = [
       },
       {
         name: "verbose",
-        short: "v",
         description: "Include command and tool details in text output.",
         type: "boolean",
       },
@@ -343,7 +342,6 @@ export const aiqCommandMetadata = [
       ...outputFlags,
       {
         name: "verbose",
-        short: "v",
         description: "Include resolved binary paths and versions.",
         type: "boolean",
       },
@@ -369,7 +367,6 @@ export const aiqCommandMetadata = [
       ...outputFlags,
       {
         name: "verbose",
-        short: "v",
         description: "Include resolved binary paths and versions.",
         type: "boolean",
       },

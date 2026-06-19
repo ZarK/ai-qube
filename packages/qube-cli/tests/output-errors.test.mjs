@@ -264,6 +264,37 @@ describe("output and error helpers", () => {
     });
   });
 
+  it("preserves fixed positional arguments before a variadic tail", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "files inspect",
+      description: "Inspect variadic file arguments for a target.",
+      arguments: [
+        { name: "target", description: "Target project.", required: true },
+        { name: "files", description: "Files to inspect.", multiple: true }
+      ],
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Inspect multiple files.", command: "fixture files inspect project a.ts b.ts --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => ({ json: { target: args.target, files: args.files } }))]
+    });
+
+    const result = await runCli(cli, ["files", "inspect", "project", "a.ts", "b.ts", "--json"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      command: "files inspect",
+      target: "project",
+      files: ["a.ts", "b.ts"]
+    });
+  });
+
   it("parses negatable boolean flags into the canonical flag key", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const command = {

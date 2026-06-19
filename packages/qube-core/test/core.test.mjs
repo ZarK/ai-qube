@@ -44,7 +44,8 @@ describe("qube core contracts", () => {
 
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/" && entry.classification === "shared QUBE namespace"));
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".aiq/aiq.config.json")));
-    assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".umpire/")));
+    assert.ok(qubePathContracts.some((entry) => entry.pathPattern === "aiu.config.json" && entry.committed === true));
+    assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".umpire/" && entry.committed === false));
   });
 
   it("keeps checked-in matrix docs aligned with core contracts", () => {
@@ -56,10 +57,10 @@ describe("qube core contracts", () => {
       assert.match(hostSurfaceDoc, new RegExp(product.packageName.replace("/", "\\/")));
     }
     for (const command of qubeCommandSurfaceContracts) {
-      assert.match(commandSurfaceDoc, new RegExp(escapeRegExp(command.commandPattern.split("|")[0])));
+      assert.match(commandSurfaceDoc, new RegExp(escapeRegExp(markdownTableCellText(command.commandPattern))));
     }
     for (const pathContract of qubePathContracts) {
-      assert.match(pathsDoc, new RegExp(escapeRegExp(pathContract.pathPattern.split(" ")[0])));
+      assert.match(pathsDoc, new RegExp(escapeRegExp(pathContract.pathPattern)));
     }
   });
 });
@@ -70,4 +71,8 @@ function readRepoDoc(relativePath) {
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function markdownTableCellText(value) {
+  return value.replaceAll("|", "\\|");
 }

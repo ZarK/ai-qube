@@ -164,10 +164,17 @@ export const qubePathContracts = [
   },
   {
     owner: "umpire",
-    pathPattern: "aiu.config.json and .umpire/",
+    pathPattern: "aiu.config.json",
     classification: "standalone product config",
     committed: true,
-    migrationPolicy: "AIU init and migrate are conflict-aware, dry-runnable, and preserve .umpire state, locks, and logs unless cleanup is explicitly confirmed.",
+    migrationPolicy: "AIU init and migrate are conflict-aware, dry-runnable, and preserve state unless explicit replacement is confirmed.",
+  },
+  {
+    owner: "umpire",
+    pathPattern: ".umpire/",
+    classification: "standalone product state",
+    committed: false,
+    migrationPolicy: "AIU init and migrate preserve .umpire state, locks, and logs unless cleanup is explicitly confirmed.",
   },
   {
     owner: "executor",

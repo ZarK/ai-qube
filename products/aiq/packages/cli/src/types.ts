@@ -135,7 +135,7 @@ Options:
   --stage <stage>
   --tag <tag>
   --up-to <0-9>
-  --verbose, -v
+  --verbose
   --kind <cold|warm|diff-only>
   --profile <fast|standard|deep>
   --debounce-ms <ms>

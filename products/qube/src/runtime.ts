@@ -130,7 +130,8 @@ export async function runQubeCli(input: readonly string[] = process.argv.slice(2
 export function resolveCommand(command: string, environment: CliEnvironment = defaultEnvironment()): string | undefined {
   const component = qubeComponents.find(candidate => candidate.command === command);
   if (component) {
-    return resolveComponentCommand(component, environment)?.commandPath;
+    const resolution = resolveComponentCommand(component, environment);
+    return resolution && !resolution.error ? resolution.commandPath : undefined;
   }
   return resolveCommandFromEntries(command, [path.join(environment.cwd, "node_modules", ".bin"), ...pathEntries(environment.env)], environment);
 }
@@ -154,6 +155,12 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
   }
 
   const resolution = withPackageMetadata(component, pathPath, "path", findNearestPackageJson(pathPath));
+  if (!resolution.packageVersion) {
+    return {
+      ...resolution,
+      error: `Refusing ${component.command} from PATH at ${pathPath}: unable to verify ${component.packageName}@${component.packageVersion}.`
+    };
+  }
   if (resolution.packageVersion && resolution.packageVersion !== component.packageVersion) {
     return {
       ...resolution,

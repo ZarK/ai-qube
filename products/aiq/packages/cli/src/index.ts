@@ -90,7 +90,6 @@ const firstRunCommandMetadata = {
     },
     {
       name: "verbose",
-      short: "v",
       description: "Include command and tool details in text output.",
       type: "boolean",
     },
@@ -510,7 +509,7 @@ function flagConsumesNextValue(flag: string): boolean {
 
 function argsAreOnlyImplicitFirstRunOptions(args: readonly string[]): boolean {
   const allowedValueFlags = new Set(["--format", "--only", "--out-dir", "--profile", "--stage", "--up-to"]);
-  const allowedBooleanFlags = new Set(["--dry-run", "--verbose", "-v"]);
+  const allowedBooleanFlags = new Set(["--dry-run", "--verbose"]);
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
     if (argument === undefined) {

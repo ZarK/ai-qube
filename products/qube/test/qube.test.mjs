@@ -58,11 +58,13 @@ describe("qube composer CLI", () => {
   it("plans dispatch through the selected standalone command", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-path-cwd-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-empty-package-root-"));
-    const dir = mkdtempSync(path.join(tmpdir(), "qube-bin-"));
+    const pathPackageRoot = mkdtempSync(path.join(tmpdir(), "qube-path-package-"));
+    const dir = path.join(pathPackageRoot, "bin");
     const command = process.platform === "win32" ? "aib.cmd" : "aib";
     const commandPath = path.join(dir, command);
     await mkdir(dir, { recursive: true });
     await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho aib %*\r\n" : "#!/usr/bin/env sh\necho aib \"$@\"\n");
+    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.0" })}\n`);
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
@@ -126,6 +128,28 @@ describe("qube composer CLI", () => {
     assert.match(planned.stderr, /Refusing aib from PATH/);
     assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.0, found 0\.0\.1/);
     assert.equal(planned.dispatch, undefined);
+  });
+
+  it("refuses PATH component binary when package metadata cannot be verified", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "qube-unverified-path-"));
+    const command = process.platform === "win32" ? "aib.cmd" : "aib";
+    const commandPath = path.join(dir, command);
+    await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho unknown %*\r\n" : "#!/usr/bin/env sh\necho unknown \"$@\"\n");
+    if (process.platform !== "win32") await chmod(commandPath, 0o755);
+
+    const env = { PATH: dir, OS: process.env.OS };
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-unverified-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-unverified-install-"));
+    const planned = planQubeCli(["run", "aib", "status"], {
+      cwd,
+      env,
+      packageRoot
+    });
+
+    assert.equal(planned.exitCode, 4);
+    assert.match(planned.stderr, /Refusing aib from PATH/);
+    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.0/);
+    assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
   });
 
   it("dispatches to resolved component command shims", async () => {

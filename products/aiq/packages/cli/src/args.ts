@@ -89,7 +89,7 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       continue;
     }
 
-    if (argument === "--verbose" || argument === "-v") {
+    if (argument === "--verbose") {
       parsed.verbose = true;
       continue;
     }
@@ -561,7 +561,7 @@ function argsAreOnlyImplicitFirstRunOptions(args: readonly string[]): boolean {
     "--stage",
     "--up-to",
   ]);
-  const allowedBooleanFlags = new Set(["--dry-run", "--verbose", "-v"]);
+  const allowedBooleanFlags = new Set(["--dry-run", "--verbose"]);
 
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];
