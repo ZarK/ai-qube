@@ -25,13 +25,22 @@ of `aib`, `aie`, `aiu`, or `aiq`.
 ## Composer CLI
 
 Use `qube components` to list the standalone tools and `qube run <component>`
-to dispatch to a tool that is already installed or available in the workspace.
-The composer does not replace direct use of the product CLIs.
+to dispatch to the component version installed with QUBE. The composer does not
+replace direct use of the product CLIs. Ambient `PATH` lookup is a diagnosed
+fallback, not the default dispatch path.
 
 ```sh
 pnpm --filter @tjalve/qube run build
 pnpm --filter @tjalve/qube exec qube components
 ```
+
+See:
+
+- `docs/qube-command-surfaces.md` for QUBE-facing versus standalone command surfaces
+- `docs/qube-host-surfaces.md` for GitHub/OpenCode ownership
+- `docs/qube-paths-and-artifacts.md` for config, state, and repo artifact ownership
+- `docs/release/install-migration.md` for fresh install and old global binary migration validation
+- `docs/release/version-audit.json` for the npm version audit used by release checks
 
 ## Package Publishing
 

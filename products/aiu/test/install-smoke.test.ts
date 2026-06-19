@@ -11,6 +11,8 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const monorepoRoot = path.resolve(repoRoot, "../..");
+const qubeCliRoot = path.join(monorepoRoot, "packages/qube-cli");
 const tempRoots: string[] = [];
 
 describe("packed tarball install smoke", () => {
@@ -24,8 +26,9 @@ describe("packed tarball install smoke", () => {
     const target = path.join(root, "repo");
     await mkdir(packDir);
     await mkdir(target);
-    const tarball = await packPackage(packDir);
-    await createLockedBlankRepo(target, tarball);
+    const tarball = await packPackage(repoRoot, packDir);
+    const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
+    await createLockedBlankRepo(target, tarball, qubeCliTarball);
 
     await runPnpm(["fetch", "--frozen-lockfile", "--ignore-scripts"], target);
     await rm(path.join(target, "node_modules"), { recursive: true, force: true });
@@ -63,8 +66,8 @@ interface InitEnvelope {
   };
 }
 
-async function packPackage(packDir: string): Promise<string> {
-  const result = await runPnpm(["pack", "--pack-destination", packDir], repoRoot);
+async function packPackage(packageRoot: string, packDir: string): Promise<string> {
+  const result = await runPnpm(["pack", "--pack-destination", packDir], packageRoot);
   const packedName = result.stdout
     .split(/\r?\n/)
     .map((line) => line.trim())
@@ -74,9 +77,10 @@ async function packPackage(packDir: string): Promise<string> {
   return path.isAbsolute(packedName) ? packedName : path.join(packDir, packedName);
 }
 
-async function createLockedBlankRepo(target: string, tarball: string): Promise<void> {
+async function createLockedBlankRepo(target: string, tarball: string, qubeCliTarball: string): Promise<void> {
   await mkdir(path.join(target, ".git"));
   const tarballSpecifier = `file:${path.relative(target, tarball).split(path.sep).join("/")}`;
+  const qubeCliTarballSpecifier = `file:${path.relative(target, qubeCliTarball).split(path.sep).join("/")}`;
   await writeFile(
     path.join(target, "package.json"),
     `${JSON.stringify(
@@ -93,7 +97,11 @@ async function createLockedBlankRepo(target: string, tarball: string): Promise<v
     "utf8",
   );
   await writeFile(path.join(target, ".npmrc"), "ignore-scripts=true\nsave-exact=true\n", "utf8");
-  await writeFile(path.join(target, "pnpm-lock.yaml"), await buildSmokeLockfile(tarballSpecifier, tarball), "utf8");
+  await writeFile(
+    path.join(target, "pnpm-lock.yaml"),
+    await buildSmokeLockfile(tarballSpecifier, tarball, qubeCliTarballSpecifier, qubeCliTarball),
+    "utf8",
+  );
 }
 
 async function createTempRoot(prefix: string): Promise<string> {
@@ -102,13 +110,24 @@ async function createTempRoot(prefix: string): Promise<string> {
   return root;
 }
 
-async function buildSmokeLockfile(tarballSpecifier: string, tarball: string): Promise<string> {
+async function buildSmokeLockfile(
+  tarballSpecifier: string,
+  tarball: string,
+  qubeCliTarballSpecifier: string,
+  qubeCliTarball: string,
+): Promise<string> {
   const rootLock = await readFile(path.join(repoRoot, "pnpm-lock.yaml"), "utf8");
   const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as { version: string };
+  const qubeCliPackageJson = JSON.parse(await readFile(path.join(qubeCliRoot, "package.json"), "utf8")) as {
+    dependencies?: Record<string, string>;
+    engines?: Record<string, string>;
+    version: string;
+  };
   const lockfileVersion = readLockfileVersion(rootLock);
   const packages = readLockfileSection(rootLock, "packages", "snapshots");
   const snapshots = readLockfileSection(rootLock, "snapshots");
   const integrity = `sha512-${createHash("sha512").update(await readFile(tarball)).digest("base64")}`;
+  const qubeCliIntegrity = `sha512-${createHash("sha512").update(await readFile(qubeCliTarball)).digest("base64")}`;
 
   return [
     `lockfileVersion: ${lockfileVersion}`,
@@ -133,14 +152,39 @@ async function buildSmokeLockfile(tarballSpecifier: string, tarball: string): Pr
     "    engines: {node: '>=24.0.0'}",
     "    hasBin: true",
     "",
+    `  '@tjalve/qube-cli@${qubeCliTarballSpecifier}':`,
+    `    resolution: {integrity: ${qubeCliIntegrity}, tarball: ${qubeCliTarballSpecifier}}`,
+    `    version: ${qubeCliPackageJson.version}`,
+    `    engines: ${renderInlineYamlRecord(qubeCliPackageJson.engines ?? {})}`,
+    "",
     packages,
     "snapshots:",
     "",
     `  '@tjalve/aiu@${tarballSpecifier}':`,
     "    dependencies:",
-    "      '@tjalve/qube-cli': 0.1.1",
+    `      '@tjalve/qube-cli': ${qubeCliTarballSpecifier}`,
+    "",
+    `  '@tjalve/qube-cli@${qubeCliTarballSpecifier}':`,
+    renderSnapshotDependencies(qubeCliPackageJson.dependencies ?? {}),
     "",
     snapshots,
+  ].join("\n");
+}
+
+function renderInlineYamlRecord(record: Record<string, string>): string {
+  const entries = Object.entries(record);
+  assert.notEqual(entries.length, 0, "Expected at least one inline YAML record entry");
+  return `{${entries.map(([key, value]) => `${key}: '${value}'`).join(", ")}}`;
+}
+
+function renderSnapshotDependencies(dependencies: Record<string, string>): string {
+  const entries = Object.entries(dependencies);
+  if (entries.length === 0) {
+    return "    dependencies: {}";
+  }
+  return [
+    "    dependencies:",
+    ...entries.map(([name, version]) => `      '${name}': ${version}`),
   ].join("\n");
 }
 

@@ -5,6 +5,6 @@
   "type": "module",
   "description": "Mutating consumer CLI used to validate @tjalve/qube-cli dry-run adoption.",
   "dependencies": {
-    "@tjalve/qube-cli": "0.1.1"
+    "@tjalve/qube-cli": "0.1.2"
   }
 }

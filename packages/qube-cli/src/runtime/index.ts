@@ -15,6 +15,7 @@ type OclifShortFlag = Interfaces.AlphabetLowercase | Interfaces.AlphabetUppercas
 
 export interface RuntimeCommandContext {
   readonly command: CommandMetadata;
+  readonly matchedName: string;
   readonly args: Readonly<Record<string, unknown>>;
   readonly flags: Readonly<Record<string, unknown>>;
   readonly argv: readonly string[];
@@ -99,6 +100,7 @@ export function createCommand(metadata: CommandMetadata, handler: RuntimeCommand
       const parsed = await this.parse(MetadataCommand);
       return handler({
         command: metadata,
+        matchedName: metadata.name,
         args: parsed.args,
         flags: parsed.flags,
         argv: this.argv
@@ -269,10 +271,11 @@ export async function runCli(cli: CliRuntime, argv: readonly string[]): Promise<
 
   try {
     const result = await match.command.handler({
-      command: match.command.metadata,
-      args: parsed.args,
-      flags: parsed.flags,
-      argv: match.argv
+        command: match.command.metadata,
+        matchedName: match.matchedName,
+        args: parsed.args,
+        flags: parsed.flags,
+        argv: match.argv
     });
     return renderCommandResult(match.command.metadata.name, result, jsonMode);
   } catch (error) {
@@ -288,14 +291,19 @@ async function parseCommandArgs(
   | { readonly args: Readonly<Record<string, unknown>>; readonly flags: Readonly<Record<string, unknown>>; readonly result?: never }
   | { readonly result: CliRunResult; readonly args?: never; readonly flags?: never }
 > {
+  const variadicArgs = extractVariadicArguments(command, argv, jsonMode);
+  if (variadicArgs?.result) {
+    return { result: variadicArgs.result };
+  }
+
   try {
-    const parsed = await Parser.parse([...argv], {
+    const parsed = await Parser.parse([...(variadicArgs?.argv ?? argv)], {
       args: createOclifArgs(command.arguments ?? []),
       flags: createOclifFlags(command.flags ?? []),
       strict: true
     });
     return {
-      args: parsed.args,
+      args: variadicArgs ? { ...parsed.args, [variadicArgs.argument.name]: variadicArgs.values } : parsed.args,
       flags: parsed.flags
     };
   } catch (error) {
@@ -315,8 +323,149 @@ async function parseCommandArgs(
   }
 }
 
+function extractVariadicArguments(
+  command: CommandMetadata,
+  argv: readonly string[],
+  jsonMode: boolean
+):
+  | {
+      readonly argument: ArgumentMetadata;
+      readonly argv: readonly string[];
+      readonly values: readonly string[];
+      readonly result?: never;
+    }
+  | { readonly result: CliRunResult; readonly argument?: never; readonly argv?: never; readonly values?: never }
+  | undefined {
+  const variadicArguments = (command.arguments ?? []).filter((argument) => argument.multiple === true);
+  if (variadicArguments.length === 0) {
+    return undefined;
+  }
+
+  const [argument] = variadicArguments;
+  if (!argument || variadicArguments.length > 1 || (command.arguments ?? []).at(-1) !== argument) {
+    return {
+      result: renderErrorResult(
+        createCliError({
+          command: command.name,
+          kind: "invalid-command-metadata",
+          operation: "parse command arguments",
+          likelyCause: "Variadic positional arguments must be declared once and as the final argument.",
+          suggestedNextAction: "Fix the command metadata before running this command.",
+          category: "unexpected"
+        }),
+        jsonMode
+      )
+    };
+  }
+
+  const split = splitVariadicArgv(command, argv);
+  if (argument.required === true && split.values.length === 0) {
+    return {
+      result: renderErrorResult(
+        createCliError({
+          command: command.name,
+          kind: "invalid-command-usage",
+          operation: "parse command arguments",
+          likelyCause: `Missing required argument: ${argument.name}.`,
+          suggestedNextAction: "Run command help and retry with valid arguments and flags.",
+          category: "usage"
+        }),
+        jsonMode
+      )
+    };
+  }
+
+  return { argument, argv: split.argv, values: split.values };
+}
+
+function splitVariadicArgv(
+  command: CommandMetadata,
+  argv: readonly string[]
+): { readonly argv: readonly string[]; readonly values: readonly string[] } {
+  const parserArgv: string[] = [];
+  const values: string[] = [];
+  const longFlags = new Map<string, FlagMetadata>();
+  const shortFlags = new Map<string, FlagMetadata>();
+  for (const flag of command.flags ?? []) {
+    longFlags.set(flag.name, flag);
+    for (const alias of flag.aliases ?? []) {
+      longFlags.set(alias, flag);
+    }
+    if (flag.short) {
+      shortFlags.set(flag.short, flag);
+    }
+  }
+
+  for (let index = 0; index < argv.length; index += 1) {
+    const token = argv[index];
+    if (token === undefined) {
+      continue;
+    }
+
+    if (token === "--") {
+      values.push(...argv.slice(index + 1));
+      break;
+    }
+
+    const flag = resolveFlagToken(token, longFlags, shortFlags);
+    if (flag) {
+      parserArgv.push(token);
+      if (flag.type !== "boolean" && !token.includes("=")) {
+        const value = argv[index + 1];
+        if (value !== undefined) {
+          parserArgv.push(value);
+          index += 1;
+        }
+      }
+      continue;
+    }
+
+    values.push(token);
+  }
+
+  return { argv: parserArgv, values };
+}
+
+function resolveFlagToken(
+  token: string,
+  longFlags: ReadonlyMap<string, FlagMetadata>,
+  shortFlags: ReadonlyMap<string, FlagMetadata>
+): FlagMetadata | undefined {
+  if (token.startsWith("--")) {
+    const [rawName] = token.slice(2).split("=", 1);
+    if (!rawName) {
+      return undefined;
+    }
+    const flag = longFlags.get(rawName);
+    if (flag) {
+      return flag;
+    }
+    if (rawName.startsWith("no-")) {
+      const negated = longFlags.get(rawName.slice(3));
+      return negated?.negatable === true ? negated : undefined;
+    }
+    return undefined;
+  }
+
+  if (/^-\d/.test(token) || !token.startsWith("-")) {
+    return undefined;
+  }
+
+  const [rawName] = token.slice(1).split("=", 1);
+  return rawName ? shortFlags.get(rawName) : undefined;
+}
+
 function renderCommandResult(command: string, result: RuntimeCommandResult, jsonMode: boolean): CliRunResult {
   const exitCode = result.exitCode ?? 0;
+  if (jsonMode && result.jsonStdout !== undefined) {
+    return {
+      exitCode,
+      stdout: validateJsonStdout(result.jsonStdout),
+      stderr: joinOutput([result.stderr, result.human]),
+      executedCommand: command
+    };
+  }
+
   if (jsonMode && exitCode !== 0) {
     return renderErrorResult(
       createCliError({
@@ -337,15 +486,6 @@ function renderCommandResult(command: string, result: RuntimeCommandResult, json
       exitCode,
       stdout: renderJsonSuccess(command, result.json),
       stderr: joinOutput([result.stderr, result.stdout]),
-      executedCommand: command
-    };
-  }
-
-  if (jsonMode && result.jsonStdout !== undefined) {
-    return {
-      exitCode,
-      stdout: validateJsonStdout(result.jsonStdout),
-      stderr: joinOutput([result.stderr, result.human]),
       executedCommand: command
     };
   }
@@ -519,13 +659,15 @@ function renderHelpResult(cli: CliRuntime, helpRequest: NonNullable<ReturnType<t
 function createOclifArgs(args: readonly ArgumentMetadata[]): Interfaces.ArgInput {
   const input: Interfaces.ArgInput = {};
   for (const argument of args) {
-    input[argument.name] = {
+    const arg = {
       input: [],
       name: argument.name,
       description: argument.description,
+      ...(argument.multiple === true ? { multiple: true } : {}),
       required: argument.required === true,
       parse: async (value: string) => value
     };
+    input[argument.name] = arg as Interfaces.Arg<unknown>;
   }
   return input;
 }
@@ -566,6 +708,7 @@ function createOclifFlag(flag: FlagMetadata): Interfaces.Flag<unknown> {
     ...options,
     input: [],
     multiple: flag.multiple === true,
+    ...(flag.multiple === true ? { multipleNonGreedy: true } : {}),
     parse: async (value: string) => parseFlagValue(flag, value),
     type: "option"
   };
@@ -594,7 +737,7 @@ async function parseFlagValue(flag: FlagMetadata, value: string): Promise<unknow
 function matchRuntimeCommand(
   cli: CliRuntime,
   argv: readonly string[]
-): { readonly command: RuntimeCommand; readonly argv: readonly string[] } | undefined {
+): { readonly command: RuntimeCommand; readonly matchedName: string; readonly argv: readonly string[] } | undefined {
   const commandByName = new Map(cli.commands.map((command) => [command.metadata.name, command]));
   const commandByAlias = new Map(cli.commands.flatMap((command) => (command.metadata.aliases ?? []).map((alias) => [alias, command])));
   const commandNames = [...commandByName.keys()].sort((left, right) => right.split(" ").length - left.split(" ").length || compareText(left, right));
@@ -603,7 +746,7 @@ function matchRuntimeCommand(
     if (tokens.every((token, index) => argv[index] === token)) {
       const command = commandByName.get(commandName);
       if (command) {
-        return { command, argv: argv.slice(tokens.length) };
+        return { command, matchedName: commandName, argv: argv.slice(tokens.length) };
       }
     }
   }
@@ -612,7 +755,7 @@ function matchRuntimeCommand(
   if (firstToken) {
     const aliasMatch = commandByAlias.get(firstToken);
     if (aliasMatch) {
-      return { command: aliasMatch, argv: argv.slice(1) };
+      return { command: aliasMatch, matchedName: firstToken, argv: argv.slice(1) };
     }
   }
   return undefined;

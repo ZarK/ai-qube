@@ -6,6 +6,7 @@ export const githubAdapter = defineQubeAdapter({
   surface: "github",
   owns: ["issues", "pull-requests", "checks", "review-gates"],
   boundary: "GitHub-specific state stays at the adapter edge; product packages consume provider-neutral contracts.",
+  contractOnly: true,
 } satisfies QubeAdapterContract);
 
 export function githubIssueReference(issueNumber: number): string {

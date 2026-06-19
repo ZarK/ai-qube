@@ -40,7 +40,7 @@ export const approvedPackageSmokeDependencies = [
   {
     name: "@tjalve/qube-cli",
     packageRoot: path.join(repoRoot, "packages", "cli", "node_modules", "@tjalve", "qube-cli"),
-    version: "0.1.1",
+    version: "0.1.2",
   },
 ] as const;
 export const publishedPackageWorkspaces = ["packages/cli"] as const;

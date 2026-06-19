@@ -36,6 +36,8 @@ Default text output is compact: status, selected stage results, diagnostics summ
 
 QUBE orchestration can discover the implemented AIQ command surface with `npx @tjalve/aiq schema --format json` or by importing `@tjalve/aiq/schema`. AIE and AIU integrations should consume `aiq evidence --format json` instead of agent narration.
 
+QUBE-facing AIQ commands are `run`, `check`, `plan`, `doctor`, `setup`, `status`, `config`, `evidence`, and `schema`. Standalone-only AIQ commands are `bench`, `watch`, `serve`, `hook install`, `ci setup`, and `ignore write`; they remain useful for direct package use but are not required by `qube components`.
+
 ## Stage Ladder
 
 | # | Stage | Scope |
