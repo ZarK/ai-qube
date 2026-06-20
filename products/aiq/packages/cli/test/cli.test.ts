@@ -102,9 +102,9 @@ describe("CLI foundation", () => {
       expect(packageJson.description).toContain("remediation guidance");
       expect(packageJson.publishConfig).toEqual({ access: "public", provenance: true });
       expect(packageJson.repository).toEqual({
-        directory: workspace,
+        directory: `products/aiq/${workspace}`,
         type: "git",
-        url: "git+https://github.com/ZarK/ai-quality.git",
+        url: "git+https://github.com/ZarK/ai-qube.git",
       });
       expect(packageJson.files).toContain("dist");
       expect(

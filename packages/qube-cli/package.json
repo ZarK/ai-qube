@@ -4,13 +4,14 @@
   "description": "Reusable TypeScript CLI infrastructure for command-line packages.",
   "license": "MIT",
   "author": "ZarK",
-  "homepage": "https://github.com/ZarK/ai-qube-cli#readme",
+  "homepage": "https://github.com/ZarK/ai-qube/tree/main/packages/qube-cli#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-qube-cli.git"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "packages/qube-cli"
   },
   "bugs": {
-    "url": "https://github.com/ZarK/ai-qube-cli/issues"
+    "url": "https://github.com/ZarK/ai-qube/issues"
   },
   "type": "module",
   "main": "./dist/index.js",

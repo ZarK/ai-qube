@@ -15,12 +15,13 @@
   "type": "module",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-executor.git"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aie"
   },
   "bugs": {
-    "url": "https://github.com/ZarK/ai-executor/issues"
+    "url": "https://github.com/ZarK/ai-qube/issues"
   },
-  "homepage": "https://github.com/ZarK/ai-executor#readme",
+  "homepage": "https://github.com/ZarK/ai-qube/tree/main/products/aie#readme",
   "packageManager": "pnpm@11.0.4",
   "engines": {
     "node": ">=24.0.0"
