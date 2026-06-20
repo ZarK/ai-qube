@@ -9,7 +9,7 @@ This package is a library foundation for CLI metadata, runtime wiring, help, sch
 Use exact versions and keep lifecycle scripts disabled during dependency installation where supported:
 
 ```sh
-pnpm add @tjalve/qube-cli@0.1.1 --save-exact --ignore-scripts
+pnpm add @tjalve/qube-cli@0.1.2 --save-exact --ignore-scripts
 ```
 
 ## Development baseline

@@ -237,6 +237,64 @@ describe("output and error helpers", () => {
     });
   });
 
+  it("parses variadic positional arguments", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "files inspect",
+      description: "Inspect variadic file arguments.",
+      arguments: [{ name: "files", description: "Files to inspect.", multiple: true }],
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Inspect multiple files.", command: "fixture files inspect a.ts b.ts --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => ({ json: { files: args.files } }))]
+    });
+
+    const result = await runCli(cli, ["files", "inspect", "a.ts", "b.ts", "--json"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      command: "files inspect",
+      files: ["a.ts", "b.ts"]
+    });
+  });
+
+  it("preserves fixed positional arguments before a variadic tail", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "files inspect",
+      description: "Inspect variadic file arguments for a target.",
+      arguments: [
+        { name: "target", description: "Target project.", required: true },
+        { name: "files", description: "Files to inspect.", multiple: true }
+      ],
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Inspect multiple files.", command: "fixture files inspect project a.ts b.ts --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => ({ json: { target: args.target, files: args.files } }))]
+    });
+
+    const result = await runCli(cli, ["files", "inspect", "project", "a.ts", "b.ts", "--json"]);
+
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: true,
+      command: "files inspect",
+      target: "project",
+      files: ["a.ts", "b.ts"]
+    });
+  });
+
   it("parses negatable boolean flags into the canonical flag key", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const command = {
@@ -317,5 +375,33 @@ describe("output and error helpers", () => {
         exitCode: 5
       }
     });
+  });
+
+  it("passes through explicit JSON stdout for non-zero command results", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const failingCommand = {
+      kind: "command",
+      name: "raw report",
+      description: "Return a non-zero structured report.",
+      flags: [{ name: "json", description: "Render JSON output.", type: "boolean" }],
+      examples: [{ description: "Run raw report.", command: "fixture raw report --json" }],
+      interactions: { json: true }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [failingCommand] }),
+      commands: [
+        createCommand(failingCommand, () => ({
+          exitCode: 1,
+          jsonStdout: '{"status":"failed","diagnosticCount":1}\n'
+        }))
+      ]
+    });
+
+    const result = await runCli(cli, ["raw", "report", "--json"]);
+
+    assert.equal(result.exitCode, 1);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), { status: "failed", diagnosticCount: 1 });
   });
 });

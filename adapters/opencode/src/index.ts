@@ -6,6 +6,7 @@ export const opencodeAdapter = defineQubeAdapter({
   surface: "opencode",
   owns: ["session-prompts", "stop-hooks", "plugin-entrypoints"],
   boundary: "OpenCode host behavior stays at the adapter edge; product packages consume host-neutral contracts.",
+  contractOnly: true,
 } satisfies QubeAdapterContract);
 
 export function opencodeSessionTarget(sessionId: string): string {

@@ -29,6 +29,7 @@ const stageSelectionFlags = [
     name: "stage",
     description: "Run one named stage.",
     type: "string",
+    multiple: true,
   },
   {
     name: "profile",
@@ -100,7 +101,7 @@ export const aiqCommandMetadata = [
       {
         name: "files",
         description: "Input files or paths to check.",
-        required: true,
+        required: false,
         multiple: true,
       },
     ],
@@ -125,7 +126,6 @@ export const aiqCommandMetadata = [
       },
       {
         name: "verbose",
-        short: "v",
         description: "Include command and tool details in text output.",
         type: "boolean",
       },
@@ -171,7 +171,7 @@ export const aiqCommandMetadata = [
       {
         name: "files",
         description: "Input files or paths to include in the plan.",
-        required: true,
+        required: false,
         multiple: true,
       },
     ],
@@ -198,6 +198,142 @@ export const aiqCommandMetadata = [
   },
   {
     kind: "command",
+    name: "bench",
+    description: "Run the standalone AIQ benchmark corpus.",
+    flags: [
+      ...outputFlags,
+      {
+        name: "corpus-root",
+        description: "Path to an alternate benchmark corpus root.",
+        type: "string",
+      },
+      {
+        name: "scenario",
+        description: "Benchmark scenario id to run.",
+        type: "string",
+        multiple: true,
+      },
+      {
+        name: "tag",
+        description: "Benchmark tag filter to run.",
+        type: "string",
+        multiple: true,
+      },
+      {
+        name: "kind",
+        description: "Benchmark scenario kind to run.",
+        type: "option",
+        options: ["cold", "diff-only", "warm"],
+        multiple: true,
+      },
+      {
+        name: "out-dir",
+        description: "Override the benchmark artifact output directory.",
+        type: "string",
+      },
+    ],
+    examples: [
+      {
+        command: "aiq bench --tag ci --format json",
+        description: "Run benchmark scenarios tagged for CI.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    supplyChain: {
+      sensitive: true,
+      kinds: ["package-manager", "dependency"],
+      reason: "AIQ bench may execute repository benchmark fixtures and quality toolchains.",
+    },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-benchmark", contexts: ["standalone"] } },
+  },
+  {
+    kind: "command",
+    name: "watch",
+    description: "Run AIQ continuously for explicit files or paths when watched inputs change.",
+    arguments: [
+      {
+        name: "files",
+        description: "Input files or paths to watch.",
+        required: false,
+        multiple: true,
+      },
+    ],
+    flags: [
+      ...manifestFlags,
+      ...stageSelectionFlags,
+      ...outputFlags,
+      {
+        name: "debounce-ms",
+        description: "Delay after a file event before rerunning.",
+        type: "integer",
+      },
+      {
+        name: "out-dir",
+        description: "Override the AIQ artifact output directory.",
+        type: "string",
+      },
+    ],
+    examples: [
+      {
+        command: "aiq watch src --stage lint",
+        description: "Watch src and rerun the lint stage on changes.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    supplyChain: {
+      sensitive: true,
+      kinds: ["package-manager", "dependency"],
+      reason: "AIQ watch may repeatedly execute project quality tools selected by repository configuration.",
+    },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-watch", contexts: ["standalone"] } },
+  },
+  {
+    kind: "command",
+    name: "serve",
+    description: "Start the standalone AIQ HTTP quality server.",
+    flags: [
+      ...stageSelectionFlags,
+      ...outputFlags,
+      {
+        name: "host",
+        description: "Host interface for the AIQ server.",
+        type: "string",
+        defaultValue: "127.0.0.1",
+      },
+      {
+        name: "port",
+        description: "TCP port for the AIQ server.",
+        type: "integer",
+        defaultValue: 3000,
+      },
+      {
+        name: "out-dir",
+        description: "Override the AIQ artifact output directory.",
+        type: "string",
+      },
+    ],
+    examples: [
+      {
+        command: "aiq serve --host 127.0.0.1 --port 3000",
+        description: "Start the local AIQ server.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    supplyChain: {
+      sensitive: true,
+      kinds: ["package-manager", "dependency"],
+      reason: "AIQ serve executes project quality tools in response to local requests.",
+    },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-server", contexts: ["standalone"] } },
+  },
+  {
+    kind: "command",
     name: "doctor",
     description:
       "Inspect AIQ config, progress state, detected technologies, and tool prerequisites.",
@@ -206,7 +342,6 @@ export const aiqCommandMetadata = [
       ...outputFlags,
       {
         name: "verbose",
-        short: "v",
         description: "Include resolved binary paths and versions.",
         type: "boolean",
       },
@@ -232,7 +367,6 @@ export const aiqCommandMetadata = [
       ...outputFlags,
       {
         name: "verbose",
-        short: "v",
         description: "Include resolved binary paths and versions.",
         type: "boolean",
       },
@@ -377,6 +511,75 @@ export const aiqCommandMetadata = [
     ],
     extensions: { aiq: { capability: "quality-schema", contexts: ["cli", "qube"] } },
   },
+  {
+    kind: "command",
+    name: "hook",
+    description: "Render standalone hook adapter setup guidance.",
+    arguments: [
+      {
+        name: "subcommand",
+        description: "Hook setup subcommand. Use install.",
+        required: false,
+      },
+    ],
+    flags: outputFlags,
+    examples: [
+      {
+        command: "aiq hook install",
+        description: "Show hook installation guidance.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-hook-guidance", contexts: ["standalone"] } },
+  },
+  {
+    kind: "command",
+    name: "ci",
+    description: "Render standalone CI adapter setup guidance.",
+    arguments: [
+      {
+        name: "subcommand",
+        description: "CI setup subcommand. Use setup.",
+        required: false,
+      },
+    ],
+    flags: outputFlags,
+    examples: [
+      {
+        command: "aiq ci setup",
+        description: "Show CI setup guidance.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-ci-guidance", contexts: ["standalone"] } },
+  },
+  {
+    kind: "command",
+    name: "ignore",
+    description: "Render standalone ignore-file setup guidance.",
+    arguments: [
+      {
+        name: "subcommand",
+        description: "Ignore setup subcommand. Use write.",
+        required: false,
+      },
+    ],
+    flags: outputFlags,
+    examples: [
+      {
+        command: "aiq ignore write",
+        description: "Show ignore configuration guidance.",
+      },
+    ],
+    output: { formats: ["text", "json"], defaultFormat: "text" },
+    interactions: { json: true, noColor: false, nonInteractive: true, ttyPrompt: false },
+    exitCodes: commonExitCodes,
+    extensions: { aiq: { capability: "quality-ignore-guidance", contexts: ["standalone"] } },
+  },
 ] as const satisfies readonly CommandMetadata[];
 
 export const aiqCommandRegistry = createCommandRegistry({ commands: aiqCommandMetadata });
@@ -393,6 +596,9 @@ const aiqSchemaOptions = {
       "quality-setup",
       "quality-status",
       "quality-evidence",
+      "quality-benchmark",
+      "quality-watch",
+      "quality-server",
     ],
     discovery: {
       command: "aiq schema --format json",

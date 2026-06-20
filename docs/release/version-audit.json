@@ -1,0 +1,55 @@
+{
+  "checkedAt": "2026-06-19",
+  "registry": "https://registry.npmjs.org/",
+  "rule": "Every public installable QUBE-family package must use a monorepo version strictly greater than the latest independently published npm version. Unpublished packages may keep their selected initial version.",
+  "packages": [
+    {
+      "name": "@tjalve/qube",
+      "packageJson": "products/qube/package.json",
+      "published": false,
+      "latestPublished": null,
+      "publishedVersions": [],
+      "selectedVersion": "0.1.0"
+    },
+    {
+      "name": "@tjalve/qube-cli",
+      "packageJson": "packages/qube-cli/package.json",
+      "published": true,
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
+    },
+    {
+      "name": "@tjalve/aib",
+      "packageJson": "products/aib/package.json",
+      "published": false,
+      "latestPublished": null,
+      "publishedVersions": [],
+      "selectedVersion": "0.1.0"
+    },
+    {
+      "name": "@tjalve/aie",
+      "packageJson": "products/aie/package.json",
+      "published": true,
+      "latestPublished": "0.1.2",
+      "publishedVersions": ["0.1.0", "0.1.1", "0.1.2"],
+      "selectedVersion": "0.1.3"
+    },
+    {
+      "name": "@tjalve/aiq",
+      "packageJson": "products/aiq/packages/cli/package.json",
+      "published": true,
+      "latestPublished": "0.2.0",
+      "publishedVersions": ["0.1.6", "0.1.8", "0.2.0"],
+      "selectedVersion": "0.2.1"
+    },
+    {
+      "name": "@tjalve/aiu",
+      "packageJson": "products/aiu/package.json",
+      "published": true,
+      "latestPublished": "0.0.2",
+      "publishedVersions": ["0.0.0", "0.0.1", "0.0.2"],
+      "selectedVersion": "0.0.3"
+    }
+  ]
+}

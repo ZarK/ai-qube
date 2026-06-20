@@ -63,12 +63,15 @@ describe("CLI foundation", () => {
     });
   });
 
-  it("keeps -v reserved for verbose first-run behavior", async () => {
-    const project = await createTypeScriptFixtureProject("aiq-cli-short-verbose-");
+  it("keeps -v reserved for version output", async () => {
+    const project = await createTypeScriptFixtureProject("aiq-cli-short-version-");
+    const packageJson = JSON.parse(await readFile(cliPackageJsonPath, "utf8")) as {
+      version: string;
+    };
     const stdout = new MemoryOutput();
     const stderr = new MemoryOutput();
 
-    const exitCode = await runCli(["node", "aiq", "-v", "--dry-run"], {
+    const exitCode = await runCli(["node", "aiq", "-v"], {
       cwd: project.root,
       stderr,
       stdin: new MemoryInput(),
@@ -77,10 +80,7 @@ describe("CLI foundation", () => {
 
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
-    expect(stdout.value).toContain("AIQ first run");
-    expect(stdout.value).toContain("AIQ dry run");
-    expect(stdout.value).toContain("Run:");
-    expect(stdout.value).toContain("Profile:");
+    expect(stdout.value).toBe(`${packageJson.version}\n`);
   });
 
   it("keeps published package metadata aligned with the clean repository", async () => {

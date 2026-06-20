@@ -17,7 +17,7 @@ The toolkit remains infrastructure. Consuming packages own command behavior, val
 Install with an exact version and disabled lifecycle scripts:
 
 ```sh
-pnpm add @tjalve/qube-cli@0.1.1 --save-exact --ignore-scripts
+pnpm add @tjalve/qube-cli@0.1.2 --save-exact --ignore-scripts
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 

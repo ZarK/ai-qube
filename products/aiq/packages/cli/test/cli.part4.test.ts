@@ -47,14 +47,20 @@ describe("CLI foundation", () => {
       packageExport: "@tjalve/aiq/schema",
     });
     expect([...commands.keys()]).toEqual([
+      "bench",
+      "ci",
       "config",
       "doctor",
       "evidence",
+      "hook",
+      "ignore",
       "plan",
       "run",
       "schema",
+      "serve",
       "setup",
       "status",
+      "watch",
     ]);
     expect(commands.get("run")?.extensions?.aiq?.capability).toBe("quality-control");
     expect(commands.get("run")?.extensions?.aiq?.contexts).toContain("qube");
@@ -73,6 +79,9 @@ describe("CLI foundation", () => {
       defaultFormat: "json",
       formats: ["json"],
     });
+    expect(commands.get("bench")?.extensions?.aiq?.contexts).toEqual(["standalone"]);
+    expect(commands.get("watch")?.extensions?.aiq?.contexts).toEqual(["standalone"]);
+    expect(commands.get("serve")?.extensions?.aiq?.contexts).toEqual(["standalone"]);
   });
 
   it("rejects text output for JSON-only commands", async () => {
