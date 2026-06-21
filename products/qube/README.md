@@ -34,18 +34,55 @@ qube components
 ```sh
 qube --help
 qube components
+
+# Plan from an idea.
 qube idea "Ship a local notes CLI"
+qube plan status --json
+qube spec draft --json
+qube spec validate --json
+qube spec accept --section all --json
+qube milestones --json
+qube work-items --json
+qube work-items render --provider github --dry-run --json
+
+# Execute issue work.
 qube queue --json
+qube start next --json
+qube view 84 --json
+qube branch create 84 --dry-run --json
+qube review gate 84 --prompt
+qube pr body 84
+qube pr gate 87 --json
+qube complete 84 --check-only --json
+
+# Audit local apps and quality state.
+qube app start --name ui-audit -- pnpm dev
+qube app wait --name ui-audit --url http://127.0.0.1:5173 --timeout 30
+qube app status --name ui-audit --json
+qube app stop --name ui-audit --json
 qube doctor --json
 qube check src --json
+qube quality status --json
+qube evidence --json
 qube status --json
 ```
 
-Use `qube run` when you need a component command that does not have a short
-QUBE command yet:
+The direct command surface covers the regular path from idea, planning, issue
+work, review gates, local audit helpers, quality evidence, and continuation
+status. Use product routing when a command is intentionally product-specific or
+ambiguous, such as config and migration:
 
 ```sh
-qube run aib -- init . --idea "Ship a local notes CLI" --json
+qube aiq config --print-config --format json
+qube aiu config --json
+qube aie migrate legacy --dry-run --json
+```
+
+Use `qube run` as the low-level escape hatch when debugging a component command
+or forwarding an unusual command shape:
+
+```sh
+qube run aib -- status --json
 qube run aiq -- doctor --format json
 ```
 

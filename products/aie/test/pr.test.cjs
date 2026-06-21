@@ -230,6 +230,52 @@ describe('PR gate service', () => {
     assert.match(result.nextAction, /no detected blockers/);
   });
 
+  it('omits resolved Copilot overview reviews from PR gate feedback', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      latestReviews: [
+        {
+          author: { login: 'copilot-pull-request-reviewer' },
+          state: 'COMMENTED',
+          body: '## Pull request overview\n\nThis PR changes the CLI surface.\n\n### Reviewed changes\n\nCopilot reviewed 3 out of 3 changed files in this pull request and generated 9 comments.',
+        },
+      ],
+    });
+    const { exec } = makePrExec({ prViews: [pr], threads: [[]] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.feedback.length, 0);
+    assert.equal(result.counts.reviews, 1);
+    assert.equal(result.counts.unresolvedThreads, 0);
+  });
+
+  it('keeps non-Copilot overview-shaped reviews as actionable feedback', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      latestReviews: [
+        {
+          author: { login: 'human-reviewer' },
+          state: 'COMMENTED',
+          body: '## Pull request overview\n\nThis still needs changes.\n\n### Reviewed changes\n\nCopilot reviewed 3 out of 3 changed files in this pull request and generated 9 comments.',
+        },
+      ],
+    });
+    const { exec } = makePrExec({ prViews: [pr], threads: [[]] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.feedback.length, 1);
+    assert.equal(result.feedback[0].author, 'human-reviewer');
+  });
+
   it('does not wait when no PR reviewers are configured', async () => {
     const config = getDefaults();
     config.reviewAgents = [];
