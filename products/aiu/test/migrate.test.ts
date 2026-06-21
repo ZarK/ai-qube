@@ -32,7 +32,7 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.dryRun, true);
     assert.deepEqual(parsed.migrate.inventory, []);
     assert.equal(parsed.migrate.filesToCreate.length >= 3, true);
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
     assert.equal(existsSync(path.join(target, ".umpire")), false);
   });
 
@@ -175,10 +175,10 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.applied, true);
     assert.equal(parsed.migrate.dryRun, false);
     assert.equal(parsed.migrate.ok, true);
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === "aiu.config.json" && item.action === "create"));
+    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".qube/aiu/config.json" && item.action === "create"));
     assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), true);
-    const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), true);
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
     assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code"]);
     assert.ok("work" in config.trustedStateCommands);
     assert.match(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), /@tjalve\/aiu\/opencode/);

@@ -187,7 +187,7 @@ describe("doctor diagnostics", () => {
 
   it("reports idle mode readiness and whip ownership diagnostics without mutating state", async () => {
     const repoRoot = await createRepoRoot();
-    const whipPath = path.join(repoRoot, ".umpire", "whip.json");
+    const whipPath = path.join(repoRoot, ".qube", "aiu", "whip.json");
     await mkdir(path.dirname(whipPath), { recursive: true });
     const whipState = {
       schemaVersion: 1,
