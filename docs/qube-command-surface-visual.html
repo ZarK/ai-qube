@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>QUBE Command Surface: Idea to Complete Implementation</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --ink: #17202a;
+      --muted: #5d6776;
+      --line: #b8c0cc;
+      --qube: #254f9b;
+      --aib: #2d8065;
+      --aie: #8a4f16;
+      --aiq: #6d4fb2;
+      --aiu: #b03052;
+      --gap: #9b2c2c;
+      --card: #ffffff;
+      --soft: #edf1f7;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.35;
+    }
+
+    main {
+      max-width: 1440px;
+      margin: 0 auto;
+      padding: 28px;
+    }
+
+    header {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 30px;
+      letter-spacing: 0;
+    }
+
+    .subtitle {
+      margin: 0;
+      color: var(--muted);
+      max-width: 840px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      min-width: 340px;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid #d6dbe4;
+      background: #fff;
+      padding: 6px 9px;
+      border-radius: 6px;
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--qube);
+    }
+
+    .dot.aib { background: var(--aib); }
+    .dot.aie { background: var(--aie); }
+    .dot.aiq { background: var(--aiq); }
+    .dot.aiu { background: var(--aiu); }
+    .dot.gap { background: var(--gap); }
+
+    .surface {
+      display: grid;
+      grid-template-columns: repeat(9, minmax(124px, 1fr));
+      gap: 12px;
+      align-items: stretch;
+      overflow-x: auto;
+      padding-bottom: 16px;
+    }
+
+    .phase {
+      min-width: 124px;
+      background: var(--card);
+      border: 1px solid #dbe0e8;
+      border-top: 5px solid var(--qube);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(23, 32, 42, 0.08);
+      padding: 12px;
+      position: relative;
+    }
+
+    .phase::after {
+      content: "";
+      position: absolute;
+      right: -12px;
+      top: 44px;
+      width: 12px;
+      height: 2px;
+      background: var(--line);
+    }
+
+    .phase:last-child::after {
+      display: none;
+    }
+
+    .phase.aib { border-top-color: var(--aib); }
+    .phase.aie { border-top-color: var(--aie); }
+    .phase.aiq { border-top-color: var(--aiq); }
+    .phase.aiu { border-top-color: var(--aiu); }
+    .phase.gap { border-top-color: var(--gap); }
+
+    .phase h2 {
+      margin: 0 0 4px;
+      font-size: 15px;
+      letter-spacing: 0;
+    }
+
+    .owner {
+      margin: 0 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+    }
+
+    .commands {
+      display: grid;
+      gap: 7px;
+    }
+
+    code {
+      display: block;
+      padding: 7px 8px;
+      background: var(--soft);
+      border: 1px solid #dde4ef;
+      border-radius: 6px;
+      color: #111927;
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+      font-size: 12px;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+    }
+
+    .note {
+      margin-top: 9px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .loops {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid #dbe0e8;
+      border-radius: 8px;
+      padding: 14px;
+      box-shadow: 0 8px 24px rgba(23, 32, 42, 0.06);
+    }
+
+    .panel h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .panel p {
+      margin: 0;
+      color: var(--muted);
+    }
+
+    @media (max-width: 900px) {
+      main {
+        padding: 18px;
+      }
+
+      header {
+        display: block;
+      }
+
+      .legend {
+        justify-content: flex-start;
+        min-width: 0;
+        margin-top: 14px;
+      }
+
+      .surface {
+        grid-template-columns: repeat(9, 220px);
+      }
+
+      .loops {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>QUBE Command Surface: Idea to Complete Implementation</h1>
+        <p class="subtitle">Use QUBE as the entrypoint and dispatcher. AIB owns planning, AIE owns issue and PR execution, AIQ owns quality evidence, and AIU owns continuation policy. The surface keeps <code>make-it-so</code> prominent while staying readable and avoiding protected franchise UI patterns.</p>
+      </div>
+      <div class="legend" aria-label="Legend">
+        <span class="chip"><span class="dot"></span>QUBE</span>
+        <span class="chip"><span class="dot aib"></span>AIB</span>
+        <span class="chip"><span class="dot aie"></span>AIE</span>
+        <span class="chip"><span class="dot aiq"></span>AIQ</span>
+        <span class="chip"><span class="dot aiu"></span>AIU</span>
+        <span class="chip"><span class="dot gap"></span>Current handoff gap</span>
+      </div>
+    </header>
+
+    <section class="surface" aria-label="QUBE command flow">
+      <article class="phase">
+        <h2>1. Discover</h2>
+        <p class="owner">QUBE</p>
+        <div class="commands">
+          <code>qube make-it-so "..."</code>
+          <code>qube components</code>
+          <code>qube run &lt;tool&gt; -- --help</code>
+        </div>
+        <p class="note">Confirms installed component versions and the available command family.</p>
+      </article>
+
+      <article class="phase aib">
+        <h2>2. Capture Idea</h2>
+        <p class="owner">AIB</p>
+        <div class="commands">
+          <code>qube run aib -- init . --agent codex --idea "..." --json</code>
+          <code>qube run aib -- next --json</code>
+          <code>qube run aib -- answer --field &lt;field&gt; --value &lt;answer&gt; --json</code>
+        </div>
+        <p class="note">Turns the fuzzy request into structured planning state.</p>
+      </article>
+
+      <article class="phase aib">
+        <h2>3. Accept Spec</h2>
+        <p class="owner">AIB</p>
+        <div class="commands">
+          <code>qube run aib -- spec draft --json</code>
+          <code>qube run aib -- spec validate --json</code>
+          <code>qube run aib -- spec accept --section &lt;id|all&gt; --json</code>
+        </div>
+        <p class="note">Implementation should not start until the right sections are accepted.</p>
+      </article>
+
+      <article class="phase aib">
+        <h2>4. Work Items</h2>
+        <p class="owner">AIB</p>
+        <div class="commands">
+          <code>qube run aib -- milestones generate --json</code>
+          <code>qube run aib -- work-items generate --json</code>
+          <code>qube run aib -- work-items render --provider github --dry-run --json</code>
+        </div>
+        <p class="note">Produces provider-ready work item drafts.</p>
+      </article>
+
+      <article class="phase gap">
+        <h2>5. Issue Handoff</h2>
+        <p class="owner">Boundary</p>
+        <div class="commands">
+          <code>review rendered GitHub issue draft</code>
+          <code>create or confirm real GitHub issue</code>
+        </div>
+        <p class="note">Current gap: AIB renders issue output; AIE starts from real provider issues.</p>
+      </article>
+
+      <article class="phase aie">
+        <h2>6. Execute Issue</h2>
+        <p class="owner">AIE</p>
+        <div class="commands">
+          <code>qube run aie -- queue --json</code>
+          <code>qube run aie -- start next</code>
+          <code>qube run aie -- view &lt;issue&gt;</code>
+          <code>qube run aie -- branch check &lt;issue&gt;</code>
+        </div>
+        <p class="note">Selects one valid issue and moves work onto the issue branch.</p>
+      </article>
+
+      <article class="phase aie">
+        <h2>7. Implement + Audit</h2>
+        <p class="owner">AIE</p>
+        <div class="commands">
+          <code>edit code, tests, and docs</code>
+          <code>qube run aie -- audit ui &lt;issue&gt; --prepare</code>
+          <code>qube run aie -- run start --name ui-audit -- &lt;dev command&gt;</code>
+          <code>qube run aie -- run wait --name ui-audit --url &lt;url&gt; --timeout 30</code>
+          <code>qube run aie -- run stop --name ui-audit</code>
+        </div>
+        <p class="note">Uses managed local app runners for UI evidence when needed.</p>
+      </article>
+
+      <article class="phase aiq">
+        <h2>8. Quality Evidence</h2>
+        <p class="owner">AIQ</p>
+        <div class="commands">
+          <code>qube run aiq -- setup --format json</code>
+          <code>qube run aiq -- doctor --format json</code>
+          <code>qube run aiq -- plan . --format json</code>
+          <code>qube run aiq -- run . --format json</code>
+          <code>qube run aiq -- evidence --format json</code>
+        </div>
+        <p class="note">Produces trusted machine-readable gate evidence.</p>
+      </article>
+
+      <article class="phase aie">
+        <h2>9. PR To Completion</h2>
+        <p class="owner">AIE + Git</p>
+        <div class="commands">
+          <code>qube run aie -- pr body &lt;issue&gt;</code>
+          <code>git commit && git push</code>
+          <code>open non-draft PR that closes issue</code>
+          <code>qube run aie -- pr view &lt;pr&gt; --json</code>
+          <code>qube run aie -- pr gate &lt;pr&gt; --json</code>
+          <code>merge after approval, CI, and gates</code>
+          <code>qube run aie -- complete &lt;issue&gt;</code>
+        </div>
+        <p class="note">PR helpers do not silently merge. Merge happens only after policy passes.</p>
+      </article>
+    </section>
+
+    <section class="loops">
+      <article class="panel">
+        <h2>Failure Loop</h2>
+        <p>If AIQ, CI, review, or UI audit fails, return to implementation, fix the concrete issue, rerun the affected gate, then rerun <code>qube run aie -- pr gate &lt;pr&gt; --json</code>.</p>
+      </article>
+      <article class="panel">
+        <h2>Continuation Loop</h2>
+        <p>After merge and <code>aie complete</code>, AIU can inspect trusted state with <code>qube run aiu -- status --json</code>, host hooks, or whip tasks before the next issue starts.</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>
