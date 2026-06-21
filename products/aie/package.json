@@ -32,7 +32,7 @@
     "provenance": true
   },
   "bin": {
-    "aie": "./bin/run"
+    "aie": "bin/run"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
