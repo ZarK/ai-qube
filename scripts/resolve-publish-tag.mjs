@@ -2,13 +2,14 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 
 const buildQubeCli = "pnpm --filter @tjalve/qube-cli run build";
+const buildAiqDependencies = `${buildQubeCli} && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build`;
 
 const packages = new Map([
   ["qube-cli", { filter: "@tjalve/qube-cli", path: "packages/qube-cli", packageJson: "packages/qube-cli/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/qube-cli run verify" }],
   ["aib", { filter: "@tjalve/aib", path: "products/aib", packageJson: "products/aib/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aib run verify" }],
   ["aie", { filter: "@tjalve/aie", path: "products/aie", packageJson: "products/aie/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aie run verify" }],
   ["aiu", { filter: "@tjalve/aiu", path: "products/aiu", packageJson: "products/aiu/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aiu run release:check" }],
-  ["aiq", { filter: "@tjalve/aiq", path: "products/aiq/packages/cli", packageJson: "products/aiq/packages/cli/package.json", prepare: buildQubeCli, verify: "pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality run test:publish-readiness" }],
+  ["aiq", { filter: "@tjalve/aiq", path: "products/aiq/packages/cli", packageJson: "products/aiq/packages/cli/package.json", prepare: buildAiqDependencies, verify: "pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality run test:publish-readiness" }],
   ["qube", { filter: "@tjalve/qube", path: "products/qube", packageJson: "products/qube/package.json", prepare: `${buildQubeCli} && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --filter ai-code-quality run build`, verify: "pnpm --filter @tjalve/qube run verify" }]
 ]);
 

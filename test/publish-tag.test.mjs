@@ -47,6 +47,9 @@ describe("publish tag resolution", () => {
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
+    assert.match(plan.prepare, /@tjalve\/qube-cli/);
+    assert.match(plan.prepare, /@tjalve\/aie/);
+    assert.match(plan.prepare, /@tjalve\/aiu/);
     assert.match(plan.verify, /ai-code-quality run build/);
     assert.match(plan.verify, /ai-code-quality run test:publish-readiness/);
     assert.doesNotMatch(plan.verify, /ai-code-quality test(?:\s|$)/);
