@@ -179,6 +179,11 @@ describe("qube composer CLI", () => {
     const planned = planQubeCli(["install", "--scope", "shared", "--yes"]);
     assert.equal(planned.exitCode, 2);
     assert.match(planned.stderr, /Invalid install option --scope=shared/);
+
+    const missingValue = planQubeCli(["install", "--scope", "--yes"]);
+    assert.equal(missingValue.exitCode, 2);
+    assert.match(missingValue.stderr, /Missing value for install option --scope/);
+    assert.match(missingValue.stderr, /local, global/);
   });
 
   it("lists standalone components without replacing them", () => {

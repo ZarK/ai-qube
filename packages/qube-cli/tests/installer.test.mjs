@@ -95,7 +95,12 @@ describe("installer choice helpers", () => {
         choices: [{ value: "pnpm", label: "pnpm" }],
         value: "npm"
       }),
-      /validate package manager: Unsupported choice "npm"\./
+      error => {
+        assert.equal(error.command, "install");
+        assert.equal(error.operation, "validate package manager");
+        assert.equal(error.likelyCause, 'Unsupported choice "npm".');
+        return true;
+      }
     );
   });
 

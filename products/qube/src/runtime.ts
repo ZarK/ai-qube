@@ -1158,7 +1158,16 @@ function parseInstallArgs(args: readonly string[]):
       continue;
     }
     const parsed = parseOptionToken(args, index);
-    if (parsed) {
+    if (parsed?.kind === "missing-value") {
+      return {
+        error: {
+          exitCode: 2,
+          stdout: "",
+          stderr: `Missing value for install option --${parsed.key}. Use one of: ${installOptionValues(parsed.key).join(", ")}.\n`
+        }
+      };
+    }
+    if (parsed?.kind === "parsed") {
       flags[parsed.key] = parsed.value;
       index = parsed.nextIndex;
       continue;
@@ -1177,7 +1186,10 @@ function parseInstallArgs(args: readonly string[]):
 function parseOptionToken(
   args: readonly string[],
   index: number
-): { readonly key: string; readonly value: string; readonly nextIndex: number } | undefined {
+):
+  | { readonly kind: "parsed"; readonly key: string; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: string }
+  | undefined {
   const token = args[index];
   if (!token) {
     return undefined;
@@ -1185,17 +1197,36 @@ function parseOptionToken(
   for (const key of ["scope", "package-manager", "host", "work-provider", "lifecycle-scripts", "migration"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
-      return { key, value: token.slice(flag.length + 1), nextIndex: index };
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
     }
     if (token === flag) {
       const value = args[index + 1];
       if (!value || value.startsWith("-")) {
-        return undefined;
+        return { kind: "missing-value", key };
       }
-      return { key, value, nextIndex: index + 1 };
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
     }
   }
   return undefined;
+}
+
+function installOptionValues(key: string): readonly string[] {
+  switch (key) {
+    case "scope":
+      return scopeChoices.choices.map(choice => choice.value);
+    case "package-manager":
+      return packageManagerChoices.choices.map(choice => choice.value);
+    case "host":
+      return hostChoices.choices.map(choice => choice.value);
+    case "work-provider":
+      return workProviderChoices.choices.map(choice => choice.value);
+    case "lifecycle-scripts":
+      return lifecycleChoices.choices.map(choice => choice.value);
+    case "migration":
+      return migrationChoices.choices.map(choice => choice.value);
+    default:
+      return [];
+  }
 }
 
 function findDirectCommand(args: readonly string[]): { readonly definition: DirectQubeCommand; readonly args: readonly string[] } | undefined {

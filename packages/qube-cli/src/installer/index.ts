@@ -37,7 +37,7 @@ export function defineInstallerChoiceGroup<const Group extends InstallerChoiceGr
   requireText(group.message, "group.message");
   validateInstallerChoices(group.choices);
   if (group.defaultValue !== undefined) {
-    requireChoiceMatch(group.defaultValue, group.choices, group.name);
+    requireChoiceMatch(group.defaultValue, group.choices, { promptName: group.name });
   }
   return Object.freeze(group);
 }
@@ -78,14 +78,20 @@ export async function promptInstallerChoice<Value extends string>(
   validateInstallerChoices(options.choices);
 
   if (options.value !== undefined) {
-    requireChoiceMatch(options.value, options.choices, options.promptName ?? "installer choice");
+    requireChoiceMatch(options.value, options.choices, {
+      command: commandName(options.command),
+      promptName: options.promptName ?? "installer choice"
+    });
     return options.value;
   }
 
   const gate = evaluatePromptGate(options);
   if (!gate.allowed) {
     if (options.defaultValue !== undefined) {
-      requireChoiceMatch(options.defaultValue, options.choices, options.promptName ?? "installer choice");
+      requireChoiceMatch(options.defaultValue, options.choices, {
+        command: commandName(options.command),
+        promptName: options.promptName ?? "installer choice"
+      });
       return options.defaultValue;
     }
     throw createCliError({
@@ -131,15 +137,18 @@ function renderInstallerChoice<Value extends string>(choice: InstallerChoice<Val
 function requireChoiceMatch<Value extends string>(
   value: Value,
   choices: readonly InstallerChoice<Value>[],
-  promptName: string
+  options: {
+    readonly command?: string;
+    readonly promptName: string;
+  }
 ): void {
   if (findInstallerChoice(choices, value)) {
     return;
   }
   throw createCliError({
-    command: promptName,
+    ...(options.command === undefined ? {} : { command: options.command }),
     kind: "invalid-installer-choice",
-    operation: `validate ${promptName}`,
+    operation: `validate ${options.promptName}`,
     likelyCause: `Unsupported choice "${value}".`,
     suggestedNextAction: `Use one of: ${choices.map(choice => choice.value).join(", ")}.`,
     category: "validation"
