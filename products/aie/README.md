@@ -1,62 +1,67 @@
 # @tjalve/aie
 
-AI Executor — autonomous GitHub issue execution for agentic development.
+`@tjalve/aie` is the AI Executor CLI for GitHub issue execution. It helps an
+agent inspect ready issues, start a scoped branch, run repository gates, open or
+update pull requests, check reviews, and complete work after merge.
 
-## Installation
+Executor is intentionally repository-centered. It works from the target checkout
+and uses the repository's own scripts, policy, branch state, GitHub issues, and
+pull requests as the source of truth.
 
-Executor follows strict supply-chain policy.
+## Install
 
-**Recommended (pinned, no lifecycle scripts):**
-
-```bash
-pnpm install --frozen-lockfile --ignore-scripts
-# or for one-off:
-pnpm add @tjalve/aie@0.1.3 --ignore-scripts --save-exact
+```sh
+pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.1.3
+pnpm exec aie --help
 ```
 
-Do not use `pnpm add @tjalve/aie@latest` as the preferred path.
+For manual global use:
 
-The package has no `preinstall`, `install`, or `postinstall` scripts.
-
-## Usage
-
-```bash
-aie --version
+```sh
+npm install -g @tjalve/aie@0.1.3 --ignore-scripts
 aie --help
 ```
 
-Initialize a repository after installing the package:
+## Requirements
 
-```bash
-aie init . --dry-run
-aie init . --defaults --yes
-```
+- Node.js 24 or newer
+- `git`
+- GitHub CLI `gh`
+- access to the GitHub repository whose issues and pull requests will be managed
 
-Check repository readiness before starting work:
+## Common Commands
 
-```bash
+```sh
+aie --version
 aie doctor
 aie schema --json
+aie queue --json
+aie start next --dry-run
+aie start next
+aie pr status --json
+aie complete <issue-number>
+```
+
+Initialize a repository policy after reviewing the dry-run output:
+
+```sh
+aie init . --dry-run --json
+aie init . --defaults --yes
 ```
 
 ## Migration
 
-Repositories that already have copied issue-workflow helpers can inspect and migrate to package-backed Executor commands without changing files first:
+Repositories that already have copied issue-workflow helpers can inspect a
+package-backed migration plan before changing files:
 
-```bash
+```sh
 aie migrate map
-aie migrate legacy
-aie migrate legacy --dry-run
 aie migrate legacy --dry-run --json
 ```
 
-`aie migrate legacy --dry-run` shows detected legacy paths, instruction references that can be updated, compatibility wrappers that could be installed, cleanup candidates, preserved files, conflicts, required confirmations, and the next recommended command. Review that plan before applying any local file changes.
+Apply only the migration action you intend:
 
-For a full adoption guide, see [docs/migration.md](docs/migration.md).
-
-Apply only the specific migration action you intend:
-
-```bash
+```sh
 aie migrate legacy --apply --dry-run
 aie migrate legacy --apply
 aie migrate legacy --install-wrappers --dry-run
@@ -65,23 +70,29 @@ aie migrate legacy --cleanup --dry-run
 aie migrate legacy --cleanup --apply
 ```
 
-Compatibility wrappers are temporary shims for repositories whose instructions still call old helper paths. Cleanup removes only known legacy helper files unless exact paths are selected and reviewed with the documented force behavior. After any apply run, review the git diff, run the configured checks, and commit only intentional source and documentation changes.
+The migration commands report detected legacy paths, instruction references,
+compatibility wrappers, cleanup candidates, preserved files, conflicts, required
+confirmations, and next commands. Review the resulting git diff before committing
+any migration output.
 
-After migration, use the normal autonomous issue cycle:
+## Safety Notes
 
-```bash
-aie queue
-aie start next --dry-run
-aie start next
-aie doctor
+- The package has no install lifecycle scripts.
+- `doctor`, `schema`, `queue`, and migration dry-runs are inspection-first
+  commands.
+- Executor does not create credentials or bypass repository policy.
+- Cleanup removes only known legacy helper files unless exact paths and force
+  behavior are explicitly selected.
+
+## Development
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm --filter @tjalve/aie run verify
 ```
 
-## Requirements
+Design details live in the repository spec:
 
-- Node.js 24 LTS or newer
-- `git`
-- GitHub CLI `gh`
-
-## Design
-
-See [docs/spec.md](docs/spec.md) for the functional requirements.
+- https://github.com/ZarK/ai-qube/tree/main/products/aie/docs/spec.md
+- https://github.com/ZarK/ai-qube/tree/main/products/aie/docs/migration.md

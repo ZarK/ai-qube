@@ -1,62 +1,74 @@
 # @tjalve/qube-cli
 
-Reusable TypeScript CLI infrastructure for command-line packages.
+`@tjalve/qube-cli` is the shared TypeScript CLI library used by the QUBE package
+family. It provides command metadata, registry wiring, help text, schema output,
+structured output helpers, mutation safety metadata, prompt helpers, redaction,
+and test utilities for package-backed CLIs.
 
-This package is a library foundation for CLI metadata, runtime wiring, help, schema, structured output, safety helpers, and tests. It is not a product-specific CLI, and it does not own the behavior or side effects of consuming commands.
+It is a library, not a product CLI. Consuming packages own their command
+behavior, validation rules, state, service integrations, and side effects.
 
-## Installation
-
-Use exact versions and keep lifecycle scripts disabled during dependency installation where supported:
+## Install
 
 ```sh
 pnpm add @tjalve/qube-cli@0.1.2 --save-exact --ignore-scripts
 ```
 
-## Development baseline
+## What It Provides
 
-- Node.js 24 or newer
-- pnpm 11 or newer
-- ESM-first TypeScript source
-- Compiled JavaScript and declaration files in `dist/`
+- command metadata and registry helpers
+- consistent human help and JSON schema output
+- structured text and JSON output helpers
+- typed mutation and safety metadata for agent-facing commands
+- terminal, prompt, and redaction utilities
+- package-content and CLI-contract test helpers
 
-## Package boundary
+## Package Boundary
 
-Consuming packages own their command behavior, validation rules, product logic, state management, service integrations, policy decisions, and side effects. This package provides reusable infrastructure only; it does not mutate user projects, configure shells, install hooks, contact external services, or run background processes during normal installation.
+This package does not mutate user projects, configure shells, install hooks,
+contact external services, start background processes, or define product policy
+during installation. Runtime behavior belongs to the consuming package.
+
+## Exports
+
+```ts
+import { defineCommand, createCommandRegistry } from "@tjalve/qube-cli";
+import { renderHelp } from "@tjalve/qube-cli/help";
+import { createJsonOutput } from "@tjalve/qube-cli/output";
+```
+
+Public subpath exports include:
+
+- `@tjalve/qube-cli/metadata`
+- `@tjalve/qube-cli/registry`
+- `@tjalve/qube-cli/help`
+- `@tjalve/qube-cli/runtime`
+- `@tjalve/qube-cli/schema`
+- `@tjalve/qube-cli/errors`
+- `@tjalve/qube-cli/output`
+- `@tjalve/qube-cli/mutation`
+- `@tjalve/qube-cli/terminal`
+- `@tjalve/qube-cli/prompts`
+- `@tjalve/qube-cli/redaction`
+- `@tjalve/qube-cli/testing`
 
 ## Adoption
 
-- [Adoption guide](docs/adoption-guide.md): add command metadata, registry-backed runtime wiring, schema output, JSON trigger metadata, human/JSON output, and CLI contract tests.
-- [Compatibility checklist](docs/compatibility-checklist.md): migrate existing commands command-by-command while preserving help, JSON, schema, exit-code, dry-run, and ownership boundaries.
+The repository includes an adoption guide and compatibility checklist:
 
-## Verification
+- https://github.com/ZarK/ai-qube/tree/main/packages/qube-cli/docs/adoption-guide.md
+- https://github.com/ZarK/ai-qube/tree/main/packages/qube-cli/docs/compatibility-checklist.md
+
+Use those docs when migrating an existing CLI command-by-command while preserving
+help, JSON, schema, exit-code, dry-run, and ownership boundaries.
+
+## Development
 
 ```sh
+corepack enable
 pnpm install --frozen-lockfile --ignore-scripts
-pnpm run build
-pnpm run typecheck
-pnpm test
-pnpm run package-dry-run
+pnpm --filter @tjalve/qube-cli run verify
 ```
 
-## Release Provenance
-
-Publish releases from immutable `publish-*` tags, not from `main`.
-
-Release checklist:
-
-1. Verify `main` is current and the release commit has passed CI.
-2. Create an immutable release tag at the exact commit being published:
-
-   ```sh
-   git tag publish-<version>-<short-sha> <commit-sha>
-   git push origin publish-<version>-<short-sha>
-   ```
-
-3. Confirm the tag resolves to the published commit:
-
-   ```sh
-   git fetch origin --tags
-   git rev-parse publish-<version>-<short-sha>^{commit}
-   ```
-
-4. After npm publish completes, inspect the package attestation. The provenance external parameters must identify the tag ref, for example `refs/tags/publish-<version>-<short-sha>`, and the resolved source digest must match the tagged commit.
+The package publishes compiled JavaScript, declaration files, `package.json`,
+license metadata, and this README.

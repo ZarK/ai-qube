@@ -1,41 +1,67 @@
 # Release Controls
 
-This file records the expected public-release controls for `@tjalve/aiu`.
+This file records the expected public-release controls for `@tjalve/aiu` after
+the package moved into the QUBE monorepo.
 
-## GitHub Repository
+## Active Repository
 
-- Visibility: private until CI, branch protection, and publish workflow changes are merged.
+- Active repository: `ZarK/ai-qube`.
+- Package path: `products/aiu`.
+- Package name: `@tjalve/aiu`.
 - Default branch: `main`.
-- Required branch protection for `main`:
-  - require signed commits
-  - require a pull request before merging
-  - require at least one approving review
-  - require CODEOWNERS review
-  - dismiss stale approvals after new pushes
-  - require approval for the most recent push
-  - require conversation resolution
-  - require the `release-check` CI status and up-to-date branches
-  - require linear history
-  - disable force pushes
-  - disable branch deletion
-- Workflow permissions default to read-only.
+- Publishing is driven by the root workflow `.github/workflows/publish.yml`.
+- Product-local workflow files from the earlier standalone repository are not
+  active GitHub workflows in the QUBE monorepo.
+
+## GitHub Repository Controls
+
+Required controls before public release:
+
+- protect `main`
+- require pull requests before merge
+- require at least one approving review
+- require CODEOWNERS review for release-sensitive files
+- require conversation resolution
+- require current CI status checks
+- disable force pushes and branch deletion on `main`
+- keep default workflow token permissions read-only
+- keep secret scanning and push protection enabled where the repository plan
+  supports them
 
 ## GitHub Actions
 
-- CI workflow: `.github/workflows/ci.yml`.
-- Publish workflow: `.github/workflows/publish.yml`.
+- CI workflow: root `.github/workflows/ci.yml`.
+- Publish workflow: root `.github/workflows/publish.yml`.
 - Third-party actions are pinned to full commit SHAs.
-- CI installs with `pnpm install --frozen-lockfile --ignore-scripts`.
-- Publish uses the protected `npm-publish` environment, `id-token: write`, exact `npm@11.15.0`, and `npm stage publish` for npm Trusted Publishing provenance.
+- CI and publish installs use `pnpm install --frozen-lockfile --ignore-scripts`.
+- The publish job uses `id-token: write`, `package-manager-cache: false`, and
+  the `npm-publish` GitHub environment.
+- The publish job verifies the selected package before publishing.
 
 ## npm Publishing
 
-- Primary publish path: npm trusted publishing for `ZarK/ai-umpire`, workflow file `publish.yml`, environment `npm-publish`, allowed only for `npm stage publish`.
+- Primary publish path: npm trusted publishing for `ZarK/ai-qube`, workflow file
+  `publish.yml`, environment `npm-publish`.
+- The allowed npm trusted-publishing action must include `npm publish`.
 - Long-lived `NPM_TOKEN` secrets are not required for the primary publish path.
-- The `npm-publish` GitHub environment must require reviewer approval before a tag publish can proceed, and npm staged-package approval remains a separate maintainer action.
+- The `npm-publish` GitHub environment should require reviewer approval when the
+  repository plan supports environment protection rules.
+- For package-local installs and release checks, use exact versions and disabled
+  lifecycle scripts:
 
-## Current External Blockers
+  ```sh
+  pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.3
+  pnpm install --frozen-lockfile --ignore-scripts
+  ```
 
-- GitHub rejected secret scanning and push protection while the repository is private. Enable after public visibility or on a plan that supports those features for private repositories.
-- npm trusted publishing must be configured in npm for `@tjalve/aiu`; this is an npm account/scope setting and cannot be verified from repository files alone.
-- GitHub must recognize the maintainer signing key before the signed-commit acceptance criterion can be closed.
+## Safe Removal
+
+Remove AIU only after host files and trusted command descriptors no longer
+depend on the package:
+
+```sh
+pnpm remove @tjalve/aiu
+```
+
+Use `aiu migrate --cleanup --dry-run --json` before deleting old copied helper
+assets.

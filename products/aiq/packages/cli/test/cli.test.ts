@@ -131,7 +131,7 @@ describe("CLI foundation", () => {
     expect(packageReadme).toContain("Existing Biome config, `tsconfig.json`, Vitest/Jest config");
     expect(packageReadme).toContain("Default text output is compact");
     expect(packageReadme).toContain("Use `--verbose` for run metadata");
-    expect(packageReadme).toContain("Use `--format json` for the complete machine-readable report");
+    expect(packageReadme).toContain("Use `--format json` for the complete structured JSON report");
     expect(packageReadme).toContain(
       "Treat metric remediation as behavior-preserving work, not architecture redesign.",
     );

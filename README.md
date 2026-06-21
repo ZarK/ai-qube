@@ -1,89 +1,122 @@
-# ai-qube
+# QUBE
 
-QUBE is the package family for durable autonomous development work: planning,
-execution, quality, and continuation controls that can be used independently or
-composed together.
+QUBE is a small package family for agent-assisted software work. The packages
+cover planning, issue execution, quality gates, and continuation policy. Each
+tool can be installed and used on its own; `@tjalve/qube` provides one composer
+CLI for discovering and dispatching to the installed tools.
 
-This repository is the monorepo home for:
+## Packages
 
-- `@tjalve/qube-cli`: reusable CLI infrastructure
-- `@tjalve/aib`: Bootstrap planning and work-item generation
-- `@tjalve/aie`: Executor work-item execution
-- `@tjalve/aiu`: Umpire continuation policy
-- `@tjalve/aiq`: Quality gates and evidence
-- `@tjalve/qube`: composer package for coordinating the standalone tools
+| Package | Command | Purpose |
+| --- | --- | --- |
+| `@tjalve/aib` | `aib` | Turn an idea into planning state, a spec, milestones, and work item drafts. |
+| `@tjalve/aie` | `aie` | Execute GitHub issues with branch, PR, review, and completion workflow controls. |
+| `@tjalve/aiq` | `aiq` | Run staged quality gates and emit structured evidence for humans and agents. |
+| `@tjalve/aiu` | `aiu` | Decide whether an idle agent session may safely continue from trusted local state. |
+| `@tjalve/qube` | `qube` | List and dispatch to the package family from one installed entry point. |
+| `@tjalve/qube-cli` | library | Shared TypeScript CLI metadata, schema, output, safety, and test helpers. |
 
-## Monorepo Policy
+## Install
 
-Use pnpm workspaces as the baseline. Do not introduce Nx or Turbo until the
-package graph and CI cost justify it.
-
-Each product package must remain independently usable and publishable. The
-`@tjalve/qube` package composes the tools, not replace direct use
-of `aib`, `aie`, `aiu`, or `aiq`.
-
-## Composer CLI
-
-Use `qube components` to list the standalone tools and `qube run <component>`
-to dispatch to the component version installed with QUBE. The composer does not
-replace direct use of the product CLIs. Ambient `PATH` lookup is a diagnosed
-fallback, not the default dispatch path.
+Use exact versions for automation and keep dependency lifecycle scripts disabled
+where your package manager supports it.
 
 ```sh
-pnpm --filter @tjalve/qube run build
-pnpm --filter @tjalve/qube exec qube components
+pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.0
+pnpm exec qube components
 ```
 
-See:
+Global installs are useful for manual command-line use, but project-local
+installs are easier to audit and reproduce:
 
-- `docs/qube-command-surfaces.md` for QUBE-facing versus standalone command surfaces
-- `docs/qube-host-surfaces.md` for GitHub/OpenCode ownership
-- `docs/qube-paths-and-artifacts.md` for config, state, and repo artifact ownership
-- `docs/release/install-migration.md` for fresh install and old global binary migration validation
-- `docs/release/version-audit.json` for the npm version audit used by release checks
+```sh
+npm install -g @tjalve/qube@0.1.0 --ignore-scripts
+qube components
+```
 
-## Package Publishing
+Install a single component when you only need that tool:
 
-Publishing is driven by immutable package-specific tags:
+```sh
+pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.0
+pnpm exec aib --help
+```
 
-- `publish-qube-cli-v<version>`
-- `publish-aib-v<version>`
-- `publish-aie-v<version>`
-- `publish-aiu-v<version>`
-- `publish-aiq-v<version>`
-- `publish-qube-v<version>`
+## Command Surface
 
-The publish workflow verifies the selected package before `npm publish
---provenance --access public`. AIQ uses its full build, test, and publish
-readiness path; most non-AIQ product changes skip AIQ's cross-language setup,
-while shared CI/workspace files still trigger AIQ checks.
+`qube` dispatches to the component versions installed with the composer package.
+It does not replace the direct package commands.
 
-## Target Layout
+```sh
+qube components
+qube run aib -- init . --idea "Ship a local notes CLI" --json
+qube run aie -- queue --json
+qube run aiq -- doctor --format json
+qube run aiu -- status --json
+```
+
+The composer first resolves component binaries from its own install scope, then
+from the local workspace, then from ambient `PATH`. PATH fallback is diagnostic:
+QUBE refuses a stale same-package binary when it can identify the installed
+package version.
+
+## Repository Layout
 
 ```text
 packages/
-  qube-cli/
-  qube-core/
+  qube-cli/       shared public CLI library
+  qube-core/      private shared workspace contracts
 products/
-  aib/
-  aie/
-  aiu/
-  aiq/
-  qube/
+  aib/            planning CLI
+  aie/            execution CLI
+  aiq/            quality CLI and adapters
+  aiu/            continuation policy CLI
+  qube/           composer CLI
 adapters/
-  github/
-  opencode/
-plugins/
-  ai-umpire-codex/
+  github/         private workspace adapter
+  opencode/       private workspace adapter
 docs/
-  notes/
 ```
 
-`packages/qube-core` and the `adapters/*` packages are private workspace
-packages. They define the first shared QUBE contract boundary without making the
-public product CLIs depend on unpublished packages.
+Public package READMEs live beside the package that npm publishes. Product and
+release docs under `docs/` explain command boundaries, host surfaces, install
+migration, and package version policy.
 
-## Planning
+## Publishing
 
-Migration tracking starts at
-[#1](https://github.com/ZarK/ai-qube/issues/1).
+Publishing is package-specific. A tag selects exactly one package:
+
+```text
+publish-qube-cli-v<version>
+publish-aib-v<version>
+publish-aie-v<version>
+publish-aiu-v<version>
+publish-aiq-v<version>
+publish-qube-v<version>
+```
+
+The shared publish workflow runs on `publish-*` tags, uses the GitHub Actions
+environment `npm-publish`, verifies the selected package, and publishes to npm
+with trusted publishing and provenance.
+
+## Development
+
+```sh
+corepack enable
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run verify
+```
+
+Use root workspace filters for package work:
+
+```sh
+pnpm --filter @tjalve/aie run verify
+pnpm --filter @tjalve/qube run verify
+```
+
+Useful public docs:
+
+- `docs/qube-command-surfaces.md`
+- `docs/qube-host-surfaces.md`
+- `docs/qube-paths-and-artifacts.md`
+- `docs/release/install-migration.md`
+- `docs/release/version-audit.json`

@@ -45,7 +45,7 @@
   },
   "homepage": "https://github.com/ZarK/ai-qube/tree/main/products/aiq/packages/cli#readme",
   "keywords": ["aiq", "code-quality", "quality-gate", "ai-agents"],
-  "files": ["dist"],
+  "files": ["dist", "README.md"],
   "scripts": {
     "build": "tsc -b ../../packages/model ../../packages/config-schema ../../packages/engine ../../packages/reporters ../../packages/benchmark . && node ../../scripts/build-aiq-package.mjs"
   },
