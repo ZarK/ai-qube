@@ -287,8 +287,8 @@ function checkConfig(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[]
   const checks: AiuDoctorCheck[] = [];
   checks.push(
     configLoad.found
-      ? check("config-present", "config", "ok", "config-present", "aiu.config.json was found.", configLoad.selectedPath, "Continue using this config file.")
-      : check("config-present", "config", "warning", "config-missing", "aiu.config.json was not found; conservative defaults are in use.", configLoad.selectedPath, "Run aiu init --dry-run --json, then aiu init when the plan is acceptable."),
+      ? check("config-present", "config", "ok", "config-present", ".qube/aiu/config.json was found.", configLoad.selectedPath, "Continue using this config file.")
+      : check("config-present", "config", "warning", "config-missing", ".qube/aiu/config.json was not found; conservative defaults are in use.", configLoad.selectedPath, "Run aiu init --dry-run --json, then aiu init when the plan is acceptable."),
   );
   checks.push(
     configLoad.ok

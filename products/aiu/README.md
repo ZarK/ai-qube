@@ -26,10 +26,10 @@ aiu --help
 ## What It Provides
 
 - the `aiu` CLI
-- typed `aiu.config.json` discovery, defaults, and validation
+- typed `.qube/aiu/config.json` discovery, defaults, and validation
 - read-only diagnostics through `aiu doctor`
 - path inspection through `aiu paths`
-- local continuation state, locks, and redacted logs under `.umpire/`
+- local continuation state, locks, and redacted logs under `.qube/aiu/`
 - dry-runnable `aiu init` plans for supported host files
 - trusted-state continuation decisions for quality, planning, work, and optional
   maintenance prompts
@@ -100,8 +100,8 @@ pnpm exec aiu migrate --cleanup --confirm scripts/aiu-stop.js --json
 ```
 
 Migration preserves repository policy, trusted command descriptors, prompt
-customizations, and `.umpire/` state unless an explicit reviewed command changes
-them.
+customizations, and legacy durable state unless an explicit reviewed command
+changes them.
 
 ## Safe Uninstall
 
@@ -124,7 +124,7 @@ cleanup candidates you intend to remove.
   dry-runs are inspection-first commands.
 - AIU does not stage, commit, push, open pull requests, close issues, delete
   files, install package managers, or create provider credentials.
-- Local `.umpire/` state, locks, and logs are diagnostics, not provider truth.
+- Local `.qube/aiu/` state, locks, and logs are diagnostics, not provider truth.
 - Use `pnpm install --frozen-lockfile --ignore-scripts` for repository
   development and trusted publishing for package releases.
 

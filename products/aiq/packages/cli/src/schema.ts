@@ -430,7 +430,7 @@ export const aiqCommandMetadata = [
       json: true,
       dryRun: {
         supported: false,
-        reason: "Stage updates intentionally persist .aiq/progress.json.",
+        reason: "Stage updates intentionally persist .qube/aiq/progress.json.",
       },
       noColor: false,
       nonInteractive: true,

@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, readdirSync } from 'fs';
-import { writeFile } from 'fs/promises';
-import { join } from 'path';
-import { Config, formatConfigFile, getDefaults } from '../config/index.js';
+import { mkdir, writeFile } from 'fs/promises';
+import { dirname, join } from 'path';
+import { AIE_CONFIG_FILENAME, Config, formatConfigFile, getDefaults } from '../config/index.js';
 import { configToExecutorPolicy } from '../config_policy.js';
 import { getAllAgentHostProfiles } from '../agent_hosts.js';
 import { GhExec, parseGhJson, runGh } from '../gh.js';
@@ -362,12 +362,13 @@ export function formatMinimalConfig(): string {
 }
 
 export async function writeMinimalConfig(configPath: string): Promise<void> {
+  await mkdir(dirname(configPath), { recursive: true });
   await writeFile(configPath, formatMinimalConfig(), { encoding: 'utf8', flag: 'wx' });
 }
 
 export async function buildRepoPrimePlan(options: { config: Config; dryRun: boolean; yes: boolean; exec?: GhExec; cwd?: string }): Promise<RepoPrimePlan> {
   const repoRoot = getRepoRoot(options.cwd);
-  const configPath = join(repoRoot ?? options.cwd ?? process.cwd(), 'aie.config.json');
+  const configPath = join(repoRoot ?? options.cwd ?? process.cwd(), AIE_CONFIG_FILENAME);
   const configPresent = existsSync(configPath);
   const warnings: string[] = [];
   const plannedChanges: string[] = [];

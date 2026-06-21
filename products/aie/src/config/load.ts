@@ -5,6 +5,10 @@ import { dirname, join, resolve } from 'path';
 import { ConfigLoadError, type Config, type ConfigLoadResult } from './types.js';
 import { validateConfig } from './schema.js';
 
+export const AIE_CONFIG_FILENAME = '.qube/aie/config.json';
+export const AIE_LEGACY_CONFIG_FILENAME = 'aie.config.json';
+export const AIE_CONFIG_FILENAMES = [AIE_CONFIG_FILENAME, AIE_LEGACY_CONFIG_FILENAME] as const;
+
 async function findRepoRoot(startDir: string): Promise<string> {
   try {
     const root = execSync('git rev-parse --show-toplevel', {
@@ -27,7 +31,7 @@ async function findRepoRoot(startDir: string): Promise<string> {
 
 export async function loadConfigFile(startDir: string = process.cwd()): Promise<ConfigLoadResult> {
   const root = await findRepoRoot(startDir);
-  const configPath = join(root, 'aie.config.json');
+  const configPath = selectConfigPath(root);
 
   try {
     const content = await readFile(configPath, 'utf8');
@@ -43,7 +47,7 @@ export async function loadConfigFile(startDir: string = process.cwd()): Promise<
       return { root, path: configPath, present: false, ok: true, errors: [] };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { root, path: configPath, present: true, ok: false, errors: [{ kind: 'invalid', path: 'aie.config.json', message: `Failed to read or parse aie.config.json: ${message}` }] };
+    return { root, path: configPath, present: true, ok: false, errors: [{ kind: 'invalid', path: AIE_CONFIG_FILENAME, message: `Failed to read or parse ${AIE_CONFIG_FILENAME}: ${message}` }] };
   }
 }
 
@@ -52,4 +56,12 @@ export async function loadConfig(startDir: string = process.cwd()): Promise<Conf
   if (!result.present) return null;
   if (result.ok && result.config) return result.config;
   throw new ConfigLoadError(result.path, result.errors);
+}
+
+function selectConfigPath(root: string): string {
+  for (const filename of AIE_CONFIG_FILENAMES) {
+    const candidate = join(root, filename);
+    if (existsSync(candidate)) return candidate;
+  }
+  return join(root, AIE_CONFIG_FILENAME);
 }

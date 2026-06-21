@@ -103,7 +103,7 @@ test("init dry-run returns agent-facing next action without mutating", () => {
   assert.equal(result.plannedAgentFiles[0].host, "codex");
   assert.ok(result.plannedAgentFiles[0].path.endsWith("AGENTS.md"));
   assert.match(result.nextAction.summary, /human/i);
-  assert.ok(result.sessionPath.endsWith("/.bootstrap/session.json") || result.sessionPath.endsWith("\\.bootstrap\\session.json"));
+  assert.ok(result.sessionPath.endsWith("/.qube/aib/session.json") || result.sessionPath.endsWith("\\.qube\\aib\\session.json"));
   assert.equal(result.session.project.intent, "Local photo archive");
 });
 

@@ -222,7 +222,7 @@ function configErrorStatus(context: StatusServiceContext): StatusResult {
     review: { state: 'unavailable', item: null, warning: 'Trusted Executor config is invalid, so review state was not loaded.' },
     gates,
     reviewGate: null,
-    decision: { state: 'stop', reasonCodes: ['config-invalid'], nextCommand: 'aie init . --dry-run --force', summary: 'Fix aie.config.json before continuing Executor work.' },
+    decision: { state: 'stop', reasonCodes: ['config-invalid'], nextCommand: 'aie init . --dry-run --force', summary: 'Fix the selected Executor config before continuing Executor work.' },
   };
 }
 

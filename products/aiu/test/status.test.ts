@@ -119,9 +119,9 @@ describe("status reporting", () => {
       assert.ok(parsed.status.errors.some((error) => error.code === "trusted-command-malformed-json"));
       assert.deepEqual(parsed.status.decision.reasonCodes, ["stop-malformed-input"]);
       assert.equal(parsed.status.inputEnvelopes.length, 0);
-      assert.equal(parsed.status.paths.stateDir, path.join(workspaceRoot, ".umpire", "state"));
-      assert.equal(parsed.status.paths.lockDir, path.join(workspaceRoot, ".umpire", "locks"));
-      assert.equal(parsed.status.paths.logDir, path.join(workspaceRoot, ".umpire", "logs"));
+      assert.equal(parsed.status.paths.stateDir, path.join(workspaceRoot, ".qube", "aiu", "state"));
+      assert.equal(parsed.status.paths.lockDir, path.join(workspaceRoot, ".qube", "aiu", "locks"));
+      assert.equal(parsed.status.paths.logDir, path.join(workspaceRoot, ".qube", "aiu", "logs"));
       assert.match(parsed.status.paths.continuationState, /continuation\.json$/);
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -239,8 +239,8 @@ describe("status reporting", () => {
     const { createAiuStatusReport } = await loadStatus();
     const target = await mkdtemp(path.join(tmpdir(), "aiu-status-whip-malformed-"));
     try {
-      await mkdir(path.join(target, ".umpire"), { recursive: true });
-      await writeFile(path.join(target, ".umpire", "whip.json"), "{", "utf8");
+      await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+      await writeFile(path.join(target, ".qube", "aiu", "whip.json"), "{", "utf8");
 
       const report = createAiuStatusReport(await configLoad({ repoRoot: target }), []);
 
@@ -311,7 +311,7 @@ async function configLoad(options: {
   return {
     ok: true,
     repoRoot: options.repoRoot ?? repoRoot,
-    selectedPath: path.join(options.repoRoot ?? repoRoot, "aiu.config.json"),
+    selectedPath: path.join(options.repoRoot ?? repoRoot, ".qube", "aiu", "config.json"),
     found: false,
     defaultsUsed: true,
     config: {

@@ -2,7 +2,7 @@ import type { RuntimeCommandContext, RuntimeCommandResult } from '@tjalve/qube-c
 import { renderSchema, renderSchemaJson } from '@tjalve/qube-cli/schema';
 import { createRequire } from 'node:module';
 import { EXECUTOR_COMMAND_REGISTRY } from './command_registry.js';
-import { configToFileShape, getDefaults } from './config/index.js';
+import { AIE_CONFIG_FILENAME, configToFileShape, getDefaults } from './config/index.js';
 import { commandResult } from './runtime_result.js';
 
 const requirePackage = createRequire(import.meta.url);
@@ -16,7 +16,7 @@ function schemaOptions() {
     sections: {
       config: {
         version: getDefaults().version,
-        path: 'aie.config.json',
+        path: AIE_CONFIG_FILENAME,
         shape: ['version', 'providers', 'policy'],
         supportedProviders: {
           work: ['github'],

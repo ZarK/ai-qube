@@ -109,7 +109,7 @@ function buildReviewers(config: Config): ReviewGateReviewer[] {
 }
 
 function evidencePaths(root: string, issueNumber: number): { json: string; markdown: string } {
-  const base = join(root, '.aie', 'reviews', reviewSlug(issueNumber));
+  const base = join(root, '.qube', 'aie', 'reviews', reviewSlug(issueNumber));
   return { json: `${base}.json`, markdown: `${base}.md` };
 }
 

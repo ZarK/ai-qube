@@ -119,7 +119,7 @@ export function buildProviderHealthDiagnostics(config: Config): ProviderHealthDi
   };
   for (const [name, provider] of Object.entries(providers)) {
     if (provider.required && !provider.supported) {
-      warnings.push(`Failed to validate ${name} provider: kind ${provider.kind} is not supported by Executor v1. Likely cause: unsupported providers.${name}.kind in aie.config.json. Next action: set providers.${name}.kind to a supported v1 kind and rerun \`aie doctor --json\`.`);
+      warnings.push(`Failed to validate ${name} provider: kind ${provider.kind} is not supported by Executor v1. Likely cause: unsupported providers.${name}.kind in the selected Executor config. Next action: set providers.${name}.kind to a supported v1 kind and rerun \`aie doctor --json\`.`);
     }
   }
   return {

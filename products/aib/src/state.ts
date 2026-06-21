@@ -197,7 +197,7 @@ const DISCOVERY_QUESTIONS: readonly DiscoveryQuestion[] = [
   }
 ];
 
-export function defaultStatePath(target: string | undefined, stateDir = ".bootstrap"): string {
+export function defaultStatePath(target: string | undefined, stateDir = ".qube/aib"): string {
   return resolve(target && target.length > 0 ? target : ".", stateDir, "session.json");
 }
 

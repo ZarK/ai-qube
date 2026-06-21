@@ -91,7 +91,7 @@ function makeContext(input = {}) {
   const workItems = input.workItems ?? [];
   const review = input.review ?? { item: null, pr: null, warning: 'Current-branch PR state unavailable: no pull request' };
   return {
-    configLoad: input.configLoad ?? { root, path: join(root, 'aie.config.json'), present: false, ok: true, errors: [], config },
+    configLoad: input.configLoad ?? { root, path: join(root, '.qube', 'aie', 'config.json'), present: false, ok: true, errors: [], config },
     config,
     policy,
     workProvider: {
@@ -210,8 +210,8 @@ describe('status service', () => {
 
   it('reports approved review and recorded review evidence as ready to ship', async () => {
     const root = makeRoot();
-    mkdirSync(join(root, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(root, '.aie', 'reviews', '76.json'), JSON.stringify({ status: 'passed', summary: 'Review found no blockers.' }));
+    mkdirSync(join(root, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(root, '.qube', 'aie', 'reviews', '76.json'), JSON.stringify({ status: 'passed', summary: 'Review found no blockers.' }));
     const result = await buildStatus(makeContext({
       root,
       workItems: [makeWork(76, 'Status command', ['S-InProgress'])],
@@ -237,7 +237,7 @@ describe('status service', () => {
     const config = makeConfig();
     const result = await buildStatus(makeContext({
       config,
-      configLoad: { root, path: join(root, 'aie.config.json'), present: true, ok: false, errors: [{ kind: 'invalid', path: 'version', message: 'version must be current' }] },
+      configLoad: { root, path: join(root, '.qube', 'aie', 'config.json'), present: true, ok: false, errors: [{ kind: 'invalid', path: 'version', message: 'version must be current' }] },
     }));
 
     assert.equal(result.ok, false);

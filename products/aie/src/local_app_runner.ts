@@ -47,7 +47,7 @@ function validateName(name: string): string {
 
 export function runPaths(repoRoot: string, name: string): RunPaths {
   const safeName = validateName(name);
-  const directory = join(repoRoot, '.aie', 'runs', safeName);
+  const directory = join(repoRoot, '.qube', 'aie', 'runs', safeName);
   return {
     directory,
     metadataPath: join(directory, 'metadata.json'),

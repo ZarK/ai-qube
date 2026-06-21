@@ -177,7 +177,7 @@ function summarizePlan(gates: GatePlanEntry[]): GatePlanResult['summary'] {
 }
 
 function readEvidence(root: string, gate: GateConfig): EvidenceRecord {
-  const base = join(root, '.aie', 'gates', gateSlug(gate.name));
+  const base = join(root, '.qube', 'aie', 'gates', gateSlug(gate.name));
   const jsonPath = `${base}.json`;
   const displayJsonPath = redactEvidencePath(jsonPath, gate);
   if (existsSync(jsonPath)) {

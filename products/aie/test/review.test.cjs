@@ -22,7 +22,8 @@ function binRun(args, cwd = process.cwd()) {
 }
 
 function writeConfig(repo, config) {
-  writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
+  mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+  writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
 }
 
 function cleanConfig() {
@@ -76,8 +77,8 @@ describe('review gate model', () => {
 
   it('reports recorded review evidence without trusting it as policy', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '95.json'), JSON.stringify({ status: 'needs-work', summary: 'Reviewer found missing tests.' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '95.json'), JSON.stringify({ status: 'needs-work', summary: 'Reviewer found missing tests.' }));
 
     const result = runReviewGate(getDefaults(), { issueNumber: 95, repoRoot: repo });
 
@@ -94,8 +95,8 @@ describe('review gate model', () => {
 
   it('keeps stale review evidence machine-readable and not verified', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '96.json'), JSON.stringify({ status: 'stale', summary: 'Review belongs to an older attempt.' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '96.json'), JSON.stringify({ status: 'stale', summary: 'Review belongs to an older attempt.' }));
 
     const result = runReviewGate(getDefaults(), { issueNumber: 96, repoRoot: repo });
 
@@ -107,8 +108,8 @@ describe('review gate model', () => {
 
   it('falls back when review evidence summary is blank', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '97.json'), JSON.stringify({ status: 'passed', summary: '   ' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '97.json'), JSON.stringify({ status: 'passed', summary: '   ' }));
 
     const result = runReviewGate(getDefaults(), { issueNumber: 97, repoRoot: repo });
 

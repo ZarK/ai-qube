@@ -26,13 +26,13 @@ aib --help
 
 ```sh
 aib init . --agent codex --idea "Build a local field notes CLI" --json
-aib next --state .bootstrap/session.json --json
-aib answer --state .bootstrap/session.json --field project.goal --value "Capture searchable field notes" --json
-aib spec draft --state .bootstrap/session.json --json
-aib spec validate --state .bootstrap/session.json --json
-aib milestones generate --state .bootstrap/session.json --json
-aib work-items generate --state .bootstrap/session.json --json
-aib work-items render --state .bootstrap/session.json --provider markdown --dry-run --json
+aib next --state .qube/aib/session.json --json
+aib answer --state .qube/aib/session.json --field project.goal --value "Capture searchable field notes" --json
+aib spec draft --state .qube/aib/session.json --json
+aib spec validate --state .qube/aib/session.json --json
+aib milestones generate --state .qube/aib/session.json --json
+aib work-items generate --state .qube/aib/session.json --json
+aib work-items render --state .qube/aib/session.json --provider markdown --dry-run --json
 ```
 
 Use `--dry-run --json` before writing files in an existing repository:
@@ -45,7 +45,7 @@ aib init . --agent opencode --idea "Add import/export support" --dry-run --json
 
 Depending on the selected provider and command, AIB can produce:
 
-- planning state under `.bootstrap/`
+- planning state under `.qube/aib/`
 - spec drafts and validation results
 - milestone plans
 - work item drafts

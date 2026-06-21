@@ -32,7 +32,7 @@ describe("init planner", () => {
     assert.equal(parsed.init.files.length, 6);
     assert.equal(parsed.init.config.operation, "create");
     assert.equal(parsed.init.recommendedNextCommand, "aiu config --json");
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
     assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
   });
 
@@ -56,7 +56,7 @@ describe("init planner", () => {
       const target = await createRepoRoot();
       const result = await runCli(target, ["init", "--tool", tool, "--json"]);
       const parsed = JSON.parse(result.stdout) as InitEnvelope;
-      const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as {
+      const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
         hosts: { enabled: string[] };
       };
 
@@ -98,7 +98,7 @@ describe("init planner", () => {
     const target = await createRepoRoot();
     const result = await runCli(target, ["init", "--tool", "all", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
-    const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as {
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
       hosts: { enabled: string[]; capabilities: Record<string, unknown>; modes: Record<string, string[]> };
       trustedStateCommands: Record<string, { argv: string[] }>;
     };
@@ -118,7 +118,8 @@ describe("init planner", () => {
 
   it("preserves existing host overrides while seeding missing init defaults", async () => {
     const target = await createRepoRoot();
-    await writeFile(path.join(target, "aiu.config.json"), JSON.stringify({
+    await mkdir(path.join(target, ".qube", "aiu"), { recursive: true });
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify({
       version: 1,
       hosts: {
         enabled: ["codex"],
@@ -135,7 +136,7 @@ describe("init planner", () => {
 
     const result = await runCli(target, ["init", "--tool", "codex", "--force", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;
-    const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as {
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
       hosts: {
         capabilities: { codex: { promptDelivery?: string; stopHook?: boolean } };
         modes: { codex: string[] };
@@ -162,7 +163,7 @@ describe("init planner", () => {
     assert.equal(blockedPlan.init.ok, false);
     assert.equal(blockedPlan.init.files[0]?.operation, "conflict");
     assert.equal(await readFile(wrapper, "utf8"), "user content\n");
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
 
     const forced = await runCli(target, ["init", "--tool", "opencode", "--force", "--json"]);
     const forcedPlan = JSON.parse(forced.stdout) as InitEnvelope;
@@ -189,7 +190,7 @@ describe("init planner", () => {
     assert.equal(applied.ok, false);
     assert.equal(applied.files[0]?.operation, "conflict");
     assert.equal(await readFile(wrapper, "utf8"), "late user content\n");
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
   });
 
   it("treats unreadable managed paths as conflicts", async () => {
@@ -209,8 +210,8 @@ describe("init planner", () => {
   it("compares existing config semantically and reports merged config details", async () => {
     const target = await createRepoRoot();
     await runCli(target, ["init", "--tool", "all", "--json"]);
-    const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8"));
-    await writeFile(path.join(target, "aiu.config.json"), JSON.stringify(config), "utf8");
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8"));
+    await writeFile(path.join(target, ".qube", "aiu", "config.json"), JSON.stringify(config), "utf8");
 
     const result = await runCli(target, ["init", "--tool", "all", "--dry-run", "--json"]);
     const parsed = JSON.parse(result.stdout) as InitEnvelope;

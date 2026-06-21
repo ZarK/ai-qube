@@ -1,4 +1,5 @@
 export const defaultProjectScopeIgnoredDirectoryNames = new Set([
+  ".qube",
   ".aiq",
   ".git",
   ".github",

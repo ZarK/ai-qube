@@ -4,7 +4,7 @@ import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'path';
 import { cwd } from 'process';
-import { Config, getDefaults, loadConfig, validateConfig, ValidationError } from './config/index.js';
+import { AIE_CONFIG_FILENAME, AIE_CONFIG_FILENAMES, Config, getDefaults, loadConfig, validateConfig, ValidationError } from './config/index.js';
 import { detectLegacyState } from './init/index.js';
 import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from './labels.js';
 import { runGh } from './gh.js';
@@ -183,12 +183,12 @@ class DoctorDiagnosticsBuilder {
 
   private addConfigRecommendations(configStatus: Awaited<ReturnType<DoctorDiagnosticsBuilder['checkConfig']>>, recommendations: string[]): void {
     if (!configStatus.present) {
-      recommendations.push('No aie.config.json found — using built-in defaults (create manually or run aie init once available).');
+      recommendations.push(`No ${AIE_CONFIG_FILENAME} found — using built-in defaults (create manually or run aie init once available).`);
       return;
     }
     if (configStatus.errors && configStatus.errors.length > 0) {
       const firstErr = configStatus.errors[0];
-      recommendations.push(`Fix aie.config.json: ${firstErr.path} - ${firstErr.message}${firstErr.suggestion ? ' (' + firstErr.suggestion + ')' : ''}`);
+      recommendations.push(`Fix ${AIE_CONFIG_FILENAME}: ${firstErr.path} - ${firstErr.message}${firstErr.suggestion ? ' (' + firstErr.suggestion + ')' : ''}`);
       return;
     }
     if (configStatus.note) recommendations.push(configStatus.note);
@@ -199,7 +199,7 @@ class DoctorDiagnosticsBuilder {
     if (labelStatus.labelsError) recommendations.push(`Labels health check failed: ${labelStatus.labelsError}. Fix gh auth, repository state, or run \`aie doctor --json\` for full diagnostics.`);
     if (labelStatus.missing.length > 0) recommendations.push(`Missing Executor labels: ${labelStatus.missing.join(', ')}. Run \`aie labels setup --dry-run\` then \`aie labels setup\`.`);
     if (labelStatus.drifted.length > 0) recommendations.push(`Drifted Executor labels (color or description): ${labelStatus.drifted.join(', ')}. Run \`aie labels setup --dry-run\` then \`aie labels setup\`.`);
-    if (labelStatus.duplicates.length > 0) recommendations.push(`Duplicate label names across families in aie.config.json: ${labelStatus.duplicates.join(', ')}. Fix config.`);
+    if (labelStatus.duplicates.length > 0) recommendations.push(`Duplicate label names across families in ${AIE_CONFIG_FILENAME}: ${labelStatus.duplicates.join(', ')}. Fix config.`);
   }
 
   private addInstructionRecommendations(input: Parameters<DoctorDiagnosticsBuilder['buildEarlyRecommendations']>[0], recommendations: string[]): void {
@@ -216,12 +216,12 @@ class DoctorDiagnosticsBuilder {
   }
 
   private addGateReadinessRecommendations(gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>, recommendations: string[]): void {
-    if (gateReadiness.gates.invalidCommands.length > 0) recommendations.push(`Configured gates have invalid commands: ${gateReadiness.gates.invalidCommands.join(', ')}. Fix aie.config.json before using gate readiness output.`);
+    if (gateReadiness.gates.invalidCommands.length > 0) recommendations.push(`Configured gates have invalid commands: ${gateReadiness.gates.invalidCommands.join(', ')}. Fix ${AIE_CONFIG_FILENAME} before using gate readiness output.`);
     if (gateReadiness.gates.supplyChainSensitive > 0) recommendations.push(`Supply-chain-sensitive gates detected: ${gateReadiness.gates.supplyChainSensitiveGates.join(', ')}. Review canonical supply-chain guard evidence before running those commands.`);
     if (gateReadiness.audit.readiness === 'needs-action') recommendations.push('Manual UI audit is enabled but agent-browser was not found on PATH. Install agent-browser or use fallback browser automation manually.');
     if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') recommendations.push('Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.');
     if (gateReadiness.prReview.readiness === 'missing') recommendations.push('PR review gates need authenticated GitHub CLI access. Run `gh auth login` before requesting or inspecting PR reviewers.');
-    if (gateReadiness.supplyChain.readiness === 'needs-action') recommendations.push('Supply-chain policy is configured but not strict enough for normal readiness. Review lifecycle-script, lockfile, and package-age settings in aie.config.json.');
+    if (gateReadiness.supplyChain.readiness === 'needs-action') recommendations.push(`Supply-chain policy is configured but not strict enough for normal readiness. Review lifecycle-script, lockfile, and package-age settings in ${AIE_CONFIG_FILENAME}.`);
   }
 
   private async readQueue(recommendations: string[]): Promise<{
@@ -358,17 +358,25 @@ class DoctorDiagnosticsBuilder {
   private async checkConfig(): Promise<{ present: boolean; valid: boolean; baseBranch?: string; baseRemote?: string; note?: string; errors?: ValidationError[] }> {
     const repoRoot = this.getRepoRoot();
     if (!repoRoot) return { present: false, valid: true, note: 'Not inside a git repository' };
-    const configPath = join(repoRoot, 'aie.config.json');
+    const configPath = this.selectConfigPath(repoRoot);
     const present = existsSync(configPath);
-    if (!present) return { present: false, valid: true, note: 'No aie.config.json — using built-in defaults' };
+    if (!present) return { present: false, valid: true, note: `No ${AIE_CONFIG_FILENAME} — using built-in defaults` };
     try {
       const validation = validateConfig(JSON.parse(await readFile(configPath, 'utf8')));
       if (validation.ok && validation.config) return { present: true, valid: true, baseBranch: validation.config.baseBranch, baseRemote: validation.config.baseRemote };
-      return { present: true, valid: false, errors: validation.errors, note: `aie.config.json has ${validation.errors.length} validation error(s)` };
+      return { present: true, valid: false, errors: validation.errors, note: `${AIE_CONFIG_FILENAME} has ${validation.errors.length} validation error(s)` };
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err);
-      return { present: true, valid: false, note: `Failed to read or parse aie.config.json: ${message}. Fix JSON syntax or file permissions, then rerun \`aie doctor --json\`.` };
+      return { present: true, valid: false, note: `Failed to read or parse ${AIE_CONFIG_FILENAME}: ${message}. Fix JSON syntax or file permissions, then rerun \`aie doctor --json\`.` };
     }
+  }
+
+  private selectConfigPath(repoRoot: string): string {
+    for (const filename of AIE_CONFIG_FILENAMES) {
+      const candidate = join(repoRoot, filename);
+      if (existsSync(candidate)) return candidate;
+    }
+    return join(repoRoot, AIE_CONFIG_FILENAME);
   }
 
   private async checkLabels(config?: Config): Promise<{ ok: boolean; missing: string[]; drifted: string[]; duplicates: string[]; labelsError?: string }> {

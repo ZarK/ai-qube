@@ -20,7 +20,8 @@ function binRun(args, cwd = process.cwd()) {
 }
 
 function writeConfig(repo, config) {
-  writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
+  mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+  writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config.normalizedPolicy ? configToFileShape(config) : config, null, 2)}\n`);
 }
 
 function cleanConfig() {
@@ -63,8 +64,8 @@ describe('gate model', () => {
 
   it('reports recorded gate evidence without claiming unverified success', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'passed', summary: 'agent reported pass with ghp_1234567890abcdef1234567890abcdef1234' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'passed', summary: 'agent reported pass with ghp_1234567890abcdef1234567890abcdef1234' }));
     const config = getDefaults();
     config.gates = [{ name: 'typecheck', kind: 'typecheck', command: 'npm run typecheck', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }];
 
@@ -83,8 +84,8 @@ describe('gate model', () => {
 
   it('reports stale gate evidence without treating it as verified success', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'passed', stale: true, summary: 'old run', recordedAt: '2024-01-01T00:00:00.000Z' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'passed', stale: true, summary: 'old run', recordedAt: '2024-01-01T00:00:00.000Z' }));
     const config = getDefaults();
     config.gates = [{ name: 'typecheck', kind: 'typecheck', command: 'npm run typecheck', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }];
 
@@ -100,8 +101,8 @@ describe('gate model', () => {
 
   it('treats array-shaped gate JSON as malformed evidence', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'typecheck.json'), JSON.stringify([{ status: 'passed', summary: 'not an object' }]));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'typecheck.json'), JSON.stringify([{ status: 'passed', summary: 'not an object' }]));
     const config = getDefaults();
     config.gates = [{ name: 'typecheck', kind: 'typecheck', command: 'npm run typecheck', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }];
 
@@ -116,8 +117,8 @@ describe('gate model', () => {
   it('redacts token-like gate names and derived evidence paths', () => {
     const repo = makeGitRepo();
     const tokenName = 'ghp_1234567890abcdef1234567890abcdef1234';
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'ghp-1234567890abcdef1234567890abcdef1234.json'), JSON.stringify({ status: 'passed', summary: 'ok' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'ghp-1234567890abcdef1234567890abcdef1234.json'), JSON.stringify({ status: 'passed', summary: 'ok' }));
     const config = getDefaults();
     config.gates = [{ name: tokenName, kind: 'custom', command: 'node --version', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: { [tokenName]: tokenName }, externalService: false }];
 
@@ -217,8 +218,8 @@ describe('gates CLI', () => {
 
   it('emits status JSON for missing and recorded evidence', () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'unit.json'), JSON.stringify({ status: 'failed', summary: 'test failure' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'unit.json'), JSON.stringify({ status: 'failed', summary: 'test failure' }));
     writeConfig(repo, configWithGates([
         { name: 'unit', kind: 'unit', command: 'node --test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
         { name: 'e2e', kind: 'e2e', command: 'npm run e2e', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
@@ -243,9 +244,9 @@ describe('gates CLI', () => {
   it('loads status evidence from the repository root when run from a subdirectory', () => {
     const repo = makeGitRepo();
     const subdir = join(repo, 'packages', 'cli');
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
     mkdirSync(subdir, { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'root evidence' }));
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'root evidence' }));
     writeConfig(repo, configWithGates([{ name: 'unit', kind: 'unit', command: 'node --test', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }]));
 
     const result = binRun(['gates', 'status', '--json'], subdir);
@@ -268,7 +269,7 @@ describe('gates CLI', () => {
     assert.equal(parsed.command, 'gates plan');
     assert.ok(parsed.errors.some(error => error.path === 'policy.gates.definitions[0].name'));
     assert.ok(parsed.errors.some(error => error.path === 'policy.gates.definitions[0].kind'));
-    assert.match(parsed.nextAction, /Fix aie.config.json/);
+    assert.match(parsed.nextAction, /Fix the selected Executor config/);
   });
 
   it('publishes gates commands in schema metadata', () => {

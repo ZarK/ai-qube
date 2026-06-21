@@ -51,7 +51,7 @@ export const defaultAibConfig: AibConfig = Object.freeze({
     questionBudget: 3
   },
   paths: {
-    stateDir: ".bootstrap",
+    stateDir: ".qube/aib",
     docsDir: "docs",
     specPath: "docs/spec.md",
     milestonesDir: "docs/milestones",

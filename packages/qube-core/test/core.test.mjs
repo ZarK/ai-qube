@@ -43,9 +43,9 @@ describe("qube core contracts", () => {
     assert.ok(workflowConfigs.every((entry) => entry.productInstalledSurface === false));
 
     assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/" && entry.classification === "shared QUBE namespace"));
-    assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".aiq/aiq.config.json")));
-    assert.ok(qubePathContracts.some((entry) => entry.pathPattern === "aiu.config.json" && entry.committed === true));
-    assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".umpire/" && entry.committed === false));
+    assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiq/config.json")));
+    assert.ok(qubePathContracts.some((entry) => entry.pathPattern === ".qube/aiu/config.json" && entry.committed === true));
+    assert.ok(qubePathContracts.some((entry) => entry.pathPattern.includes(".qube/aiu/state") && entry.committed === false));
   });
 
   it("keeps checked-in matrix docs aligned with core contracts", () => {

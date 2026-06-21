@@ -49,7 +49,7 @@ export const handleRunStart: RuntimeCommandHandler = async context => {
   }
   try {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix aie.config.json, then start the local app runner again.');
+    if (!loaded.ok) return configLoadFailure(context, 'run start', loaded, 'Fix the selected Executor config, then start the local app runner again.');
     const result = runStart({
       repoRoot: loaded.root,
       name: runName(context),
@@ -73,7 +73,7 @@ export const handleRunWait: RuntimeCommandHandler = async context => {
   }
   try {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'run wait', loaded, 'Fix aie.config.json, then wait for the local app runner again.');
+    if (!loaded.ok) return configLoadFailure(context, 'run wait', loaded, 'Fix the selected Executor config, then wait for the local app runner again.');
     const result = await runWait({
       repoRoot: loaded.root,
       name: runName(context),
@@ -91,7 +91,7 @@ export const handleRunWait: RuntimeCommandHandler = async context => {
 export const handleRunStatus: RuntimeCommandHandler = async context => {
   try {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'run status', loaded, 'Fix aie.config.json, then inspect the local app runner again.');
+    if (!loaded.ok) return configLoadFailure(context, 'run status', loaded, 'Fix the selected Executor config, then inspect the local app runner again.');
     const result = runStatus({ repoRoot: loaded.root, name: runName(context) });
     return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
   } catch (err: unknown) {
@@ -104,7 +104,7 @@ export const handleRunStatus: RuntimeCommandHandler = async context => {
 export const handleRunStop: RuntimeCommandHandler = async context => {
   try {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'run stop', loaded, 'Fix aie.config.json, then stop the local app runner again.');
+    if (!loaded.ok) return configLoadFailure(context, 'run stop', loaded, 'Fix the selected Executor config, then stop the local app runner again.');
     const result = runStop({ repoRoot: loaded.root, name: runName(context), dryRun: readBooleanFlag(context, 'dry-run') });
     return result.ok ? commandResult(context, result, formatRunResult(result)) : commandFailure(context, result, formatRunResult(result));
   } catch (err: unknown) {

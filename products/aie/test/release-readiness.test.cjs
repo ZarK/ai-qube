@@ -41,11 +41,11 @@ describe('release readiness repository fixtures', () => {
     const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
 
     assert.equal(result.ok, true);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), true);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), true);
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
     assert.match(readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'), /Continue repository development/);
     assert.equal(existsSync(join(repo, '.npmrc')), false);
-    assert.equal(existsSync(join(repo, '.aie')), false);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'runs')), false);
   });
 
   it('covers all supported host projections from one init renderer pass', async () => {

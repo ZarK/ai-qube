@@ -457,7 +457,7 @@ export function validateConfig(raw: unknown): ConfigValidationResult {
         kind: 'invalid',
         path: '.',
         message: 'Config must be a JSON object',
-        suggestion: 'Create aie.config.json containing the current version, providers, and policy sections.',
+        suggestion: 'Create .qube/aie/config.json containing the current version, providers, and policy sections.',
       }],
     };
   }

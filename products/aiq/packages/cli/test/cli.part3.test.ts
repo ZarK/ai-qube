@@ -42,7 +42,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("aiq schema --format json");
     expect(stdout.value).toContain("0=e2e 1=lint 2=format 3=typecheck");
     expect(stdout.value).toContain(
-      "By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present",
+      "By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .qube/aiq/progress.json current_stage when present",
     );
     expect(stdout.value).toContain("then run aiq for the normal cumulative project workflow");
     expect(stdout.value).toContain("Use aiq run <paths...> for explicit file and subtree checks");
@@ -53,7 +53,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("--set-stage <0-9>");
     expect(stdout.value).toContain("--up-to <0-9>");
     expect(stdout.value).toContain("--verbose");
-    expect(stdout.value).toContain("aiq config initializes .aiq/aiq.config.json");
+    expect(stdout.value).toContain("aiq config initializes .qube/aiq/config.json");
     expect(stdout.value).toContain("Default text output is compact");
     expect(stdout.value).toContain("--verbose adds run metadata");
     expect(stdout.value).toContain("--format json keeps the complete machine-readable report");
