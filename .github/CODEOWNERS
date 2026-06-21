@@ -1,0 +1,13 @@
+# Default repository ownership for QUBE. Keep this file small so it stays useful.
+* @ZarK
+
+# Treat release and supply-chain surfaces as explicitly owned.
+.github/CODEOWNERS @ZarK
+.github/workflows/ @ZarK
+package.json @ZarK
+pnpm-lock.yaml @ZarK
+pnpm-workspace.yaml @ZarK
+packages/ @ZarK
+products/ @ZarK
+adapters/ @ZarK
+plugins/ @ZarK

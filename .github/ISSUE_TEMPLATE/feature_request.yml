@@ -1,0 +1,39 @@
+name: Feature request
+description: Propose a QUBE capability or package behavior change.
+title: "[Feature]: "
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user or maintainer problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: Describe the expected behavior, command surface, or package impact.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+    validations:
+      required: false
+  - type: dropdown
+    id: package-area
+    attributes:
+      label: Area
+      options:
+        - QUBE shared CLI/runtime
+        - AIB
+        - AIE
+        - AIQ
+        - AIU
+        - Adapters or plugins
+        - Documentation
+        - Unsure
+    validations:
+      required: true
