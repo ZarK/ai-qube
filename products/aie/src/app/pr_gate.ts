@@ -171,6 +171,10 @@ function waitAction(waitMinutes: number, status: PrGateActionStatus): PrGateActi
   };
 }
 
+function hasReviewerRequest(actions: PrGateAction[], status: PrGateActionStatus): boolean {
+  return actions.some(action => (action.kind === 'request-reviewer' || action.kind === 'post-review-comment') && action.status === status);
+}
+
 function prFeedback(item: ReviewItem): PrGateFeedback[] {
   return item.feedback
     .filter((entry): entry is ReviewFeedback & { source: PrGateFeedback['source'] } => entry.source === 'review' || entry.source === 'comment' || entry.source === 'review-comment' || entry.source === 'thread')
@@ -191,6 +195,10 @@ function hasUncheckedIssueChecklist(issueChecklists: IssueChecklistSummary[]): b
   return issueChecklists.some(issue => issue.checklist.unchecked > 0);
 }
 
+function configuredReviewersSatisfied(reviewers: PrGateReviewer[]): boolean {
+  return reviewers.every(reviewer => reviewer.requestedForHead && !reviewer.pending && !reviewer.staleRequest);
+}
+
 function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[]): PrGateStatus {
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
@@ -198,7 +206,7 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   if (unavailable.length > 0) return 'unavailable';
   if (item.reviewDecision === 'review-required' || reviewers.some(reviewer => reviewer.pending)) return 'pending';
   if (item.reviewDecision === 'approved') return 'complete';
-  if (reviewers.length === 0 && item.mergeability === 'mergeable' && !hasIncompleteChecks(item)) return 'complete';
+  if (configuredReviewersSatisfied(reviewers) && item.mergeability === 'mergeable' && !hasIncompleteChecks(item)) return 'complete';
   return 'pending';
 }
 
@@ -271,7 +279,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   if (!dryRun) {
     await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
     actions = await applyReviewPlan(provider, firstPlan);
-    const waitStatus = policy.reviews.waitMinutes > 0 && firstReviewers.length > 0 ? 'planned' : 'skipped';
+    const waitStatus = policy.reviews.waitMinutes > 0 && hasReviewerRequest(actions, 'completed') ? 'planned' : 'skipped';
     const plannedWait = waitAction(policy.reviews.waitMinutes, waitStatus);
     if (plannedWait.status === 'planned') {
       await (options.sleep ?? defaultSleep)(policy.reviews.waitMinutes * 60 * 1000);
@@ -282,7 +290,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     }
     finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
   } else {
-    actions.push(waitAction(policy.reviews.waitMinutes, policy.reviews.waitMinutes > 0 && firstReviewers.length > 0 ? 'planned' : 'skipped'));
+    actions.push(waitAction(policy.reviews.waitMinutes, policy.reviews.waitMinutes > 0 && hasReviewerRequest(actions, 'planned') ? 'planned' : 'skipped'));
   }
 
   const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);

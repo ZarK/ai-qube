@@ -403,16 +403,43 @@ describe('PR gate service', () => {
   it('skips duplicate comment triggers for the same PR head', async () => {
     const config = getDefaults();
     config.reviewAgents = ['@comfyrabbitai'];
-    config.reviewWaitMinutes = 0;
+    config.reviewWaitMinutes = 10;
     const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
     const pr = basePr({ comments: [{ author: { login: 'executor' }, body: `${currentMarker}\n@comfyrabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' }] });
     const { exec, calls } = makePrExec({ prViews: [pr] });
+    const waits = [];
 
-    const result = await runPrGate(config, { prNumber: 12, exec, sleep: async () => {} });
+    const result = await runPrGate(config, { prNumber: 12, exec, sleep: async milliseconds => { waits.push(milliseconds); } });
 
     assert.equal(result.reviewers[0].requestedForHead, true);
     assert.equal(result.actions.find(action => action.kind === 'post-review-comment').status, 'skipped');
+    assert.equal(result.actions.find(action => action.kind === 'wait').status, 'skipped');
+    assert.deepEqual(waits, []);
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+  });
+
+  it('completes comment-trigger review gates once the current head is requested and checks are clean', async () => {
+    const config = getDefaults();
+    config.reviewAgents = ['@comfyrabbitai'];
+    config.reviewWaitMinutes = 0;
+    const currentMarker = '<!-- aie:pr-gate:comfyrabbitai:abc123 -->';
+    const pr = basePr({
+      comments: [
+        { author: { login: 'executor' }, body: `${currentMarker}\n@comfyrabbitai review`, url: 'https://github.com/example/repo/pull/12#issuecomment-1' },
+        { author: { login: 'coderabbitai' }, body: 'No actionable comments were generated.', url: 'https://github.com/example/repo/pull/12#issuecomment-2' },
+      ],
+      mergeStateStatus: 'CLEAN',
+      reviewDecision: '',
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, exec, sleep: async () => {} });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.reviewers[0].requestedForHead, true);
+    assert.equal(result.reviewers[0].pending, false);
+    assert.match(result.nextAction, /no detected blockers/);
   });
 
   it('does not trust spoofed marker comments as reviewer requests', async () => {
