@@ -192,3 +192,39 @@ jobs:
 
       - name: Check AIQ package readiness
         run: pnpm --filter ai-code-quality run test:publish-readiness
+
+  ci-required:
+    needs:
+      - changes
+      - core
+      - aiq
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify required CI outcomes
+        shell: bash
+        run: |
+          declare -A results=(
+            [changes]="${{ needs.changes.result }}"
+            [core]="${{ needs.core.result }}"
+            [aiq]="${{ needs.aiq.result }}"
+          )
+
+          if [[ "${results[changes]}" != "success" ]]; then
+            echo "changes job finished with ${results[changes]}" >&2
+            exit 1
+          fi
+
+          for job in core aiq; do
+            case "${results[$job]}" in
+              success|skipped)
+                ;;
+              *)
+                echo "$job job finished with ${results[$job]}" >&2
+                exit 1
+                ;;
+            esac
+          done
+
+          echo "Required CI outcomes are acceptable."

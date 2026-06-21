@@ -1,0 +1,39 @@
+name: Bug report
+description: Report a reproducible problem in QUBE or its packages.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use security advisories for vulnerabilities or secrets, not public issues.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What failed?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction
+      description: Minimal commands, config, repo state, or package version needed to reproduce the issue.
+      placeholder: |
+        1. Install/use ...
+        2. Run ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Node.js version, package manager version, and affected QUBE package.
+    validations:
+      required: true
