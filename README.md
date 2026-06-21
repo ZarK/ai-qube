@@ -96,7 +96,9 @@ publish-qube-v<version>
 
 The shared publish workflow runs on `publish-*` tags, uses the GitHub Actions
 environment `npm-publish`, verifies the selected package, and publishes to npm
-with trusted publishing and provenance.
+with trusted publishing and provenance. See `docs/release-controls.md` for the
+trusted-publishing setup, staged approval flow, and first publish exception for
+brand-new package names.
 
 ## Development
 

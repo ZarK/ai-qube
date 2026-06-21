@@ -28,6 +28,7 @@ describe("publish tag resolution", () => {
       filter: "@tjalve/qube",
       path: "products/qube"
     });
+    assert.match(plan.prepare, /@tjalve\/qube-cli/);
     assert.match(plan.verify, /@tjalve\/qube/);
   });
 
@@ -39,5 +40,15 @@ describe("publish tag resolution", () => {
     const mismatch = resolveTag("publish-qube-v9.9.9");
     assert.notEqual(mismatch.status, 0);
     assert.match(mismatch.stderr, /does not match/);
+  });
+
+  it("uses the AIQ publish-readiness gate without the full AIQ suite", () => {
+    const result = resolveTag("publish-aiq-v0.2.1");
+    assert.equal(result.status, 0);
+
+    const plan = JSON.parse(result.stdout);
+    assert.match(plan.verify, /ai-code-quality run build/);
+    assert.match(plan.verify, /ai-code-quality run test:publish-readiness/);
+    assert.doesNotMatch(plan.verify, /ai-code-quality test(?:\s|$)/);
   });
 });

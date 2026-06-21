@@ -31,7 +31,7 @@
     "provenance": true
   },
   "bin": {
-    "qube": "./bin/run"
+    "qube": "bin/run"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

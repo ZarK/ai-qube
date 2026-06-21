@@ -22,7 +22,7 @@ describe('package publish surface safety', () => {
 
   it('declares the intended package surface and dry-run pack check', () => {
     assert.deepEqual(pkg.files, ['bin/', 'dist/', 'docs/migration.md', 'README.md']);
-    assert.equal(pkg.bin.aie, './bin/run');
+    assert.equal(pkg.bin.aie, 'bin/run');
     assert.equal(pkg.main, './dist/index.js');
     assert.equal(pkg.types, './dist/index.d.ts');
     assert.match(pkg.scripts['pack:check'], /^pnpm run build && pnpm pack --dry-run(?:\s|$)/);
@@ -71,7 +71,7 @@ describe('package publish surface safety', () => {
   });
 
   it('keeps trusted publishing staged, tokenless, and pinned', () => {
-    const workflowPath = join(__dirname, '..', '.github', 'workflows', 'publish.yml');
+    const workflowPath = join(__dirname, '..', '..', '..', '.github', 'workflows', 'publish.yml');
     assert.equal(existsSync(workflowPath), true);
 
     const workflow = readFileSync(workflowPath, 'utf8');
@@ -81,16 +81,18 @@ describe('package publish surface safety', () => {
     assert.equal(pkg.publishConfig.registry, 'https://registry.npmjs.org/');
     assert.equal(pkg.publishConfig.provenance, true);
     assert.equal(pkg.scripts.verify, 'pnpm run lint && pnpm run test && pnpm run pack:check');
-    assert.match(workflow, /^permissions:\n  contents: read\n  id-token: write$/m);
+    assert.match(workflow, /^permissions:\n  contents: read$/m);
+    assert.match(workflow, /permissions:\n\s+contents: read\n\s+id-token: write/);
     assert.match(workflow, /environment: npm-publish/);
     assert.match(workflow, /runs-on: ubuntu-latest/);
     assert.match(workflow, /node-version: 24/);
     assert.match(workflow, /package-manager-cache: false/);
     assert.match(workflow, /corepack prepare pnpm@11\.0\.4 --activate/);
     assert.match(workflow, /pnpm install --frozen-lockfile --ignore-scripts/);
-    assert.match(workflow, /pnpm run verify/);
+    assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
+    assert.match(workflow, /steps\.plan\.outputs\.verify/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
-    assert.match(workflow, /npm stage publish \. --access public/);
+    assert.match(workflow, /npm stage publish \. --access public --ignore-scripts/);
     assert.doesNotMatch(workflow, /npm publish(?:\s|$)/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.deepEqual(actionPins.map(match => match[1]).sort(), ['actions/checkout', 'actions/setup-node']);

@@ -4,6 +4,7 @@
 # Treat release and supply-chain surfaces as explicitly owned.
 .github/CODEOWNERS @ZarK
 .github/workflows/ @ZarK
+.npmrc @ZarK
 package.json @ZarK
 pnpm-lock.yaml @ZarK
 pnpm-workspace.yaml @ZarK

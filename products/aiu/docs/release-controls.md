@@ -42,7 +42,7 @@ Required controls before public release:
 
 - Primary publish path: npm trusted publishing for `ZarK/ai-qube`, workflow file
   `publish.yml`, environment `npm-publish`.
-- The allowed npm trusted-publishing action must include `npm publish`.
+- The allowed npm trusted-publishing action must include `npm stage publish`.
 - Long-lived `NPM_TOKEN` secrets are not required for the primary publish path.
 - The `npm-publish` GitHub environment should require reviewer approval when the
   repository plan supports environment protection rules.
