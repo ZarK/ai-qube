@@ -21,12 +21,12 @@ describe("config foundation", () => {
     assert.equal(result.ok, true);
     assert.equal(result.found, false);
     assert.equal(result.defaultsUsed, true);
-    assert.equal(result.selectedPath, path.join(repoRoot, "aiu.config.json"));
+    assert.equal(result.selectedPath, path.join(repoRoot, ".qube", "aiu", "config.json"));
     assert.equal(result.config.version, 1);
     assert.deepEqual(result.config.paths, {
-      stateDir: ".umpire/state",
-      lockDir: ".umpire/locks",
-      logDir: ".umpire/logs",
+      stateDir: ".qube/aiu/state",
+      lockDir: ".qube/aiu/locks",
+      logDir: ".qube/aiu/logs",
     });
     assert.equal(result.config.continuation.stopOnUnknownState, true);
     assert.equal(result.config.continuation.stopOnUnsafeState, true);
@@ -40,7 +40,7 @@ describe("config foundation", () => {
     assert.equal(result.config.whip.enabled, true);
     assert.equal(result.config.whip.usePackageDefaults, true);
     assert.deepEqual(result.config.whip.tasks, []);
-    assert.equal(result.config.whip.statePath, ".umpire/whip.json");
+    assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
 
   it("loads valid config with argv trusted state descriptors", async () => {
@@ -229,6 +229,17 @@ describe("config foundation", () => {
     assert.ok(kinds.includes("invalid-prompt-text"));
   });
 
+  it("reports parse errors against the selected legacy config path", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeFile(path.join(repoRoot, "aiu.config.json"), "{ invalid json", "utf8");
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.selectedPath, path.join(repoRoot, "aiu.config.json"));
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.message.includes("Could not parse aiu.config.json")));
+  });
+
   it("rejects state paths below file ancestors and non-searchable directories", async (t) => {
     const repoRoot = await createRepoRoot();
     const blockedDir = path.join(repoRoot, "blocked-dir");
@@ -304,7 +315,7 @@ describe("config foundation", () => {
 
     assert.equal(result.ok, true);
     assert.deepEqual(result.diagnostics, []);
-    assert.equal(result.config.whip.statePath, ".umpire/whip.json");
+    assert.equal(result.config.whip.statePath, ".qube/aiu/whip.json");
   });
 });
 
@@ -317,7 +328,9 @@ async function createRepoRoot(): Promise<string> {
 }
 
 async function writeConfig(repoRoot: string, config: unknown): Promise<void> {
-  await writeFile(path.join(repoRoot, "aiu.config.json"), `${JSON.stringify(config, null, 2)}\n`, "utf8");
+  const configPath = path.join(repoRoot, ".qube", "aiu", "config.json");
+  await mkdir(path.dirname(configPath), { recursive: true });
+  await writeFile(configPath, `${JSON.stringify(config, null, 2)}\n`, "utf8");
 }
 
 function canAccess(targetPath: string, mode: number): boolean {

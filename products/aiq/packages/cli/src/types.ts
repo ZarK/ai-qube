@@ -150,7 +150,7 @@ Stage ladder:
   0=e2e 1=lint 2=format 3=typecheck 4=unit 5=sloc 6=complexity 7=maintainability 8=coverage 9=security
 
 Stage selection:
-  By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
+  By default aiq, aiq run, and aiq plan use cumulative ladder stages 0 through .qube/aiq/progress.json current_stage when present, otherwise the configured CLI profile stages.
   Set the current stage once with aiq config --set-stage N, then run aiq for the normal cumulative project workflow.
   Use aiq run <paths...> for explicit file and subtree checks.
   --only N runs one stage from the ladder.
@@ -184,7 +184,7 @@ Package surface:
   @tjalve/aiq/schema and aiq schema --format json expose QUBE-compatible command metadata.
 
 Config state:
-  aiq config initializes .aiq/aiq.config.json and .aiq/progress.json.
+  aiq config initializes .qube/aiq/config.json and .qube/aiq/progress.json.
   aiq config --print-config prints effective config plus progress/current-stage state.
-  aiq config --set-stage N persists .aiq/progress.json current_stage.
+  aiq config --set-stage N persists .qube/aiq/progress.json current_stage.
 `;

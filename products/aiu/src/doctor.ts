@@ -285,10 +285,11 @@ function checkRepository(configLoad: AiuConfigLoadResult): AiuDoctorCheck {
 
 function checkConfig(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
   const checks: AiuDoctorCheck[] = [];
+  const selectedConfigPath = displayConfigPath(configLoad.repoRoot, configLoad.selectedPath);
   checks.push(
     configLoad.found
-      ? check("config-present", "config", "ok", "config-present", "aiu.config.json was found.", configLoad.selectedPath, "Continue using this config file.")
-      : check("config-present", "config", "warning", "config-missing", "aiu.config.json was not found; conservative defaults are in use.", configLoad.selectedPath, "Run aiu init --dry-run --json, then aiu init when the plan is acceptable."),
+      ? check("config-present", "config", "ok", "config-present", `${selectedConfigPath} was found.`, configLoad.selectedPath, "Continue using this config file.")
+      : check("config-present", "config", "warning", "config-missing", `${selectedConfigPath} was not found; conservative defaults are in use.`, configLoad.selectedPath, "Run aiu init --dry-run --json, then aiu init when the plan is acceptable."),
   );
   checks.push(
     configLoad.ok
@@ -650,6 +651,14 @@ function isExecutableFile(targetPath: string): boolean {
 
 function portablePath(filePath: string): string {
   return filePath.replace(/\\/g, "/");
+}
+
+function displayConfigPath(repoRoot: string, selectedPath: string): string {
+  const relativePath = path.relative(repoRoot, selectedPath);
+  if (relativePath.length === 0 || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return portablePath(selectedPath);
+  }
+  return portablePath(relativePath);
 }
 
 function normalizeText(value: string): string {

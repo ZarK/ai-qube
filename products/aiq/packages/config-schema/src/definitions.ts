@@ -11,8 +11,9 @@ import {
   surfaceIds,
 } from "@tjalve/aiq/model";
 
-export const aiqConfigFileNames = [".aiq/aiq.config.json", "aiq.config.json"] as const;
-export const aiqProgressFileName = ".aiq/progress.json" as const;
+export const aiqConfigFileNames = [".qube/aiq/config.json", ".aiq/aiq.config.json", "aiq.config.json"] as const;
+export const aiqProgressFileNames = [".qube/aiq/progress.json", ".aiq/progress.json"] as const;
+export const aiqProgressFileName = aiqProgressFileNames[0];
 
 export const aiqProfileNames = ["fast", "standard", "deep"] as const;
 

@@ -32,7 +32,7 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.dryRun, true);
     assert.deepEqual(parsed.migrate.inventory, []);
     assert.equal(parsed.migrate.filesToCreate.length >= 3, true);
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), false);
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), false);
     assert.equal(existsSync(path.join(target, ".umpire")), false);
   });
 
@@ -68,6 +68,7 @@ describe("migration planner", () => {
     await mkdir(path.join(target, "packages", "lib"), { recursive: true });
     await mkdir(path.join(target, "plugins", "ai-umpire", "hooks"), { recursive: true });
     await mkdir(path.join(target, "scripts"), { recursive: true });
+    await mkdir(path.join(target, ".qube", "aiu", "cache"), { recursive: true });
     await mkdir(path.join(target, ".umpire"), { recursive: true });
     await writeFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "export const local = true;\n", "utf8");
     await writeFile(path.join(target, ".agents", "plugins", "marketplace.json"), JSON.stringify({ managedBy: "@tjalve/aiu", extraLocalPolicy: true }), "utf8");
@@ -77,6 +78,7 @@ describe("migration planner", () => {
     await writeFile(path.join(target, "scripts", "aiu-stop.js"), "console.log('ai-umpire hook-stop helper');\n", "utf8");
     await writeFile(path.join(target, ".opencode", "commands", "make-it-so.md"), "Run the local AI Umpire continuation prompt.\n", "utf8");
     await writeFile(path.join(target, ".opencode", "mystery.md"), "Umpire notes from an unknown local customization.\n", "utf8");
+    await writeFile(path.join(target, ".qube", "aiu", "cache", "note.md"), "Umpire cache text should not be part of migration scanning.\n", "utf8");
     await writeFile(path.join(target, ".umpire", "whip.json"), JSON.stringify({ schemaVersion: 1, tasks: [] }), "utf8");
     await writeFile(path.join(target, "AGENTS.md"), "Use ../ai-umpire local command paths until migrated.\n", "utf8");
     await writeFile(path.join(target, "aiu.config.json"), JSON.stringify({
@@ -137,6 +139,7 @@ describe("migration planner", () => {
     assert.ok(parsed.migrate.hostInstructionReferences.some((finding) => finding.relativePath === "AGENTS.md"));
     assert.ok(parsed.migrate.trustedCommandDescriptors.some((finding) => finding.sourceCommandSummary === "aie status --json"));
     assert.ok(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === ".opencode/mystery.md"));
+    assert.equal(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === ".qube/aiu/cache/note.md"), false);
     assert.equal(parsed.migrate.reviewRequired.some((finding) => finding.category === "unknown-aiu-file" && finding.relativePath === "packages/lib/package.json"), false);
     assert.ok(parsed.migrate.cleanupCandidates.length >= 4);
     assert.ok(parsed.migrate.conflicts.length >= 6);
@@ -175,10 +178,10 @@ describe("migration planner", () => {
     assert.equal(parsed.migrate.applied, true);
     assert.equal(parsed.migrate.dryRun, false);
     assert.equal(parsed.migrate.ok, true);
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === "aiu.config.json" && item.action === "create"));
+    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".qube/aiu/config.json" && item.action === "create"));
     assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".opencode/plugins/ai-umpire-continuation.ts"));
-    assert.equal(existsSync(path.join(target, "aiu.config.json")), true);
-    const config = JSON.parse(await readFile(path.join(target, "aiu.config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
+    assert.equal(existsSync(path.join(target, ".qube", "aiu", "config.json")), true);
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as { hosts: { enabled: string[] }; trustedStateCommands: Record<string, unknown> };
     assert.deepEqual(config.hosts.enabled, ["opencode", "codex", "claude-code"]);
     assert.ok("work" in config.trustedStateCommands);
     assert.match(await readFile(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts"), "utf8"), /@tjalve\/aiu\/opencode/);

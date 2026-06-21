@@ -35,7 +35,7 @@ export const pathsCommand = defineCommand({
     }),
     defineExample({
       description: "Inspect paths for an explicit config file.",
-      command: "aiu paths --config ./aiu.config.json --json",
+      command: "aiu paths --config ./.qube/aiu/config.json --json",
     }),
   ],
   output: {
@@ -101,7 +101,7 @@ export const doctorCommand = defineCommand({
     }),
     defineExample({
       description: "Inspect Umpire health for an explicit config file.",
-      command: "aiu doctor --config ./aiu.config.json --json",
+      command: "aiu doctor --config ./.qube/aiu/config.json --json",
     }),
   ],
   output: {
@@ -329,7 +329,7 @@ export const configCommand = defineCommand({
     }),
     defineExample({
       description: "Inspect an explicit config path.",
-      command: "aiu config --config ./aiu.config.json --json",
+      command: "aiu config --config ./.qube/aiu/config.json --json",
     }),
   ],
   output: {

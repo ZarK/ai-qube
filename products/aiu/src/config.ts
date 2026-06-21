@@ -3,7 +3,9 @@ import path from "node:path";
 
 import { evaluateAiuHostRuntimePolicy } from "./host_policy.js";
 
-export const AIU_CONFIG_FILENAME = "aiu.config.json";
+export const AIU_CONFIG_FILENAME = ".qube/aiu/config.json";
+export const AIU_LEGACY_CONFIG_FILENAME = "aiu.config.json";
+export const AIU_CONFIG_FILENAMES = [AIU_CONFIG_FILENAME, AIU_LEGACY_CONFIG_FILENAME] as const;
 export const AIU_CONFIG_SCHEMA_VERSION = 1;
 export const AIU_HOSTS = ["opencode", "codex", "claude-code"] as const;
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
@@ -155,9 +157,9 @@ const DEFAULT_CONFIG: AiuConfig = Object.freeze({
     promptMs: 600_000,
   }),
   paths: Object.freeze({
-    stateDir: ".umpire/state",
-    lockDir: ".umpire/locks",
-    logDir: ".umpire/logs",
+    stateDir: ".qube/aiu/state",
+    lockDir: ".qube/aiu/locks",
+    logDir: ".qube/aiu/logs",
   }),
   supplyChain: Object.freeze({
     stopOnApprovalRequired: true,
@@ -175,7 +177,7 @@ const DEFAULT_CONFIG: AiuConfig = Object.freeze({
     enabled: true,
     usePackageDefaults: true,
     tasks: Object.freeze([]),
-    statePath: ".umpire/whip.json",
+    statePath: ".qube/aiu/whip.json",
   }),
 });
 
@@ -187,7 +189,7 @@ export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoad
   const repoRoot = findRepositoryRoot(path.resolve(options.cwd ?? process.cwd()));
   const selectedPath = options.configPath
     ? path.resolve(repoRoot, options.configPath)
-    : path.join(repoRoot, AIU_CONFIG_FILENAME);
+    : selectAiuConfigPath(repoRoot);
   const found = existsSync(selectedPath);
   const diagnostics: AiuConfigDiagnostic[] = [];
   let rawConfig: unknown = {};
@@ -200,7 +202,7 @@ export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoad
         diagnostic(
           "invalid-json",
           "$",
-          `Could not parse ${AIU_CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+          `Could not parse ${displayConfigPath(repoRoot, selectedPath)}: ${error instanceof Error ? error.message : String(error)}`,
           "Fix the JSON syntax before running Umpire commands.",
         ),
       );
@@ -899,6 +901,24 @@ function findRepositoryRoot(startDir: string): string {
     }
     current = parent;
   }
+}
+
+function selectAiuConfigPath(repoRoot: string): string {
+  for (const filename of AIU_CONFIG_FILENAMES) {
+    const candidate = path.join(repoRoot, filename);
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return path.join(repoRoot, AIU_CONFIG_FILENAME);
+}
+
+function displayConfigPath(repoRoot: string, selectedPath: string): string {
+  const relativePath = path.relative(repoRoot, selectedPath);
+  if (relativePath.length === 0 || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return selectedPath.replace(/\\/g, "/");
+  }
+  return relativePath.replace(/\\/g, "/");
 }
 
 function validateHost(value: string, fieldPath: string, diagnostics: AiuConfigDiagnostic[]): value is AiuHost {

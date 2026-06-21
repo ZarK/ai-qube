@@ -3,7 +3,7 @@ const { writeFileSync, mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
-const { configToFileShape, getDefaults, loadConfig, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, getDefaults, loadConfig, loadConfigFile, validateConfig } = require('../dist/config/index.js');
 
 function defaultFile() {
   return configToFileShape(getDefaults());
@@ -191,5 +191,16 @@ describe('config validation', () => {
         && error.message.includes('Next action:')
         && error.errors.some((entry) => entry.path === 'legacyFlatField'),
     );
+  });
+
+  it('reports parse errors against the selected legacy config path', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-'));
+    writeFileSync(join(repo, 'aie.config.json'), '{ invalid json');
+
+    const result = await loadConfigFile(repo);
+
+    assert.equal(result.ok, false);
+    assert.equal(result.path, join(repo, 'aie.config.json'));
+    assert.ok(result.errors.some((entry) => entry.path === 'aie.config.json' && entry.message.includes('Failed to read or parse aie.config.json')));
   });
 });

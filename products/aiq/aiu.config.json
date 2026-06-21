@@ -43,9 +43,9 @@
     }
   },
   "paths": {
-    "lockDir": ".umpire/locks",
-    "logDir": ".umpire/logs",
-    "stateDir": ".umpire/state"
+    "lockDir": ".qube/aiu/locks",
+    "logDir": ".qube/aiu/logs",
+    "stateDir": ".qube/aiu/state"
   },
   "supplyChain": {
     "stopOnApprovalRequired": true

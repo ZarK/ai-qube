@@ -4,6 +4,7 @@ import path from "node:path";
 import {
   aiqConfigFileNames,
   aiqProgressFileName,
+  aiqProgressFileNames,
   aiqProgressStageIndexes,
   aiqStageLadderIds,
   defaultConfig,
@@ -45,9 +46,11 @@ export async function findAiqProgressFile(startDir: string): Promise<string | un
   let currentDir = path.resolve(startDir);
 
   while (true) {
-    const candidate = path.join(currentDir, aiqProgressFileName);
-    if (await pathExists(candidate)) {
-      return candidate;
+    for (const relativePath of aiqProgressFileNames) {
+      const candidate = path.join(currentDir, relativePath);
+      if (await pathExists(candidate)) {
+        return candidate;
+      }
     }
 
     const nextDir = path.dirname(currentDir);
@@ -62,13 +65,12 @@ export async function findAiqProgressFile(startDir: string): Promise<string | un
 export async function findAiqProjectRoot(startDir: string): Promise<string> {
   const progressPath = await findAiqProgressFile(startDir);
   if (progressPath !== undefined) {
-    return path.dirname(path.dirname(progressPath));
+    return projectRootFromKnownPath(progressPath);
   }
 
   const configPath = await findAiqConfigFile(startDir);
   if (configPath !== undefined) {
-    const configDir = path.dirname(configPath);
-    return path.basename(configDir) === ".aiq" ? path.dirname(configDir) : configDir;
+    return projectRootFromKnownPath(configPath);
   }
 
   return path.resolve(startDir);
@@ -227,6 +229,19 @@ function cloneProgressState(progress: AiqProgressState): AiqProgressState {
     order: [...progress.order],
     last_run: progress.last_run,
   };
+}
+
+function projectRootFromKnownPath(filePath: string): string {
+  const parent = path.dirname(filePath);
+  const productDir = path.basename(parent);
+  const namespaceDir = path.basename(path.dirname(parent));
+  if (namespaceDir === ".qube" && productDir === "aiq") {
+    return path.dirname(path.dirname(parent));
+  }
+  if (productDir === ".aiq") {
+    return path.dirname(parent);
+  }
+  return parent;
 }
 
 async function pathExists(filePath: string): Promise<boolean> {

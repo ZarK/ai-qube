@@ -1,7 +1,7 @@
 import { createCliError } from "@tjalve/qube-cli/errors";
 import { createDryRunPlanFields, renderDryRunPlan } from "@tjalve/qube-cli/mutation";
 import { createCli, createCommand, createSchemaCommand, createTopicCommand, runCli } from "@tjalve/qube-cli/runtime";
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 
 import { writeAgentAssetFiles } from "./agent_assets.js";
 import { loadAibConfig } from "./config.js";
@@ -129,7 +129,7 @@ export const aibCli = createCli({
     }),
     createCommand(statusCommand, ({ flags }) => {
       try {
-        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const nextAction = computeNextAction(envelope.state);
         const spec = computeSpecStatus(envelope.state);
         const projectRoot = projectRootForState(envelope.statePath);
@@ -153,7 +153,7 @@ export const aibCli = createCli({
     }),
     createCommand(nextCommand, ({ flags }) => {
       try {
-        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const nextAction = computeNextAction(envelope.state);
         return {
           json: {
@@ -169,7 +169,7 @@ export const aibCli = createCli({
     }),
     createCommand(answerCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const envelope = readBootstrapState(statePath);
         const updated = applyAnswer(
           envelope.state,
@@ -210,7 +210,7 @@ export const aibCli = createCli({
     }),
     createCommand(specDraftCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const envelope = readBootstrapState(statePath);
         const projectRoot = projectRootForState(envelope.statePath);
         const draft = flags["dry-run"] === true ? createSpecDraft(envelope.state, projectRoot) : writeSpecDraft(envelope.state, projectRoot);
@@ -252,7 +252,7 @@ export const aibCli = createCli({
     }),
     createCommand(specValidateCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const envelope = readBootstrapState(statePath);
         const validation = validateSpecFile(envelope.state, projectRootForState(envelope.statePath));
         const updated = withSpecValidationState(envelope.state, validation);
@@ -286,7 +286,7 @@ export const aibCli = createCli({
     }),
     createCommand(specAcceptCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const section = typeof flags.section === "string" ? flags.section : "";
         const envelope = readBootstrapState(statePath);
         const validation = validateSpecFile(envelope.state, projectRootForState(envelope.statePath));
@@ -327,7 +327,7 @@ export const aibCli = createCli({
     }),
     createCommand(specReopenCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const section = typeof flags.section === "string" ? flags.section : "";
         const envelope = readBootstrapState(statePath);
         const updated = withReopenedSpecState(envelope.state, section);
@@ -364,7 +364,7 @@ export const aibCli = createCli({
     }),
     createCommand(milestonesGenerateCommand, ({ flags }) => {
       try {
-        const statePath = typeof flags.state === "string" ? flags.state : ".bootstrap/session.json";
+        const statePath = typeof flags.state === "string" ? flags.state : ".qube/aib/session.json";
         const envelope = readBootstrapState(statePath);
         const projectRoot = projectRootForState(envelope.statePath);
         const validation = validateSpecFile(envelope.state, projectRoot);
@@ -425,7 +425,7 @@ export const aibCli = createCli({
     }),
     createCommand(workItemsGenerateCommand, ({ flags }) => {
       try {
-        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const projectRoot = projectRootForState(envelope.statePath);
         const validation = validateSpecFile(envelope.state, projectRoot);
         const spec = computeSpecStatus(envelope.state);
@@ -534,7 +534,7 @@ export const aibCli = createCli({
     }),
     createCommand(workItemsRenderCommand, ({ flags }) => {
       try {
-        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".bootstrap/session.json");
+        const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const projectRoot = projectRootForState(envelope.statePath);
         const provider = flags.provider === "github" || flags.provider === "markdown" ? flags.provider : undefined;
         if (!provider) {
@@ -920,5 +920,12 @@ function isCliSpecError(error: unknown): error is ReturnType<typeof createCliErr
 }
 
 function projectRootForState(statePath: string): string {
+  const stateDir = dirname(statePath);
+  if (basename(stateDir) === "aib" && basename(dirname(stateDir)) === ".qube") {
+    return dirname(dirname(stateDir));
+  }
+  if (basename(stateDir) === ".bootstrap") {
+    return dirname(stateDir);
+  }
   return dirname(dirname(statePath));
 }

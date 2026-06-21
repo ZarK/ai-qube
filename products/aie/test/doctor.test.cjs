@@ -193,6 +193,19 @@ describe('doctor diagnostics', () => {
     assert.equal(parsed.recommendations.some(recommendation => recommendation.includes('Labels health check failed')), true);
   });
 
+  it('reports config recommendations against the selected legacy config path', () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'aie.config.json'), '{ invalid json');
+
+    const result = binRun(['doctor', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.configPresent, true);
+    assert.equal(parsed.configValid, false);
+    assert.equal(parsed.recommendations.some(recommendation => recommendation.includes('Failed to read or parse aie.config.json')), true);
+  });
+
   it('reports installed and stale compatibility wrapper state', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'gh-priority-order.sh'), [

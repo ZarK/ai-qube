@@ -148,7 +148,7 @@ export const statusCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     })
   ],
   examples: [
@@ -186,7 +186,7 @@ export const nextCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     })
   ],
   examples: [
@@ -224,7 +224,7 @@ export const specDraftCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -274,7 +274,7 @@ export const specValidateCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -324,7 +324,7 @@ export const specAcceptCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -396,7 +396,7 @@ export const specReopenCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -459,7 +459,7 @@ export const milestonesGenerateCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -516,7 +516,7 @@ export const workItemsGenerateCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",
@@ -593,7 +593,7 @@ export const workItemsRenderCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "provider",
@@ -688,7 +688,7 @@ export const answerCommand = defineCommand({
       name: "state",
       description: "Path to the bootstrap session JSON file.",
       type: "string",
-      defaultValue: ".bootstrap/session.json"
+      defaultValue: ".qube/aib/session.json"
     }),
     defineFlag({
       name: "dry-run",

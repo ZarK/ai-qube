@@ -87,7 +87,7 @@ describe('repo prime service', () => {
     assert.equal(plan.instructions.agents, true);
     assert.equal(plan.planning.spec, true);
     assert.equal(plan.planning.milestones.length, 1);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'config.json')), false);
     assert.equal(calls.some(args => args[0] === 'label' && (args[1] === 'create' || args[1] === 'edit')), false);
   });
 

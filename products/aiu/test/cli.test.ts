@@ -245,7 +245,7 @@ describe("metadata-backed CLI", () => {
     assert.ok(config.flags?.some((flag) => flag.name === "config" && flag.type === "string"));
     assert.ok(config.errors?.some((error) => error.kind === "unsafe-command-descriptor"));
     assert.equal(parsed.sections?.config?.schemaVersion, 1);
-    assert.equal(parsed.sections?.config?.defaultPath, "aiu.config.json");
+    assert.equal(parsed.sections?.config?.defaultPath, ".qube/aiu/config.json");
     assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilityNames, ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"]);
     assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "recipe-only", "unsupported"]);
@@ -326,7 +326,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.sections?.whip?.stateSchemaVersion, 1);
     assert.deepEqual(parsed.sections?.whip?.taskStatuses, ["pending", "prompted", "completed", "cancelled"]);
     assert.deepEqual(parsed.sections?.whip?.taskSources, ["package-default", "repo-config", "cli"]);
-    assert.equal(parsed.sections?.whip?.statePathDefault, ".umpire/whip.json");
+    assert.equal(parsed.sections?.whip?.statePathDefault, ".qube/aiu/whip.json");
     assert.ok(parsed.sections?.whip?.taskFields?.includes("completionEvidence"));
     assert.ok(parsed.sections?.whip?.selectedTaskFields?.includes("promptFingerprint"));
     assert.ok(parsed.sections?.whip?.statusFields?.includes("staleOwnership"));
@@ -475,9 +475,9 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.config.defaultsUsed, true);
     assert.equal(parsed.config.valid, true);
     assert.deepEqual(parsed.config.value.paths, {
-      stateDir: ".umpire/state",
-      lockDir: ".umpire/locks",
-      logDir: ".umpire/logs",
+      stateDir: ".qube/aiu/state",
+      lockDir: ".qube/aiu/locks",
+      logDir: ".qube/aiu/logs",
     });
     assert.equal(parsed.config.value.continuation.stopOnUnknownState, true);
     assert.equal(parsed.config.value.continuation.stopOnSupplyChainApprovalBlock, true);
@@ -513,7 +513,7 @@ describe("metadata-backed CLI", () => {
     assert.deepEqual(parsed.migrate.repoLocalHooks, []);
     assert.deepEqual(parsed.migrate.scanErrors, []);
     assert.ok(parsed.migrate.managedSections.length >= 3);
-    assert.ok(parsed.migrate.customizationPoints.includes("aiu.config.json trustedStateCommands argv arrays"));
+    assert.ok(parsed.migrate.customizationPoints.includes(".qube/aiu/config.json trustedStateCommands argv arrays"));
     assert.equal(parsed.migrate.recommendedNextCommand, "aiu init --dry-run --json");
   });
 
@@ -542,7 +542,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(parsed.migrate.ok, true);
     assert.equal(parsed.migrate.dryRun, false);
     assert.equal(parsed.migrate.applied, true);
-    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === "aiu.config.json" && item.action === "create"));
+    assert.ok(parsed.migrate.changed.some((item) => item.relativePath === ".qube/aiu/config.json" && item.action === "create"));
     assert.deepEqual(parsed.migrate.conflicted, []);
     assert.deepEqual(parsed.migrate.reviewRequired, []);
   });
@@ -598,7 +598,7 @@ describe("metadata-backed CLI", () => {
     assert.equal(statusJson.command, "whip");
     assert.equal(statusJson.whip.action, "status");
     assert.equal(statusJson.whip.stateOk, true);
-    assert.ok(statusJson.whip.statePath.endsWith(path.join(".umpire", "whip.json")));
+    assert.ok(statusJson.whip.statePath.endsWith(path.join(".qube", "aiu", "whip.json")));
     assert.ok(statusJson.whip.tasks.some((task) => task.status === "pending"));
     assert.deepEqual(statusJson.whip.errors, []);
 

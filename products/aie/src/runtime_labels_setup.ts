@@ -20,7 +20,7 @@ export async function handleLabelsSetup(context: RuntimeCommandContext): Promise
     return { stdout: formatLabelsSetup(plan, dryRun, hadChanges) };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    return commandFailure(context, { ok: false, command: 'labels setup', dryRun, error: message }, `Failed to run \`aie labels setup\`. Likely cause: ${message}. Next action: verify GitHub authentication, label permissions, and aie.config.json, then rerun \`aie labels setup --dry-run\`.`);
+    return commandFailure(context, { ok: false, command: 'labels setup', dryRun, error: message }, `Failed to run \`aie labels setup\`. Likely cause: ${message}. Next action: verify GitHub authentication, label permissions, and the selected Executor config, then rerun \`aie labels setup --dry-run\`.`);
   }
 }
 

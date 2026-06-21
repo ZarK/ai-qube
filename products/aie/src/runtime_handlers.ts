@@ -300,7 +300,7 @@ async function handleAuditUi(context: Parameters<RuntimeCommandHandler>[0]) {
     return commandFailure(context, { ok: false, command: 'audit ui', error: message, usage: 'aie audit ui <issue> [--prepare] [--check] [--dry-run] [--json]', examples: commandExamples('audit ui') }, message);
   }
   const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'audit ui', loaded, 'Fix aie.config.json, then run the UI audit helper again.');
+  if (!loaded.ok) return configLoadFailure(context, 'audit ui', loaded, 'Fix the selected Executor config, then run the UI audit helper again.');
   const result = runUiAudit(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run'), prepare: readBooleanFlag(context, 'prepare'), check: readBooleanFlag(context, 'check') });
   return commandResult(context, result, formatUiAudit(result));
 }
@@ -321,7 +321,7 @@ async function handleReviewGate(context: Parameters<RuntimeCommandHandler>[0]) {
     return commandFailure(context, { ok: false, command: 'review gate', error: message, usage: 'aie review gate <issue> [--prompt] [--dry-run] [--json]', examples: commandExamples('review gate') }, message);
   }
   const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'review gate', loaded, 'Fix aie.config.json, then run the review gate again.');
+  if (!loaded.ok) return configLoadFailure(context, 'review gate', loaded, 'Fix the selected Executor config, then run the review gate again.');
   const promptOnly = readBooleanFlag(context, 'prompt');
   const result = runReviewGate(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run'), promptOnly });
   return commandResult(context, result, promptOnly ? result.prompt : formatReviewGate(result));
@@ -343,7 +343,7 @@ async function handlePrView(context: Parameters<RuntimeCommandHandler>[0]) {
     return commandFailure(context, { ok: false, command: 'pr view', error: message, usage: 'aie pr view <pr> [--json]', examples: commandExamples('pr view') }, message);
   }
   const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'pr view', loaded, 'Fix aie.config.json, then inspect PR state again.');
+  if (!loaded.ok) return configLoadFailure(context, 'pr view', loaded, 'Fix the selected Executor config, then inspect PR state again.');
   try {
     const result = await runPrViewService({ prNumber, repoRoot: loaded.root });
     return commandResult(context, result, formatPrView(result));
@@ -370,7 +370,7 @@ async function handlePrBody(context: Parameters<RuntimeCommandHandler>[0]) {
     return commandFailure(context, { ok: false, command: 'pr body', error: message, usage: 'aie pr body <issue> [--json]', examples: commandExamples('pr body') }, message);
   }
   const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'pr body', loaded, 'Fix aie.config.json, then draft the PR body again.');
+  if (!loaded.ok) return configLoadFailure(context, 'pr body', loaded, 'Fix the selected Executor config, then draft the PR body again.');
   try {
     const result = await buildPrBodyService(loaded.config ?? getDefaults(), { issueNumber, repoRoot: loaded.root });
     return commandResult(context, result, formatPrBody(result));
@@ -397,7 +397,7 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
     return commandFailure(context, { ok: false, command: 'pr gate', error: message, usage: 'aie pr gate <pr> [--dry-run] [--json]', examples: commandExamples('pr gate') }, message);
   }
   const loaded = await loadConfigFile();
-  if (!loaded.ok) return configLoadFailure(context, 'pr gate', loaded, 'Fix aie.config.json, then run the PR gate again.');
+  if (!loaded.ok) return configLoadFailure(context, 'pr gate', loaded, 'Fix the selected Executor config, then run the PR gate again.');
   try {
     const warnings: string[] = [];
     const result = await runPrGateService(loaded.config ?? getDefaults(), {
@@ -442,20 +442,20 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   gates: topic(['Use `aie gates plan --dry-run`, `aie gates plan --stage pre-pr --json`, or `aie gates status --json`.', 'Gate commands are read from trusted repository config and are never executed by Executor.']),
   'gates plan': async context => {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'gates plan', loaded, 'Fix aie.config.json, then run the gate plan again.');
+    if (!loaded.ok) return configLoadFailure(context, 'gates plan', loaded, 'Fix the selected Executor config, then run the gate plan again.');
     const stage = stringFlag(context, 'stage');
     const result = buildGatePlan(loaded.config ?? getDefaults(), { stage: isGateStage(stage) ? stage : undefined, dryRun: readBooleanFlag(context, 'dry-run') });
     return commandResult(context, result, formatGatePlan(result));
   },
   'gates status': async context => {
     const loaded = await loadConfigFile();
-    if (!loaded.ok) return configLoadFailure(context, 'gates status', loaded, 'Fix aie.config.json, then run the gate status again.');
+    if (!loaded.ok) return configLoadFailure(context, 'gates status', loaded, 'Fix the selected Executor config, then run the gate status again.');
     const stage = stringFlag(context, 'stage');
     const result = buildGateStatus(loaded.config ?? getDefaults(), { stage: isGateStage(stage) ? stage : undefined, evidenceRoot: loaded.root });
     return commandResult(context, result, formatGateStatus(result));
   },
   init: handleInit,
-  labels: topic(['Use `aie labels setup` to create or update the labels defined in aie.config.json (or the built-in defaults) idempotently.', 'This command and its subcommands can mutate GitHub labels when not in --dry-run mode.']),
+  labels: topic(['Use `aie labels setup` to create or update labels defined in the selected Executor config (or the built-in defaults) idempotently.', 'This command and its subcommands can mutate GitHub labels when not in --dry-run mode.']),
   'labels setup': handleLabelsSetup,
   migrate: topic(['Use `aie migrate map` to inspect legacy command mappings, or `aie migrate legacy --dry-run` to inspect legacy Executor state without mutation.', 'Migration planning preserves repository files, git history, branches, issue state, labels, and GitHub milestone assignments while reporting inventory and planned changes.']),
   'migrate legacy': async context => {
@@ -489,7 +489,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     if (q.driftCount > 0) lines.push('Drift detected - labels disagree with dependency state. Run `aie deps fix --dry-run` then `aie deps fix`.');
     return commandResult(context, { ok: true, command: 'queue', ...q }, lineOutput(lines));
   },
-  repo: topic(['Use `aie repo prime --dry-run` to inspect repository readiness before issue execution.', '`aie repo prime` can create or update Executor labels and can write a minimal aie.config.json only with --yes. It never creates specs, GitHub milestones, issue batches, or agent instructions.']),
+  repo: topic(['Use `aie repo prime --dry-run` to inspect repository readiness before issue execution.', '`aie repo prime` can create or update Executor labels and can write a minimal .qube/aie/config.json only with --yes. It never creates specs, GitHub milestones, issue batches, or agent instructions.']),
   'repo prime': async context => {
     const config = (await loadConfig()) || getDefaults();
     const dryRun = readBooleanFlag(context, 'dry-run');

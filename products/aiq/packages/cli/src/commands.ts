@@ -338,7 +338,7 @@ function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: s
         requested: `ci ${subcommand ?? ""}`.trim(),
         summary: "CI setup uses explicit workflow configuration.",
         replacement:
-          "Use npx @tjalve/aiq run <files> in CI and keep stage/profile selection in .aiq/aiq.config.json.",
+          "Use npx @tjalve/aiq run <files> in CI and keep stage/profile selection in .qube/aiq/config.json.",
       };
     case "ignore":
       return {
@@ -346,7 +346,7 @@ function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: s
         requested: `ignore ${subcommand ?? ""}`.trim(),
         summary: "Ignored inputs are configured in the canonical AIQ config file.",
         replacement:
-          "Run aiq config to initialize .aiq/aiq.config.json, then edit inputs.ignore there so the ignored paths are reviewed with project config.",
+          "Run aiq config to initialize .qube/aiq/config.json, then edit inputs.ignore there so the ignored paths are reviewed with project config.",
       };
   }
 }

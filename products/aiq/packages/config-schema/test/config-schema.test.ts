@@ -41,9 +41,9 @@ describe("config schema", () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-progress-ladder-"));
     tempDirs.push(repoDir);
 
-    await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(repoDir, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(repoDir, ".aiq", "progress.json"),
+      path.join(repoDir, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
     );
 
@@ -75,7 +75,7 @@ describe("config schema", () => {
           { id: "typecheck", index: 3 },
         ],
       },
-      progressPath: path.join(repoDir, ".aiq", "progress.json"),
+      progressPath: path.join(repoDir, ".qube", "aiq", "progress.json"),
       progressSource: "file",
       selectedStages: ["e2e", "lint", "format", "typecheck"],
     });
@@ -87,21 +87,23 @@ describe("config schema", () => {
     );
   });
 
-  it("prefers .aiq/aiq.config.json during ancestor discovery", async () => {
+  it("prefers .qube/aiq/config.json during ancestor discovery", async () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-config-"));
     tempDirs.push(repoDir);
 
+    await mkdir(path.join(repoDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
     await mkdir(path.join(repoDir, "packages", "app"), { recursive: true });
+    await writeFile(path.join(repoDir, ".qube", "aiq", "config.json"), '{"version":1}\n');
     await writeFile(path.join(repoDir, ".aiq", "aiq.config.json"), '{"version":1}\n');
     await writeFile(path.join(repoDir, "aiq.config.json"), '{"version":1}\n');
 
     const discovered = await findAiqConfigFile(path.join(repoDir, "packages", "app"));
 
-    expect(discovered).toBe(path.join(repoDir, ".aiq", "aiq.config.json"));
+    expect(discovered).toBe(path.join(repoDir, ".qube", "aiq", "config.json"));
   });
 
-  it("discovers progress state from ancestor .aiq directory", async () => {
+  it("discovers legacy progress state from ancestor .aiq directory", async () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-progress-"));
     tempDirs.push(repoDir);
 
@@ -122,9 +124,9 @@ describe("config schema", () => {
 
     expect(result).toEqual({
       configCreated: true,
-      configPath: path.join(repoDir, ".aiq", "aiq.config.json"),
+      configPath: path.join(repoDir, ".qube", "aiq", "config.json"),
       progressCreated: true,
-      progressPath: path.join(repoDir, ".aiq", "progress.json"),
+      progressPath: path.join(repoDir, ".qube", "aiq", "progress.json"),
     });
     expect(JSON.parse(await readFile(result.configPath, "utf8"))).toEqual({ version: 1 });
     expect(JSON.parse(await readFile(result.progressPath, "utf8"))).toEqual(defaultProgressState);
@@ -134,8 +136,8 @@ describe("config schema", () => {
     const repoDir = await mkdtemp(path.join(os.tmpdir(), "aiq-init-invalid-config-"));
     tempDirs.push(repoDir);
 
-    await mkdir(path.join(repoDir, ".aiq"), { recursive: true });
-    await writeFile(path.join(repoDir, ".aiq", "aiq.config.json"), '{"version":1,}\n');
+    await mkdir(path.join(repoDir, ".qube", "aiq"), { recursive: true });
+    await writeFile(path.join(repoDir, ".qube", "aiq", "config.json"), '{"version":1,}\n');
 
     await expect(initializeAiqProjectConfig(repoDir)).rejects.toThrowError("Failed to parse");
   });

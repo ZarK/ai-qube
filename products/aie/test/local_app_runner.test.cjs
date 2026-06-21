@@ -7,7 +7,8 @@ const { join, resolve } = require('node:path');
 
 function repo() {
   const root = mkdtempSync(join(tmpdir(), 'aie-runner-'));
-  writeFileSync(join(root, 'aie.config.json'), JSON.stringify({
+  mkdirSync(join(root, '.qube', 'aie'), { recursive: true });
+  writeFileSync(join(root, '.qube', 'aie', 'config.json'), JSON.stringify({
     version: 1,
     providers: {
       work: { kind: 'github' },
@@ -38,9 +39,9 @@ describe('local app runner service', () => {
     assert.equal(plan.cwd, resolve(root, 'apps/web'));
     assert.equal(plan.detached, true);
     assert.equal(plan.windowsHide, true);
-    assert.equal(paths.metadataPath, join(root, '.aie', 'runs', 'ui-audit', 'metadata.json'));
-    assert.equal(paths.stdoutPath, join(root, '.aie', 'runs', 'ui-audit', 'stdout.log'));
-    assert.equal(paths.stderrPath, join(root, '.aie', 'runs', 'ui-audit', 'stderr.log'));
+    assert.equal(paths.metadataPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'metadata.json'));
+    assert.equal(paths.stdoutPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stdout.log'));
+    assert.equal(paths.stderrPath, join(root, '.qube', 'aie', 'runs', 'ui-audit', 'stderr.log'));
   });
 
   it('plans start without launching and reports persisted current-process status', async () => {

@@ -46,7 +46,7 @@ export function getDesiredLabels(config: Config): LabelSpec[] {
   for (let i = 0; i < families.length; i++) {
     for (const name of families[i]) {
       if (allNames.has(name)) {
-        throw new Error(`Duplicate label name '${name}' appears in both ${familyNames[i]} and another family. Fix aie.config.json.`);
+        throw new Error(`Duplicate label name '${name}' appears in both ${familyNames[i]} and another family. Fix the selected Executor config.`);
       }
       allNames.add(name);
     }

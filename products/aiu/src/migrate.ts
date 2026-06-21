@@ -161,7 +161,7 @@ interface ManagedHostPath {
 }
 
 const SEARCH_ROOTS = Object.freeze([".opencode", ".agents", "plugins", ".claude", ".codex", "scripts", ".umpire"]);
-const SEARCH_FILES = Object.freeze(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "aiu.config.json", "AGENTS.md", "CLAUDE.md", "README.md"]);
+const SEARCH_FILES = Object.freeze(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "aiu.config.json", ".qube/aiu/config.json", "AGENTS.md", "CLAUDE.md", "README.md"]);
 const MANIFEST_FILE_NAMES = new Set(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock"]);
 const RECURSIVE_SCAN_IGNORES = new Set([".git", "node_modules", "dist", "coverage", ".turbo", ".next", ".cache"]);
 const LOCAL_CHECKOUT_PATTERN = /(?:file:|link:|workspace:|(?:\.\.\/)+)[:./\\\w-]*(?:ai-umpire|@tjalve\/aiu)|(?:^|["'\s])\/[^"'\s]*(?:ai-umpire|@tjalve\/aiu)(?:\/|["'\s]|$)/i;
@@ -280,10 +280,10 @@ export function planAiuMigration(options: AiuMigrationOptions = {}): AiuMigratio
     filesToUpdate: Object.freeze(filesToUpdate),
     filesToPreserve: Object.freeze(filesToPreserve),
     customizationPoints: Object.freeze([
-      "aiu.config.json trustedStateCommands argv arrays",
+      ".qube/aiu/config.json trustedStateCommands argv arrays",
       "host trust settings outside package-managed files",
       "prompt text outside package-managed sections",
-      ".umpire/ durable state",
+      "legacy .umpire/ durable state",
     ]),
     conflicts: Object.freeze(conflicts),
     warnings: Object.freeze(conflicts.map((finding) => finding.reason)),
@@ -291,7 +291,7 @@ export function planAiuMigration(options: AiuMigrationOptions = {}): AiuMigratio
       stateDir,
       exists: existsSync(path.resolve(repoRoot, stateDir)),
       action: "preserve" as const,
-      reason: "Migration preserves durable continuation state and does not delete .umpire data.",
+      reason: "Migration preserves durable continuation state and does not delete legacy .umpire data.",
     }),
     stateMigrations: Object.freeze(stateMigrations),
     requiredConfirmations: Object.freeze([
@@ -762,7 +762,7 @@ function findExistingConfig(repoRoot: string, configPath: string): AiuMigrationF
   return [{
     relativePath: relativeToRepo(repoRoot, configPath),
     category: "existing-config",
-    reason: "Existing aiu.config.json is preserved and future apply steps should merge rather than replace repository policy.",
+    reason: "Existing AIU config is preserved and future apply steps should merge rather than replace repository policy.",
     confidence: "high",
     fingerprint: fileFingerprint(configPath),
   }];
@@ -1010,7 +1010,7 @@ function applyConfig(
       conflicted.push(applyAction(relativePath, "conflict", "package-config", `Config could not be written: ${writeError}`));
       return;
     }
-    changed.push(applyAction(relativePath, "create", "package-config", "Created package-backed aiu.config.json defaults."));
+    changed.push(applyAction(relativePath, "create", "package-config", "Created package-backed AIU config defaults."));
     return;
   }
   if (existing.error !== undefined) {
@@ -1130,7 +1130,7 @@ function isConfirmedCleanupCandidate(finding: AiuMigrationFinding): boolean {
     && finding.sourceCategory !== undefined
     && REMOVABLE_CLEANUP_SOURCE_CATEGORIES.has(finding.sourceCategory)
     && !MANIFEST_FILE_NAMES.has(path.basename(finding.relativePath))
-    && !["AGENTS.md", "CLAUDE.md", "README.md", "aiu.config.json"].includes(finding.relativePath);
+    && !["AGENTS.md", "CLAUDE.md", "README.md", "aiu.config.json", ".qube/aiu/config.json"].includes(finding.relativePath);
 }
 
 function cleanupCandidateConfirmed(finding: AiuMigrationFinding, confirmations: ReadonlySet<string>): boolean {

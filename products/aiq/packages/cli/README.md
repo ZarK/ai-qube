@@ -30,7 +30,7 @@ pnpm exec aiq evidence --format json
 ```
 
 `aiq` is the configured project gate. It looks for a supported project in the
-current directory, initializes `.aiq/aiq.config.json` and `.aiq/progress.json`
+current directory, initializes `.qube/aiq/config.json` and `.qube/aiq/progress.json`
 when it can safely infer inputs, and runs every stage from `0` through the
 persisted `current_stage`.
 
@@ -100,7 +100,7 @@ aiq run src --stage typecheck
 ```
 
 - Default `aiq`, `run`, `plan`, and `doctor`: use cumulative stages
-  `0..current_stage` when `.aiq/progress.json` exists.
+  `0..current_stage` when `.qube/aiq/progress.json` exists.
 - `--up-to N`: ignore persisted progress and run every stage from `0` through
   `N`.
 - `--only N`: run one numeric stage.

@@ -26,7 +26,7 @@ export function createInitPlan(input: {
 }): InitPlan {
   const target = resolve(input.target && input.target.length > 0 ? input.target : ".");
   const config = input.loadedConfig.config;
-  const stateDir = config.paths?.stateDir ?? ".bootstrap";
+  const stateDir = config.paths?.stateDir ?? ".qube/aib";
   const docsDir = config.paths?.docsDir ?? "docs";
   const specPath = config.paths?.specPath ?? `${docsDir}/spec.md`;
   const milestonesDir = config.paths?.milestonesDir ?? `${docsDir}/milestones`;

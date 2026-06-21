@@ -23,14 +23,14 @@ export function buildWatchReplanPaths(
   const replanPaths = new Set<string>();
   if (configPath === undefined) {
     replanPaths.add(path.resolve(cwd, "aiq.config.json"));
-    replanPaths.add(path.resolve(cwd, ".aiq", "aiq.config.json"));
+    replanPaths.add(path.resolve(cwd, ".qube", "aiq", "config.json"));
   } else {
     replanPaths.add(path.resolve(cwd, configPath));
   }
   if (progressPath !== undefined) {
     replanPaths.add(path.resolve(cwd, progressPath));
   } else if (watchProgressPath) {
-    replanPaths.add(path.resolve(cwd, ".aiq", "progress.json"));
+    replanPaths.add(path.resolve(cwd, ".qube", "aiq", "progress.json"));
   }
   if (filesFromPath !== undefined) {
     replanPaths.add(path.resolve(cwd, filesFromPath));
@@ -87,13 +87,13 @@ export function buildWatchTargets(
     addWatchTarget(targets, cwd, configPath);
   } else {
     addWatchTarget(targets, cwd, path.join(cwd, "aiq.config.json"));
-    addWatchTarget(targets, cwd, path.join(cwd, ".aiq", "aiq.config.json"));
+    addWatchTarget(targets, cwd, path.join(cwd, ".qube", "aiq", "config.json"));
   }
 
   if (progressPath !== undefined) {
     addWatchTarget(targets, cwd, progressPath);
   } else if (watchProgressPath) {
-    addWatchTarget(targets, cwd, path.join(cwd, ".aiq", "progress.json"));
+    addWatchTarget(targets, cwd, path.join(cwd, ".qube", "aiq", "progress.json"));
   }
 
   return [...targets.entries()]

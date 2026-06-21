@@ -13,6 +13,7 @@ function makeGitRepo() {
   execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.email', 'executor@example.invalid'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['config', 'user.name', 'Executor Test'], { cwd: repo, stdio: 'ignore' });
+  mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
   writeFileSync(join(repo, 'README.md'), 'fixture\n');
   execFileSync('git', ['add', 'README.md'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
@@ -42,9 +43,9 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     assert.equal(result.dryRun, true);
     assert.deepEqual(result.selectedTools, ['opencode']);
-    assert.deepEqual(result.actions.map(action => action.path), ['aie.config.json', 'AGENTS.md', opencodeCommandPath('make-it-so.md')]);
+    assert.deepEqual(result.actions.map(action => action.path), [join('.qube', 'aie', 'config.json'), 'AGENTS.md', opencodeCommandPath('make-it-so.md')]);
     assert.equal(result.actions.every(action => action.status === 'planned'), true);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
   });
 
@@ -74,7 +75,7 @@ describe('init service', () => {
     assert.match(command, /configured gates cannot run/);
     assert.match(agents, /Configured review agents: comfyrabbitai/);
     assert.match(agents, /pr-review-wait/);
-    const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.version, 1);
     assert.equal(config.providers.work.kind, 'github');
     assert.equal(config.providers.repository.kind, 'local-git');
@@ -103,7 +104,7 @@ describe('init service', () => {
 
   it('blocks unknown config fields unless force replaces with current shape', async () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify({ version: 1, customPolicy: { keep: true } }, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify({ version: 1, customPolicy: { keep: true } }, null, 2)}\n`);
 
     const blocked = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
     assert.equal(blocked.ok, false);
@@ -112,7 +113,7 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
 
     assert.equal(result.ok, true);
-    const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.customPolicy, undefined);
     assert.deepEqual(config.policy.labels.statuses, ['S-Ready', 'S-InProgress', 'S-Blocked', 'S-Blocking']);
   });
@@ -123,7 +124,7 @@ describe('init service', () => {
     config.policy.milestoneOrdering = { enabled: true, missingAssignment: 'warn' };
     config.policy.instructions = { namingRules: true };
     config.policy.supplyChain = { packageAgeDays: 8 };
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify({
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify({
       version: config.version,
       providers: config.providers,
       policy: config.policy,
@@ -132,7 +133,7 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
 
     assert.equal(result.ok, true);
-    const written = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const written = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(written.policy.milestoneOrdering.enabled, true);
     assert.equal(written.policy.milestoneOrdering.missingAssignment, 'warn');
     assert.deepEqual(written.policy.milestoneOrdering.order, []);
@@ -147,7 +148,7 @@ describe('init service', () => {
 
   it('replaces old flat safety toggles under force instead of migrating unreleased shapes', async () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify({
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify({
       version: 1,
       promptInjectionWarning: false,
       noCreditWarning: false,
@@ -156,7 +157,7 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
 
     assert.equal(result.ok, true);
-    const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.promptInjectionWarning, undefined);
     assert.equal(config.noCreditWarning, undefined);
     assert.equal(config.policy.instructions.promptInjectionWarning, true);
@@ -171,12 +172,12 @@ describe('init service', () => {
     config.policy.lifecycle.assignOnStart = false;
     config.policy.lifecycle.commentOnStart = false;
     config.policy.reviews.agents = ['review-bot'];
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: true, cwd: repo });
 
     assert.equal(result.ok, true);
-    const written = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const written = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(written.policy.branch.baseRemote, 'upstream');
     assert.equal(written.policy.branch.baseBranch, 'develop');
     assert.equal(written.policy.lifecycle.assignOnStart, false);
@@ -201,7 +202,7 @@ describe('init service', () => {
     config.policy.milestoneOrdering = { enabled: true, order: ['Alpha', 'Beta'], missingAssignment: 'warn' };
     config.policy.instructions = { ...config.policy.instructions, namingRules: true };
     config.policy.supplyChain = { ...config.policy.supplyChain, pinCiActions: false, packageAgeDays: 11, highRiskPackageAgeDays: 22 };
-    writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
 
     const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
 
@@ -235,7 +236,7 @@ describe('init service', () => {
     assert.equal(planned.ok, true);
     assert.equal(planned.policy.opencodeCommandAlias, true);
     assert.deepEqual(planned.actions.map(action => action.path), [
-      'aie.config.json',
+      join('.qube', 'aie', 'config.json'),
       'AGENTS.md',
       'CLAUDE.md',
       opencodeCommandPath('make-it-so.md'),
@@ -407,7 +408,7 @@ describe('init service', () => {
     assert.equal(result.ok, true);
     assert.equal(result.policy.namingRules, true);
     assert.equal(result.policy.milestoneOrdering, true);
-    const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.policy.branch.baseBranch, 'trunk');
     assert.equal(config.policy.branch.baseRemote, 'upstream');
     assert.equal(config.policy.instructions.namingRules, true);
@@ -552,17 +553,17 @@ describe('init service', () => {
 
   it('labels forced malformed config rewrites as config updates', async () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, 'aie.config.json'), '{broken');
+    writeFileSync(join(repo, '.qube/aie/config.json'), '{broken');
 
     const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: true, cwd: repo });
 
     assert.equal(result.ok, true);
-    assert.equal(result.actions.find(action => action.path === 'aie.config.json').operation, 'update-config');
+    assert.equal(result.actions.find(action => action.path === join('.qube', 'aie', 'config.json')).operation, 'update-config');
   });
 
   it('preserves requested policy summaries in blocked init plans', async () => {
     const repo = makeGitRepo();
-    writeFileSync(join(repo, 'aie.config.json'), '{broken');
+    writeFileSync(join(repo, '.qube/aie/config.json'), '{broken');
     const policy = { instructions: { namingRules: true }, milestoneOrdering: { enabled: true, missingAssignment: 'block' } };
 
     const blockedConfig = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy });
@@ -677,7 +678,7 @@ describe('init command metadata', () => {
     assert.equal(JSON.parse(jsonWithTool.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
     assert.equal(jsonWithListFlag.status, 0);
     assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
   it('emits stable JSON dry-run output from the CLI', () => {
@@ -692,7 +693,7 @@ describe('init command metadata', () => {
     assert.deepEqual(parsed.selectedTools, ['opencode']);
     assert.equal(parsed.policy.namingRules, false);
     assert.equal(parsed.actions.length, 3);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
   it('runs defaults and yes mode without prompts and writes default policy', () => {
@@ -704,7 +705,7 @@ describe('init command metadata', () => {
     assert.equal(parsed.ok, true);
     assert.equal(parsed.policy.namingRules, false);
     assert.equal(parsed.policy.supplyChainSafety, true);
-    const config = JSON.parse(readFileSync(join(repo, 'aie.config.json'), 'utf8'));
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
     assert.equal(config.policy.branch.noWorktree, true);
     assert.equal(config.policy.branch.blockOnOpenPRs, true);
     assert.equal(config.policy.branch.requireBaseBranchFreshness, true);
@@ -745,7 +746,7 @@ describe('init command metadata', () => {
     assert.equal(parsed.policy.opencodeCommandAlias, true);
     assert.equal(parsed.actions.some((action) => action.path === '.opencode/commands/makeitso.md'), true);
     assert.equal(parsed.actions.some((action) => action.path === 'CLAUDE.md'), true);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
   it('reports unsupported init policy values before mutation', () => {
@@ -759,7 +760,7 @@ describe('init command metadata', () => {
     assert.match(parsed.error, /Failed to parse init arguments/);
     assert.notEqual(shortJson.status, 0);
     assert.equal(JSON.parse(shortJson.stdout).ok, false);
-    assert.equal(existsSync(join(repo, 'aie.config.json')), false);
+    assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
   it('publishes non-interactive negative policy flags in schema metadata', () => {

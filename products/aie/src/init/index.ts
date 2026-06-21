@@ -1,5 +1,5 @@
 import { join, relative, resolve } from 'path';
-import { type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
+import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { parseInitTool, uniqueTools } from '../init_content.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
 import { renderInitFiles } from '../init_renderer.js';
@@ -233,7 +233,7 @@ function makeAction(input: Omit<InitAction, 'status'> & { status?: InitActionSta
 }
 
 async function planConfig(repoRoot: string, force: boolean, warnings: string[], policy: InitPolicyOptions | undefined): Promise<{ action: InitAction; write?: PlannedWrite; config: Config }> {
-  const configPath = join(repoRoot, 'aie.config.json');
+  const configPath = join(repoRoot, AIE_CONFIG_FILENAME);
   const configRead = await readConfig(configPath);
   const fallbackConfig = configFromPolicy(policy);
   if (configRead.parseError) {
@@ -342,7 +342,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   const writes: PlannedWrite[] = [];
 
   if (selectedTools.length === 0) {
-    const configPath = join(repoRoot ?? targetPath, 'aie.config.json');
+    const configPath = join(repoRoot ?? targetPath, AIE_CONFIG_FILENAME);
     return {
       result: {
         ok: false,
@@ -368,7 +368,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   }
 
   if (!repoRoot) {
-    const configPath = join(targetPath, 'aie.config.json');
+    const configPath = join(targetPath, AIE_CONFIG_FILENAME);
     return {
       result: {
         ok: false,
@@ -439,7 +439,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       repoRoot,
       selectedTools,
       policy: policySummary(config),
-      configPath: join(repoRoot, 'aie.config.json'),
+        configPath: join(repoRoot, AIE_CONFIG_FILENAME),
       actions,
       legacy,
       plannedChanges: actions.filter(action => action.status === 'planned').map(actionText),

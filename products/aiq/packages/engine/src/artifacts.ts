@@ -3,7 +3,7 @@ import path from "node:path";
 
 import type { RunPlan, RunResult, RunTelemetryEvent } from "./contracts.js";
 
-export const defaultOutDir = ".aiq/out";
+export const defaultOutDir = ".qube/aiq/out";
 
 export function resolveArtifactOutDir(root: string, outDir = defaultOutDir): string {
   return path.resolve(root, outDir);
