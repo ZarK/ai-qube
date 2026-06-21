@@ -139,7 +139,7 @@ describe("benchmark harness", () => {
     tempDirs.push(outDir);
 
     await expect(
-      access(path.join(benchmarkTypeScriptLargeFixturePath, ".aiq")),
+      access(path.join(benchmarkTypeScriptLargeFixturePath, ".qube")),
     ).rejects.toMatchObject({
       code: "ENOENT",
     });
@@ -152,7 +152,7 @@ describe("benchmark harness", () => {
     });
 
     await expect(
-      access(path.join(benchmarkTypeScriptLargeFixturePath, ".aiq")),
+      access(path.join(benchmarkTypeScriptLargeFixturePath, ".qube")),
     ).rejects.toMatchObject({
       code: "ENOENT",
     });

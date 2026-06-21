@@ -15,7 +15,7 @@ describe("engine foundation", () => {
 
     expect(plan.artifactType).toBe("plan");
     expect(plan.artifactVersion).toBe(1);
-    expect(plan.artifacts.outDir).toBe(path.resolve(process.cwd(), ".aiq/out"));
+    expect(plan.artifacts.outDir).toBe(path.resolve(process.cwd(), ".qube/aiq/out"));
     expect(plan.context).toBe("cli");
     expect(plan.engineVersion).toBe("0.0.0");
     expect(plan.input.files).toEqual([fixtureFile]);

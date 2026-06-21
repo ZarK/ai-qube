@@ -264,7 +264,7 @@ export async function buildAiqOpenCodeHooks(
     tool: {
       aiq_check_files: tool({
         description:
-          "Run AIQ checks for explicit files. Defaults to current-stage cumulative stages when .aiq/progress.json is present.",
+          "Run AIQ checks for explicit files. Defaults to current-stage cumulative stages when .qube/aiq/progress.json is present.",
         args: {
           files: tool.schema.array(tool.schema.string()).min(1),
           outDir: tool.schema.string().optional(),

@@ -53,10 +53,10 @@ Requirements use stable identifiers (`FR-XX-NNN`) so milestones and issues can r
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-04-001 | Repository policy is stored in a versioned config file, defaulting to `aiu.config.json` or an equivalent documented path. | Required |
+| FR-04-001 | Repository policy is stored in a versioned config file, defaulting to `.qube/aiu/config.json` with legacy `aiu.config.json` discovery for existing repositories. | Required |
 | FR-04-002 | Config includes enabled hosts, host capability overrides, trusted state command descriptors, continuation modes, stop rules, timeouts, cooldowns, state paths, lock paths, log paths, and supply-chain stop policy. | Required |
 | FR-04-003 | Trusted state commands are explicit argv descriptors, not shell strings assembled from untrusted text. | Required |
-| FR-04-004 | Defaults are conservative: no provider mutation by Umpire, no continuation through safety blocks, no background scheduling, no untrusted prose as authority, and `.umpire/` state paths. | Required |
+| FR-04-004 | Defaults are conservative: no provider mutation by Umpire, no continuation through safety blocks, no background scheduling, no untrusted prose as authority, and `.qube/aiu/` state paths. | Required |
 | FR-04-005 | `aiu init` creates a dry-runnable plan before writing host files or config changes. | Required |
 | FR-04-006 | Init supports OpenCode, Codex, and Claude Code host targets through capability profiles, preserves unrelated user config, and reports conflicts instead of silently overwriting. | Required |
 | FR-04-007 | Init can run non-interactively when flags/defaults provide every prompt answer. | Required |
@@ -101,7 +101,7 @@ M3.2 wires the `@tjalve/aiu/opencode` runtime around trusted state adapters, the
 
 M3.3 wires `aiu hook-stop --tool codex|claude-code` into the same trusted-state decision runtime. Stop hooks parse host payloads, normalize host-session state, load configured trusted state commands, render concrete prompts, and emit clean host JSON. They block only when trusted state loads successfully, the decision is `continue` or safe `repair`, the prompt is concrete, and `hosts.stopHookBlocking.<tool>` is explicitly enabled; all unavailable, malformed, stale, unknown, unsupported, blocked, wait, stop, human-question, and safety-block states allow the host to stop.
 
-M3.4 adds durable continuation state for host integrations. OpenCode continuation serializes host events with `.umpire/` locks, recovers stale locks after the configured host timeout, persists prompt ownership, selected target, mode, fingerprints, timestamps, and source summaries, suppresses duplicate or competing prompts, and writes bounded redacted continuation logs. `aiu status --json` exposes the configured state, lock, and log paths plus any persisted continuation state.
+M3.4 adds durable continuation state for host integrations. OpenCode continuation serializes host events with `.qube/aiu/` locks, recovers stale locks after the configured host timeout, persists prompt ownership, selected target, mode, fingerprints, timestamps, and source summaries, suppresses duplicate or competing prompts, and writes bounded redacted continuation logs. `aiu status --json` exposes the configured state, lock, and log paths plus any persisted continuation state.
 
 M3.5 closes the host integration milestone with explicit diagnostics and schema contracts. `aiu doctor` now reports package-backed host entrypoints in addition to managed host file, state path, trusted command, stop-hook, and capability-policy diagnostics. `aiu schema --json` exposes hook-stop output kinds, continuation ownership/lock/log field shapes, reason codes, status paths, and stable doctor diagnostic kinds so agents can validate M3 integrations without live host runtimes.
 
@@ -129,7 +129,7 @@ M3.5 closes the host integration milestone with explicit diagnostics and schema 
 | FR-08-004 | Umpire can continue quality work when configured trusted quality state reports a concrete failing stage or finding group and no supply-chain or human policy block exists. | Required |
 | FR-08-005 | Idle prompts must not ask agents to perform broad, vague, unrelated, or dependency/tooling work without explicit repository policy and required approval. | Required |
 
-M4.1 adds the durable whip task management surface. Whip state is stored in the configured `whip.statePath` (`.umpire/whip.json` by default), validated on read, and managed through `aiu whip list`, `aiu whip status --json`, `aiu whip add`, `aiu whip cancel`, and `aiu whip complete`. Mutating commands support `--dry-run`, write only local whip state, require explicit completion evidence, and preserve the rule that prompt delivery alone never completes a task.
+M4.1 adds the durable whip task management surface. Whip state is stored in the configured `whip.statePath` (`.qube/aiu/whip.json` by default), validated on read, and managed through `aiu whip list`, `aiu whip status --json`, `aiu whip add`, `aiu whip cancel`, and `aiu whip complete`. Mutating commands support `--dry-run`, write only local whip state, require explicit completion evidence, and preserve the rule that prompt delivery alone never completes a task.
 
 M4.2 adds quality idle continuation from structured trusted state. The `quality` state kind now carries normalized stages, findings, affected paths, failing checks, configured next/rerun commands, selected targets, and human or supply-chain approval blocks. Umpire selects one failing stage or finding only when `quality.enabled` is true and higher-priority work is idle; prompts name the trusted source, target, affected paths, next command, rerun check, and expected evidence. Agent narration, logs, issue prose, comments, and checklist edits are not accepted as passing quality evidence.
 
@@ -161,5 +161,5 @@ M4.5 closes the milestone by making idle modes observable through read-only diag
 | FR-10-005 | Umpire redacts token-like values in logs, debug output, errors, and rendered diagnostics where practical. | Required |
 | FR-10-006 | `aiu status` shows trusted input availability, continuation decision, selected mode, selected target, stop reasons, repair action, and state freshness. | Required |
 | FR-10-007 | Logs include decision ids, prompt fingerprints, source command summaries, host event type, selected session, reason codes, and elapsed timings without leaking secrets. | Required |
-| FR-10-008 | State, locks, and logs live under `.umpire/` by default, use configurable paths, and are bounded or rotated where long-running sessions can grow logs. | Required |
+| FR-10-008 | State, locks, and logs live under `.qube/aiu/` by default, use configurable paths, and are bounded or rotated where long-running sessions can grow logs. | Required |
 | FR-10-009 | Umpire must not ship fake behavior: no placeholder commands, stub providers, no-op implementations, or tests that pass without validating real behavior. | Required |

@@ -74,7 +74,7 @@ Whip tasks include:
 - completion evidence
 - cancellation reason
 
-Task state is stored under `.umpire/whip.json` by default and validated on read.
+Task state is stored under `.qube/aiu/whip.json` by default and validated on read.
 
 Repositories can disable idle whip prompts with committed config:
 
@@ -87,7 +87,7 @@ Repositories can disable idle whip prompts with committed config:
 }
 ```
 
-When disabled, existing `.umpire/whip.json` state is preserved and no whip prompt is enqueued. Repositories can replace package defaults with `whip.usePackageDefaults: false` plus a repo-owned `whip.tasks` list. Prompt delivery alone never completes a task; completion requires explicit task state transition evidence.
+When disabled, existing `.qube/aiu/whip.json` state is preserved and legacy `.umpire/whip.json` state remains a migration input rather than being deleted. Repositories can replace package defaults with `whip.usePackageDefaults: false` plus a repo-owned `whip.tasks` list. Prompt delivery alone never completes a task; completion requires explicit task state transition evidence.
 
 ### 1.2 - Task Commands
 
@@ -242,7 +242,7 @@ Tests cover:
 
 Add durable task state, commands, validation, dry-run support, JSON output, and task fixtures.
 
-Status: implemented by the shared `whip` module and `aiu whip` command. Whip state is read from the configured `whip.statePath`, defaults to `.umpire/whip.json`, validates schema version and task records on read, and exposes stable JSON reports for list/status/add/cancel/complete. Mutating commands support `--dry-run`, write only local whip state, preserve disabled state without deleting tasks, reject unknown ids and invalid transitions, require explicit completion evidence, and surface stale prompted ownership in status output. Prompt delivery remains non-completing.
+Status: implemented by the shared `whip` module and `aiu whip` command. Whip state is read from the configured `whip.statePath`, defaults to `.qube/aiu/whip.json`, validates schema version and task records on read, and exposes stable JSON reports for list/status/add/cancel/complete. Mutating commands support `--dry-run`, write only local whip state, preserve disabled state without deleting tasks, reject unknown ids and invalid transitions, require explicit completion evidence, and surface stale prompted ownership in status output. Prompt delivery remains non-completing.
 
 ### M4.2 - Implement Quality Idle Continuation
 

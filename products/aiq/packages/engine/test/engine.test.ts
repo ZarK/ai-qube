@@ -43,7 +43,7 @@ describe("engine foundation", () => {
     expect(request.cwd).toBe(process.cwd());
     expect(request.manifest.root).toBe(process.cwd());
     expect(request.manifest.summary.fileCount).toBe(1);
-    expect(request.outDir).toBe(path.resolve(process.cwd(), ".aiq/out"));
+    expect(request.outDir).toBe(path.resolve(process.cwd(), ".qube/aiq/out"));
     expect(request.selection).toEqual({
       stages: ["lint"],
       profile: "fast",

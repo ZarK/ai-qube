@@ -49,6 +49,11 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /Usage:\n  qube <command> \[flags\]/);
     assert.match(help.stdout, /Commands:/);
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
+    assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
+    assert.match(help.stdout, /queue\s+Show the Executor issue queue\./);
+    assert.match(help.stdout, /doctor\s+Run Quality Control diagnostics\./);
+    assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
+    assert.match(help.stdout, /status\s+Show Umpire continuation status\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
 
     const runHelp = runCli(["run", "--help"]);
@@ -62,11 +67,21 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.package.name, "@tjalve/qube");
     assert.deepEqual(
       parsed.commands.map(command => command.name).sort(),
-      ["aib", "aie", "aiq", "aiu", "components", "run", "schema"]
+      ["aib", "aie", "aiq", "aiu", "check", "components", "doctor", "idea", "queue", "run", "schema", "status"]
     );
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
+    );
+    assert.deepEqual(
+      parsed.sections.directCommands.map(command => [command.command, command.component]),
+      [
+        ["idea", "aib"],
+        ["queue", "aie"],
+        ["doctor", "aiq"],
+        ["check", "aiq"],
+        ["status", "aiu"]
+      ]
     );
   });
 
@@ -111,6 +126,64 @@ describe("qube composer CLI", () => {
     assert.equal(helpDispatch.exitCode, 0);
     assert.equal(helpDispatch.dispatch?.component.command, "aib");
     assert.deepEqual(helpDispatch.dispatch?.args, ["--help"]);
+  });
+
+  it("maps common QUBE commands to component commands", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-direct-cwd-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-direct-package-root-"));
+    const binDir = path.join(packageRoot, "node_modules", ".bin");
+    await mkdir(binDir, { recursive: true });
+
+    for (const component of ["aib", "aie", "aiq", "aiu"]) {
+      const command = process.platform === "win32" ? `${component}.cmd` : component;
+      const commandPath = path.join(binDir, command);
+      await writeFile(commandPath, process.platform === "win32" ? `@echo off\r\necho ${component} %*\r\n` : `#!/usr/bin/env sh\necho ${component} "$@"\n`);
+      const packageDir = path.join(packageRoot, "node_modules", "@tjalve", component);
+      await mkdir(packageDir, { recursive: true });
+      await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: `@tjalve/${component}`, version: findQubeComponent(component).packageVersion })}\n`);
+      if (process.platform !== "win32") await chmod(commandPath, 0o755);
+    }
+
+    const env = { PATH: process.env.PATH ?? "", OS: process.env.OS };
+    const cases = [
+      {
+        input: ["idea", "Ship a local notes CLI", "--json"],
+        component: "aib",
+        args: ["init", ".", "--idea", "Ship a local notes CLI", "--json"]
+      },
+      {
+        input: ["idea", "--json"],
+        component: "aib",
+        args: ["init", ".", "--json"]
+      },
+      {
+        input: ["queue", "--json"],
+        component: "aie",
+        args: ["queue", "--json"]
+      },
+      {
+        input: ["doctor", "--json"],
+        component: "aiq",
+        args: ["doctor", "--format", "json"]
+      },
+      {
+        input: ["check", "src", "--json"],
+        component: "aiq",
+        args: ["check", "src", "--format", "json"]
+      },
+      {
+        input: ["status", "--json"],
+        component: "aiu",
+        args: ["status", "--json"]
+      }
+    ];
+
+    for (const testCase of cases) {
+      const planned = planQubeCli(testCase.input, { cwd, env, packageRoot });
+      assert.equal(planned.exitCode, 0);
+      assert.equal(planned.dispatch?.component.command, testCase.component);
+      assert.deepEqual(planned.dispatch?.args, testCase.args);
+    }
   });
 
   it("prefers install-scoped component binaries over ambient PATH", async () => {
@@ -215,6 +288,16 @@ describe("qube composer CLI", () => {
     });
     assert.equal(help.status, 0);
     assert.match(help.stdout, /dispatched --help/);
+
+    const ideaWithoutText = runCli(["idea", "--json"], {
+      env: {
+        PATH: process.env.PATH ?? "",
+        QUBE_TEST_PACKAGE_ROOT: packageRoot,
+        OS: process.env.OS
+      }
+    });
+    assert.equal(ideaWithoutText.status, 0);
+    assert.match(ideaWithoutText.stdout, /dispatched init \. --json/);
   });
 
   it("returns an actionable error when a component command is unavailable", () => {

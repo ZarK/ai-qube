@@ -181,7 +181,7 @@ Instruction files must not be silently overwritten.
 
 M4 may create or update:
 
-- `aie.config.json`
+- `.qube/aie/config.json`
 - `AGENTS.md`
 - `CLAUDE.md`
 - `.opencode/commands/make-it-so.md`

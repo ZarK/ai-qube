@@ -34,10 +34,19 @@ qube components
 ```sh
 qube --help
 qube components
+qube idea "Ship a local notes CLI"
+qube queue --json
+qube doctor --json
+qube check src --json
+qube status --json
+```
+
+Use `qube run` when you need a component command that does not have a short
+QUBE command yet:
+
+```sh
 qube run aib -- init . --idea "Ship a local notes CLI" --json
-qube run aie -- queue --json
 qube run aiq -- doctor --format json
-qube run aiu -- status --json
 ```
 
 The direct component commands remain the right entry point when you only need one

@@ -123,7 +123,7 @@ The main entrypoint.
 
 Responsibilities:
 
-* initialize `.bootstrap/session.yaml`
+* initialize `.qube/aib/session.json`
 * classify the project idea
 * start the discovery interview
 * continue until enough certainty exists for a first dry spec
@@ -168,15 +168,15 @@ Do not rely on raw conversation alone. Keep structured state.
 I’d add something like:
 
 ```text
-.bootstrap/
-  session.yaml
+.qube/aib/
+  session.json
   discovery-log.md
   assumptions.md
   decisions/
     ADR-0001-*.md
 ```
 
-`session.yaml` should track:
+`session.json` should track:
 
 * project idea
 * name candidates

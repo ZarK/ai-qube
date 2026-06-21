@@ -8,8 +8,8 @@ Steps:
 1. read `docs/spec.md`
 2. verify that each major section is present and reviewable
 3. ask for explicit acceptance section by section if acceptance is still ambiguous
-4. once the user accepts the spec, update `.bootstrap/session.yaml` so `spec_status: accepted`
-5. record any final assumptions or follow-up constraints in `.bootstrap/assumptions.md`
+4. once the user accepts the spec, update `.qube/aib/session.json` so the spec status is accepted
+5. record any final assumptions or follow-up constraints in `.qube/aib/assumptions.md`
 6. point the workflow to `/generate-milestones`
 
 Do not:
