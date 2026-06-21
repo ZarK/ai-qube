@@ -73,6 +73,11 @@ export interface CliRunResult {
   readonly executedCommand?: string;
 }
 
+export interface DefaultCommandInputOptions {
+  readonly defaultCommand: string;
+  readonly reservedCommands?: readonly string[];
+}
+
 export interface SchemaCommandOptions {
   readonly registry: CommandRegistry | (() => CommandRegistry);
   readonly bin: string;
@@ -189,17 +194,22 @@ export function createCli(options: CliRuntimeOptions): CliRuntime {
 }
 
 export async function runCli(cli: CliRuntime, argv: readonly string[]): Promise<CliRunResult> {
-  const helpRequest = normalizeHelpRequest(argv);
-  if (helpRequest) {
-    return renderHelpResult(cli, helpRequest);
+  const preMatch = matchRuntimeCommand(cli, argv);
+  const isPassthroughMatch = preMatch ? commandAllowsPassthrough(preMatch.command.metadata, preMatch.argv) : false;
+
+  if (!isPassthroughMatch) {
+    const helpRequest = normalizeHelpRequest(argv);
+    if (helpRequest) {
+      return renderHelpResult(cli, helpRequest);
+    }
+
+    const versionRequest = normalizeVersionRequest(argv);
+    if (versionRequest) {
+      return renderVersionResult(cli, versionRequest.json);
+    }
   }
 
-  const versionRequest = normalizeVersionRequest(argv);
-  if (versionRequest) {
-    return renderVersionResult(cli, versionRequest.json);
-  }
-
-  const match = matchRuntimeCommand(cli, argv);
+  const match = preMatch;
   if (!match) {
     const attemptedCommand = trimAtFirstFlag(argv).join(" ");
     const suggestion = suggestCommand(cli.registry, attemptedCommand);
@@ -652,6 +662,21 @@ function validateJsonStdout(stdout: string): string {
   return stdout;
 }
 
+export function normalizeDefaultCommandInput(input: readonly string[], options: DefaultCommandInputOptions): readonly string[] {
+  if (input.length === 0) {
+    return [options.defaultCommand];
+  }
+  if (input.length === 1 && input[0] === "-h") {
+    return ["--help"];
+  }
+  const reserved = new Set(["help", "schema", options.defaultCommand, ...(options.reservedCommands ?? [])]);
+  const first = input[0] ?? "";
+  if (first === "--help" || input.some(isVersionFlag) || reserved.has(first)) {
+    return input;
+  }
+  return [options.defaultCommand, ...input];
+}
+
 function renderHelpResult(cli: CliRuntime, helpRequest: NonNullable<ReturnType<typeof normalizeHelpRequest>>): CliRunResult {
   try {
     return {
@@ -814,6 +839,10 @@ function ensureCommandHandlers(registry: CommandRegistry, commands: readonly Run
 }
 
 function findUnknownFlag(command: CommandMetadata, argv: readonly string[]): string | undefined {
+  if (commandAllowsPassthrough(command, argv)) {
+    return undefined;
+  }
+
   const knownFlags = new Set((command.flags ?? []).flatMap(renderKnownLongFlagNames));
   const knownShortFlags = new Set((command.flags ?? []).map((flag) => flag.short).filter(isString));
   for (const token of argv) {
@@ -886,4 +915,53 @@ function requireNonEmpty(value: string, field: string): void {
 
 function isString(value: string | undefined): value is string {
   return typeof value === "string";
+}
+
+function commandAllowsPassthrough(command: CommandMetadata, argv: readonly string[]): boolean {
+  const extensions = command.extensions;
+  if (!isRecord(extensions)) {
+    return false;
+  }
+  const passthrough = extensions.passthrough;
+  if (passthrough === true) {
+    return true;
+  }
+  if (isRecord(passthrough)) {
+    return countPositionalTokensBeforeFlag(argv) >= readMinArguments(passthrough);
+  }
+  const qubeCli = extensions.qubeCli;
+  if (!isRecord(qubeCli)) {
+    return false;
+  }
+  if (qubeCli.passthrough === true) {
+    return true;
+  }
+  return isRecord(qubeCli.passthrough) && countPositionalTokensBeforeFlag(argv) >= readMinArguments(qubeCli.passthrough);
+}
+
+function readMinArguments(value: Readonly<Record<string, unknown>>): number {
+  const minArguments = value.minArguments;
+  return typeof minArguments === "number" && Number.isInteger(minArguments) && minArguments > 0 ? minArguments : 0;
+}
+
+function countPositionalTokensBeforeFlag(argv: readonly string[]): number {
+  let count = 0;
+  for (const token of argv) {
+    if (token === "--") {
+      continue;
+    }
+    if (token.startsWith("-")) {
+      break;
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function isVersionFlag(value: string): boolean {
+  return value === "--version" || value === "-v";
+}
+
+function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

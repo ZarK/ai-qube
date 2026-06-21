@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli");
 const tempRoots = [];
 
 const fakeComponents = [
@@ -31,6 +32,7 @@ describe("packed QUBE install smoke", () => {
     await mkdir(target);
 
     const qubeTarball = await packPackage(packageRoot, packDir);
+    const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const componentTarballs = new Map();
     for (const component of fakeComponents) {
       componentTarballs.set(component.name, await createFakeComponentTarball(component, root, packDir));
@@ -60,6 +62,7 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
+        `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(target, qubeCliTarball))},`,
         ...fakeComponents.map(component =>
           `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(target, componentTarballs.get(component.name)))},`
         ),
@@ -73,7 +76,7 @@ describe("packed QUBE install smoke", () => {
       ].join("\n")
     );
 
-    await runPnpm(["install", "--ignore-scripts", "--offline"], target);
+    await runPnpm(["install", "--ignore-scripts"], target);
 
     const components = await runPnpm(["exec", "qube", "components", "--json"], target);
     assert.deepEqual(

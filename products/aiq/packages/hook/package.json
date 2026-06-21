@@ -18,7 +18,8 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@tjalve/aiq": "0.2.1"
+    "@tjalve/aiq": "0.2.1",
+    "@tjalve/qube-cli": "0.1.2"
   },
   "repository": {
     "type": "git",

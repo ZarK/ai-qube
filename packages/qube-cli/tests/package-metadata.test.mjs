@@ -101,7 +101,7 @@ describe("package metadata", () => {
       }
     });
     assert.equal(Object.hasOwn(packageJson, "bin"), false);
-    assert.deepEqual(packageJson.files, ["dist"]);
+    assert.deepEqual(packageJson.files, ["dist", "README.md"]);
   });
 
   it("configures pnpm dependency safety gates for the project", async () => {
@@ -122,6 +122,11 @@ describe("package metadata", () => {
 
     assert.match(workflow, /tags:\s*\n\s+- "publish-\*"/);
     assert.match(workflow, /if: startsWith\(github\.ref, 'refs\/tags\/publish-'\)/);
+    assert.match(workflow, /id-token:\s*write/);
+    assert.match(workflow, /environment:\s*npm-publish/);
+    assert.match(workflow, /npm stage publish\b/);
+    assert.doesNotMatch(workflow, /(?:^|\s)npm publish(?:\s|$)/);
+    assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.doesNotMatch(workflow, /refs\/heads\/main/);
     assert.doesNotMatch(workflow, /workflow_dispatch/);
     assert.match(workflow, /persist-credentials: false/);

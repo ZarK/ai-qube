@@ -1,7 +1,11 @@
+import { spawn } from "node:child_process";
 import { existsSync, realpathSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+
+import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
+import { createCommandRegistry } from "@tjalve/qube-cli/registry";
+import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 
 import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
@@ -35,37 +39,104 @@ export interface CommandResolution {
   readonly warning?: string;
 }
 
-const helpText = `${packageName} ${packageVersion}
+const passthroughExtensions = defineExtensions({ passthrough: true });
+const targetedPassthroughExtensions = defineExtensions({ passthrough: { minArguments: 1 } });
 
-${packageDescription}
+const componentsCommand = defineCommand({
+  kind: "command",
+  name: "components",
+  description: "List QUBE component packages and commands.",
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    {
+      description: "List QUBE components.",
+      command: "qube components"
+    },
+    {
+      description: "List QUBE components as JSON.",
+      command: "qube components --json"
+    }
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  }
+});
 
-Usage:
-  qube components [--json]
-  qube run <component> [-- <args...>]
-  qube <component> [args...]
-  qube --version [--json]
+const runCommand = defineCommand({
+  kind: "command",
+  name: "run",
+  description: "Run a QUBE component command with passthrough arguments.",
+  arguments: [
+    defineArgument({
+      name: "component",
+      description: "Component id, command, or package name to run.",
+      required: false
+    }),
+    defineArgument({
+      name: "args",
+      description: "Arguments forwarded to the component command.",
+      multiple: true
+    })
+  ],
+  examples: [
+    {
+      description: "Run AIB status through QUBE.",
+      command: "qube run aib status"
+    },
+    {
+      description: "Forward flags to a component command.",
+      command: "qube run aiq --version"
+    }
+  ],
+  interactions: {
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  extensions: targetedPassthroughExtensions
+});
 
-Components:
-${qubeComponents.map(component => `  ${component.command.padEnd(4)} ${component.packageName.padEnd(13)} ${component.packageVersion.padEnd(7)} ${component.summary}`).join("\n")}
-`;
+const componentCommands = qubeComponents.map(component => defineCommand({
+  kind: "command",
+  name: component.command,
+  description: component.summary,
+  aliases: component.id === component.command ? [] : [component.id],
+  arguments: [
+    defineArgument({
+      name: "args",
+      description: `Arguments forwarded to ${component.command}.`,
+      multiple: true
+    })
+  ],
+  examples: [
+    {
+      description: `Run ${component.command} through QUBE.`,
+      command: `qube ${component.command} --version`
+    }
+  ],
+  interactions: {
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  extensions: passthroughExtensions
+}));
+
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
-  if (args.length === 0 || args[0] === "help" || args[0] === "--help" || args[0] === "-h") {
-    return { exitCode: 0, stdout: helpText, stderr: "" };
-  }
-
-  if (isVersionRequest(args)) {
-    if (args.includes("--json")) {
-      return {
-        exitCode: 0,
-        stdout: `${JSON.stringify({ ok: true, command: "version", package: { name: packageName, version: packageVersion }, version: packageVersion })}\n`,
-        stderr: ""
-      };
-    }
-    return { exitCode: 0, stdout: `${packageVersion}\n`, stderr: "" };
-  }
-
   if (args[0] === "components") {
     if (args.includes("--json")) {
       return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents })}\n`, stderr: "" };
@@ -75,56 +146,15 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
 
   const dispatchInput = args[0] === "run" ? args.slice(1) : args;
   const [componentName, ...componentArgs] = dispatchInput;
-  if (!componentName) {
-    return { exitCode: 2, stdout: "", stderr: "Missing component. Run qube components to list available tools.\n" };
-  }
-
-  const component = findQubeComponent(componentName);
-  if (!component) {
-    return { exitCode: 2, stdout: "", stderr: `Unknown QUBE component: ${componentName}\nRun qube components to list available tools.\n` };
-  }
-
-  const resolution = resolveComponentCommand(component, environment);
-  if (!resolution) {
-    return {
-      exitCode: 4,
-      stdout: "",
-      stderr: `Cannot find ${component.command} for ${component.packageName}@${component.packageVersion}.\nInstall QUBE with its component dependencies or install the matching standalone package version.\n`
-    };
-  }
-  if (resolution.error) {
-    return {
-      exitCode: 4,
-      stdout: "",
-      stderr: `${resolution.error}\n`
-    };
-  }
-
-  return {
-    exitCode: 0,
-    stdout: "",
-    stderr: resolution.warning ? `${resolution.warning}\n` : "",
-    dispatch: {
-      component,
-      commandPath: resolution.commandPath,
-      resolution,
-      args: stripSeparator(componentArgs)
-    }
-  };
+  return planQubeDispatch(componentName, stripSeparator(componentArgs), environment);
 }
 
 export async function runQubeCli(input: readonly string[] = process.argv.slice(2)): Promise<number> {
-  const planned = planQubeCli(input);
-  if (planned.stdout.length > 0) process.stdout.write(planned.stdout);
-  if (planned.stderr.length > 0) process.stderr.write(planned.stderr);
-  if (!planned.dispatch) {
-    process.exitCode = planned.exitCode === 0 ? process.exitCode : planned.exitCode;
-    return planned.exitCode;
-  }
-
-  const exitCode = await dispatchCommand(planned.dispatch);
-  process.exitCode = exitCode === 0 ? process.exitCode : exitCode;
-  return exitCode;
+  const result = await runCli(createQubeCli(defaultEnvironment()), input);
+  if (result.stdout.length > 0) process.stdout.write(result.stdout);
+  if (result.stderr.length > 0) process.stderr.write(result.stderr);
+  process.exitCode = result.exitCode === 0 ? process.exitCode : result.exitCode;
+  return result.exitCode;
 }
 
 export function resolveCommand(command: string, environment: CliEnvironment = defaultEnvironment()): string | undefined {
@@ -173,6 +203,92 @@ export function resolveComponentCommand(component: QubeComponent, environment: C
   };
 }
 
+function createQubeCli(environment: CliEnvironment) {
+  const cli = createCli({
+    bin: "qube",
+    packageName,
+    packageVersion,
+    description: packageDescription,
+    registry: runtimeRegistry,
+    commands: [
+      createRuntimeCommand(componentsCommand, ({ flags }) => {
+        if (flags.json === true) {
+          return { json: { components: qubeComponents } };
+        }
+        return { stdout: renderComponents() };
+      }),
+      createRuntimeCommand(runCommand, ({ args }) => executeQubeDispatch(readString(args.component), readStringArray(args.args), environment)),
+      ...qubeComponents.map((component, index) => createRuntimeCommand(
+        componentCommands[index]!,
+        ({ args }) => executeQubeDispatch(component.command, readStringArray(args.args), environment)
+      )),
+      createSchemaCommand({
+        registry: () => runtimeRegistry,
+        bin: "qube",
+        packageName,
+        packageVersion,
+        sections: {
+          components: qubeComponents
+        }
+      })
+    ]
+  });
+  runtimeRegistry = cli.registry;
+  return cli;
+}
+
+async function executeQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const planned = planQubeDispatch(componentName, componentArgs, environment);
+  if (!planned.dispatch) {
+    return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
+  }
+
+  if (planned.stderr.length > 0) {
+    process.stderr.write(planned.stderr);
+  }
+  const exitCode = await dispatchCommand(planned.dispatch);
+  return { exitCode };
+}
+
+function planQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): CliExecution {
+  if (!componentName) {
+    return { exitCode: 2, stdout: "", stderr: "Missing component. Run qube components to list available tools.\n" };
+  }
+
+  const component = findQubeComponent(componentName);
+  if (!component) {
+    return { exitCode: 2, stdout: "", stderr: `Unknown QUBE component: ${componentName}\nRun qube components to list available tools.\n` };
+  }
+
+  const resolution = resolveComponentCommand(component, environment);
+  if (!resolution) {
+    return {
+      exitCode: 4,
+      stdout: "",
+      stderr: `Cannot find ${component.command} for ${component.packageName}@${component.packageVersion}.\nInstall QUBE with its component dependencies or install the matching standalone package version.\n`
+    };
+  }
+  if (resolution.error) {
+    return {
+      exitCode: 4,
+      stdout: "",
+      stderr: `${resolution.error}\n`
+    };
+  }
+
+  return {
+    exitCode: 0,
+    stdout: "",
+    stderr: resolution.warning ? `${resolution.warning}\n` : "",
+    dispatch: {
+      component,
+      commandPath: resolution.commandPath,
+      resolution,
+      args: componentArgs
+    }
+  };
+}
+
 function resolveCommandFromEntries(command: string, entries: readonly string[], environment: CliEnvironment): string | undefined {
   for (const entry of entries) {
     for (const name of commandNames(command, environment)) {
@@ -194,8 +310,15 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
   return fileURLToPath(new URL("..", import.meta.url));
 }
 
-function isVersionRequest(args: readonly string[]): boolean {
-  return args.every(arg => arg === "--version" || arg === "-v" || arg === "--json") && args.some(arg => arg === "--version" || arg === "-v");
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function readStringArray(value: unknown): readonly string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(item => typeof item === "string");
 }
 
 function stripSeparator(args: readonly string[]): readonly string[] {

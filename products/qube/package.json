@@ -50,13 +50,14 @@
     "@tjalve/aib": "0.1.0",
     "@tjalve/aie": "0.1.3",
     "@tjalve/aiq": "0.2.1",
-    "@tjalve/aiu": "0.0.3"
+    "@tjalve/aiu": "0.0.3",
+    "@tjalve/qube-cli": "0.1.2"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && node --test \"test/*.test.mjs\"",
+    "test": "pnpm run build && node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "prepack": "pnpm run build",
     "pack:check": "pnpm run build && pnpm pack --dry-run --json",
     "verify": "pnpm run typecheck && pnpm test && pnpm run pack:check"

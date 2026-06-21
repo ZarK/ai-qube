@@ -193,6 +193,9 @@ importers:
       '@tjalve/aiq':
         specifier: 0.2.1
         version: link:../cli
+      '@tjalve/qube-cli':
+        specifier: 0.1.2
+        version: link:../../../../packages/qube-cli
 
   products/aiq/packages/lsp:
     dependencies:
@@ -208,6 +211,9 @@ importers:
       '@tjalve/aiq':
         specifier: 0.2.1
         version: link:../cli
+      '@tjalve/qube-cli':
+        specifier: 0.1.2
+        version: link:../../../../packages/qube-cli
       zod:
         specifier: 4.3.6
         version: 4.3.6
@@ -252,6 +258,9 @@ importers:
       '@tjalve/aiu':
         specifier: 0.0.3
         version: link:../aiu
+      '@tjalve/qube-cli':
+        specifier: 0.1.2
+        version: link:../../packages/qube-cli
     devDependencies:
       '@types/node':
         specifier: 24.12.2

@@ -43,6 +43,33 @@ describe("qube composer CLI", () => {
     });
   });
 
+  it("renders the shared command help and schema surface", () => {
+    const help = runCli(["--help"]);
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /Usage:\n  qube <command> \[flags\]/);
+    assert.match(help.stdout, /Commands:/);
+    assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
+    assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
+
+    const runHelp = runCli(["run", "--help"]);
+    assert.equal(runHelp.status, 0);
+    assert.match(runHelp.stdout, /Usage:\n  qube run \[component\] \[args\]/);
+    assert.match(runHelp.stdout, /Run a QUBE component command with passthrough arguments\./);
+
+    const schema = runCli(["schema", "--json"]);
+    assert.equal(schema.status, 0);
+    const parsed = JSON.parse(schema.stdout);
+    assert.equal(parsed.package.name, "@tjalve/qube");
+    assert.deepEqual(
+      parsed.commands.map(command => command.name).sort(),
+      ["aib", "aie", "aiq", "aiu", "components", "run", "schema"]
+    );
+    assert.deepEqual(
+      parsed.sections.components.map(component => component.command),
+      ["aib", "aie", "aiq", "aiu"]
+    );
+  });
+
   it("lists standalone components without replacing them", () => {
     const result = runCli(["components", "--json"]);
     assert.equal(result.status, 0);
@@ -178,6 +205,16 @@ describe("qube composer CLI", () => {
 
     assert.equal(result.status, 0);
     assert.match(result.stdout, /dispatched status --json/);
+
+    const help = runCli(["aib", "--help"], {
+      env: {
+        PATH: process.env.PATH ?? "",
+        QUBE_TEST_PACKAGE_ROOT: packageRoot,
+        OS: process.env.OS
+      }
+    });
+    assert.equal(help.status, 0);
+    assert.match(help.stdout, /dispatched --help/);
   });
 
   it("returns an actionable error when a component command is unavailable", () => {
