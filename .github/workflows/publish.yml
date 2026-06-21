@@ -57,11 +57,15 @@ jobs:
 
       - name: Build publish dependencies
         shell: bash
-        run: ${{ steps.plan.outputs.prepare }}
+        env:
+          PREPARE_CMD: ${{ steps.plan.outputs.prepare }}
+        run: bash -euo pipefail -c "$PREPARE_CMD"
 
       - name: Verify selected package
         shell: bash
-        run: ${{ steps.plan.outputs.verify }}
+        env:
+          VERIFY_CMD: ${{ steps.plan.outputs.verify }}
+        run: bash -euo pipefail -c "$VERIFY_CMD"
 
       - name: Publish selected package
         working-directory: ${{ steps.plan.outputs.path }}

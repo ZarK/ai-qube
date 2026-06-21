@@ -63,9 +63,9 @@ Because local shells are not a supported provenance provider, override package
 provenance for that seed publish:
 
 ```sh
-cd C:\code\ai\ai-qube
+cd <repo-root>
 pnpm --filter @tjalve/qube-cli run build
-cd C:\code\ai\ai-qube\products\aib
+cd products/aib
 npm publish --access public --provenance=false --otp <otp>
 ```
 
