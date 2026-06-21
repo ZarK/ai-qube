@@ -923,6 +923,7 @@ async function resolveInstallChoice<Value extends string>(
 }
 
 function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>): InstallSelections {
+  // Keep these synchronous fallbacks aligned with the choice group defaults above.
   return {
     scope: readOption<InstallScope>(flags, "scope") ?? "local",
     packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? "pnpm",
@@ -955,7 +956,7 @@ function createInstallCommands(selections: InstallSelections): readonly InstallC
     return [
       {
         label: "Install QUBE in the current project.",
-        command: `pnpm add -D --save-exact ${lifecycleFlag(selections, "pnpm")} ${packageSpec}`.replace(/\s+/g, " ").trim()
+        command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
       },
       {
         label: "Confirm the installed component deck.",
@@ -967,7 +968,7 @@ function createInstallCommands(selections: InstallSelections): readonly InstallC
     return [
       {
         label: "Install QUBE globally for manual shell use.",
-        command: `pnpm add --global ${lifecycleFlag(selections, "pnpm")} ${packageSpec}`.replace(/\s+/g, " ").trim()
+        command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
       },
       {
         label: "Confirm the installed component deck.",
@@ -979,7 +980,7 @@ function createInstallCommands(selections: InstallSelections): readonly InstallC
     return [
       {
         label: "Install QUBE in the current project.",
-        command: `npm install --save-dev --save-exact ${lifecycleFlag(selections, "npm")} ${packageSpec}`.replace(/\s+/g, " ").trim()
+        command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
       },
       {
         label: "Confirm the installed component deck.",
@@ -990,7 +991,7 @@ function createInstallCommands(selections: InstallSelections): readonly InstallC
   return [
     {
       label: "Install QUBE globally for manual shell use.",
-      command: `npm install --global ${lifecycleFlag(selections, "npm")} ${packageSpec}`.replace(/\s+/g, " ").trim()
+      command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
     },
     {
       label: "Confirm the installed component deck.",
@@ -1063,9 +1064,9 @@ function renderInstallPlan(plan: InstallPlan): string {
   ].join("\n");
 }
 
-function lifecycleFlag(selections: InstallSelections, packageManager: InstallPackageManager): string {
+function lifecycleFlag(selections: InstallSelections): string {
   if (selections.lifecycleScripts === "disabled" || selections.lifecycleScripts === "review") {
-    return packageManager === "pnpm" ? "--ignore-scripts" : "--ignore-scripts";
+    return "--ignore-scripts";
   }
   return "";
 }
