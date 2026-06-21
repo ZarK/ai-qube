@@ -25,7 +25,8 @@ function binRun(args, cwd = process.cwd()) {
 }
 
 function writeConfig(repo, config) {
-  writeFileSync(join(repo, 'aie.config.json'), `${JSON.stringify(config, null, 2)}\n`);
+  mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+  writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
 function safeRepoSegment(repo) {
@@ -609,13 +610,13 @@ describe('PR body service', () => {
   it('drafts issue-closing PR text with gate, UI audit, review, and readiness state', async () => {
     const repo = makeGitRepo();
     const home = mkdtempSync(join(tmpdir(), 'aie-pr-body-home-'));
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
     const auditDirectory = join(home, 'github-verification', safeRepoSegment(repo), '93');
     const screenshotsDirectory = join(auditDirectory, 'screenshots');
     mkdirSync(screenshotsDirectory, { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
-    writeFileSync(join(repo, '.aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'oracle found no blockers' }));
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'unit.json'), JSON.stringify({ status: 'passed', summary: 'node test passed' }));
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'oracle found no blockers' }));
     writeFileSync(join(auditDirectory, 'browser-observation.md'), 'opened the real running app with agent-browser\n');
     writeFileSync(join(auditDirectory, 'notes.md'), 'audited running app visual state\n');
     writeFileSync(join(screenshotsDirectory, 'settings.png'), 'fake image bytes\n');
@@ -676,8 +677,8 @@ describe('PR body service', () => {
 
   it('blocks PR body readiness when the issue checklist is unchecked', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -697,8 +698,8 @@ describe('PR body service', () => {
 
   it('does not report ready while GitHub merge state is still blocked', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '95.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '95.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -735,8 +736,8 @@ describe('PR body service', () => {
 
   it('blocks PR body readiness for draft pull requests', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '96.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '96.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -766,8 +767,8 @@ describe('PR body service', () => {
 
   it('blocks readiness when GitHub has requested PR changes', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '99.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '99.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -798,8 +799,8 @@ describe('PR body service', () => {
 
   it('keeps stale review-agent evidence pending in readiness details', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '98.json'), JSON.stringify({ status: 'stale', summary: 'review is stale' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '98.json'), JSON.stringify({ status: 'stale', summary: 'review is stale' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -814,8 +815,8 @@ describe('PR body service', () => {
 
   it('keeps readiness pending when PR review-gate inspection is unavailable', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '96.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '96.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -841,8 +842,8 @@ describe('PR body service', () => {
 
   it('keeps readiness pending while PR review gate remains pending', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '97.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '97.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
@@ -867,8 +868,8 @@ describe('PR body service', () => {
 
   it('reports blockers without requiring an existing current-branch pull request', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'gates'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'failed', summary: 'type error' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'gates'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'gates', 'typecheck.json'), JSON.stringify({ status: 'failed', summary: 'type error' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.gates = [{ name: 'typecheck', kind: 'typecheck', command: 'npm run typecheck', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false }];
@@ -885,8 +886,8 @@ describe('PR body service', () => {
 
   it('recommends a non-draft pull request when no current PR exists', async () => {
     const repo = makeGitRepo();
-    mkdirSync(join(repo, '.aie', 'reviews'), { recursive: true });
-    writeFileSync(join(repo, '.aie', 'reviews', '98.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '98.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
     const config = getDefaults();
     config.manualUiAudit = false;
     config.reviewAgents = [];
