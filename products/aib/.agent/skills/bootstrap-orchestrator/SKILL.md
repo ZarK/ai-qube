@@ -12,9 +12,9 @@ Outcomes:
 
 Key files:
 
-- `.bootstrap/session.yaml`
-- `.bootstrap/discovery-log.md`
-- `.bootstrap/assumptions.md`
+- `.qube/aib/session.json`
+- `.qube/aib/discovery-log.md`
+- `.qube/aib/assumptions.md`
 - `docs/spec.md`
 - `docs/milestones/`
 - `docs/issues/`

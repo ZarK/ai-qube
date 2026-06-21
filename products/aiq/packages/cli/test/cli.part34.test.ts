@@ -33,7 +33,7 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
 
-    const defaultOutDir = path.join(tempDir, ".aiq/out");
+    const defaultOutDir = path.join(tempDir, ".qube/aiq/out");
     const output = JSON.parse(stdout.value) as {
       artifactType: string;
       artifacts: { outDir: string };

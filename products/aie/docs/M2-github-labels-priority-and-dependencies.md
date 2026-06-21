@@ -455,7 +455,7 @@ It may:
 - verify configured base branch/remote values can be resolved when config exists
 - report open pull requests that would block starting new issue work under repository policy
 - create or update Executor-owned labels
-- write minimal `aie.config.json` when missing and explicitly allowed
+- write minimal `.qube/aie/config.json` when missing and explicitly allowed
 - check whether open issues exist
 - report existing GitHub milestones and missing milestone assignments
 - check whether Executor instructions are installed

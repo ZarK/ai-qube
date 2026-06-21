@@ -140,7 +140,7 @@ It allows the stop when the queue is empty, work is blocked, planning needs a hu
 
 ### 4.1 - State Files
 
-Umpire uses `.umpire/` by default for:
+Umpire uses `.qube/aiu/` by default for:
 
 - continuation state
 - lock files
@@ -236,7 +236,7 @@ Status: implemented by `aiu hook-stop --tool codex|claude-code`. The command par
 
 ### M3.4 - Implement Durable State, Locking, Logging, And Rotation
 
-Add robust `.umpire/` state handling, stale lock recovery, log redaction, and log caps.
+Add robust `.qube/aiu/` state handling, stale lock recovery, log redaction, and log caps.
 
 Status: implemented by the shared `continuation_store` module and OpenCode runtime integration. The runtime persists prompt ownership and fingerprints after successful delivery, suppresses duplicate or competing prompts, serializes host events with stale lock recovery, logs redacted bounded decision records, and exposes continuation state, lock, and log paths through `aiu status`.
 

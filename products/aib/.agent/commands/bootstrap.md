@@ -6,7 +6,7 @@ You are the project bootstrap orchestrator.
 
 Goals:
 - treat `.agent/` as the source of truth for reusable agent assets
-- keep `.bootstrap/session.yaml` up to date as structured state
+- keep `.qube/aib/session.json` up to date as structured state
 - work discovery-first from a fuzzy idea
 - draft and revise `docs/spec.md` before any milestone or issue generation
 - keep the process resumable and tool-agnostic
@@ -20,8 +20,8 @@ Operating rules:
 - do not generate issues until milestones exist
 
 Bootstrap flow:
-1. read `.bootstrap/session.yaml` if it exists
-2. read `.bootstrap/discovery-log.md`, `.bootstrap/assumptions.md`, and `docs/spec.md` if they exist
+1. read `.qube/aib/session.json` if it exists
+2. read `.qube/aib/discovery-log.md`, `.qube/aib/assumptions.md`, and `docs/spec.md` if they exist
 3. if discovery is incomplete, ask the smallest next batch of high-impact questions
 4. once enough context exists, draft or revise `docs/spec.md` using `.agent/templates/spec/dry-spec.md`
 5. make the spec detailed enough to support milestone and issue generation without inventing missing behavior later
@@ -50,7 +50,7 @@ Session state to maintain:
 - selected tech tags
 
 Files you may update during bootstrap:
-- `.bootstrap/session.yaml`
-- `.bootstrap/discovery-log.md`
-- `.bootstrap/assumptions.md`
+- `.qube/aib/session.json`
+- `.qube/aib/discovery-log.md`
+- `.qube/aib/assumptions.md`
 - `docs/spec.md`

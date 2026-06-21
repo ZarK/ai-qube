@@ -65,48 +65,90 @@ fi
 
 python3 "$REPO_ROOT/scripts/project_assets.py" "${PROJECT_ARGS[@]}"
 
-mkdir -p "$TARGET/.bootstrap" "$TARGET/docs/milestones"
+mkdir -p "$TARGET/.qube/aib" "$TARGET/docs/milestones"
 
-if [ ! -f "$TARGET/.bootstrap/discovery-log.md" ]; then
-	cp "$TARGET/.agent/templates/bootstrap/discovery-log.md" "$TARGET/.bootstrap/discovery-log.md"
+if [ ! -f "$TARGET/.qube/aib/discovery-log.md" ]; then
+	cp "$TARGET/.agent/templates/bootstrap/discovery-log.md" "$TARGET/.qube/aib/discovery-log.md"
 fi
 
-if [ ! -f "$TARGET/.bootstrap/assumptions.md" ]; then
-	cp "$TARGET/.agent/templates/bootstrap/assumptions.md" "$TARGET/.bootstrap/assumptions.md"
+if [ ! -f "$TARGET/.qube/aib/assumptions.md" ]; then
+	cp "$TARGET/.agent/templates/bootstrap/assumptions.md" "$TARGET/.qube/aib/assumptions.md"
 fi
 
 if [ ! -f "$TARGET/docs/spec.md" ]; then
 	cp "$TARGET/.agent/templates/spec/dry-spec.md" "$TARGET/docs/spec.md"
 fi
 
-if [ ! -f "$TARGET/.bootstrap/session.yaml" ]; then
-	{
-		printf 'idea: "%s"\n' "${IDEA//\"/\\\"}"
-		printf 'project_name: ""\n'
-		printf 'tool: "%s"\n' "$TOOL"
-		printf 'profile: "%s"\n' "$PROFILE"
-		if [ "${#TECH_ARGS[@]}" -eq 0 ]; then
-			printf 'tech: []\n'
-		else
-			printf 'tech:\n'
-			index=1
-			while [ "$index" -lt "${#TECH_ARGS[@]}" ]; do
-				printf '  - "%s"\n' "${TECH_ARGS[$index]}"
-				index=$((index + 2))
-			done
-		fi
-		printf 'name_candidates: []\n'
-		printf 'target_users: []\n'
-		printf 'platforms: []\n'
-		printf 'privacy_requirements: []\n'
-		printf 'core_flows: []\n'
-		printf 'assumptions: []\n'
-		printf 'unresolved_questions: []\n'
-		printf 'spec_status: drafting\n'
-		printf 'milestone_status: pending\n'
-		printf 'issue_status: pending\n'
-		printf 'harness_status: pending\n'
-	} >"$TARGET/.bootstrap/session.yaml"
+case "$TOOL" in
+claude)
+	AGENT_HOST="claude-code"
+	;;
+codex | opencode | gemini)
+	AGENT_HOST="$TOOL"
+	;;
+*)
+	AGENT_HOST="other"
+	;;
+esac
+
+if [ ! -f "$TARGET/.qube/aib/session.json" ]; then
+	AIB_IDEA="$IDEA" AIB_AGENT_HOST="$AGENT_HOST" python3 - "$TARGET/.qube/aib/session.json" <<'PY'
+import json
+import os
+import sys
+
+idea = os.environ.get("AIB_IDEA", "")
+agent_host = os.environ.get("AIB_AGENT_HOST", "other")
+project = {"intent": idea} if idea else {}
+artifacts = {
+    "spec": {"path": "docs/spec.md", "status": "missing"},
+    "milestones": [],
+    "workItems": [],
+}
+planning = {
+    "version": 1,
+    "project": project,
+    "artifacts": artifacts,
+    "milestoneDrafts": [],
+    "workItemDrafts": [],
+    "providers": [],
+    "agentHosts": [],
+    "nextAction": {
+        "kind": "ask_human",
+        "actor": "agent",
+        "summary": "Ask the human for product intent and project shape before provider or host details.",
+        "questionBudget": 3,
+        "stateFields": ["project.intent", "project.type"],
+    },
+}
+state = {
+    "version": 1,
+    "phase": "discovery",
+    "project": project,
+    "discovery": {
+        "referencePaths": [],
+        "inspectCurrentRepo": False,
+        "inspectDocs": False,
+        "inspectSiblingRepos": False,
+        "inspectedSources": [],
+        "knownDecisions": [],
+        "unresolvedQuestions": [],
+    },
+    "agent": {"host": agent_host, "questionBudget": 3},
+    "spec": {
+        "acceptedSectionIds": [],
+        "reopenedSectionIds": [],
+        "unresolvedGaps": [],
+        "revision": 0,
+    },
+    "assumptions": [],
+    "artifacts": artifacts,
+    "planning": planning,
+}
+with open(sys.argv[1], "w", encoding="utf-8") as file:
+    json.dump(state, file, indent=2)
+    file.write("\n")
+PY
 fi
 
 printf 'Bootstrapped %s for %s\n' "$TARGET" "$TOOL"

@@ -81,7 +81,7 @@ M5 depends on:
 
 M5 assumes:
 
-- `aie.config.json` exists and validates.
+- `.qube/aie/config.json` exists and validates, or a legacy `aie.config.json` fallback is detected.
 - `gh` wrapper, redaction, and JSON output foundations exist.
 - lifecycle commands can identify active issues and completion state.
 - installed instructions can be updated to name M5 commands honestly.

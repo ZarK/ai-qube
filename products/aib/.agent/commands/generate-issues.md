@@ -7,7 +7,7 @@ Generate issue drafts from an accepted spec and a selected milestone.
 Required inputs:
 - `docs/spec.md`
 - one file from `docs/milestones/`
-- selected profile from `.bootstrap/session.yaml`
+- selected profile from `.qube/aib/session.json`
 - `.agent/templates/issues/base.md`
 - the active profile issue template
 

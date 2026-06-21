@@ -275,9 +275,9 @@ Executor needs one repository policy file for workflow behavior.
 
 Implement config discovery for the documented default path:
 
-- `aie.config.json`
+- `.qube/aie/config.json`
 
-Additional config paths are out of scope for M1.
+Legacy `aie.config.json` remains a compatibility discovery path for existing repositories.
 
 ### 3.2 - Config Schema
 
@@ -350,7 +350,7 @@ M1 `aie doctor` must check:
 - whether `git` is available
 - whether `gh` is available
 - whether `gh auth status` appears usable
-- whether `aie.config.json` exists
+- whether `.qube/aie/config.json` exists or a legacy `aie.config.json` fallback is in use
 - whether config parses and validates
 - whether Node.js runtime satisfies the package requirement
 
@@ -443,7 +443,7 @@ Acceptance:
 
 ### M1.3 - Implement Config Discovery, Defaults, And Validation
 
-Create the repository config model around `aie.config.json`, including defaults and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, agent-run quality gates, and instruction toggles.
+Create the repository config model around `.qube/aie/config.json`, including legacy `aie.config.json` fallback, defaults, and validation for labels, branch policy, base branch/remote, no-worktree enforcement, open-PR preflight policy, ignored automation PR authors, review agents, waits, manual UI audit, agent-run quality gates, and instruction toggles.
 
 Primary FRs: FR-04-001, FR-04-002, FR-04-003 through FR-04-009, FR-04-016 through FR-04-018.
 

@@ -5,7 +5,7 @@ description: Finalize tool projection and project harness
 Finalize the project after the spec, milestones, and issue structure are in place.
 
 Finalization goals:
-- confirm the selected profile and tech tags in `.bootstrap/session.yaml`
+- confirm the selected profile and tech tags in `.qube/aib/session.json`
 - compose the right instruction set from `.agent/rules/`
 - regenerate `AGENTS.md`
 - project tool-native assets for the active tool

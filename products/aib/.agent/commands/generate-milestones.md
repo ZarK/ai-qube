@@ -6,11 +6,11 @@ Generate milestone documents from the accepted dry spec.
 
 Required inputs:
 - `docs/spec.md`
-- `.bootstrap/session.yaml`
-- `.bootstrap/assumptions.md`
+- `.qube/aib/session.json`
+- `.qube/aib/assumptions.md`
 
 Preconditions:
-- require an accepted spec state in `.bootstrap/session.yaml`
+- require an accepted spec state in `.qube/aib/session.json`; run `/accept-spec` first when acceptance is not recorded yet
 - refuse to generate milestones from a shallow or obviously unaccepted spec
 
 Milestone design rules:

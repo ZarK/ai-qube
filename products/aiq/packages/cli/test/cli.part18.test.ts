@@ -90,7 +90,7 @@ describe("CLI foundation", () => {
   it("reports progress default stages when workflow requests omit explicit stages", () => {
     const workflow = createRunWorkflowOutput(
       {
-        path: "/tmp/project/.aiq/progress.json",
+        path: "/tmp/project/.qube/aiq/progress.json",
         progress: {
           current_stage: 3,
           disabled: [],

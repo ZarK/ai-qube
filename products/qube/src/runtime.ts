@@ -41,18 +41,17 @@ export interface CommandResolution {
 
 const passthroughExtensions = defineExtensions({ passthrough: true });
 const targetedPassthroughExtensions = defineExtensions({ passthrough: { minArguments: 1 } });
+const jsonFlag = defineFlag({
+  name: "json",
+  description: "Render machine-readable JSON output.",
+  type: "boolean"
+});
 
 const componentsCommand = defineCommand({
   kind: "command",
   name: "components",
   description: "List QUBE component packages and commands.",
-  flags: [
-    defineFlag({
-      name: "json",
-      description: "Render machine-readable JSON output.",
-      type: "boolean"
-    })
-  ],
+  flags: [jsonFlag],
   examples: [
     {
       description: "List QUBE components.",
@@ -75,6 +74,186 @@ const componentsCommand = defineCommand({
   }
 });
 
+interface DirectQubeCommand {
+  readonly command: ReturnType<typeof defineCommand>;
+  readonly component: QubeComponent["command"];
+  readonly mapArgs: (args: readonly string[]) => readonly string[];
+}
+
+const directCommandDefinitions: readonly DirectQubeCommand[] = [
+  {
+    command: defineCommand({
+      kind: "command",
+      name: "idea",
+      description: "Start Bootstrap from a concise idea.",
+      arguments: [
+        defineArgument({
+          name: "idea",
+          description: "Idea text to turn into an initial QUBE plan.",
+          required: false
+        }),
+        defineArgument({
+          name: "args",
+          description: "Additional arguments forwarded to aib init.",
+          multiple: true
+        })
+      ],
+      flags: [jsonFlag],
+      examples: [
+        {
+          description: "Start a QUBE plan from an idea.",
+          command: "qube idea \"Ship a local notes CLI\""
+        },
+        {
+          description: "Start a QUBE plan and render JSON.",
+          command: "qube idea \"Ship a local notes CLI\" --json"
+        }
+      ],
+      interactions: {
+        json: true,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component: "aib",
+    mapArgs(args) {
+      return mapIdeaArgs(args);
+    }
+  },
+  {
+    command: defineCommand({
+      kind: "command",
+      name: "queue",
+      description: "Show the Executor issue queue.",
+      arguments: [
+        defineArgument({
+          name: "args",
+          description: "Additional arguments forwarded to aie queue.",
+          multiple: true
+        })
+      ],
+      flags: [jsonFlag],
+      examples: [
+        {
+          description: "Show the queue as JSON.",
+          command: "qube queue --json"
+        }
+      ],
+      interactions: {
+        json: true,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component: "aie",
+    mapArgs(args) {
+      return ["queue", ...stripSeparator(args)];
+    }
+  },
+  {
+    command: defineCommand({
+      kind: "command",
+      name: "doctor",
+      description: "Run Quality Control diagnostics.",
+      arguments: [
+        defineArgument({
+          name: "args",
+          description: "Additional arguments forwarded to aiq doctor.",
+          multiple: true
+        })
+      ],
+      flags: [jsonFlag],
+      examples: [
+        {
+          description: "Run quality diagnostics as JSON.",
+          command: "qube doctor --json"
+        }
+      ],
+      interactions: {
+        json: true,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component: "aiq",
+    mapArgs(args) {
+      return ["doctor", ...translateJsonFlag(stripSeparator(args))];
+    }
+  },
+  {
+    command: defineCommand({
+      kind: "command",
+      name: "check",
+      description: "Run Quality Control checks for explicit paths.",
+      arguments: [
+        defineArgument({
+          name: "args",
+          description: "Files, paths, and flags forwarded to aiq check.",
+          multiple: true
+        })
+      ],
+      flags: [jsonFlag],
+      examples: [
+        {
+          description: "Check source files as JSON.",
+          command: "qube check src --json"
+        }
+      ],
+      interactions: {
+        json: true,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component: "aiq",
+    mapArgs(args) {
+      return ["check", ...translateJsonFlag(stripSeparator(args))];
+    }
+  },
+  {
+    command: defineCommand({
+      kind: "command",
+      name: "status",
+      description: "Show Umpire continuation status.",
+      arguments: [
+        defineArgument({
+          name: "args",
+          description: "Additional arguments forwarded to aiu status.",
+          multiple: true
+        })
+      ],
+      flags: [jsonFlag],
+      examples: [
+        {
+          description: "Show continuation status as JSON.",
+          command: "qube status --json"
+        }
+      ],
+      interactions: {
+        json: true,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component: "aiu",
+    mapArgs(args) {
+      return ["status", ...stripSeparator(args)];
+    }
+  }
+];
+
+const directCommands = directCommandDefinitions.map(definition => definition.command);
+
 const runCommand = defineCommand({
   kind: "command",
   name: "run",
@@ -93,7 +272,7 @@ const runCommand = defineCommand({
   ],
   examples: [
     {
-      description: "Run AIB status through QUBE.",
+      description: "Run an advanced AIB command through QUBE.",
       command: "qube run aib status"
     },
     {
@@ -133,7 +312,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -142,6 +321,11 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
       return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderComponents(), stderr: "" };
+  }
+
+  const direct = planDirectCommand(args[0], args.slice(1), environment);
+  if (direct) {
+    return direct;
   }
 
   const dispatchInput = args[0] === "run" ? args.slice(1) : args;
@@ -217,6 +401,10 @@ function createQubeCli(environment: CliEnvironment) {
         }
         return { stdout: renderComponents() };
       }),
+      ...directCommandDefinitions.map(definition => createRuntimeCommand(
+        definition.command,
+        ({ argv }) => executeQubeDispatch(definition.component, definition.mapArgs(argv), environment)
+      )),
       createRuntimeCommand(runCommand, ({ args }) => executeQubeDispatch(readString(args.component), readStringArray(args.args), environment)),
       ...qubeComponents.map((component, index) => createRuntimeCommand(
         componentCommands[index]!,
@@ -228,7 +416,11 @@ function createQubeCli(environment: CliEnvironment) {
         packageName,
         packageVersion,
         sections: {
-          components: qubeComponents
+          components: qubeComponents,
+          directCommands: directCommandDefinitions.map(definition => ({
+            command: definition.command.name,
+            component: definition.component
+          }))
         }
       })
     ]
@@ -248,6 +440,14 @@ async function executeQubeDispatch(componentName: string | undefined, componentA
   }
   const exitCode = await dispatchCommand(planned.dispatch);
   return { exitCode };
+}
+
+function planDirectCommand(commandName: string | undefined, args: readonly string[], environment: CliEnvironment): CliExecution | undefined {
+  const definition = directCommandDefinitions.find(candidate => candidate.command.name === commandName);
+  if (!definition) {
+    return undefined;
+  }
+  return planQubeDispatch(definition.component, definition.mapArgs(args), environment);
 }
 
 function planQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): CliExecution {
@@ -323,6 +523,20 @@ function readStringArray(value: unknown): readonly string[] {
 
 function stripSeparator(args: readonly string[]): readonly string[] {
   return args[0] === "--" ? args.slice(1) : args;
+}
+
+function mapIdeaArgs(args: readonly string[]): readonly string[] {
+  const forceIdea = args[0] === "--";
+  const normalized = stripSeparator(args);
+  const [idea, ...rest] = normalized;
+  if (idea && (forceIdea || !idea.startsWith("-"))) {
+    return ["init", ".", "--idea", idea, ...rest];
+  }
+  return ["init", ".", ...normalized];
+}
+
+function translateJsonFlag(args: readonly string[]): readonly string[] {
+  return args.flatMap(arg => arg === "--json" ? ["--format", "json"] : [arg]);
 }
 
 function renderComponents(): string {

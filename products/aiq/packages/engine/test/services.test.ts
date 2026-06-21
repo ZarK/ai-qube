@@ -35,7 +35,7 @@ describe("engine core services", () => {
     expect(context).toMatchObject({
       context: "cli",
       cwd: process.cwd(),
-      outDir: path.resolve(process.cwd(), ".aiq/out"),
+      outDir: path.resolve(process.cwd(), ".qube/aiq/out"),
       selection: {
         profile: "fast",
         stages: ["lint"],

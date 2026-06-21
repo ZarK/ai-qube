@@ -177,7 +177,7 @@ All QUBE CLIs should be explorable by humans and deterministic for agents:
 
 ## Shared Config Concepts
 
-Each package should have a small versioned config file and strict validation. Executor currently proposes `aie.config.json`; other packages should use equivalent package-specific names unless a shared QUBE config layer is introduced later.
+Each package should have a small versioned config file and strict validation. Installed package defaults use QUBE-prefixed paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and `.qube/aiu/config.json`; legacy root config files remain compatibility and migration inputs where each package documents them.
 
 Reusable config areas:
 

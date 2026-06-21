@@ -93,7 +93,7 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 
 | ID | Requirement | Status |
 |----|-------------|--------|
-| FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `aie.config.json` or an equivalent documented path. | Required |
+| FR-04-001 | Executor stores repository-specific workflow policy in a versioned config file, defaulting to `.qube/aie/config.json` with legacy `aie.config.json` discovery for existing repositories. | Required |
 | FR-04-002 | Configuration includes provider selection, provider capability policy, priority labels, status labels, component labels, optional GitHub milestone ordering policy, branch naming policy, base branch/remote, no-worktree enforcement, open-PR blocking behavior, ignored automation PR authors, enabled review agents, review wait duration, manual UI audit policy, agent-run quality gate commands, and supply-chain safety policy. | Required |
 | FR-04-003 | Priority labels are fixed by default to `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`. | Required |
 | FR-04-004 | Status labels are fixed by default to `S-Ready`, `S-InProgress`, `S-Blocked`, and `S-Blocking`. | Required |

@@ -1,6 +1,6 @@
 # Delivery Contract
 
-- Surface assumptions explicitly in `.bootstrap/assumptions.md` and in spec drafts.
+- Surface assumptions explicitly in `.qube/aib/assumptions.md` and in spec drafts.
 - Keep `docs/spec.md` stable and easy to reference.
 - Use milestone files as visible delivery units.
 - Keep issue drafts profile-aware: desktop UI projects need different verification than CLI or backend projects.

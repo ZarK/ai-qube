@@ -5,9 +5,9 @@ description: Continue discovery or produce the next deep dry spec draft
 Continue the spec workflow from the current project state.
 
 Required inputs to read first:
-- `.bootstrap/session.yaml`
-- `.bootstrap/discovery-log.md`
-- `.bootstrap/assumptions.md`
+- `.qube/aib/session.json`
+- `.qube/aib/discovery-log.md`
+- `.qube/aib/assumptions.md`
 - `docs/spec.md` if it exists
 - relevant plan, naming, and resource files if they exist
 

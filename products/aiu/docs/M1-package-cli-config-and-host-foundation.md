@@ -10,7 +10,7 @@ M1 delivers five things:
 
 1. **Package foundation** - package metadata, pnpm, Node 24 baseline, build/type/test/release scripts, publish surface, and no install-time side effects.
 2. **CLI foundation** - metadata-backed help, schema, JSON output, exit codes, no-color behavior, and dry-run conventions.
-3. **Config foundation** - `aiu.config.json` discovery, conservative defaults, validation, and typed diagnostics.
+3. **Config foundation** - `.qube/aiu/config.json` discovery, conservative defaults, validation, legacy fallback, and typed diagnostics.
 4. **Host install planner** - dry-runnable install plans for OpenCode, Codex, and Claude Code without silent overwrites.
 5. **Diagnostics foundation** - `aiu doctor`, `aiu paths`, and `aiu schema --json` for humans, agents, and tests.
 
@@ -85,7 +85,7 @@ No future command may exist as an executable placeholder.
 
 ## Part 3: Config Foundation
 
-Discover config from `aiu.config.json` at the repository root unless a command receives an explicit config path.
+Discover config from `.qube/aiu/config.json` unless a command receives an explicit config path. Legacy `aiu.config.json` remains a compatibility discovery path for existing repositories.
 
 The initial schema covers:
 
@@ -105,7 +105,7 @@ Defaults are conservative:
 - stop on unknown or unsafe state
 - no shell command synthesis from untrusted text
 - no background scheduling
-- `.umpire/` for package state
+- `.qube/aiu/` for package state
 
 Trusted state commands are represented as validated `argv` arrays. Runtime shell-string fallback, legacy helper modes, and generated shell command synthesis are not part of the config schema.
 
@@ -168,7 +168,7 @@ Implement package identity, pnpm, Node baseline, build/type/test/release scripts
 
 Implement shared command metadata for root help, explicit help, suffix help, unknown-command suggestions, JSON output rules, and `aiu schema --json`.
 
-### M1.3 - Implement `aiu.config.json` Discovery, Defaults, And Validation
+### M1.3 - Implement `.qube/aiu/config.json` Discovery, Defaults, And Validation
 
 Add typed config loading, conservative defaults, validation diagnostics, and fixtures for invalid config cases.
 
