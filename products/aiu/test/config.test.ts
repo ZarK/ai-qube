@@ -229,6 +229,17 @@ describe("config foundation", () => {
     assert.ok(kinds.includes("invalid-prompt-text"));
   });
 
+  it("reports parse errors against the selected legacy config path", async () => {
+    const repoRoot = await createRepoRoot();
+    await writeFile(path.join(repoRoot, "aiu.config.json"), "{ invalid json", "utf8");
+
+    const result = loadAiuConfig({ cwd: repoRoot });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.selectedPath, path.join(repoRoot, "aiu.config.json"));
+    assert.ok(result.diagnostics.some((diagnostic) => diagnostic.kind === "invalid-json" && diagnostic.message.includes("Could not parse aiu.config.json")));
+  });
+
   it("rejects state paths below file ancestors and non-searchable directories", async (t) => {
     const repoRoot = await createRepoRoot();
     const blockedDir = path.join(repoRoot, "blocked-dir");

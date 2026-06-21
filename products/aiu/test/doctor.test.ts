@@ -33,10 +33,12 @@ describe("doctor diagnostics", () => {
     const repoRoot = await createRepoRoot();
 
     const report = runAiuDoctor({ cwd: repoRoot });
+    const configCheck = report.checks.find((check) => check.kind === "config-missing");
 
     assert.equal(report.status, "warning");
     assert.equal(report.config.found, false);
-    assert.ok(report.checks.some((check) => check.kind === "config-missing"));
+    assert.ok(configCheck);
+    assert.match(configCheck.message, /\.qube\/aiu\/config\.json was not found/);
   });
 
   it("reports invalid config with stable error kinds", async () => {
@@ -50,6 +52,8 @@ describe("doctor diagnostics", () => {
     assert.equal(report.config.valid, false);
     assert.ok(kinds.includes("config-invalid"));
     assert.ok(kinds.includes("invalid-json"));
+    assert.ok(report.checks.some((check) => check.kind === "config-present" && check.message.includes("aiu.config.json was found")));
+    assert.ok(report.checks.some((check) => check.kind === "invalid-json" && check.message.includes("aiu.config.json")));
   });
 
   it("reports missing configured host files", async () => {

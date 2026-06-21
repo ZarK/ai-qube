@@ -160,8 +160,8 @@ interface ManagedHostPath {
   readonly content: string;
 }
 
-const SEARCH_ROOTS = Object.freeze([".opencode", ".agents", "plugins", ".claude", ".codex", "scripts", ".qube", ".umpire"]);
-const SEARCH_FILES = Object.freeze(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "aiu.config.json", "AGENTS.md", "CLAUDE.md", "README.md"]);
+const SEARCH_ROOTS = Object.freeze([".opencode", ".agents", "plugins", ".claude", ".codex", "scripts", ".umpire"]);
+const SEARCH_FILES = Object.freeze(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock", "aiu.config.json", ".qube/aiu/config.json", "AGENTS.md", "CLAUDE.md", "README.md"]);
 const MANIFEST_FILE_NAMES = new Set(["package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "bun.lock"]);
 const RECURSIVE_SCAN_IGNORES = new Set([".git", "node_modules", "dist", "coverage", ".turbo", ".next", ".cache"]);
 const LOCAL_CHECKOUT_PATTERN = /(?:file:|link:|workspace:|(?:\.\.\/)+)[:./\\\w-]*(?:ai-umpire|@tjalve\/aiu)|(?:^|["'\s])\/[^"'\s]*(?:ai-umpire|@tjalve\/aiu)(?:\/|["'\s]|$)/i;

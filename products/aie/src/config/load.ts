@@ -1,7 +1,7 @@
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import { readFile } from 'fs/promises';
-import { dirname, join, resolve } from 'path';
+import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import { ConfigLoadError, type Config, type ConfigLoadResult } from './types.js';
 import { validateConfig } from './schema.js';
 
@@ -47,7 +47,8 @@ export async function loadConfigFile(startDir: string = process.cwd()): Promise<
       return { root, path: configPath, present: false, ok: true, errors: [] };
     }
     const message = err instanceof Error ? err.message : String(err);
-    return { root, path: configPath, present: true, ok: false, errors: [{ kind: 'invalid', path: AIE_CONFIG_FILENAME, message: `Failed to read or parse ${AIE_CONFIG_FILENAME}: ${message}` }] };
+    const displayPath = displayConfigPath(root, configPath);
+    return { root, path: configPath, present: true, ok: false, errors: [{ kind: 'invalid', path: displayPath, message: `Failed to read or parse ${displayPath}: ${message}` }] };
   }
 }
 
@@ -58,10 +59,18 @@ export async function loadConfig(startDir: string = process.cwd()): Promise<Conf
   throw new ConfigLoadError(result.path, result.errors);
 }
 
-function selectConfigPath(root: string): string {
+export function selectConfigPath(root: string): string {
   for (const filename of AIE_CONFIG_FILENAMES) {
     const candidate = join(root, filename);
     if (existsSync(candidate)) return candidate;
   }
   return join(root, AIE_CONFIG_FILENAME);
+}
+
+export function displayConfigPath(root: string, configPath: string): string {
+  const relativePath = relative(root, configPath);
+  if (relativePath.length === 0 || relativePath.startsWith('..') || isAbsolute(relativePath)) {
+    return configPath.replace(/\\/g, '/');
+  }
+  return relativePath.replace(/\\/g, '/');
 }

@@ -202,7 +202,7 @@ export function loadAiuConfig(options: LoadAiuConfigOptions = {}): AiuConfigLoad
         diagnostic(
           "invalid-json",
           "$",
-          `Could not parse ${AIU_CONFIG_FILENAME}: ${error instanceof Error ? error.message : String(error)}`,
+          `Could not parse ${displayConfigPath(repoRoot, selectedPath)}: ${error instanceof Error ? error.message : String(error)}`,
           "Fix the JSON syntax before running Umpire commands.",
         ),
       );
@@ -911,6 +911,14 @@ function selectAiuConfigPath(repoRoot: string): string {
     }
   }
   return path.join(repoRoot, AIU_CONFIG_FILENAME);
+}
+
+function displayConfigPath(repoRoot: string, selectedPath: string): string {
+  const relativePath = path.relative(repoRoot, selectedPath);
+  if (relativePath.length === 0 || relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
+    return selectedPath.replace(/\\/g, "/");
+  }
+  return relativePath.replace(/\\/g, "/");
 }
 
 function validateHost(value: string, fieldPath: string, diagnostics: AiuConfigDiagnostic[]): value is AiuHost {
