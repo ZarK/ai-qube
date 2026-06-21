@@ -13,10 +13,10 @@ const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli"
 const tempRoots = [];
 
 const fakeComponents = [
-  { name: "@tjalve/aib", command: "aib", version: "0.1.0" },
-  { name: "@tjalve/aie", command: "aie", version: "0.1.3" },
-  { name: "@tjalve/aiq", command: "aiq", version: "0.2.1" },
-  { name: "@tjalve/aiu", command: "aiu", version: "0.0.3" }
+  { name: "@tjalve/aib", command: "aib", version: "0.1.1" },
+  { name: "@tjalve/aie", command: "aie", version: "0.1.4" },
+  { name: "@tjalve/aiq", command: "aiq", version: "0.2.2" },
+  { name: "@tjalve/aiu", command: "aiu", version: "0.0.4" }
 ];
 
 describe("packed QUBE install smoke", () => {
@@ -87,15 +87,15 @@ describe("packed QUBE install smoke", () => {
         component.packageVersion
       ]),
       [
-        ["bootstrap", "aib", "@tjalve/aib", "0.1.0"],
-        ["executor", "aie", "@tjalve/aie", "0.1.3"],
-        ["quality", "aiq", "@tjalve/aiq", "0.2.1"],
-        ["umpire", "aiu", "@tjalve/aiu", "0.0.3"]
+        ["bootstrap", "aib", "@tjalve/aib", "0.1.1"],
+        ["executor", "aie", "@tjalve/aie", "0.1.4"],
+        ["quality", "aiq", "@tjalve/aiq", "0.2.2"],
+        ["umpire", "aiu", "@tjalve/aiu", "0.0.4"]
       ]
     );
 
     const dispatched = await runPnpm(["exec", "qube", "run", "aib", "--", "status", "--json"], target);
-    assert.equal(dispatched.stdout.trim(), "aib 0.1.0 status --json");
+    assert.equal(dispatched.stdout.trim(), "aib 0.1.1 status --json");
   });
 });
 

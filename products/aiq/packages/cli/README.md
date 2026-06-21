@@ -9,14 +9,14 @@ AIQ uses repository-native tool configs by default. Existing Biome config, `tsco
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiq@0.2.1
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiq@0.2.2
 pnpm exec aiq --help
 ```
 
 For a one-off pinned run:
 
 ```sh
-npx @tjalve/aiq@0.2.1 doctor
+npx @tjalve/aiq@0.2.2 doctor
 ```
 
 ## Quick Start

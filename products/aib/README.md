@@ -11,14 +11,14 @@ flows.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.0
+pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.1
 pnpm exec aib --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aib@0.1.0 --ignore-scripts
+npm install -g @tjalve/aib@0.1.1 --ignore-scripts
 aib --help
 ```
 

@@ -24,11 +24,11 @@ describe("qube composer CLI", () => {
   it("reports package version without invoking component tools", () => {
     const text = runCli(["--version"]);
     assert.equal(text.status, 0);
-    assert.equal(text.stdout.trim(), "0.1.0");
+    assert.equal(text.stdout.trim(), "0.1.1");
 
     const short = runCli(["-v"]);
     assert.equal(short.status, 0);
-    assert.equal(short.stdout.trim(), "0.1.0");
+    assert.equal(short.stdout.trim(), "0.1.1");
 
     const json = runCli(["-v", "--json"]);
     assert.equal(json.status, 0);
@@ -37,9 +37,9 @@ describe("qube composer CLI", () => {
       command: "version",
       package: {
         name: "@tjalve/qube",
-        version: "0.1.0"
+        version: "0.1.1"
       },
-      version: "0.1.0"
+      version: "0.1.1"
     });
   });
 
@@ -109,7 +109,7 @@ describe("qube composer CLI", () => {
     const commandPath = path.join(dir, command);
     await mkdir(dir, { recursive: true });
     await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho aib %*\r\n" : "#!/usr/bin/env sh\necho aib \"$@\"\n");
-    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.0" })}\n`);
+    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.1" })}\n`);
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
@@ -272,7 +272,7 @@ describe("qube composer CLI", () => {
     await mkdir(packageDir, { recursive: true });
     await writeFile(installCommandPath, process.platform === "win32" ? "@echo off\r\necho install-scoped %*\r\n" : "#!/usr/bin/env sh\necho install-scoped \"$@\"\n");
     await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho path %*\r\n" : "#!/usr/bin/env sh\necho path \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.0" })}\n`);
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.1" })}\n`);
     if (process.platform !== "win32") {
       await chmod(installCommandPath, 0o755);
       await chmod(pathCommandPath, 0o755);
@@ -285,7 +285,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(resolution?.commandPath, installCommandPath);
     assert.equal(resolution?.source, "install");
-    assert.equal(resolution?.packageVersion, "0.1.0");
+    assert.equal(resolution?.packageVersion, "0.1.1");
     assert.equal(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 
@@ -304,7 +304,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.0, found 0\.0\.1/);
+    assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.1, found 0\.0\.1/);
     assert.equal(planned.dispatch, undefined);
   });
 
@@ -326,7 +326,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.0/);
+    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.1/);
     assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
   });
 

@@ -22,7 +22,7 @@ Use exact versions for automation and keep dependency lifecycle scripts disabled
 where your package manager supports it.
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.0
+pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
 pnpm exec qube components
 ```
 
@@ -30,14 +30,14 @@ Global installs are useful for manual command-line use, but project-local
 installs are easier to audit and reproduce:
 
 ```sh
-npm install -g @tjalve/qube@0.1.0 --ignore-scripts
+npm install -g @tjalve/qube@0.1.1 --ignore-scripts
 qube components
 ```
 
 Install a single component when you only need that tool:
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.0
+pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.1
 pnpm exec aib --help
 ```
 

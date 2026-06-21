@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiu",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "AI Umpire package foundation and CLI for safe agent continuation.",
   "type": "module",
   "license": "MIT",

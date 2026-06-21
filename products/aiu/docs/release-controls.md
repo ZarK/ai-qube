@@ -50,7 +50,7 @@ Required controls before public release:
   lifecycle scripts:
 
   ```sh
-  pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.3
+  pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.4
   pnpm install --frozen-lockfile --ignore-scripts
   ```
 

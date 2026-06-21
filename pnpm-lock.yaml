@@ -91,10 +91,10 @@ importers:
         specifier: 1.9.4
         version: 1.9.4
       '@tjalve/aie':
-        specifier: 0.1.3
+        specifier: 0.1.4
         version: link:../aie
       '@tjalve/aiu':
-        specifier: 0.0.3
+        specifier: 0.0.4
         version: link:../aiu
       '@types/node':
         specifier: 24.12.0
@@ -185,13 +185,13 @@ importers:
         specifier: 3.0.1
         version: 3.0.1
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../cli
 
   products/aiq/packages/hook:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../cli
       '@tjalve/qube-cli':
         specifier: 0.1.2
@@ -200,7 +200,7 @@ importers:
   products/aiq/packages/lsp:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../cli
 
   products/aiq/packages/mcp:
@@ -209,7 +209,7 @@ importers:
         specifier: 1.27.1
         version: 1.27.1(zod@4.3.6)
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../cli
       '@tjalve/qube-cli':
         specifier: 0.1.2
@@ -226,7 +226,7 @@ importers:
         specifier: 1.3.0
         version: 1.3.0
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../cli
 
   products/aiq/packages/reporters: {}
@@ -247,16 +247,16 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.1.0
+        specifier: 0.1.1
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.1.3
+        specifier: 0.1.4
         version: link:../aie
       '@tjalve/aiq':
-        specifier: 0.2.1
+        specifier: 0.2.2
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
-        specifier: 0.0.3
+        specifier: 0.0.4
         version: link:../aiu
       '@tjalve/qube-cli':
         specifier: 0.1.2
