@@ -295,6 +295,62 @@ describe("output and error helpers", () => {
     });
   });
 
+  it("lets passthrough variadic commands receive flag-like child arguments", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    let invoked = false;
+    const command = {
+      kind: "command",
+      name: "dispatch",
+      description: "Forward arguments to another executable.",
+      arguments: [
+        { name: "target", description: "Executable to dispatch.", required: true },
+        { name: "args", description: "Arguments for the executable.", multiple: true }
+      ],
+      examples: [{ description: "Forward help to a child command.", command: "fixture dispatch aib --help" }],
+      extensions: { passthrough: { minArguments: 1 } }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      packageName: "fixture-package",
+      packageVersion: "1.2.3",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => {
+        invoked = true;
+        return {
+          stdout: `${JSON.stringify({ target: args.target, args: args.args ?? [] })}\n`
+        };
+      })]
+    });
+
+    const commandHelp = await runCli(cli, ["dispatch", "--help"]);
+    assert.equal(commandHelp.exitCode, 0);
+    assert.match(commandHelp.stdout, /fixture dispatch/);
+    assert.equal(invoked, false);
+
+    const result = await runCli(cli, ["dispatch", "aib", "--help", "--json", "-v"]);
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.stderr, "");
+    assert.deepEqual(JSON.parse(result.stdout), {
+      target: "aib",
+      args: ["--help", "--json", "-v"]
+    });
+    assert.equal(invoked, true);
+  });
+
+  it("normalizes default command input without hiding global help and version", async () => {
+    const { normalizeDefaultCommandInput } = await import("../dist/index.js");
+
+    assert.deepEqual(normalizeDefaultCommandInput([], { defaultCommand: "run" }), ["run"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["-h"], { defaultCommand: "run" }), ["--help"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["--help"], { defaultCommand: "run" }), ["--help"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["--version"], { defaultCommand: "run" }), ["--version"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["--json", "-v"], { defaultCommand: "run" }), ["--json", "-v"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["help", "run"], { defaultCommand: "run" }), ["help", "run"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["schema", "--json"], { defaultCommand: "run" }), ["schema", "--json"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["run", "--stage", "lint"], { defaultCommand: "run" }), ["run", "--stage", "lint"]);
+    assert.deepEqual(normalizeDefaultCommandInput(["--stage", "lint"], { defaultCommand: "run" }), ["run", "--stage", "lint"]);
+  });
+
   it("parses negatable boolean flags into the canonical flag key", async () => {
     const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
     const command = {

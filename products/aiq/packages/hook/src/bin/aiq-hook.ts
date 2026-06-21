@@ -3,6 +3,9 @@ import { stderr, stdout } from "node:process";
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
+import { defineCommand, defineFlag } from "@tjalve/qube-cli/metadata";
+import { createCommandRegistry } from "@tjalve/qube-cli/registry";
+import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, normalizeDefaultCommandInput, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import {
   type AiqProfileName,
   type StageId,
@@ -18,55 +21,99 @@ const requirePackage = createRequire(import.meta.url);
 const packageJson = requirePackage("../../package.json") as { name: string; version: string };
 const packageIdentity = { name: packageJson.name, version: packageJson.version };
 
-const helpText = `AIQ hook adapter
+const runCommand = defineCommand({
+  kind: "command",
+  name: "run",
+  description: "Run AIQ checks for files selected by the host hook.",
+  flags: [
+    defineFlag({
+      name: "up-to",
+      description: "Run cumulative AIQ stages through the stage index.",
+      type: "integer"
+    }),
+    defineFlag({
+      name: "only",
+      description: "Run only one AIQ stage index.",
+      type: "integer"
+    }),
+    defineFlag({
+      name: "stage",
+      description: "Run one AIQ stage by id.",
+      type: "option",
+      options: stageIds
+    }),
+    defineFlag({
+      name: "profile",
+      description: "Select the AIQ execution profile.",
+      type: "option",
+      options: aiqProfileNames
+    })
+  ],
+  examples: [
+    {
+      description: "Run the default hook checks.",
+      command: "aiq-hook run"
+    },
+    {
+      description: "Run stages through stage 4.",
+      command: "aiq-hook run --up-to 4"
+    }
+  ],
+  interactions: {
+    nonInteractive: true,
+    ttyPrompt: false
+  }
+});
 
-Usage:
-  aiq-hook [--up-to <0-9> | --only <0-9> | --stage <stage>] [--profile <fast|standard|deep>]
+let hookRegistry = createCommandRegistry({ commands: [runCommand] });
 
-Defaults to cumulative stages through .aiq/progress.json current_stage when present; explicit stage/profile flags override that selection.
-`;
+const hookCli = createCli({
+  bin: "aiq-hook",
+  packageName: packageIdentity.name,
+  packageVersion: packageIdentity.version,
+  description: "AIQ hook adapter.",
+  registry: hookRegistry,
+  commands: [
+    createRuntimeCommand(runCommand, context => runHookCommand(context.argv)),
+    createSchemaCommand({
+      registry: () => hookRegistry,
+      bin: "aiq-hook",
+      packageName: packageIdentity.name,
+      packageVersion: packageIdentity.version
+    })
+  ]
+});
+hookRegistry = hookCli.registry;
 
 export async function main(argv: string[]): Promise<number> {
-  const args = argv.slice(2);
-  if (args.includes("--help") || args.includes("-h")) {
-    stdout.write(helpText);
-    return 0;
-  }
-  if (isVersionRequest(args)) {
-    if (args.includes("--json")) {
-      stdout.write(
-        `${JSON.stringify({ ok: true, command: "version", package: packageIdentity, version: packageIdentity.version })}\n`,
-      );
-    } else {
-      stdout.write(`${packageIdentity.version}\n`);
-    }
-    return 0;
-  }
-
-  try {
-    const result = await runAiqHook(parseHookArgs(args));
-    if (result.skipped || result.result === undefined) {
-      stdout.write("AIQ hook skipped: no staged files selected.\n");
-      return 0;
-    }
-
-    stdout.write(formatRunResultAsText(result.result));
-    return result.exitCode;
-  } catch (error) {
-    stderr.write(`${formatError(error)}\n`);
-    return 1;
-  }
+  return runAiqHookCli(argv.slice(2));
 }
 
-function isVersionRequest(args: readonly string[]): boolean {
-  return (
-    args.some((arg) => arg === "--version" || arg === "-v") &&
-    args.every((arg) => arg === "--version" || arg === "-v" || arg === "--json")
-  );
+export async function runAiqHookCli(input: readonly string[]): Promise<number> {
+  const result = await runCli(hookCli, normalizeDefaultCommandInput(input, { defaultCommand: "run" }));
+  if (result.stdout.length > 0) stdout.write(result.stdout);
+  if (result.stderr.length > 0) stderr.write(result.stderr);
+  return result.exitCode;
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   process.exitCode = await main(process.argv);
+}
+
+async function runHookCommand(argv: readonly string[]): Promise<RuntimeCommandResult> {
+  try {
+    const result = await runAiqHook(parseHookArgs([...argv]));
+    if (result.skipped || result.result === undefined) {
+      return { stdout: "AIQ hook skipped: no staged files selected.\n" };
+    }
+
+    return {
+      stdout: formatRunResultAsText(result.result),
+      exitCode: result.exitCode
+    };
+  } catch (error) {
+    return { stderr: `${formatError(error)}\n`, exitCode: 1 };
+  }
 }
 
 function formatError(error: unknown): string {
