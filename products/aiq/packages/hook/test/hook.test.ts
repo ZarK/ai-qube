@@ -2,13 +2,14 @@ import { execFile } from "node:child_process";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { defaultConfig } from "../../config-schema/src/index.js";
 import type { RunResult, StageId } from "../../model/src/index.js";
-import { parseHookArgs } from "../src/bin/aiq-hook.js";
+import { main, parseHookArgs } from "../src/bin/aiq-hook.js";
 import { AiqHookCancelledError, renderPreCommitHookScript, runAiqHook } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
@@ -19,6 +20,34 @@ afterEach(async () => {
 });
 
 describe("hook adapter", () => {
+  it("supports standard root version forms", async () => {
+    const packageJson = JSON.parse(
+      await readFile(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+        "utf8",
+      ),
+    ) as { name: string; version: string };
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      await expect(main(["node", "aiq-hook", "-v"])).resolves.toBe(0);
+      expect(stdoutWrite).toHaveBeenLastCalledWith(`${packageJson.version}\n`);
+
+      await expect(main(["node", "aiq-hook", "--version", "--json"])).resolves.toBe(0);
+      expect(JSON.parse(String(stdoutWrite.mock.calls.at(-1)?.[0]))).toEqual({
+        ok: true,
+        command: "version",
+        package: {
+          name: packageJson.name,
+          version: packageJson.version,
+        },
+        version: packageJson.version,
+      });
+    } finally {
+      stdoutWrite.mockRestore();
+    }
+  });
+
   it("runs AIQ on staged files and returns failing diagnostics", async () => {
     const repoDir = await createGitRepo({
       "src/index.ts": "var failing = 1;\nexport { failing };\n",

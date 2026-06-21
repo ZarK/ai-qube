@@ -1,11 +1,13 @@
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { defaultConfig } from "../../config-schema/src/index.js";
 import type { RunResult, StageId } from "../../model/src/index.js";
+import { main } from "../src/bin/aiq-mcp.js";
 
 import {
   AiqMcpAdapter,
@@ -21,6 +23,34 @@ afterEach(async () => {
 });
 
 describe("MCP adapter", () => {
+  it("supports standard root version forms", async () => {
+    const packageJson = JSON.parse(
+      await readFile(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "package.json"),
+        "utf8",
+      ),
+    ) as { name: string; version: string };
+    const stdoutWrite = vi.spyOn(process.stdout, "write").mockImplementation(() => true);
+
+    try {
+      await expect(main(["node", "aiq-mcp", "-v"])).resolves.toBe(0);
+      expect(stdoutWrite).toHaveBeenLastCalledWith(`${packageJson.version}\n`);
+
+      await expect(main(["node", "aiq-mcp", "--version", "--json"])).resolves.toBe(0);
+      expect(JSON.parse(String(stdoutWrite.mock.calls.at(-1)?.[0]))).toEqual({
+        ok: true,
+        command: "version",
+        package: {
+          name: packageJson.name,
+          version: packageJson.version,
+        },
+        version: packageJson.version,
+      });
+    } finally {
+      stdoutWrite.mockRestore();
+    }
+  });
+
   it("runs AIQ checks for explicit files without exposing a fix path", async () => {
     const repoDir = await createWorkspace("var failing = 1;\nexport { failing };\n");
     const adapter = new AiqMcpAdapter({

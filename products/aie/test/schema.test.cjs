@@ -2,12 +2,31 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { spawnSync } = require('node:child_process');
 const { join } = require('node:path');
+const packageJson = require('../package.json');
 
 function binRun(args, cwd = process.cwd()) {
   return spawnSync(process.execPath, [join(process.cwd(), 'bin/run'), ...args], { cwd, encoding: 'utf8' });
 }
 
 describe('schema command', () => {
+  it('renders root version through standard -v and --version forms', () => {
+    const short = binRun(['-v']);
+    assert.equal(short.status, 0, short.stderr);
+    assert.equal(short.stdout.trim(), packageJson.version);
+
+    const json = binRun(['--version', '--json']);
+    assert.equal(json.status, 0, json.stderr);
+    assert.deepEqual(JSON.parse(json.stdout), {
+      ok: true,
+      command: 'version',
+      package: {
+        name: packageJson.name,
+        version: packageJson.version,
+      },
+      version: packageJson.version,
+    });
+  });
+
   it('backs implemented commands with the qube-cli registry metadata model', async () => {
     const { EXECUTOR_COMMAND_REGISTRY } = await import('../dist/command_registry.js');
     const { listCommands } = await import('@tjalve/qube-cli/registry');

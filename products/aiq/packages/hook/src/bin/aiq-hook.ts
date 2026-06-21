@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { stderr, stdout } from "node:process";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -13,6 +14,10 @@ import {
 
 import { runAiqHook } from "../index.js";
 
+const requirePackage = createRequire(import.meta.url);
+const packageJson = requirePackage("../../package.json") as { name: string; version: string };
+const packageIdentity = { name: packageJson.name, version: packageJson.version };
+
 const helpText = `AIQ hook adapter
 
 Usage:
@@ -22,13 +27,24 @@ Defaults to cumulative stages through .aiq/progress.json current_stage when pres
 `;
 
 export async function main(argv: string[]): Promise<number> {
-  if (argv.includes("--help") || argv.includes("-h")) {
+  const args = argv.slice(2);
+  if (args.includes("--help") || args.includes("-h")) {
     stdout.write(helpText);
+    return 0;
+  }
+  if (isVersionRequest(args)) {
+    if (args.includes("--json")) {
+      stdout.write(
+        `${JSON.stringify({ ok: true, command: "version", package: packageIdentity, version: packageIdentity.version })}\n`,
+      );
+    } else {
+      stdout.write(`${packageIdentity.version}\n`);
+    }
     return 0;
   }
 
   try {
-    const result = await runAiqHook(parseHookArgs(argv.slice(2)));
+    const result = await runAiqHook(parseHookArgs(args));
     if (result.skipped || result.result === undefined) {
       stdout.write("AIQ hook skipped: no staged files selected.\n");
       return 0;
@@ -40,6 +56,13 @@ export async function main(argv: string[]): Promise<number> {
     stderr.write(`${formatError(error)}\n`);
     return 1;
   }
+}
+
+function isVersionRequest(args: readonly string[]): boolean {
+  return (
+    args.some((arg) => arg === "--version" || arg === "-v") &&
+    args.every((arg) => arg === "--version" || arg === "-v" || arg === "--json")
+  );
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {

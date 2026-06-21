@@ -26,7 +26,11 @@ describe("qube composer CLI", () => {
     assert.equal(text.status, 0);
     assert.equal(text.stdout.trim(), "0.1.0");
 
-    const json = runCli(["--version", "--json"]);
+    const short = runCli(["-v"]);
+    assert.equal(short.status, 0);
+    assert.equal(short.stdout.trim(), "0.1.0");
+
+    const json = runCli(["-v", "--json"]);
     assert.equal(json.status, 0);
     assert.deepEqual(JSON.parse(json.stdout), {
       ok: true,

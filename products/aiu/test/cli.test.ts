@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
@@ -47,6 +47,31 @@ describe("metadata-backed CLI", () => {
       assert.match(result.stdout, /Usage:/, form.join(" "));
       assert.equal(result.stderr, "", form.join(" "));
     }
+  });
+
+  it("supports standard root version forms", async () => {
+    const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+      name: string;
+      version: string;
+    };
+
+    const short = await runCli(["-v"]);
+    assert.equal(short.exitCode, 0);
+    assert.equal(short.stdout, `${packageJson.version}\n`);
+    assert.equal(short.stderr, "");
+
+    const json = await runCli(["--version", "--json"]);
+    assert.equal(json.exitCode, 0);
+    assert.equal(json.stderr, "");
+    assert.deepEqual(JSON.parse(json.stdout), {
+      ok: true,
+      command: "version",
+      package: {
+        name: packageJson.name,
+        version: packageJson.version,
+      },
+      version: packageJson.version,
+    });
   });
 
   it("emits clean JSON for paths", async () => {

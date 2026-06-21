@@ -59,6 +59,22 @@ test("renders help and version", () => {
   const version = runAib(["--version"]);
   assert.equal(version.status, 0, version.stderr);
   assert.equal(version.stdout.trim(), "0.1.0");
+
+  const shortVersion = runAib(["-v"]);
+  assert.equal(shortVersion.status, 0, shortVersion.stderr);
+  assert.equal(shortVersion.stdout.trim(), "0.1.0");
+
+  const jsonVersion = runAib(["-v", "--json"]);
+  assert.equal(jsonVersion.status, 0, jsonVersion.stderr);
+  assert.deepEqual(JSON.parse(jsonVersion.stdout), {
+    ok: true,
+    command: "version",
+    package: {
+      name: "@tjalve/aib",
+      version: "0.1.0"
+    },
+    version: "0.1.0"
+  });
 });
 
 test("schema exposes dry-run and mutation metadata", () => {
