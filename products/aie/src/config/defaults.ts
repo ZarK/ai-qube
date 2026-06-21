@@ -60,7 +60,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       mergeStrategy: 'squash',
     },
     reviews: {
-      agents: ['comfyrabbitai'],
+      agents: ['coderabbitai'],
       waitMinutes: 10,
       requestText: '',
     },

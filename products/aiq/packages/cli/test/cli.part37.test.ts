@@ -52,11 +52,11 @@ describe("CLI foundation", () => {
   it("fails fast when repo config is invalid", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-config-invalid-"));
     tempDirs.push(tempDir);
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(tempDir, "src"), { recursive: true });
     await writeFile(path.join(tempDir, "src/index.ts"), "export const invalid = false;\n", "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "aiq.config.json"),
+      path.join(tempDir, ".qube", "aiq", "config.json"),
       '{"version":1,"surfaces":{"cli":{"profile":"broken"}}}\n',
       "utf8",
     );

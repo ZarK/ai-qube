@@ -92,10 +92,10 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Next: no action required.");
 
     const config = JSON.parse(
-      await readFile(path.join(project.root, ".aiq", "aiq.config.json"), "utf8"),
+      await readFile(path.join(project.root, ".qube", "aiq", "config.json"), "utf8"),
     ) as { version: number };
     const progress = JSON.parse(
-      await readFile(path.join(project.root, ".aiq", "progress.json"), "utf8"),
+      await readFile(path.join(project.root, ".qube", "aiq", "progress.json"), "utf8"),
     ) as { current_stage: number; disabled: number[]; last_run: string | null; order: number[] };
     expect(config).toEqual({ version: 1 });
     expect(progress).toEqual({
@@ -131,7 +131,7 @@ describe("CLI foundation", () => {
     expect(status.lastRun.status).toBe("passed");
     expect(status.nextCommand).toBe("aiq config --set-stage 2");
     expect(status.artifactPaths.report).toBe(
-      path.join(project.root, ".aiq", "out", "aiq.report.json"),
+      path.join(project.root, ".qube", "aiq", "out", "aiq.report.json"),
     );
   });
 });

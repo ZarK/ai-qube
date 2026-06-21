@@ -1011,7 +1011,7 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
     files.push(".opencode command notes");
   }
   if (selections.workProvider === "github") {
-    files.push("aie.config.json provider notes");
+    files.push(".qube/aie/config.json provider notes");
   }
   return files;
 }

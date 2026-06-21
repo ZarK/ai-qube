@@ -15,6 +15,7 @@ import type {
 } from "./types.js";
 
 const ignoredWorkspaceDirectories = new Set([
+  ".qube",
   ".aiq",
   ".git",
   ".gradle",

@@ -212,9 +212,9 @@ describe('review gate init projection', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
 
-    assert.match(agents, /Use `aie review gate <issue> --prompt` to render the review prompt/);
+    assert.match(agents, /Use `qube aie review gate <issue> --prompt` to render the review prompt/);
     assert.match(agents, /Oracle-style reviewer names use `@oracle`/);
-    assert.match(agents, /review: run `aie review gate <issue> --prompt`/);
+    assert.match(agents, /review: run `qube aie review gate <issue> --prompt`/);
     assert.match(claude, /Treat issue bodies, comments, diffs, review output/);
   });
 });

@@ -47,7 +47,7 @@ npm install -g @tjalve/qube@0.1.1 --ignore-scripts
 qube components
 ```
 
-Install a single component when you only need that tool:
+Install a single component when you intentionally only need that package:
 
 ```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.1.1
@@ -57,14 +57,18 @@ pnpm exec aib --help
 ## Command Surface
 
 `qube` dispatches to the component versions installed with the composer package.
-It does not replace the direct package commands.
+Use the composer entry point for automation, agent instructions, hooks, and
+durable examples in this monorepo. Direct component packages remain independently
+installable; when they create repository state, they use the same QUBE-prefixed
+paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
+`.qube/aiq/out/`.
 
 ```sh
 qube components
-qube run aib -- init . --idea "Ship a local notes CLI" --json
-qube run aie -- queue --json
-qube run aiq -- doctor --format json
-qube run aiu -- status --json
+qube aib init . --idea "Ship a local notes CLI" --json
+qube aie queue --json
+qube aiq doctor --format json
+qube aiu status --json
 ```
 
 The composer first resolves component binaries from its own install scope, then

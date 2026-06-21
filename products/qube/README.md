@@ -96,17 +96,22 @@ Use `qube run` as the low-level escape hatch when debugging a component command
 or forwarding an unusual command shape:
 
 ```sh
-qube run aib -- status --json
-qube run aiq -- doctor --format json
+qube aib status --json
+qube aiq doctor --format json
 ```
 
-The direct component commands remain the right entry point when you only need one
-tool:
+The direct component packages remain independently installable when you
+intentionally only need one package:
 
 ```sh
 pnpm exec aiq doctor --format json
 pnpm exec aie queue --json
 ```
+
+QUBE remains the preferred entry point for automation, agent instructions, hooks,
+and durable examples in this monorepo. Direct package commands share QUBE-owned
+repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
+`.qube/aiq/out/`.
 
 ## Dispatch Model
 

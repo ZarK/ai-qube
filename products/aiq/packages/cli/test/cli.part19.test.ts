@@ -14,8 +14,8 @@ import {
 describe("CLI foundation", () => {
   it("reports status before any run without writing config state", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-status-no-run-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
-    const progressPath = path.join(project.root, ".aiq", "progress.json");
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
+    const progressPath = path.join(project.root, ".qube", "aiq", "progress.json");
     const progressContents = `${JSON.stringify({
       current_stage: 3,
       disabled: [],
@@ -57,10 +57,10 @@ describe("CLI foundation", () => {
     expect(output.progressLastRun).toBe("previous");
     expect(output.nextCommand).toBe("aiq run <paths...>");
     expect(output.artifactPaths.report).toBe(
-      path.join(project.root, ".aiq", "out", "aiq.report.json"),
+      path.join(project.root, ".qube", "aiq", "out", "aiq.report.json"),
     );
     expect(await readFile(progressPath, "utf8")).toBe(progressContents);
-    await expect(access(path.join(project.root, ".aiq", "aiq.config.json"))).rejects.toThrow();
+    await expect(access(path.join(project.root, ".qube", "aiq", "config.json"))).rejects.toThrow();
   });
 
   it("emits trusted missing-quality evidence before any run", async () => {

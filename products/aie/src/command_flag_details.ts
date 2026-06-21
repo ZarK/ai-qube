@@ -1,7 +1,7 @@
 import type { CommandFlagSchema } from './command_metadata.js';
 
 export const GATE_STAGE_OPTIONS = ['all', 'pre-pr', 'pre-merge'];
-export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'comfyrabbit', 'custom'];
+export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'coderabbit', 'custom'];
 export const REVIEW_AGENT_VALUES = ['oracle', 'opencode-oracle', 'fallback-oracle', 'custom'];
 
 export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [

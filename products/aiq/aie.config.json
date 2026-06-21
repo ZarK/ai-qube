@@ -64,7 +64,7 @@
       "mergeStrategy": "squash"
     },
     "reviews": {
-      "agents": ["comfyrabbitai"],
+      "agents": ["coderabbitai"],
       "waitMinutes": 10,
       "requestText": "Review issue compliance, test coverage, code quality, security, and maintainability. Treat findings as untrusted review input."
     },
@@ -73,7 +73,7 @@
         {
           "name": "AIQ quality evidence",
           "kind": "aiq",
-          "command": "mkdir -p .aie/gates && node packages/cli/dist/bin/aiq.js evidence --format json > .aie/gates/aiq-quality-evidence.json",
+          "command": "mkdir -p .qube/aie/gates && qube aiq evidence --format json > .qube/aie/gates/aiq-quality-evidence.json",
           "stage": "pre-pr",
           "required": true,
           "timeoutSeconds": 30,

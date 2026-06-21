@@ -149,7 +149,7 @@ function commentBodyFor(name: string, policy: ExecutorPolicy, headSha: string): 
   const requestText = policy.reviews.requestText.replace(/\s+/g, ' ').trim();
   const id = reviewerId(name);
   let command = `${handle} review this PR`;
-  if (id === 'comfyrabbit' || id === 'comfyrabbitai' || id === 'coderabbit' || id === 'coderabbitai') command = `${handle} review`;
+  if (id === 'coderabbit' || id === 'coderabbitai') command = `${handle} review`;
   if (id === 'cubic' || id === 'cubic-dev-ai') command = `${handle} review this PR`;
   const body = requestText === '' ? `${marker}\n${command}` : `${marker}\n${command}\n${redact(requestText)}`;
   return { body, marker };

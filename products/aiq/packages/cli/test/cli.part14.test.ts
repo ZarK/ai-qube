@@ -14,9 +14,9 @@ import {
 describe("CLI foundation", () => {
   it("uses persisted current_stage and reports detected technology setup", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-doctor-progress-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );

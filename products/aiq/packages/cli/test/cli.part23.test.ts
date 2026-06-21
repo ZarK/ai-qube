@@ -11,9 +11,9 @@ import {
 describe("CLI foundation", () => {
   it("uses persisted current_stage as the default cumulative check target", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-check-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );
@@ -37,9 +37,9 @@ describe("CLI foundation", () => {
 
   it("lets explicit run stage flags override persisted current_stage", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-override-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );
@@ -64,9 +64,9 @@ describe("CLI foundation", () => {
 
   it("lets explicit run profiles override persisted current_stage", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-profile-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );
@@ -101,9 +101,9 @@ describe("CLI foundation", () => {
 
   it("lets explicit named run stages override persisted current_stage", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-named-stage-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );

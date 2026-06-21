@@ -108,7 +108,7 @@ describe('doctor diagnostics', () => {
     const config = getDefaults();
     config.manualUiAudit = false;
     config.qualityControl = true;
-    config.reviewAgents = ['@copilot', '@comfyrabbitai', 'oracle', 'custom bot'];
+    config.reviewAgents = ['@copilot', '@coderabbitai', 'oracle', 'custom bot'];
     config.reviewWaitMinutes = 3;
     config.gates = [
       { name: 'build', kind: 'build', command: 'npm run build', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
@@ -137,7 +137,7 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('github-copilot'));
-    assert.ok(diagnostics.reviewAgent.externalServices.includes('comfyrabbitai'));
+    assert.ok(diagnostics.reviewAgent.externalServices.includes('coderabbitai'));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('custom-pr-reviewer:custom-bot'));
     assert.ok(!diagnostics.reviewAgent.externalServices.includes('oracle'));
     assert.equal(diagnostics.supplyChain.readiness, 'ready');

@@ -35,9 +35,9 @@ describe("CLI foundation", () => {
   it("returns quality failure code and diagnostic remediation for first-run code diagnostics", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-first-run-quality-failure-");
     await writeFile(project.filePath, "export const value: string = 1;\n", "utf8");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );

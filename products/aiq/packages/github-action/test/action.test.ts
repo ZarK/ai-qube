@@ -49,7 +49,7 @@ describe("github action adapter", () => {
     expect(io.uploads).toHaveLength(1);
     expect(io.uploads[0]).toMatchObject({
       name: "aiq-artifact",
-      rootDirectory: path.join(repoDir, ".aiq", "out"),
+      rootDirectory: path.join(repoDir, ".qube", "aiq", "out"),
     });
     expect(io.uploads[0]?.files.map((file) => path.basename(file)).sort()).toEqual([
       "aiq.plan.json",

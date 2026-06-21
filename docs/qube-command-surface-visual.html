@@ -253,9 +253,9 @@
         <h2>2. Capture Idea</h2>
         <p class="owner">AIB</p>
         <div class="commands">
-          <code>qube run aib -- init . --agent codex --idea "..." --json</code>
-          <code>qube run aib -- next --json</code>
-          <code>qube run aib -- answer --field &lt;field&gt; --value &lt;answer&gt; --json</code>
+          <code>qube aib init . --agent codex --idea "..." --json</code>
+          <code>qube aib next --json</code>
+          <code>qube aib answer --field &lt;field&gt; --value &lt;answer&gt; --json</code>
         </div>
         <p class="note">Turns the fuzzy request into structured planning state.</p>
       </article>
@@ -264,9 +264,9 @@
         <h2>3. Accept Spec</h2>
         <p class="owner">AIB</p>
         <div class="commands">
-          <code>qube run aib -- spec draft --json</code>
-          <code>qube run aib -- spec validate --json</code>
-          <code>qube run aib -- spec accept --section &lt;id|all&gt; --json</code>
+          <code>qube aib spec draft --json</code>
+          <code>qube aib spec validate --json</code>
+          <code>qube aib spec accept --section &lt;id|all&gt; --json</code>
         </div>
         <p class="note">Implementation should not start until the right sections are accepted.</p>
       </article>
@@ -275,9 +275,9 @@
         <h2>4. Work Items</h2>
         <p class="owner">AIB</p>
         <div class="commands">
-          <code>qube run aib -- milestones generate --json</code>
-          <code>qube run aib -- work-items generate --json</code>
-          <code>qube run aib -- work-items render --provider github --dry-run --json</code>
+          <code>qube aib milestones generate --json</code>
+          <code>qube aib work-items generate --json</code>
+          <code>qube aib work-items render --provider github --dry-run --json</code>
         </div>
         <p class="note">Produces provider-ready work item drafts.</p>
       </article>
@@ -296,10 +296,10 @@
         <h2>6. Execute Issue</h2>
         <p class="owner">AIE</p>
         <div class="commands">
-          <code>qube run aie -- queue --json</code>
-          <code>qube run aie -- start next</code>
-          <code>qube run aie -- view &lt;issue&gt;</code>
-          <code>qube run aie -- branch check &lt;issue&gt;</code>
+          <code>qube aie queue --json</code>
+          <code>qube aie start next</code>
+          <code>qube aie view &lt;issue&gt;</code>
+          <code>qube aie branch check &lt;issue&gt;</code>
         </div>
         <p class="note">Selects one valid issue and moves work onto the issue branch.</p>
       </article>
@@ -309,10 +309,10 @@
         <p class="owner">AIE</p>
         <div class="commands">
           <code>edit code, tests, and docs</code>
-          <code>qube run aie -- audit ui &lt;issue&gt; --prepare</code>
-          <code>qube run aie -- run start --name ui-audit -- &lt;dev command&gt;</code>
-          <code>qube run aie -- run wait --name ui-audit --url &lt;url&gt; --timeout 30</code>
-          <code>qube run aie -- run stop --name ui-audit</code>
+          <code>qube aie audit ui &lt;issue&gt; --prepare</code>
+          <code>qube aie run start --name ui-audit -- &lt;dev command&gt;</code>
+          <code>qube aie run wait --name ui-audit --url &lt;url&gt; --timeout 30</code>
+          <code>qube aie run stop --name ui-audit</code>
         </div>
         <p class="note">Uses managed local app runners for UI evidence when needed.</p>
       </article>
@@ -321,11 +321,11 @@
         <h2>8. Quality Evidence</h2>
         <p class="owner">AIQ</p>
         <div class="commands">
-          <code>qube run aiq -- setup --format json</code>
-          <code>qube run aiq -- doctor --format json</code>
-          <code>qube run aiq -- plan . --format json</code>
-          <code>qube run aiq -- run . --format json</code>
-          <code>qube run aiq -- evidence --format json</code>
+          <code>qube aiq setup --format json</code>
+          <code>qube aiq doctor --format json</code>
+          <code>qube aiq plan . --format json</code>
+          <code>qube aiq run . --format json</code>
+          <code>qube aiq evidence --format json</code>
         </div>
         <p class="note">Produces trusted machine-readable gate evidence.</p>
       </article>
@@ -334,13 +334,13 @@
         <h2>9. PR To Completion</h2>
         <p class="owner">AIE + Git</p>
         <div class="commands">
-          <code>qube run aie -- pr body &lt;issue&gt;</code>
+          <code>qube aie pr body &lt;issue&gt;</code>
           <code>git commit && git push</code>
           <code>open non-draft PR that closes issue</code>
-          <code>qube run aie -- pr view &lt;pr&gt; --json</code>
-          <code>qube run aie -- pr gate &lt;pr&gt; --json</code>
+          <code>qube aie pr view &lt;pr&gt; --json</code>
+          <code>qube aie pr gate &lt;pr&gt; --json</code>
           <code>merge after approval, CI, and gates</code>
-          <code>qube run aie -- complete &lt;issue&gt;</code>
+          <code>qube aie complete &lt;issue&gt;</code>
         </div>
         <p class="note">PR helpers do not silently merge. Merge happens only after policy passes.</p>
       </article>
@@ -349,11 +349,11 @@
     <section class="loops">
       <article class="panel">
         <h2>Failure Loop</h2>
-        <p>If AIQ, CI, review, or UI audit fails, return to implementation, fix the concrete issue, rerun the affected gate, then rerun <code>qube run aie -- pr gate &lt;pr&gt; --json</code>.</p>
+        <p>If AIQ, CI, review, or UI audit fails, return to implementation, fix the concrete issue, rerun the affected gate, then rerun <code>qube aie pr gate &lt;pr&gt; --json</code>.</p>
       </article>
       <article class="panel">
         <h2>Continuation Loop</h2>
-        <p>After merge and <code>aie complete</code>, AIU can inspect trusted state with <code>qube run aiu -- status --json</code>, host hooks, or whip tasks before the next issue starts.</p>
+        <p>After merge and <code>qube aie complete</code>, AIU can inspect trusted state with <code>qube aiu status --json</code>, host hooks, or whip tasks before the next issue starts.</p>
       </article>
     </section>
   </main>

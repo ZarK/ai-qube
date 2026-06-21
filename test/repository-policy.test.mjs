@@ -11,7 +11,7 @@ function read(path) {
 describe("repository policy", () => {
   it("keeps root Executor instructions installed with branch and naming policy", () => {
     const agents = read("AGENTS.md");
-    const config = JSON.parse(read("aie.config.json"));
+    const config = JSON.parse(read(".qube/aie/config.json"));
 
     assert.match(agents, /BEGIN EXECUTOR MANAGED SECTION/);
     assert.match(agents, /executor-managed-checksum:/);

@@ -13,10 +13,10 @@ import {
 describe("CLI foundation", () => {
   it("prints successful current-stage workflow guidance and advancement", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-status-successful-run-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
-    await writeFile(path.join(project.root, ".aiq", "aiq.config.json"), '{"version":1}\n', "utf8");
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
+    await writeFile(path.join(project.root, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );
@@ -65,7 +65,7 @@ describe("CLI foundation", () => {
       status: "pass",
     });
 
-    const reportPath = path.join(project.root, ".aiq", "out", "aiq.report.json");
+    const reportPath = path.join(project.root, ".qube", "aiq", "out", "aiq.report.json");
     const report = JSON.parse(await readFile(reportPath, "utf8")) as { finishedAt: string };
     report.finishedAt = "2020-01-01T00:00:00.000Z";
     await writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
