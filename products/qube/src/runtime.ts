@@ -3,7 +3,7 @@ import { existsSync, realpathSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { defineInstallerChoiceGroup, promptInstallerChoice } from "@tjalve/qube-cli/installer";
+import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
@@ -93,18 +93,6 @@ interface InstallPlan {
   readonly commands: readonly InstallCommandStep[];
   readonly files: readonly string[];
   readonly notes: readonly string[];
-}
-
-interface InstallChoiceGroup<Value extends string> {
-  readonly name: string;
-  readonly message: string;
-  readonly choices: readonly {
-    readonly value: Value;
-    readonly label: string;
-    readonly description?: string;
-    readonly recommended?: boolean;
-  }[];
-  readonly defaultValue?: Value;
 }
 
 const scopeChoices = defineInstallerChoiceGroup({
@@ -918,7 +906,7 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
 }
 
 async function resolveInstallChoice<Value extends string>(
-  group: InstallChoiceGroup<Value>,
+  group: InstallerChoiceGroup<Value>,
   value: Value | undefined,
   flags: Readonly<Record<string, unknown>>
 ): Promise<Value> {
