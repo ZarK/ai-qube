@@ -2,6 +2,8 @@
 
 This matrix defines which package commands are part of the QUBE-facing workflow and which remain standalone package surfaces.
 
+See also the static command-flow visual: [QUBE Command Surface: Idea to Complete Implementation](./qube-command-surface-visual.html).
+
 | Package | Command pattern | Classification | QUBE-facing | Schema required | Notes |
 | --- | --- | --- | --- | --- | --- |
 | `@tjalve/aib` | `aib init\|status\|next\|answer\|spec *\|milestones *\|work-items *` | QUBE-facing workflow command | yes | yes | Bootstrap planning commands are discoverable through QUBE and keep provider mutation behind dry-run or local-file guards. |
