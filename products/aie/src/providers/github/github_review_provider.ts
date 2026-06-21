@@ -47,7 +47,7 @@ function sanitizeFeedbackText(text: string | undefined): string {
     .replace(/Prompt for AI Agents[\s\S]*$/i, '');
 }
 
-function isNonActionableSummary(text: string | undefined): boolean {
+function isNonActionableSummary(text: string | undefined, authorLogin?: string | null): boolean {
   const normalized = sanitizeFeedbackText(text).replace(/\s+/g, ' ').trim().toLowerCase();
   if (normalized === '') return true;
   if (normalized.includes('no actionable comments were generated')) return true;
@@ -55,8 +55,16 @@ function isNonActionableSummary(text: string | undefined): boolean {
   if (normalized.includes('currently processing new changes')) return true;
   if (normalized.includes('<summary>📝 walkthrough</summary>')) return true;
   if (normalized.includes('<summary>walkthrough</summary>')) return true;
+  if (isCopilotOverview(normalized, authorLogin)) return true;
   if (normalized.startsWith('**no issues found**') || normalized.startsWith('no issues found')) return true;
   return false;
+}
+
+function isCopilotOverview(normalizedText: string, authorLogin?: string | null): boolean {
+  if ((authorLogin ?? '').toLowerCase() !== 'copilot-pull-request-reviewer') return false;
+  return normalizedText.startsWith('## pull request overview')
+    && normalizedText.includes('### reviewed changes')
+    && /\bcopilot reviewed \d+ out of \d+ changed files in this pull request\b/i.test(normalizedText);
 }
 
 function isResolvedProviderReviewSummary(text: string | undefined): boolean {
@@ -253,11 +261,11 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
     const state = review.state ?? 'UNKNOWN';
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
     if (raw.unresolvedThreads.length === 0 && isResolvedProviderReviewSummary(review.body)) continue;
-    if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
+    if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body, review.author?.login))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
-    if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
+    if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
     const first = thread.comments?.nodes?.[0];

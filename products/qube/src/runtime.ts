@@ -77,6 +77,7 @@ const componentsCommand = defineCommand({
 interface DirectQubeCommand {
   readonly command: ReturnType<typeof defineCommand>;
   readonly component: QubeComponent["command"];
+  readonly supportsJson: boolean;
   readonly mapArgs: (args: readonly string[]) => readonly string[];
 }
 
@@ -118,141 +119,88 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
       extensions: passthroughExtensions
     }),
     component: "aib",
+    supportsJson: true,
     mapArgs(args) {
       return mapIdeaArgs(args);
     }
   },
-  {
-    command: defineCommand({
-      kind: "command",
-      name: "queue",
-      description: "Show the Executor issue queue.",
-      arguments: [
-        defineArgument({
-          name: "args",
-          description: "Additional arguments forwarded to aie queue.",
-          multiple: true
-        })
-      ],
-      flags: [jsonFlag],
-      examples: [
-        {
-          description: "Show the queue as JSON.",
-          command: "qube queue --json"
-        }
-      ],
-      interactions: {
-        json: true,
-        noColor: true,
-        nonInteractive: true,
-        ttyPrompt: false
-      },
-      extensions: passthroughExtensions
-    }),
-    component: "aie",
-    mapArgs(args) {
-      return ["queue", ...stripSeparator(args)];
-    }
-  },
-  {
-    command: defineCommand({
-      kind: "command",
-      name: "doctor",
-      description: "Run Quality Control diagnostics.",
-      arguments: [
-        defineArgument({
-          name: "args",
-          description: "Additional arguments forwarded to aiq doctor.",
-          multiple: true
-        })
-      ],
-      flags: [jsonFlag],
-      examples: [
-        {
-          description: "Run quality diagnostics as JSON.",
-          command: "qube doctor --json"
-        }
-      ],
-      interactions: {
-        json: true,
-        noColor: true,
-        nonInteractive: true,
-        ttyPrompt: false
-      },
-      extensions: passthroughExtensions
-    }),
-    component: "aiq",
-    mapArgs(args) {
-      return ["doctor", ...translateJsonFlag(stripSeparator(args))];
-    }
-  },
-  {
-    command: defineCommand({
-      kind: "command",
-      name: "check",
-      description: "Run Quality Control checks for explicit paths.",
-      arguments: [
-        defineArgument({
-          name: "args",
-          description: "Files, paths, and flags forwarded to aiq check.",
-          multiple: true
-        })
-      ],
-      flags: [jsonFlag],
-      examples: [
-        {
-          description: "Check source files as JSON.",
-          command: "qube check src --json"
-        }
-      ],
-      interactions: {
-        json: true,
-        noColor: true,
-        nonInteractive: true,
-        ttyPrompt: false
-      },
-      extensions: passthroughExtensions
-    }),
-    component: "aiq",
-    mapArgs(args) {
-      return ["check", ...translateJsonFlag(stripSeparator(args))];
-    }
-  },
-  {
-    command: defineCommand({
-      kind: "command",
-      name: "status",
-      description: "Show Umpire continuation status.",
-      arguments: [
-        defineArgument({
-          name: "args",
-          description: "Additional arguments forwarded to aiu status.",
-          multiple: true
-        })
-      ],
-      flags: [jsonFlag],
-      examples: [
-        {
-          description: "Show continuation status as JSON.",
-          command: "qube status --json"
-        }
-      ],
-      interactions: {
-        json: true,
-        noColor: true,
-        nonInteractive: true,
-        ttyPrompt: false
-      },
-      extensions: passthroughExtensions
-    }),
-    component: "aiu",
-    mapArgs(args) {
-      return ["status", ...stripSeparator(args)];
-    }
-  }
+  createDirectCommand("init", "Initialize Bootstrap planning state for a target.", "aib", "init"),
+  createDirectCommand("plan status", "Show Bootstrap planning status.", "aib", "status"),
+  createDirectCommand("plan next", "Show the next Bootstrap planning action.", "aib", "next"),
+  createDirectCommand("answer", "Record a Bootstrap planning answer.", "aib", "answer"),
+  createDirectCommand("spec draft", "Draft the Bootstrap spec artifact.", "aib", "spec draft"),
+  createDirectCommand("spec validate", "Validate the Bootstrap spec artifact.", "aib", "spec validate"),
+  createDirectCommand("spec accept", "Accept reviewed Bootstrap spec sections.", "aib", "spec accept"),
+  createDirectCommand("spec reopen", "Reopen accepted Bootstrap spec sections.", "aib", "spec reopen"),
+  createDirectCommand("milestones", "Generate milestone planning artifacts.", "aib", "milestones generate"),
+  createDirectCommand("milestones generate", "Generate milestone planning artifacts.", "aib", "milestones generate"),
+  createDirectCommand("work-items", "Generate provider-neutral work item drafts.", "aib", "work-items generate"),
+  createDirectCommand("work-items generate", "Generate provider-neutral work item drafts.", "aib", "work-items generate"),
+  createDirectCommand("work-items render", "Render work item drafts for a provider.", "aib", "work-items render"),
+  createDirectCommand("queue", "Show the Executor issue queue.", "aie", "queue"),
+  createDirectCommand("next", "Select the next Executor issue.", "aie", "next"),
+  createDirectCommand("start", "Start or resume Executor issue work.", "aie", "start"),
+  createDirectCommand("switch", "Switch Executor issue work.", "aie", "switch"),
+  createDirectCommand("view", "Show Executor issue context.", "aie", "view"),
+  createDirectCommand("complete", "Complete post-merge Executor issue work.", "aie", "complete"),
+  createDirectCommand("branch", "Show Executor branch helpers.", "aie", "branch", { supportsJson: false }),
+  createDirectCommand("branch suggest", "Suggest the policy-compliant issue branch.", "aie", "branch suggest"),
+  createDirectCommand("branch check", "Check the current issue branch.", "aie", "branch check"),
+  createDirectCommand("branch create", "Create or switch to the issue branch.", "aie", "branch create"),
+  createDirectCommand("gates", "Show Executor gate helpers.", "aie", "gates", { supportsJson: false }),
+  createDirectCommand("gates plan", "Show configured Executor gate obligations.", "aie", "gates plan"),
+  createDirectCommand("gates status", "Show recorded Executor gate evidence.", "aie", "gates status"),
+  createDirectCommand("audit", "Show Executor audit helpers.", "aie", "audit", { supportsJson: false }),
+  createDirectCommand("audit ui", "Plan or check manual UI audit evidence.", "aie", "audit ui"),
+  createDirectCommand("review", "Show Executor review helpers.", "aie", "review", { supportsJson: false }),
+  createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate"),
+  createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
+  createDirectCommand("pr view", "Show concise pull request state.", "aie", "pr view"),
+  createDirectCommand("pr body", "Draft a pull request body for issue work.", "aie", "pr body"),
+  createDirectCommand("pr gate", "Request and inspect configured pull request reviews.", "aie", "pr gate"),
+  createDirectCommand("deps", "Show Executor dependency helpers.", "aie", "deps", { supportsJson: false }),
+  createDirectCommand("deps blockers", "List direct blockers for an issue.", "aie", "deps blockers"),
+  createDirectCommand("deps blocked", "List blocked open issues.", "aie", "deps blocked"),
+  createDirectCommand("deps blocking", "List open issues blocked by an issue.", "aie", "deps blocking"),
+  createDirectCommand("deps ready", "List ready issues with no open blockers.", "aie", "deps ready"),
+  createDirectCommand("deps chain", "Show recursive issue blockers.", "aie", "deps chain"),
+  createDirectCommand("deps graph", "Emit the open issue dependency graph.", "aie", "deps graph"),
+  createDirectCommand("deps fix", "Synchronize dependency status labels.", "aie", "deps fix"),
+  createDirectCommand("app start", "Start a local app process for audit work.", "aie", "run start"),
+  createDirectCommand("app wait", "Wait for a local audit app readiness URL.", "aie", "run wait"),
+  createDirectCommand("app status", "Show local audit app process status.", "aie", "run status"),
+  createDirectCommand("app stop", "Stop a local audit app process.", "aie", "run stop"),
+  createDirectCommand("doctor", "Run Quality Control diagnostics.", "aiq", "doctor", { translateJson: true }),
+  createDirectCommand("check", "Run Quality Control checks for explicit paths.", "aiq", "check", { translateJson: true }),
+  createDirectCommand("quality", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
+  createDirectCommand("quality run", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
+  createDirectCommand("quality plan", "Resolve the AIQ quality plan.", "aiq", "plan", { translateJson: true }),
+  createDirectCommand("quality status", "Show AIQ quality status.", "aiq", "status", { translateJson: true }),
+  createDirectCommand("quality setup", "Render AIQ setup guidance.", "aiq", "setup", { translateJson: true }),
+  createDirectCommand("evidence", "Emit structured AIQ quality evidence.", "aiq", "evidence", { translateJson: true }),
+  createDirectCommand("quality evidence", "Emit structured AIQ quality evidence.", "aiq", "evidence", { translateJson: true }),
+  createDirectCommand("bench", "Run the standalone AIQ benchmark corpus.", "aiq", "bench", { translateJson: true }),
+  createDirectCommand("watch", "Run AIQ continuously for explicit paths.", "aiq", "watch", { translateJson: true }),
+  createDirectCommand("serve", "Start the standalone AIQ quality server.", "aiq", "serve", { translateJson: true }),
+  createDirectCommand("status", "Show Umpire continuation status.", "aiu", "status"),
+  createDirectCommand("continue", "Show Umpire continuation status.", "aiu", "status"),
+  createDirectCommand("continue status", "Show Umpire continuation status.", "aiu", "status"),
+  createDirectCommand("whip", "Inspect and manage durable idle whip tasks.", "aiu", "whip"),
 ];
 
 const directCommands = directCommandDefinitions.map(definition => definition.command);
+const directCommandNames = new Set(directCommands.map(command => command.name));
+const sortedDirectCommandDefinitions = [...directCommandDefinitions].sort((left, right) => right.command.name.split(" ").length - left.command.name.split(" ").length);
+
+const ambiguousCommandGuidance: Readonly<Record<string, string>> = {
+  config: "Config exists in multiple components. Use qube aiq config, qube aiu config, or qube aie init for Executor config setup.",
+  migrate: "Migration exists in Executor and Umpire. Use qube aie migrate ... for Executor migration or qube aiu migrate ... for Umpire migration.",
+  labels: "Label management is Executor-specific. Use qube aie labels setup ... when you need repository label administration.",
+  repo: "Repository preparation is Executor-specific administration. Use qube aie repo prime ... when you need it.",
+  paths: "Path inspection is Umpire-specific. Use qube aiu paths ... when you need package and state paths.",
+  hook: "Hook setup is package-specific. Use qube aiq hook ... for Quality Control hooks.",
+  "hook-stop": "Stop-hook handling is Umpire-specific host integration. Use qube aiu hook-stop ... from host hook wiring."
+};
 
 const runCommand = defineCommand({
   kind: "command",
@@ -291,7 +239,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   kind: "command",
   name: component.command,
   description: component.summary,
-  aliases: component.id === component.command ? [] : [component.id],
+  aliases: component.id === component.command || directCommandNames.has(component.id) ? [] : [component.id],
   arguments: [
     defineArgument({
       name: "args",
@@ -323,9 +271,14 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
     return { exitCode: 0, stdout: renderComponents(), stderr: "" };
   }
 
-  const direct = planDirectCommand(args[0], args.slice(1), environment);
+  const direct = planDirectCommand(args, environment);
   if (direct) {
     return direct;
+  }
+
+  const ambiguous = ambiguityError(args);
+  if (ambiguous) {
+    return ambiguous;
   }
 
   const dispatchInput = args[0] === "run" ? args.slice(1) : args;
@@ -403,7 +356,7 @@ function createQubeCli(environment: CliEnvironment) {
       }),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
-        ({ argv }) => executeQubeDispatch(definition.component, definition.mapArgs(argv), environment)
+        ({ argv }) => executeDirectCommand(definition, argv, environment)
       )),
       createRuntimeCommand(runCommand, ({ args }) => executeQubeDispatch(readString(args.component), readStringArray(args.args), environment)),
       ...qubeComponents.map((component, index) => createRuntimeCommand(
@@ -442,12 +395,16 @@ async function executeQubeDispatch(componentName: string | undefined, componentA
   return { exitCode };
 }
 
-function planDirectCommand(commandName: string | undefined, args: readonly string[], environment: CliEnvironment): CliExecution | undefined {
-  const definition = directCommandDefinitions.find(candidate => candidate.command.name === commandName);
-  if (!definition) {
+function planDirectCommand(args: readonly string[], environment: CliEnvironment): CliExecution | undefined {
+  const match = findDirectCommand(args);
+  if (!match) {
     return undefined;
   }
-  return planQubeDispatch(definition.component, definition.mapArgs(args), environment);
+  const mapped = mapDirectArgs(match.definition, match.args);
+  if ("error" in mapped) {
+    return mapped.error;
+  }
+  return planQubeDispatch(match.definition.component, mapped.args, environment);
 }
 
 function planQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): CliExecution {
@@ -537,6 +494,98 @@ function mapIdeaArgs(args: readonly string[]): readonly string[] {
 
 function translateJsonFlag(args: readonly string[]): readonly string[] {
   return args.flatMap(arg => arg === "--json" ? ["--format", "json"] : [arg]);
+}
+
+async function executeDirectCommand(definition: DirectQubeCommand, args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const mapped = mapDirectArgs(definition, args);
+  if ("error" in mapped) {
+    return { exitCode: mapped.error.exitCode, stdout: mapped.error.stdout, stderr: mapped.error.stderr };
+  }
+  return executeQubeDispatch(definition.component, mapped.args, environment);
+}
+
+function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): { readonly args: readonly string[] } | { readonly error: CliExecution } {
+  const stripped = stripSeparator(args);
+  if (!definition.supportsJson && stripped.includes("--json")) {
+    return {
+      error: {
+        exitCode: 2,
+        stdout: "",
+        stderr: `qube ${definition.command.name} does not support --json because ${definition.component} ${definition.command.name} is a helper topic. Use qube help ${definition.command.name} or a concrete subcommand.\n`
+      }
+    };
+  }
+  return { args: definition.mapArgs(args) };
+}
+
+function createDirectCommand(
+  name: string,
+  description: string,
+  component: QubeComponent["command"],
+  targetCommand: string,
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean } = {}
+): DirectQubeCommand {
+  const supportsJson = options.supportsJson ?? true;
+  return {
+    command: defineCommand({
+      kind: "command",
+      name,
+      description,
+      arguments: [
+        defineArgument({
+          name: "args",
+          description: `Arguments forwarded to ${component} ${targetCommand}.`,
+          multiple: true
+        })
+      ],
+      flags: supportsJson ? [jsonFlag] : [],
+      examples: [
+        {
+          description,
+          command: supportsJson ? `qube ${name} --json` : `qube ${name} --help`
+        }
+      ],
+      interactions: {
+        json: supportsJson,
+        noColor: true,
+        nonInteractive: true,
+        ttyPrompt: false
+      },
+      extensions: passthroughExtensions
+    }),
+    component,
+    supportsJson,
+    mapArgs(args) {
+      const stripped = stripSeparator(args);
+      const forwarded = options.translateJson ? translateJsonFlag(stripped) : stripped;
+      return [...targetCommand.split(" "), ...forwarded];
+    }
+  };
+}
+
+function findDirectCommand(args: readonly string[]): { readonly definition: DirectQubeCommand; readonly args: readonly string[] } | undefined {
+  for (const definition of sortedDirectCommandDefinitions) {
+    const tokens = definition.command.name.split(" ");
+    if (tokens.every((token, index) => args[index] === token)) {
+      return { definition, args: args.slice(tokens.length) };
+    }
+  }
+  return undefined;
+}
+
+function ambiguityError(args: readonly string[]): CliExecution | undefined {
+  const [first, second] = args;
+  const candidates = second ? [`${first} ${second}`, first] : [first];
+  for (const candidate of candidates) {
+    if (candidate && ambiguousCommandGuidance[candidate]) {
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: `${ambiguousCommandGuidance[candidate]}\n`
+      };
+    }
+  }
+  return undefined;
 }
 
 function renderComponents(): string {

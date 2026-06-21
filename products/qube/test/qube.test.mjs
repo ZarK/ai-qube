@@ -50,9 +50,16 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /Commands:/);
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
     assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
+    assert.match(help.stdout, /spec draft\s+Draft the Bootstrap spec artifact\./);
+    assert.match(help.stdout, /work-items render\s+Render work item drafts for a provider\./);
     assert.match(help.stdout, /queue\s+Show the Executor issue queue\./);
+    assert.match(help.stdout, /start\s+Start or resume Executor issue work\./);
+    assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
+    assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
     assert.match(help.stdout, /doctor\s+Run Quality Control diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
+    assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
+    assert.match(help.stdout, /evidence\s+Emit structured AIQ quality evidence\./);
     assert.match(help.stdout, /status\s+Show Umpire continuation status\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
 
@@ -65,24 +72,16 @@ describe("qube composer CLI", () => {
     assert.equal(schema.status, 0);
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
-    assert.deepEqual(
-      parsed.commands.map(command => command.name).sort(),
-      ["aib", "aie", "aiq", "aiu", "check", "components", "doctor", "idea", "queue", "run", "schema", "status"]
-    );
+    const commandNames = parsed.commands.map(command => command.name);
+    for (const command of ["idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+      assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
+    }
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
     );
-    assert.deepEqual(
-      parsed.sections.directCommands.map(command => [command.command, command.component]),
-      [
-        ["idea", "aib"],
-        ["queue", "aie"],
-        ["doctor", "aiq"],
-        ["check", "aiq"],
-        ["status", "aiu"]
-      ]
-    );
+    assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component])).status, "aiu");
+    assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component]))["pr gate"], "aie");
   });
 
   it("lists standalone components without replacing them", () => {
@@ -157,9 +156,44 @@ describe("qube composer CLI", () => {
         args: ["init", ".", "--json"]
       },
       {
+        input: ["spec", "draft", "--json"],
+        component: "aib",
+        args: ["spec", "draft", "--json"]
+      },
+      {
+        input: ["work-items", "render", "--provider", "github", "--json"],
+        component: "aib",
+        args: ["work-items", "render", "--provider", "github", "--json"]
+      },
+      {
         input: ["queue", "--json"],
         component: "aie",
         args: ["queue", "--json"]
+      },
+      {
+        input: ["start", "next", "--json"],
+        component: "aie",
+        args: ["start", "next", "--json"]
+      },
+      {
+        input: ["branch", "create", "84", "--dry-run", "--json"],
+        component: "aie",
+        args: ["branch", "create", "84", "--dry-run", "--json"]
+      },
+      {
+        input: ["pr", "--help"],
+        component: "aie",
+        args: ["pr", "--help"]
+      },
+      {
+        input: ["pr", "gate", "87", "--json"],
+        component: "aie",
+        args: ["pr", "gate", "87", "--json"]
+      },
+      {
+        input: ["app", "start", "--name", "ui-audit", "--", "pnpm", "dev"],
+        component: "aie",
+        args: ["run", "start", "--name", "ui-audit", "--", "pnpm", "dev"]
       },
       {
         input: ["doctor", "--json"],
@@ -172,7 +206,22 @@ describe("qube composer CLI", () => {
         args: ["check", "src", "--format", "json"]
       },
       {
+        input: ["quality", "status", "--json"],
+        component: "aiq",
+        args: ["status", "--format", "json"]
+      },
+      {
+        input: ["evidence", "--json"],
+        component: "aiq",
+        args: ["evidence", "--format", "json"]
+      },
+      {
         input: ["status", "--json"],
+        component: "aiu",
+        args: ["status", "--json"]
+      },
+      {
+        input: ["continue", "status", "--json"],
         component: "aiu",
         args: ["status", "--json"]
       }
@@ -184,6 +233,31 @@ describe("qube composer CLI", () => {
       assert.equal(planned.dispatch?.component.command, testCase.component);
       assert.deepEqual(planned.dispatch?.args, testCase.args);
     }
+  });
+
+  it("explains ambiguous product-specific commands", () => {
+    const planned = planQubeCli(["config", "--json"], {
+      cwd: mkdtempSync(path.join(tmpdir(), "qube-ambiguous-cwd-")),
+      env: { PATH: "" },
+      packageRoot: mkdtempSync(path.join(tmpdir(), "qube-ambiguous-root-"))
+    });
+
+    assert.equal(planned.exitCode, 2);
+    assert.match(planned.stderr, /Config exists in multiple components/);
+    assert.match(planned.stderr, /qube aiq config/);
+    assert.match(planned.stderr, /qube aiu config/);
+  });
+
+  it("rejects JSON on helper topics that do not support JSON", () => {
+    const planned = planQubeCli(["pr", "--json"], {
+      cwd: mkdtempSync(path.join(tmpdir(), "qube-topic-json-cwd-")),
+      env: { PATH: "" },
+      packageRoot: mkdtempSync(path.join(tmpdir(), "qube-topic-json-root-"))
+    });
+
+    assert.equal(planned.exitCode, 2);
+    assert.match(planned.stderr, /qube pr does not support --json/);
+    assert.equal(planned.dispatch, undefined);
   });
 
   it("prefers install-scoped component binaries over ambient PATH", async () => {
