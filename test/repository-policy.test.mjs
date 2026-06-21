@@ -37,4 +37,13 @@ describe("repository policy", () => {
     assert.doesNotMatch(workflow, /(?:^|\s)npm publish(?:\s|$)/);
     assert.match(codeowners, /^\.npmrc @ZarK$/m);
   });
+
+  it("keeps CI off the full AIQ suite while it is not publish-ready", () => {
+    const workflow = read(".github/workflows/ci.yml");
+
+    assert.match(workflow, /pnpm --filter ai-code-quality run build/);
+    assert.match(workflow, /pnpm --filter ai-code-quality run typecheck/);
+    assert.match(workflow, /pnpm --filter ai-code-quality run test:publish-readiness/);
+    assert.doesNotMatch(workflow, /pnpm --filter ai-code-quality test(?:\s|$)/);
+  });
 });
