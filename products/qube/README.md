@@ -9,6 +9,19 @@ continuation tools while keeping each component package independently usable.
 Prefer project-local installs for automation:
 
 ```sh
+qube install
+qube install --yes --dry-run --json
+qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
+```
+
+`qube install` is a guided installer planner. It asks about project-local versus
+global use, package manager, host surface, work provider, lifecycle-script
+posture, docs/config notes, and migration from standalone package globals. In
+agent and CI contexts, pass explicit flags or `--yes` for safe defaults. The
+command prints a plan and copyable commands; it does not run package managers or
+install hidden dependencies.
+
+```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
 pnpm exec qube components
 ```
@@ -34,6 +47,7 @@ qube components
 ```sh
 qube --help
 qube components
+qube install --yes --dry-run --json
 
 # Plan from an idea.
 qube idea "Ship a local notes CLI"

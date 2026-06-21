@@ -8,6 +8,7 @@ export * from "./output/index.js";
 export * from "./mutation/index.js";
 export * from "./terminal/index.js";
 export * from "./prompts/index.js";
+export * from "./installer/index.js";
 export * from "./redaction/index.js";
 export * from "./testing/index.js";
 

@@ -21,6 +21,19 @@ CLI for discovering and dispatching to the installed tools.
 Use exact versions for automation and keep dependency lifecycle scripts disabled
 where your package manager supports it.
 
+Use the guided installer when choosing between local/global use, package manager,
+host surface, provider surface, docs notes, or migration from direct package
+globals:
+
+```sh
+qube install
+qube install --yes --dry-run --json
+qube install --scope global --package-manager npm --yes
+```
+
+The installer prints a plan and copyable commands. It does not run package
+managers or lifecycle scripts for you.
+
 ```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
 pnpm exec qube components
