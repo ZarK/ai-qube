@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aib",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "AI Bootstrap - agent-operated project discovery and planning CLI.",
   "keywords": [
     "cli",

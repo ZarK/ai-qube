@@ -7,7 +7,7 @@ This guide covers the safe path from repository-local issue workflow helpers to 
 Use pinned package versions and disable dependency lifecycle scripts where your package manager supports it:
 
 ```bash
-pnpm add @tjalve/aie@0.1.3 --ignore-scripts --save-exact
+pnpm add @tjalve/aie@0.1.4 --ignore-scripts --save-exact
 ```
 
 For checked-in projects, prefer lockfile-based installs:

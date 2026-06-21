@@ -11,14 +11,14 @@ pull requests as the source of truth.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.1.3
+pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.1.4
 pnpm exec aie --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aie@0.1.3 --ignore-scripts
+npm install -g @tjalve/aie@0.1.4 --ignore-scripts
 aie --help
 ```
 

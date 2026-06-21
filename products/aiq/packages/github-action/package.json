@@ -1,6 +1,6 @@
 {
   "name": "aiq-internal-github-action",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -17,7 +17,7 @@
   "dependencies": {
     "@actions/artifact": "6.2.1",
     "@actions/core": "3.0.1",
-    "@tjalve/aiq": "0.2.1"
+    "@tjalve/aiq": "0.2.2"
   },
   "repository": {
     "type": "git",

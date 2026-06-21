@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
   "type": "module",
   "main": "./dist/index.js",

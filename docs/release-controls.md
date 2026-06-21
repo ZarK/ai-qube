@@ -77,7 +77,7 @@ For package-local installs and release checks, use exact versions and disabled
 lifecycle scripts:
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.3
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.4
 pnpm install --frozen-lockfile --ignore-scripts
 ```
 

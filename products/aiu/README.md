@@ -12,14 +12,14 @@ malformed, stale, blocked, or untrusted state as a stop condition.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.3
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.4
 pnpm exec aiu --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aiu@0.0.3 --ignore-scripts
+npm install -g @tjalve/aiu@0.0.4 --ignore-scripts
 aiu --help
 ```
 

@@ -58,11 +58,11 @@ test("renders help and version", () => {
 
   const version = runAib(["--version"]);
   assert.equal(version.status, 0, version.stderr);
-  assert.equal(version.stdout.trim(), "0.1.0");
+  assert.equal(version.stdout.trim(), "0.1.1");
 
   const shortVersion = runAib(["-v"]);
   assert.equal(shortVersion.status, 0, shortVersion.stderr);
-  assert.equal(shortVersion.stdout.trim(), "0.1.0");
+  assert.equal(shortVersion.stdout.trim(), "0.1.1");
 
   const jsonVersion = runAib(["-v", "--json"]);
   assert.equal(jsonVersion.status, 0, jsonVersion.stderr);
@@ -71,9 +71,9 @@ test("renders help and version", () => {
     command: "version",
     package: {
       name: "@tjalve/aib",
-      version: "0.1.0"
+      version: "0.1.1"
     },
-    version: "0.1.0"
+    version: "0.1.1"
   });
 });
 
