@@ -14,11 +14,11 @@ describe("CLI foundation", () => {
   it("uses repo config surface defaults for plan requests", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-config-surface-"));
     tempDirs.push(tempDir);
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(tempDir, "src"), { recursive: true });
     await writeFile(path.join(tempDir, "src/index.ts"), "export const value = 1;\n", "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "aiq.config.json"),
+      path.join(tempDir, ".qube", "aiq", "config.json"),
       `${JSON.stringify(
         {
           version: 1,
@@ -60,12 +60,12 @@ describe("CLI foundation", () => {
   it("uses persisted current_stage as the default cumulative plan target", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-plan-progress-"));
     tempDirs.push(tempDir);
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(tempDir, "src"), { recursive: true });
     await writeFile(path.join(tempDir, "src/index.ts"), "export const value = 1;\n", "utf8");
-    await writeFile(path.join(tempDir, ".aiq", "aiq.config.json"), '{"version":1}\n', "utf8");
+    await writeFile(path.join(tempDir, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "progress.json"),
+      path.join(tempDir, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 6, disabled: [], order: [0, 1, 2, 3, 4, 5, 6], last_run: null })}\n`,
       "utf8",
     );

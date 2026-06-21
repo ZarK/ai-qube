@@ -113,7 +113,7 @@ afterEach(async () => {
 describe("CLI watch setup hardening", () => {
   it("ignores ENOENT watch setup failures based on error code", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-watch-enoent-");
-    const missingWatchDir = path.join(project.root, ".aiq");
+    const missingWatchDir = path.join(project.root, ".qube", "aiq");
 
     watchMockState.customWatch = ((...args: unknown[]) => {
       const watchPath = args[0];

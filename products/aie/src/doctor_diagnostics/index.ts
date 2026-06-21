@@ -183,8 +183,7 @@ function reviewerExternalService(name: string): string | null {
   if (normalized === 'oracle' || normalized === 'opencode-oracle' || normalized === 'fallback-oracle') return null;
   if (normalized === 'copilot') return 'github-copilot';
   if (normalized === 'cubic' || normalized === 'cubic-dev-ai') return 'cubic';
-  if (normalized === 'comfyrabbit' || normalized === 'comfyrabbitai') return 'comfyrabbitai';
-  if (normalized === 'coderabbit' || normalized === 'coderabbitai') return 'coderabbit';
+  if (normalized === 'coderabbit' || normalized === 'coderabbitai') return 'coderabbitai';
   const id = normalized.replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'custom';
   return `custom-pr-reviewer:${redact(id)}`;
 }

@@ -328,8 +328,8 @@ async function planManagedFile(input: {
 }
 
 function nextCommand(resultOk: boolean): string {
-  if (!resultOk) return 'Resolve blocked file actions or rerun `aie init . --dry-run --force` to review forced updates.';
-  return 'Run `aie doctor --json` to verify repository setup, then `aie queue --json` to inspect issue work.';
+  if (!resultOk) return 'Resolve blocked file actions or rerun `qube aie init . --dry-run --force` to review forced updates.';
+  return 'Run `qube aie doctor --json` to verify repository setup, then `qube aie queue --json` to inspect issue work.';
 }
 
 async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
@@ -361,7 +361,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         skippedActions: [],
         warnings,
         errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, or all.`],
-        nextCommand: 'Run `aie init --help` to see supported tool values.',
+        nextCommand: 'Run `qube aie init --help` to see supported tool values.',
       },
       writes,
     };
@@ -386,8 +386,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: ['Target is not inside a git repository. Run `aie init .` from the repository checkout.'],
-        nextCommand: 'Change to a git repository root, then rerun `aie init . --dry-run`.',
+        errors: ['Target is not inside a git repository. Run `qube aie init .` from the repository checkout.'],
+        nextCommand: 'Change to a git repository root, then rerun `qube aie init . --dry-run`.',
       },
       writes,
     };

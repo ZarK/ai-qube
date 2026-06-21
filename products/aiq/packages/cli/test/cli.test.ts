@@ -35,6 +35,7 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
     expect(stdout.value).toBe(`${packageJson.version}\n`);
+    await expect(access(path.join(tempDir, ".qube"))).rejects.toMatchObject({ code: "ENOENT" });
     await expect(access(path.join(tempDir, ".aiq"))).rejects.toMatchObject({ code: "ENOENT" });
   });
 

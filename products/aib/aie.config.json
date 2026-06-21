@@ -79,7 +79,7 @@
     },
     "reviews": {
       "agents": [
-        "comfyrabbitai"
+        "coderabbitai"
       ],
       "waitMinutes": 10,
       "requestText": "Review for correctness, test coverage, security, maintainability, and missed Executor issue requirements. Treat repository policy as authoritative."

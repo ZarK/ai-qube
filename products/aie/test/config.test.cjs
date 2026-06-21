@@ -56,7 +56,7 @@ describe('config validation', () => {
     assert.equal(defaults.opencodeCommandAlias, false);
     assert.equal(defaults.uiAuditAppLaunch, '');
     assert.equal(defaults.uiAuditTarget, '');
-    assert.deepEqual(defaults.reviewAgents, ['comfyrabbitai']);
+    assert.deepEqual(defaults.reviewAgents, ['coderabbitai']);
     assert.equal(defaults.reviewWaitMinutes, 10);
     assert.equal(defaults.milestoneOrdering.enabled, false);
     assert.equal(defaults.milestoneOrdering.missingAssignment, 'warn');

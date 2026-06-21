@@ -41,10 +41,10 @@ describe("CLI foundation", () => {
 
   it("uses persisted current_stage as the default cumulative run target", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-run-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
-    await writeFile(path.join(project.root, ".aiq", "aiq.config.json"), '{"version":1}\n', "utf8");
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
+    await writeFile(path.join(project.root, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );

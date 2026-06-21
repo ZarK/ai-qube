@@ -91,6 +91,10 @@ describe("package metadata", () => {
         types: "./dist/prompts/index.d.ts",
         import: "./dist/prompts/index.js"
       },
+      "./installer": {
+        types: "./dist/installer/index.d.ts",
+        import: "./dist/installer/index.js"
+      },
       "./redaction": {
         types: "./dist/redaction/index.d.ts",
         import: "./dist/redaction/index.js"

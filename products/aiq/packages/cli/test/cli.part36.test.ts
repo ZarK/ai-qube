@@ -16,11 +16,11 @@ describe("CLI foundation", () => {
     tempDirs.push(tempDir);
 
     const nestedDir = path.join(tempDir, "packages", "app");
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(nestedDir, "src"), { recursive: true });
     await writeFile(path.join(nestedDir, "src/index.ts"), "export const nested = true;\n", "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "aiq.config.json"),
+      path.join(tempDir, ".qube", "aiq", "config.json"),
       `${JSON.stringify(
         {
           version: 1,
@@ -65,11 +65,11 @@ describe("CLI foundation", () => {
   it("lets invocation profile override the surface default profile", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-config-profile-"));
     tempDirs.push(tempDir);
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
     await mkdir(path.join(tempDir, "src"), { recursive: true });
     await writeFile(path.join(tempDir, "src/index.ts"), "export const profile = true;\n", "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "aiq.config.json"),
+      path.join(tempDir, ".qube", "aiq", "config.json"),
       `${JSON.stringify(
         {
           version: 1,

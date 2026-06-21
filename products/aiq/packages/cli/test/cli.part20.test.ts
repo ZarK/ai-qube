@@ -12,7 +12,7 @@ import {
 describe("CLI foundation", () => {
   it("emits trusted malformed-quality evidence for invalid report shapes", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-evidence-malformed-run-");
-    const reportDir = path.join(project.root, ".aiq", "out");
+    const reportDir = path.join(project.root, ".qube", "aiq", "out");
     await mkdir(reportDir, { recursive: true });
     await writeFile(
       path.join(reportDir, "aiq.report.json"),

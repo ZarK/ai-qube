@@ -28,14 +28,14 @@ describe("CLI foundation", () => {
     expect(exitCode).toBe(0);
     expect(stderr.value).toBe("");
     expect(stdout.value).toContain("AIQ config initialized");
-    expect(stdout.value).toContain(path.join(tempDir, ".aiq", "aiq.config.json"));
-    expect(stdout.value).toContain(path.join(tempDir, ".aiq", "progress.json"));
+    expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "config.json"));
+    expect(stdout.value).toContain(path.join(tempDir, ".qube", "aiq", "progress.json"));
 
     const config = JSON.parse(
-      await readFile(path.join(tempDir, ".aiq", "aiq.config.json"), "utf8"),
+      await readFile(path.join(tempDir, ".qube", "aiq", "config.json"), "utf8"),
     ) as { version: number };
     const progress = JSON.parse(
-      await readFile(path.join(tempDir, ".aiq", "progress.json"), "utf8"),
+      await readFile(path.join(tempDir, ".qube", "aiq", "progress.json"), "utf8"),
     ) as { current_stage: number; disabled: number[]; last_run: string | null; order: number[] };
     expect(config).toEqual({ version: 1 });
     expect(progress).toEqual({
@@ -69,10 +69,10 @@ describe("CLI foundation", () => {
   it("prints effective config with persisted progress state", async () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-config-print-"));
     tempDirs.push(tempDir);
-    await mkdir(path.join(tempDir, ".aiq"), { recursive: true });
-    await writeFile(path.join(tempDir, ".aiq", "aiq.config.json"), '{"version":1}\n', "utf8");
+    await mkdir(path.join(tempDir, ".qube", "aiq"), { recursive: true });
+    await writeFile(path.join(tempDir, ".qube", "aiq", "config.json"), '{"version":1}\n', "utf8");
     await writeFile(
-      path.join(tempDir, ".aiq", "progress.json"),
+      path.join(tempDir, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 3, disabled: [], order: [0, 1, 2, 3], last_run: null })}\n`,
       "utf8",
     );
@@ -121,7 +121,7 @@ describe("CLI foundation", () => {
     expect(stdout.value).toContain("Set current_stage=6");
 
     const progress = JSON.parse(
-      await readFile(path.join(tempDir, ".aiq", "progress.json"), "utf8"),
+      await readFile(path.join(tempDir, ".qube", "aiq", "progress.json"), "utf8"),
     ) as { current_stage: number; order: number[] };
     expect(progress.current_stage).toBe(6);
     expect(progress.order).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);

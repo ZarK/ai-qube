@@ -9,6 +9,19 @@ continuation tools while keeping each component package independently usable.
 Prefer project-local installs for automation:
 
 ```sh
+qube install
+qube install --yes --dry-run --json
+qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
+```
+
+`qube install` is a guided installer planner. It asks about project-local versus
+global use, package manager, host surface, work provider, lifecycle-script
+posture, docs/config notes, and migration from standalone package globals. In
+agent and CI contexts, pass explicit flags or `--yes` for safe defaults. The
+command prints a plan and copyable commands; it does not run package managers or
+install hidden dependencies.
+
+```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
 pnpm exec qube components
 ```
@@ -34,6 +47,7 @@ qube components
 ```sh
 qube --help
 qube components
+qube install --yes --dry-run --json
 
 # Plan from an idea.
 qube idea "Ship a local notes CLI"
@@ -82,17 +96,22 @@ Use `qube run` as the low-level escape hatch when debugging a component command
 or forwarding an unusual command shape:
 
 ```sh
-qube run aib -- status --json
-qube run aiq -- doctor --format json
+qube aib status --json
+qube aiq doctor --format json
 ```
 
-The direct component commands remain the right entry point when you only need one
-tool:
+The direct component packages remain independently installable when you
+intentionally only need one package:
 
 ```sh
 pnpm exec aiq doctor --format json
 pnpm exec aie queue --json
 ```
+
+QUBE remains the preferred entry point for automation, agent instructions, hooks,
+and durable examples in this monorepo. Direct package commands share QUBE-owned
+repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
+`.qube/aiq/out/`.
 
 ## Dispatch Model
 

@@ -11,9 +11,9 @@ import {
 describe("CLI foundation", () => {
   it("does not require valid progress when explicit run stages are selected", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-progress-invalid-explicit-");
-    await mkdir(path.join(project.root, ".aiq"), { recursive: true });
+    await mkdir(path.join(project.root, ".qube", "aiq"), { recursive: true });
     await writeFile(
-      path.join(project.root, ".aiq", "progress.json"),
+      path.join(project.root, ".qube", "aiq", "progress.json"),
       `${JSON.stringify({ current_stage: 12, disabled: [], order: [0], last_run: null })}\n`,
       "utf8",
     );

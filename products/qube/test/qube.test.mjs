@@ -49,6 +49,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /Usage:\n  qube <command> \[flags\]/);
     assert.match(help.stdout, /Commands:/);
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
+    assert.match(help.stdout, /install\s+Build a guided, supply-chain-safe QUBE install plan\./);
     assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
     assert.match(help.stdout, /spec draft\s+Draft the Bootstrap spec artifact\./);
     assert.match(help.stdout, /work-items render\s+Render work item drafts for a provider\./);
@@ -68,20 +69,121 @@ describe("qube composer CLI", () => {
     assert.match(runHelp.stdout, /Usage:\n  qube run \[component\] \[args\]/);
     assert.match(runHelp.stdout, /Run a QUBE component command with passthrough arguments\./);
 
+    const installHelp = runCli(["install", "--help"]);
+    assert.equal(installHelp.status, 0);
+    assert.match(installHelp.stdout, /Usage:\n  qube install/);
+    assert.match(installHelp.stdout, /Dry run: supported/);
+    assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
+
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
     const commandNames = parsed.commands.map(command => command.name);
-    for (const command of ["idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+    for (const command of ["install", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
       assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
     }
+    const installCommand = parsed.commands.find(command => command.name === "install");
+    assert.equal(installCommand?.dryRun.supported, true);
+    assert.deepEqual(installCommand?.supplyChain.kinds, ["dependency", "package-manager"]);
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
     );
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component])).status, "aiu");
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component]))["pr gate"], "aie");
+  });
+
+  it("renders a non-interactive guided install plan as JSON", () => {
+    const result = runCli(["install", "--yes", "--dry-run", "--json"]);
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, "install");
+    assert.deepEqual(parsed.installPlan.package, {
+      name: "@tjalve/qube",
+      version: "0.1.1"
+    });
+    assert.deepEqual(parsed.installPlan.selections, {
+      docs: true,
+      host: "generic",
+      lifecycleScripts: "disabled",
+      migration: "none",
+      packageManager: "pnpm",
+      scope: "local",
+      workProvider: "github"
+    });
+    assert.equal(parsed.installPlan.dryRun, true);
+    assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
+      "pnpm exec qube components"
+    ]);
+    assert.match(parsed.installPlan.notes.join("\n"), /No package-manager command is executed/);
+  });
+
+  it("renders explicit global npm install commands without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "global",
+      "--package-manager",
+      "npm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "standalone-globals"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /QUBE guided install plan/);
+    assert.match(result.stdout, /Scope: global/);
+    assert.match(result.stdout, /Host surface: codex/);
+    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.1\.1/);
+    assert.match(result.stdout, /AGENTS\.md policy notes/);
+    assert.match(result.stdout, /remove stale standalone global commands/);
+    assert.match(result.stdout, /No commands were run\./);
+  });
+
+  it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {
+    const result = runCli(["install", "--json"]);
+    assert.equal(result.status, 2);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      ok: false,
+      command: "install",
+      error: {
+        kind: "prompt-blocked",
+        operation: "prompt install scope",
+        likelyCause: "Prompts are disabled in JSON output mode.",
+        suggestedNextAction: "Provide an explicit flag value or rerun in an interactive terminal.",
+        category: "usage",
+        exitCode: 2
+      }
+    });
+  });
+
+  it("rejects invalid installer flag selections", () => {
+    const result = runCli(["install", "--scope", "shared", "--yes", "--json"]);
+    assert.equal(result.status, 2);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.command, "install");
+    assert.equal(parsed.error.kind, "invalid-command-usage");
+    assert.match(parsed.error.likelyCause, /Expected --scope=shared to be one of: local, global/);
+
+    const planned = planQubeCli(["install", "--scope", "shared", "--yes"]);
+    assert.equal(planned.exitCode, 2);
+    assert.match(planned.stderr, /Invalid install option --scope=shared/);
+
+    const missingValue = planQubeCli(["install", "--scope", "--yes"]);
+    assert.equal(missingValue.exitCode, 2);
+    assert.match(missingValue.stderr, /Missing value for install option --scope/);
+    assert.match(missingValue.stderr, /local, global/);
   });
 
   it("lists standalone components without replacing them", () => {

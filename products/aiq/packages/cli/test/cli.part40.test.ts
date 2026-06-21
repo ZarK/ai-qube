@@ -13,8 +13,8 @@ import {
 describe("CLI foundation", () => {
   it("supports watch cadence stages and only replans when config changes", async () => {
     const project = await createTypeScriptFixtureProject("aiq-cli-watch-cadence-");
-    const configDir = path.join(project.root, ".aiq");
-    const configPath = path.join(configDir, "aiq.config.json");
+    const configDir = path.join(project.root, ".qube", "aiq");
+    const configPath = path.join(configDir, "config.json");
     await mkdir(configDir, { recursive: true });
     await writeFile(
       configPath,
@@ -125,7 +125,7 @@ describe("CLI foundation", () => {
       }>(stdout.value).filter((line) => line.event === "run");
       return lines.find(
         (line) =>
-          line.trigger.endsWith(path.join(".aiq", "aiq.config.json")) &&
+          line.trigger.endsWith(path.join(".qube", "aiq", "config.json")) &&
           line.result.plan.runId !== startupRun.result.plan.runId,
       );
     });

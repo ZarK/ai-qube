@@ -3,6 +3,7 @@ import { existsSync, realpathSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
@@ -45,6 +46,275 @@ const jsonFlag = defineFlag({
   name: "json",
   description: "Render machine-readable JSON output.",
   type: "boolean"
+});
+const dryRunFlag = defineFlag({
+  name: "dry-run",
+  description: "Print the install plan and commands without running package-manager commands.",
+  type: "boolean"
+});
+const yesFlag = defineFlag({
+  name: "yes",
+  short: "y",
+  description: "Use safe defaults for non-interactive installer decisions.",
+  type: "boolean"
+});
+
+type InstallScope = "local" | "global";
+type InstallPackageManager = "pnpm" | "npm";
+type InstallHost = "generic" | "codex" | "opencode" | "claude-code";
+type InstallWorkProvider = "github" | "local";
+type InstallLifecycleScripts = "disabled" | "review";
+type InstallMigration = "none" | "standalone-globals";
+type YesNo = "yes" | "no";
+
+interface InstallSelections {
+  readonly scope: InstallScope;
+  readonly packageManager: InstallPackageManager;
+  readonly host: InstallHost;
+  readonly workProvider: InstallWorkProvider;
+  readonly lifecycleScripts: InstallLifecycleScripts;
+  readonly docs: boolean;
+  readonly migration: InstallMigration;
+}
+
+interface InstallCommandStep {
+  readonly label: string;
+  readonly command: string;
+}
+
+interface InstallPlan {
+  readonly package: {
+    readonly name: string;
+    readonly version: string;
+  };
+  readonly selections: InstallSelections;
+  readonly mode: "copy-commands";
+  readonly dryRun: boolean;
+  readonly commands: readonly InstallCommandStep[];
+  readonly files: readonly string[];
+  readonly notes: readonly string[];
+}
+
+const scopeChoices = defineInstallerChoiceGroup({
+  name: "install scope",
+  message: "Where should QUBE be installed?",
+  defaultValue: "local",
+  choices: [
+    {
+      value: "local",
+      label: "Project-local",
+      description: "Install into the current project for reproducible automation.",
+      recommended: true
+    },
+    {
+      value: "global",
+      label: "Global manual",
+      description: "Install for direct human shell use."
+    }
+  ]
+});
+const packageManagerChoices = defineInstallerChoiceGroup({
+  name: "package manager",
+  message: "Which package manager should the commands use?",
+  defaultValue: "pnpm",
+  choices: [
+    {
+      value: "pnpm",
+      label: "pnpm",
+      description: "Use pnpm with exact package specifiers and disabled lifecycle scripts.",
+      recommended: true
+    },
+    {
+      value: "npm",
+      label: "npm",
+      description: "Use npm with exact package specifiers and disabled lifecycle scripts."
+    }
+  ]
+});
+const hostChoices = defineInstallerChoiceGroup({
+  name: "host surface",
+  message: "Which host surface should the install notes target?",
+  defaultValue: "generic",
+  choices: [
+    {
+      value: "generic",
+      label: "Generic terminal",
+      description: "No host-specific setup assumptions.",
+      recommended: true
+    },
+    {
+      value: "codex",
+      label: "Codex",
+      description: "Preserve AGENTS.md policy precedence and local todo expectations."
+    },
+    {
+      value: "opencode",
+      label: "OpenCode",
+      description: "Use OpenCode commands and instruction files when a component init creates them."
+    },
+    {
+      value: "claude-code",
+      label: "Claude Code",
+      description: "Keep Claude Code behavior separate from OpenCode and Codex."
+    }
+  ]
+});
+const workProviderChoices = defineInstallerChoiceGroup({
+  name: "work provider",
+  message: "Which work provider should the notes target?",
+  defaultValue: "github",
+  choices: [
+    {
+      value: "github",
+      label: "GitHub",
+      description: "Use GitHub issues, pull requests, and checks for issue-driven work.",
+      recommended: true
+    },
+    {
+      value: "local",
+      label: "Local only",
+      description: "Install QUBE without assuming a forge-backed work provider."
+    }
+  ]
+});
+const lifecycleChoices = defineInstallerChoiceGroup({
+  name: "lifecycle scripts",
+  message: "How should package lifecycle scripts be handled?",
+  defaultValue: "disabled",
+  choices: [
+    {
+      value: "disabled",
+      label: "Disabled",
+      description: "Add package-manager flags that keep install lifecycle scripts off.",
+      recommended: true
+    },
+    {
+      value: "review",
+      label: "Review before enabling",
+      description: "Keep generated commands safe and document any manual exception."
+    }
+  ]
+});
+const docsChoices = defineInstallerChoiceGroup({
+  name: "docs generation",
+  message: "Should the plan include docs/config notes?",
+  defaultValue: "yes",
+  choices: [
+    {
+      value: "yes",
+      label: "Include docs notes",
+      description: "Show README and config guidance after install.",
+      recommended: true
+    },
+    {
+      value: "no",
+      label: "Commands only",
+      description: "Only show package install and verification commands."
+    }
+  ]
+});
+const migrationChoices = defineInstallerChoiceGroup({
+  name: "migration path",
+  message: "Is this replacing standalone global package commands?",
+  defaultValue: "none",
+  choices: [
+    {
+      value: "none",
+      label: "Fresh QUBE install",
+      description: "Keep the plan focused on installing the composer package.",
+      recommended: true
+    },
+    {
+      value: "standalone-globals",
+      label: "Migrate standalone globals",
+      description: "Include notes for moving from direct aib, aie, aiq, or aiu globals."
+    }
+  ]
+});
+
+const installCommand = defineCommand({
+  kind: "command",
+  name: "install",
+  description: "Build a guided, supply-chain-safe QUBE install plan.",
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    yesFlag,
+    defineFlag({
+      name: "scope",
+      description: "Install scope to plan.",
+      type: "option",
+      options: ["local", "global"]
+    }),
+    defineFlag({
+      name: "package-manager",
+      description: "Package manager to use in generated commands.",
+      type: "option",
+      options: ["pnpm", "npm"]
+    }),
+    defineFlag({
+      name: "host",
+      description: "Host surface to mention in setup notes.",
+      type: "option",
+      options: ["generic", "codex", "opencode", "claude-code"]
+    }),
+    defineFlag({
+      name: "work-provider",
+      description: "Work provider to mention in setup notes.",
+      type: "option",
+      options: ["github", "local"]
+    }),
+    defineFlag({
+      name: "lifecycle-scripts",
+      description: "Lifecycle script posture for generated install commands.",
+      type: "option",
+      options: ["disabled", "review"]
+    }),
+    defineFlag({
+      name: "docs",
+      description: "Include README and configuration guidance in the generated plan.",
+      type: "boolean",
+      negatable: true
+    }),
+    defineFlag({
+      name: "migration",
+      description: "Migration posture for users moving from standalone package globals.",
+      type: "option",
+      options: ["none", "standalone-globals"]
+    })
+  ],
+  examples: [
+    {
+      description: "Render an interactive guided install plan.",
+      command: "qube install"
+    },
+    {
+      description: "Render a non-interactive local install plan as JSON.",
+      command: "qube install --yes --dry-run --json"
+    },
+    {
+      description: "Render a global npm install plan.",
+      command: "qube install --scope global --package-manager npm --yes"
+    }
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: {
+      supported: true
+    },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: true
+  },
+  supplyChain: {
+    sensitive: true,
+    reason: "Installer output contains package-manager commands and dependency setup guidance.",
+    kinds: ["dependency", "package-manager"]
+  }
 });
 
 const componentsCommand = defineCommand({
@@ -260,7 +530,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -269,6 +539,9 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
       return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderComponents(), stderr: "" };
+  }
+  if (args[0] === "install") {
+    return planQubeInstall(args.slice(1));
   }
 
   const direct = planDirectCommand(args, environment);
@@ -353,6 +626,13 @@ function createQubeCli(environment: CliEnvironment) {
           return { json: { components: qubeComponents } };
         }
         return { stdout: renderComponents() };
+      }),
+      createRuntimeCommand(installCommand, async ({ flags }) => {
+        const plan = createInstallPlan(await resolveInstallSelections(flags), flags["dry-run"] === true);
+        if (flags.json === true) {
+          return { json: { installPlan: plan } };
+        }
+        return { stdout: renderInstallPlan(plan) };
       }),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
@@ -518,6 +798,49 @@ function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): 
   return { args: definition.mapArgs(args) };
 }
 
+function planQubeInstall(args: readonly string[]): CliExecution {
+  const parsed = parseInstallArgs(args);
+  if ("error" in parsed) {
+    return parsed.error;
+  }
+  const validationError = validateInstallFlagChoices(parsed.flags);
+  if (validationError) {
+    return validationError;
+  }
+  if (parsed.flags.json === true && parsed.flags.yes !== true && !hasCompleteInstallSelections(parsed.flags)) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "install",
+        error: {
+          kind: "prompt-blocked",
+          operation: "prompt install scope",
+          likelyCause: "Prompts are disabled in JSON output mode.",
+          suggestedNextAction: "Provide explicit install flags or pass --yes for safe defaults.",
+          category: "usage",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  const selections = createInstallSelectionsFromFlags(parsed.flags);
+  const plan = createInstallPlan(selections, parsed.flags["dry-run"] === true);
+  if (parsed.flags.json === true) {
+    return {
+      exitCode: 0,
+      stdout: `${JSON.stringify({ ok: true, command: "install", installPlan: plan })}\n`,
+      stderr: ""
+    };
+  }
+  return {
+    exitCode: 0,
+    stdout: renderInstallPlan(plan),
+    stderr: ""
+  };
+}
+
 function createDirectCommand(
   name: string,
   description: string,
@@ -561,6 +884,338 @@ function createDirectCommand(
       return [...targetCommand.split(" "), ...forwarded];
     }
   };
+}
+
+async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>): Promise<InstallSelections> {
+  const scope = await resolveInstallChoice(scopeChoices, readOption<InstallScope>(flags, "scope"), flags);
+  const packageManager = await resolveInstallChoice(packageManagerChoices, readOption<InstallPackageManager>(flags, "package-manager"), flags);
+  const host = await resolveInstallChoice(hostChoices, readOption<InstallHost>(flags, "host"), flags);
+  const workProvider = await resolveInstallChoice(workProviderChoices, readOption<InstallWorkProvider>(flags, "work-provider"), flags);
+  const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
+  const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
+  const migration = await resolveInstallChoice(migrationChoices, readOption<InstallMigration>(flags, "migration"), flags);
+  return {
+    scope,
+    packageManager,
+    host,
+    workProvider,
+    lifecycleScripts,
+    docs: docsValue === "yes",
+    migration
+  };
+}
+
+async function resolveInstallChoice<Value extends string>(
+  group: InstallerChoiceGroup<Value>,
+  value: Value | undefined,
+  flags: Readonly<Record<string, unknown>>
+): Promise<Value> {
+  return promptInstallerChoice({
+    command: installCommand,
+    promptName: group.name,
+    message: group.message,
+    choices: group.choices,
+    value,
+    defaultValue: flags.yes === true ? group.defaultValue : undefined,
+    jsonMode: flags.json === true,
+    yes: flags.yes === true
+  });
+}
+
+function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>): InstallSelections {
+  // Keep these synchronous fallbacks aligned with the choice group defaults above.
+  return {
+    scope: readOption<InstallScope>(flags, "scope") ?? "local",
+    packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? "pnpm",
+    host: readOption<InstallHost>(flags, "host") ?? "generic",
+    workProvider: readOption<InstallWorkProvider>(flags, "work-provider") ?? "github",
+    lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
+    docs: readDocsFlag(flags) !== "no",
+    migration: readOption<InstallMigration>(flags, "migration") ?? "none"
+  };
+}
+
+function createInstallPlan(selections: InstallSelections, dryRun: boolean): InstallPlan {
+  return {
+    package: {
+      name: packageName,
+      version: packageVersion
+    },
+    selections,
+    mode: "copy-commands",
+    dryRun,
+    commands: createInstallCommands(selections),
+    files: createInstallFiles(selections),
+    notes: createInstallNotes(selections)
+  };
+}
+
+function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
+  const packageSpec = `${packageName}@${packageVersion}`;
+  if (selections.packageManager === "pnpm" && selections.scope === "local") {
+    return [
+      {
+        label: "Install QUBE in the current project.",
+        command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
+      },
+      {
+        label: "Confirm the installed component deck.",
+        command: "pnpm exec qube components"
+      }
+    ];
+  }
+  if (selections.packageManager === "pnpm" && selections.scope === "global") {
+    return [
+      {
+        label: "Install QUBE globally for manual shell use.",
+        command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
+      },
+      {
+        label: "Confirm the installed component deck.",
+        command: "qube components"
+      }
+    ];
+  }
+  if (selections.packageManager === "npm" && selections.scope === "local") {
+    return [
+      {
+        label: "Install QUBE in the current project.",
+        command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
+      },
+      {
+        label: "Confirm the installed component deck.",
+        command: "npm exec -- qube components"
+      }
+    ];
+  }
+  return [
+    {
+      label: "Install QUBE globally for manual shell use.",
+      command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
+    },
+    {
+      label: "Confirm the installed component deck.",
+      command: "qube components"
+    }
+  ];
+}
+
+function createInstallFiles(selections: InstallSelections): readonly string[] {
+  if (!selections.docs) {
+    return [];
+  }
+  const files = ["README.md install snippet"];
+  if (selections.host === "codex") {
+    files.push("AGENTS.md policy notes");
+  }
+  if (selections.host === "opencode") {
+    files.push(".opencode command notes");
+  }
+  if (selections.workProvider === "github") {
+    files.push(".qube/aie/config.json provider notes");
+  }
+  return files;
+}
+
+function createInstallNotes(selections: InstallSelections): readonly string[] {
+  const notes = [
+    "No package-manager command is executed by qube install.",
+    "Commands use exact QUBE package versions.",
+    selections.lifecycleScripts === "disabled"
+      ? "Lifecycle scripts stay disabled where the selected package manager supports it."
+      : "Generated commands still keep lifecycle scripts disabled; review any manual exception before changing them."
+  ];
+  if (selections.scope === "global") {
+    notes.push("Prefer project-local installs for automation; global installs are for manual shell use.");
+  }
+  if (selections.workProvider === "github") {
+    notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
+  } else {
+    notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
+  }
+  if (selections.migration === "standalone-globals") {
+    notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");
+  }
+  return notes;
+}
+
+function renderInstallPlan(plan: InstallPlan): string {
+  return [
+    "QUBE guided install plan",
+    "",
+    `Package: ${plan.package.name}@${plan.package.version}`,
+    `Scope: ${plan.selections.scope}`,
+    `Package manager: ${plan.selections.packageManager}`,
+    `Host surface: ${plan.selections.host}`,
+    `Work provider: ${plan.selections.workProvider}`,
+    `Lifecycle scripts: ${plan.selections.lifecycleScripts}`,
+    `Docs/config notes: ${plan.selections.docs ? "included" : "omitted"}`,
+    `Migration path: ${plan.selections.migration}`,
+    "",
+    "Commands to run:",
+    ...plan.commands.flatMap((step, index) => [`${index + 1}. ${step.label}`, `   ${step.command}`]),
+    "",
+    "Notes:",
+    ...plan.notes.map(note => `- ${note}`),
+    ...(plan.files.length > 0 ? ["", "Docs/config notes to add:", ...plan.files.map(file => `- ${file}`)] : []),
+    "",
+    "No commands were run.",
+    ""
+  ].join("\n");
+}
+
+function lifecycleFlag(selections: InstallSelections): string {
+  if (selections.lifecycleScripts === "disabled" || selections.lifecycleScripts === "review") {
+    return "--ignore-scripts";
+  }
+  return "";
+}
+
+function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): CliExecution | undefined {
+  const groups = [
+    { key: "scope", choices: scopeChoices.choices },
+    { key: "package-manager", choices: packageManagerChoices.choices },
+    { key: "host", choices: hostChoices.choices },
+    { key: "work-provider", choices: workProviderChoices.choices },
+    { key: "lifecycle-scripts", choices: lifecycleChoices.choices },
+    { key: "migration", choices: migrationChoices.choices }
+  ];
+  for (const group of groups) {
+    const value = flags[group.key];
+    if (typeof value !== "string") {
+      continue;
+    }
+    if (group.choices.some(choice => choice.value === value)) {
+      continue;
+    }
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `Invalid install option --${group.key}=${value}. Use one of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
+    };
+  }
+  return undefined;
+}
+
+function readOption<Value extends string>(flags: Readonly<Record<string, unknown>>, key: string): Value | undefined {
+  const value = flags[key];
+  return typeof value === "string" ? value as Value : undefined;
+}
+
+function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefined {
+  if (flags.docs === true) {
+    return "yes";
+  }
+  if (flags.docs === false) {
+    return "no";
+  }
+  return undefined;
+}
+
+function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>): boolean {
+  return ["scope", "package-manager", "host", "work-provider", "lifecycle-scripts", "migration"].every(key => typeof flags[key] === "string")
+    && typeof flags.docs === "boolean";
+}
+
+function parseInstallArgs(args: readonly string[]):
+  | { readonly flags: Readonly<Record<string, unknown>> }
+  | { readonly error: CliExecution } {
+  const flags: Record<string, unknown> = {};
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === undefined) {
+      continue;
+    }
+    if (token === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      flags["dry-run"] = true;
+      continue;
+    }
+    if (token === "--yes" || token === "-y") {
+      flags.yes = true;
+      continue;
+    }
+    if (token === "--docs") {
+      flags.docs = true;
+      continue;
+    }
+    if (token === "--no-docs") {
+      flags.docs = false;
+      continue;
+    }
+    const parsed = parseOptionToken(args, index);
+    if (parsed?.kind === "missing-value") {
+      return {
+        error: {
+          exitCode: 2,
+          stdout: "",
+          stderr: `Missing value for install option --${parsed.key}. Use one of: ${installOptionValues(parsed.key).join(", ")}.\n`
+        }
+      };
+    }
+    if (parsed?.kind === "parsed") {
+      flags[parsed.key] = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+    return {
+      error: {
+        exitCode: 2,
+        stdout: "",
+        stderr: `Unknown install flag or argument: ${token}\n`
+      }
+    };
+  }
+  return { flags };
+}
+
+function parseOptionToken(
+  args: readonly string[],
+  index: number
+):
+  | { readonly kind: "parsed"; readonly key: string; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: string }
+  | undefined {
+  const token = args[index];
+  if (!token) {
+    return undefined;
+  }
+  for (const key of ["scope", "package-manager", "host", "work-provider", "lifecycle-scripts", "migration"]) {
+    const flag = `--${key}`;
+    if (token.startsWith(`${flag}=`)) {
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
+    }
+    if (token === flag) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { kind: "missing-value", key };
+      }
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
+    }
+  }
+  return undefined;
+}
+
+function installOptionValues(key: string): readonly string[] {
+  switch (key) {
+    case "scope":
+      return scopeChoices.choices.map(choice => choice.value);
+    case "package-manager":
+      return packageManagerChoices.choices.map(choice => choice.value);
+    case "host":
+      return hostChoices.choices.map(choice => choice.value);
+    case "work-provider":
+      return workProviderChoices.choices.map(choice => choice.value);
+    case "lifecycle-scripts":
+      return lifecycleChoices.choices.map(choice => choice.value);
+    case "migration":
+      return migrationChoices.choices.map(choice => choice.value);
+    default:
+      return [];
+  }
 }
 
 function findDirectCommand(args: readonly string[]): { readonly definition: DirectQubeCommand; readonly args: readonly string[] } | undefined {

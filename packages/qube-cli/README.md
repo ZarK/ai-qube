@@ -21,6 +21,7 @@ pnpm add @tjalve/qube-cli@0.1.2 --save-exact --ignore-scripts
 - structured text and JSON output helpers
 - typed mutation and safety metadata for agent-facing commands
 - terminal, prompt, and redaction utilities
+- installer choice primitives for guided setup flows
 - package-content and CLI-contract test helpers
 
 ## Package Boundary
@@ -49,8 +50,36 @@ Public subpath exports include:
 - `@tjalve/qube-cli/mutation`
 - `@tjalve/qube-cli/terminal`
 - `@tjalve/qube-cli/prompts`
+- `@tjalve/qube-cli/installer`
 - `@tjalve/qube-cli/redaction`
 - `@tjalve/qube-cli/testing`
+
+## Installer UX Primitives
+
+Package authors can build safe setup flows without inventing prompt, choice, and
+non-interactive behavior from scratch:
+
+```ts
+import {
+  defineInstallerChoiceGroup,
+  promptInstallerChoice,
+  renderInstallerChoices
+} from "@tjalve/qube-cli/installer";
+
+const scope = defineInstallerChoiceGroup({
+  name: "install scope",
+  message: "Where should this package be installed?",
+  defaultValue: "local",
+  choices: [
+    { value: "local", label: "Project-local", recommended: true },
+    { value: "global", label: "Global manual" }
+  ]
+});
+```
+
+Use explicit flag values or safe defaults for `--json`, `--yes`, and CI paths.
+Consuming packages still own command generation, validation rules, install
+policy, and side effects.
 
 ## Adoption
 
