@@ -15,9 +15,43 @@ export interface GitHubReviewPullRequest {
   isDraft: boolean;
 }
 
+export type GitHubCiDiagnosticStatus =
+  | 'mapped'
+  | 'pending-current-head-run'
+  | 'missing-current-head-run'
+  | 'failed-current-head-run'
+  | 'skipped-current-head-run'
+  | 'stale-old-head-run'
+  | 'unknown';
+
+export type GitHubCiDiagnosticReasonCode =
+  | 'current-head-check-run-found'
+  | 'current-head-workflow-run-found'
+  | 'current-head-check-run-pending'
+  | 'current-head-check-run-failed'
+  | 'current-head-check-run-skipped'
+  | 'missing-current-head-ci-run'
+  | 'stale-old-head-ci-run';
+
+export interface GitHubCiDiagnostic {
+  checkName: string;
+  status: GitHubCiDiagnosticStatus;
+  reasonCode: GitHubCiDiagnosticReasonCode;
+  currentHeadSha: string;
+  mappedToCurrentHeadCheckRun: boolean;
+  mappedToCurrentHeadWorkflowRun: boolean;
+  currentHeadSuiteIds: string[];
+  currentHeadRunIds: string[];
+  staleRunIds: string[];
+  workflowDispatchSupported: boolean | null;
+  summary: string;
+  nextAction: string;
+}
+
 export interface GitHubReviewSnapshot {
   item: ReviewItem;
   pr: GitHubReviewPullRequest;
+  ciDiagnostics: GitHubCiDiagnostic[];
   closingIssueNumbers: number[];
   reviewRequests: string[];
   commentsCount: number;
@@ -38,7 +72,7 @@ export interface RawComment { author?: RawAuthor | null; body?: string; url?: st
 export interface RawReview { author?: RawAuthor | null; body?: string; state?: string; submittedAt?: string; url?: string; commit?: { oid?: string } | null }
 export interface RawReviewRequest { login?: string; name?: string; slug?: string }
 export interface RawClosingIssueReference { number?: number }
-export interface RawStatusCheck { conclusion?: string; status?: string; state?: string; name?: string; context?: string; startedAt?: string; createdAt?: string; completedAt?: string; detailsUrl?: string; targetUrl?: string }
+export interface RawStatusCheck { conclusion?: string; status?: string; state?: string; name?: string; context?: string; workflowName?: string; startedAt?: string; createdAt?: string; completedAt?: string; detailsUrl?: string; targetUrl?: string }
 export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
 export interface RawIssueComment { body?: string; html_url?: string; user?: RawAuthor | null }
 export interface RawReviewComment { body?: string; html_url?: string; path?: string; user?: { login?: string } | null }

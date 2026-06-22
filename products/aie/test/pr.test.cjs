@@ -29,6 +29,11 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function writeWorkflow(repo, body) {
+  mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
+  writeFileSync(join(repo, '.github', 'workflows', 'ci.yml'), body);
+}
+
 function safeRepoSegment(repo) {
   return basename(repo).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'repository';
 }
@@ -90,6 +95,10 @@ function makePrExec(options = {}) {
   const events = [];
   const prViews = [...(options.prViews || [basePr()])];
   const reviewComments = options.reviewComments || [];
+  const checkRuns = options.checkRuns || [];
+  const checkSuites = options.checkSuites || [];
+  const workflowRuns = options.workflowRuns || [];
+  const workflowRunsById = options.workflowRunsById || {};
   let currentPr = prViews[0];
   const threads = options.threads || [];
   const exec = async (args) => {
@@ -116,6 +125,20 @@ function makePrExec(options = {}) {
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') {
       return { args, exitCode: 0, stdout: JSON.stringify(options.issueComments || issueCommentsFromPr(currentPr)), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
+      return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-suites$/.test(args[1])) {
+      return { args, exitCode: 0, stdout: JSON.stringify({ check_suites: checkSuites }), stderr: '' };
+    }
+    if (args[0] === 'api' && args[1] === 'repos/example/repo/actions/runs') {
+      return { args, exitCode: 0, stdout: JSON.stringify({ workflow_runs: workflowRuns }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/actions\/runs\/\d+$/.test(args[1])) {
+      const runId = args[1].split('/').at(-1);
+      const run = workflowRunsById[runId];
+      return run ? { args, exitCode: 0, stdout: JSON.stringify(run), stderr: '' } : { args, exitCode: 1, stdout: '', stderr: 'workflow run not found' };
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
@@ -161,6 +184,110 @@ describe('PR gate service', () => {
     assert.equal(snapshot.item.checks[1].reasonCode, 'provider-check-stale');
     assert.equal(snapshot.item.checks[1].stale, true);
     assert.equal(snapshot.pr.reviewDecision, 'SOMETHING_NEW');
+  });
+
+  it('reports missing current-head CI runs and recommends a push when workflow dispatch is unavailable', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const { exec } = makePrExec({ prViews: [pr], checkRuns: [], workflowRuns: [] });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'missing-current-head-run');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'missing-current-head-ci-run');
+    assert.equal(result.ciDiagnostics[0].workflowDispatchSupported, false);
+    assert.match(result.ciDiagnostics[0].nextAction, /Push a new commit/);
+    assert.match(result.nextAction, /Push a new commit/);
+  });
+
+  it('recommends workflow_dispatch when no current-head CI run exists and manual dispatch is available', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  workflow_dispatch:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'QUEUED', conclusion: null }],
+    });
+    const { exec } = makePrExec({ prViews: [pr], checkRuns: [], workflowRuns: [] });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'missing-current-head-run');
+    assert.equal(result.ciDiagnostics[0].workflowDispatchSupported, true);
+    assert.match(result.ciDiagnostics[0].nextAction, /workflow_dispatch/);
+  });
+
+  it('reports failed current-head CI runs and recommends rerunning failed jobs', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'core', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/example/repo/actions/runs/100/job/1' }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [{ id: 200, name: 'core', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      checkSuites: [{ id: 300, head_sha: 'abc123', status: 'COMPLETED', conclusion: 'FAILURE' }],
+      workflowRuns: [{ id: 100, name: 'CI', head_sha: 'abc123', status: 'COMPLETED', conclusion: 'FAILURE' }],
+    });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'failed-current-head-run');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'current-head-check-run-failed');
+    assert.deepEqual(result.ciDiagnostics[0].currentHeadSuiteIds, ['300']);
+    assert.deepEqual(result.ciDiagnostics[0].currentHeadRunIds, ['200', '100']);
+    assert.match(result.ciDiagnostics[0].nextAction, /Rerun failed jobs/);
+  });
+
+  it('reports skipped current-head CI workflows for explicit inspection', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      statusCheckRollup: [{ name: 'changes', status: 'COMPLETED', conclusion: 'SKIPPED' }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [{ id: 201, name: 'changes', status: 'COMPLETED', conclusion: 'SKIPPED' }],
+      workflowRuns: [],
+    });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'skipped-current-head-run');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'current-head-check-run-skipped');
+    assert.match(result.ciDiagnostics[0].nextAction, /skip condition/);
+  });
+
+  it('detects stale old-head workflow runs and avoids claiming they validate the current head', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'IN_PROGRESS', conclusion: null, detailsUrl: 'https://github.com/example/repo/actions/runs/55/job/1' }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [],
+      workflowRuns: [],
+      workflowRunsById: { 55: { id: 55, name: 'CI', head_sha: 'old123', status: 'COMPLETED', conclusion: 'SUCCESS' } },
+    });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'stale-old-head-run');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'stale-old-head-ci-run');
+    assert.deepEqual(result.ciDiagnostics[0].staleRunIds, ['55']);
+    assert.match(result.ciDiagnostics[0].nextAction, /Do not rerun the stale old-head workflow run/);
   });
 
   it('redacts invalid review item keys and parser input in errors', async () => {
@@ -305,6 +432,24 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'complete');
     assert.match(result.nextAction, /no detected blockers/);
+  });
+
+  it('surfaces current-head CI diagnostics in PR gate output', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const { exec } = makePrExec({ prViews: [pr], checkRuns: [], workflowRuns: [] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.checkDiagnostics[0].status, 'missing-current-head-run');
+    assert.match(result.nextAction, /Push a new commit/);
   });
 
   it('blocks PR gate when a linked issue has unchecked checklist items', async () => {
@@ -778,6 +923,45 @@ describe('PR body service', () => {
     assert.equal(result.readiness.status, 'pending');
     assert.ok(result.readiness.pending.some(item => item.includes('merge state BLOCKED')));
     assert.match(result.body, /GitHub state: review=APPROVED; merge=BLOCKED/);
+  });
+
+  it('includes missing current-head CI diagnostics in PR body readiness', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '102.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const currentPr = { number: 12, title: 'Missing CI', state: 'OPEN', url: 'https://github.com/example/repo/pull/12', reviewDecision: 'APPROVED', mergeStateStatus: 'BLOCKED', mergeable: 'MERGEABLE', isDraft: false };
+    const pr = basePr({
+      title: 'Missing CI',
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const exec = async args => {
+      const issue = issueViewResponse(args, 102);
+      if (issue) return issue;
+      if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') return { args, exitCode: 0, stdout: JSON.stringify(currentPr), stderr: '' };
+      if (args.join(' ') === `pr view 12 --json ${prViewFields}`) return { args, exitCode: 0, stdout: JSON.stringify(pr), stderr: '' };
+      if (args.join(' ') === 'repo view --json nameWithOwner,url') return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
+      if (args.join(' ') === 'api user') return { args, exitCode: 0, stdout: JSON.stringify({ login: 'executor' }), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/comments') return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/commits/abc123/check-runs') return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: [] }), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/commits/abc123/check-suites') return { args, exitCode: 0, stdout: JSON.stringify({ check_suites: [] }), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/actions/runs') return { args, exitCode: 0, stdout: JSON.stringify({ workflow_runs: [] }), stderr: '' };
+      if (args[0] === 'api' && args[1] === 'graphql') return { args, exitCode: 0, stdout: JSON.stringify(threadResponse()), stderr: '' };
+      return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 102, repoRoot: repo, exec });
+
+    assert.equal(result.readiness.status, 'pending');
+    assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'missing-current-head-ci-run'));
+    assert.match(result.body, /PR CI diagnostics/);
+    assert.match(result.body, /Push a new commit/);
   });
 
   it('blocks PR body readiness for draft pull requests', async () => {
