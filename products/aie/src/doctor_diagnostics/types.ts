@@ -160,8 +160,32 @@ export interface GateReadinessDiagnostics {
     required: boolean;
     readiness: DoctorReadinessStatus;
     adapter: string;
+    profile: string;
+    severityThreshold: string;
     reviewers: string[];
     localReviewers: string[];
+    configuredProfiles: string[];
+    requiredLanes: string[];
+    configuredLanes: string[];
+    promptFragments: {
+      repository: string[];
+      safety: string[];
+      style: string[];
+      adapter: string[];
+      reviewer: string[];
+      commandAddendum: string[];
+    };
+    contextSources: {
+      instructions: string[];
+      requirements: string[];
+      issues: string;
+      issueComments: string;
+      linkedIssues: string;
+      milestones: string;
+      pullRequests: string;
+      prComments: string;
+      reviewThreads: string;
+    };
     defaultOracle: boolean;
     fallbackPromptAvailable: boolean;
     localEvidenceRoot: string;
@@ -169,6 +193,21 @@ export interface GateReadinessDiagnostics {
       configured: boolean;
       readiness: DoctorReadinessStatus;
       command: string | null;
+      capabilities: {
+        canRun: boolean;
+        canComment: boolean;
+        canInline: boolean;
+        canUseTools: boolean;
+        canRunShell: boolean;
+        canUseBrowser: boolean;
+        canReadMcp: boolean;
+        canAccessNetwork: boolean;
+        canWriteEvidence: boolean;
+        supportsJson: boolean;
+        supportsPromptStack: boolean;
+        supportsIncrementalReview: boolean;
+      };
+      missingTools: string[];
       nextAction: string;
     };
     externalServices: string[];
@@ -178,6 +217,7 @@ export interface GateReadinessDiagnostics {
     readiness: DoctorReadinessStatus;
     ghAuthenticated: boolean;
     adapter: string;
+    profile: string;
     reviewers: string[];
     localReviewers: string[];
     localEvidenceRoot: string;

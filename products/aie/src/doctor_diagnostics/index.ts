@@ -10,6 +10,7 @@ import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.
 import { redact } from '../gh.js';
 import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
+import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 
@@ -208,6 +209,8 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const reviewerServices = unique(config.reviewAgents.map(reviewerExternalService).filter((service): service is string => service !== null));
   const defaultOracle = configuredReviewers.length === 0 && config.reviewAdapter !== 'local';
   const localReviewEnabled = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
+  const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
+  const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
   const localEvidenceRoot = '.qube/aie/pr-reviews';
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit);
   const fallbackBrowserAutomation = toolAvailability('playwright', false);
@@ -227,9 +230,24 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const prReviewReadiness: DoctorReadinessStatus = options.ghAuthenticated ? 'ready' : 'missing';
   const localRunner = {
     configured: false,
-    readiness: localReviewEnabled ? 'unavailable' as const : 'disabled' as const,
+    readiness: localReviewEnabled || localReviewShadow ? 'unavailable' as const : 'disabled' as const,
     command: null,
-    nextAction: localReviewEnabled
+    capabilities: {
+      canRun: false,
+      canComment: false,
+      canInline: false,
+      canUseTools: false,
+      canRunShell: false,
+      canUseBrowser: false,
+      canReadMcp: false,
+      canAccessNetwork: false,
+      canWriteEvidence: true,
+      supportsJson: true,
+      supportsPromptStack: true,
+      supportsIncrementalReview: false,
+    },
+    missingTools: localReviewEnabled || localReviewShadow ? ['local-review-runner'] : [],
+    nextAction: localReviewEnabled || localReviewShadow
       ? 'No local review runner is configured. Record local review evidence manually in the repository-scoped evidence path, or configure a real runner before relying on runner automation.'
       : 'Local review evidence is disabled by the selected review adapter.',
   };
@@ -269,8 +287,32 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       required: true,
       readiness: 'ready',
       adapter: config.reviewAdapter,
+      profile: effectiveReviewProfile,
+      severityThreshold: config.reviewSeverityThreshold,
       reviewers: defaultOracle ? ['oracle'] : configuredReviewers,
       localReviewers: configuredLocalReviewers,
+      configuredProfiles: ['remote-compatible', 'local-standard', 'local-comprehensive', 'local-shadow'],
+      requiredLanes: [...requiredLocalReviewLanes(effectiveReviewProfile)],
+      configuredLanes: config.reviewLanes.map(lane => lane.id),
+      promptFragments: {
+        repository: [...config.reviewPromptFragments.repository],
+        safety: [...config.reviewPromptFragments.safety],
+        style: [...config.reviewPromptFragments.style],
+        adapter: [...config.reviewPromptFragments.adapter],
+        reviewer: [...config.reviewPromptFragments.reviewer],
+        commandAddendum: [...config.reviewPromptFragments.commandAddendum],
+      },
+      contextSources: {
+        instructions: [...config.reviewContextSources.instructions],
+        requirements: [...config.reviewContextSources.requirements],
+        issues: config.reviewContextSources.issues,
+        issueComments: config.reviewContextSources.issueComments,
+        linkedIssues: config.reviewContextSources.linkedIssues,
+        milestones: config.reviewContextSources.milestones,
+        pullRequests: config.reviewContextSources.pullRequests,
+        prComments: config.reviewContextSources.prComments,
+        reviewThreads: config.reviewContextSources.reviewThreads,
+      },
       defaultOracle,
       fallbackPromptAvailable: true,
       localEvidenceRoot,
@@ -282,6 +324,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       readiness: prReviewReadiness,
       ghAuthenticated: options.ghAuthenticated,
       adapter: config.reviewAdapter,
+      profile: effectiveReviewProfile,
       reviewers: configuredReviewers,
       localReviewers: configuredLocalReviewers,
       localEvidenceRoot,

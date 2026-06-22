@@ -18,7 +18,7 @@ export type PrGateExec = (args: string[], cwd?: string) => Promise<PrGateExecRes
 
 export type PrGateActionKind = 'request-reviewer' | 'post-review-comment' | 'wait';
 export type PrGateActionStatus = 'planned' | 'completed' | 'failed' | 'skipped';
-export type PrGateStatus = 'complete' | 'pending' | 'failed' | 'rerun-required' | 'unavailable';
+export type PrGateStatus = 'complete' | 'pending' | 'failed' | 'rerun-required' | 'unavailable' | 'inconclusive';
 export type PrReviewerTrigger = 'github-reviewer' | 'comment';
 
 export interface PrGateReviewer {
@@ -255,6 +255,7 @@ function localStatus(status: LocalReviewStatus): PrGateStatus | null {
   if (status === 'stale') return 'rerun-required';
   if (status === 'failed' || status === 'needs-work' || status === 'malformed') return 'failed';
   if (status === 'unavailable') return 'unavailable';
+  if (status === 'inconclusive') return 'inconclusive';
   return 'pending';
 }
 
@@ -279,6 +280,7 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
 
 function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate): string {
   if (localReview.required && localReview.status !== 'passed') return localReview.nextAction;
+  if (status === 'inconclusive') return localReview.nextAction;
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Update linked GitHub issue checklist items with `aie checklist update <issue> --index <n>`, rerun affected gates if needed, then rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
@@ -306,11 +308,15 @@ function warnings(item: ReviewItem, reviewers: PrGateReviewer[]): string[] {
 }
 
 function githubReviewEnabled(config: Config): boolean {
-  return config.reviewAdapter === 'github' || config.reviewAdapter === 'mixed';
+  return config.reviewAdapter === 'github' || config.reviewAdapter === 'remote' || config.reviewAdapter === 'mixed';
 }
 
-function localReviewEnabled(config: Config): boolean {
-  return config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
+function localReviewRequired(config: Config): boolean {
+  return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.reviewProfile !== 'local-shadow';
+}
+
+function localReviewShadow(config: Config): boolean {
+  return config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
 }
 
 function githubOnlyPolicy(config: Config): ReturnType<typeof configToExecutorPolicy> {
@@ -390,9 +396,12 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     prNumber: options.prNumber,
     headSha: finalSnapshot.pr.headRefOid,
     reviewers: config.localReviewAgents,
-    required: localReviewEnabled(config),
+    required: localReviewRequired(config),
+    profile: config.reviewProfile,
+    severityThreshold: config.reviewSeverityThreshold,
+    shadow: localReviewShadow(config),
   });
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local');
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow');
   return {
     ok: true,
     command: 'pr gate',
@@ -434,8 +443,8 @@ export function formatPrGate(result: PrGateResult): string {
   lines.push('Actions:');
   for (const action of result.actions) lines.push(`- ${action.status}: ${action.description}`);
   lines.push(`Feedback counts: comments=${result.counts.comments}, reviews=${result.counts.reviews}, reviewComments=${result.counts.reviewComments}, unresolvedThreads=${result.counts.unresolvedThreads}.`);
-  lines.push(`Local review evidence: ${result.localReview.required ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
-  if (result.localReview.required) {
+  lines.push(`Local review evidence: ${result.localReview.mode}; profile=${result.localReview.profile}; status=${result.localReview.required || result.localReview.mode === 'shadow' ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
+  if (result.localReview.required || result.localReview.mode === 'shadow') {
     for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
   }
   if (result.feedback.length > 0) {

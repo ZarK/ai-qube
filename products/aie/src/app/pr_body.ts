@@ -15,7 +15,7 @@ function redactText(text: string): string {
 
 export type PrBodyReadinessStatus = 'ready' | 'blocked' | 'pending';
 export type PrBodyGateState = 'passed' | 'failed' | 'skipped' | 'pending' | 'unknown' | 'stale' | 'missing';
-export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable' | 'local-review-missing' | 'local-review-pending' | 'local-review-stale' | 'local-review-unavailable' | 'local-review-malformed' | 'local-review-failed' | 'missing-current-head-ci-run' | 'stale-old-head-ci-run' | 'current-head-check-run-pending' | 'current-head-check-run-failed' | 'current-head-check-run-skipped';
+export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable' | 'local-review-missing' | 'local-review-pending' | 'local-review-stale' | 'local-review-unavailable' | 'local-review-malformed' | 'local-review-inconclusive' | 'local-review-failed' | 'missing-current-head-ci-run' | 'stale-old-head-ci-run' | 'current-head-check-run-pending' | 'current-head-check-run-failed' | 'current-head-check-run-skipped';
 
 export interface PrBodyReadinessItem {
   reasonCode: PrBodyReadinessReasonCode;
@@ -171,7 +171,7 @@ async function inspectIssueChecklistState(options: PrBodyOptions): Promise<{ res
   }
 }
 
-function reviewState(result: ReviewGateResult): 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown' {
+function reviewState(result: ReviewGateResult): 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown' | 'inconclusive' {
   if (result.evidence.source === 'not-recorded') return 'pending';
   return result.evidence.status;
 }
@@ -216,11 +216,12 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr && !prReview) pending.push(readinessItem('pr-review-state-unavailable', `Run \`aie pr gate ${pr.number}\` to collect PR review-gate state before merge.`, 'pr-review-gate', 'trusted-provider'));
   if (prReview) {
     if (prReview.localReview.required) {
-      if (prReview.localReview.status === 'missing') pending.push(readinessItem('local-review-missing', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
-      if (prReview.localReview.status === 'pending' || prReview.localReview.status === 'stale') pending.push(readinessItem(prReview.localReview.status === 'stale' ? 'local-review-stale' : 'local-review-pending', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
-      if (prReview.localReview.status === 'unavailable') pending.push(readinessItem('local-review-unavailable', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+      if (prReview.localReview.status === 'missing') pending.push(readinessItem('local-review-missing', prReview.localReview.nextAction, 'review-agent', 'unverified'));
+      if (prReview.localReview.status === 'pending' || prReview.localReview.status === 'stale') pending.push(readinessItem(prReview.localReview.status === 'stale' ? 'local-review-stale' : 'local-review-pending', prReview.localReview.nextAction, 'review-agent', 'unverified'));
+      if (prReview.localReview.status === 'unavailable') pending.push(readinessItem('local-review-unavailable', prReview.localReview.nextAction, 'review-agent', 'unverified'));
+      if (prReview.localReview.status === 'inconclusive') pending.push(readinessItem('local-review-inconclusive', prReview.localReview.nextAction, 'review-agent', 'unverified'));
     }
-    if (prReview.status === 'pending') pending.push(readinessItem('pr-review-pending', `Rerun \`aie pr gate ${prReview.pr.number}\` after pending PR review requirements complete.`, 'pr-review-gate', 'trusted-provider'));
+    if (prReview.status === 'pending' || prReview.status === 'inconclusive') pending.push(readinessItem(prReview.status === 'inconclusive' ? 'local-review-inconclusive' : 'pr-review-pending', `Rerun \`aie pr gate ${prReview.pr.number}\` after pending PR review requirements complete.`, 'pr-review-gate', 'trusted-provider'));
     for (const diagnostic of prReview.checkDiagnostics) {
       if (['missing-current-head-run', 'stale-old-head-run', 'pending-current-head-run', 'skipped-current-head-run'].includes(diagnostic.status)) pending.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
     }
@@ -245,8 +246,8 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr?.mergeStateStatus === 'DIRTY') blockers.push(readinessItem('merge-conflict', 'Pull request branch is dirty and cannot merge cleanly.', 'github-pr', 'trusted-provider'));
   if (audit.required && (audit.evidence.state === 'metadata-only' || audit.evidence.state === 'browser-visited' || audit.evidence.state === 'screenshots-captured')) blockers.push(readinessItem(audit.evidence.reasonCode, 'Manual UI audit evidence directory exists but visual evidence is incomplete.', audit.evidence.source, audit.evidence.trust));
   if (prReview?.status === 'failed') blockers.push(readinessItem('review-feedback-blocker', 'PR review gate reports feedback that must be addressed.', 'pr-review-gate', 'trusted-provider'));
-  if (prReview?.localReview.required && (prReview.localReview.status === 'failed' || prReview.localReview.status === 'needs-work')) blockers.push(readinessItem('local-review-failed', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
-  if (prReview?.localReview.required && prReview.localReview.status === 'malformed') blockers.push(readinessItem('local-review-malformed', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+  if (prReview?.localReview.required && (prReview.localReview.status === 'failed' || prReview.localReview.status === 'needs-work')) blockers.push(readinessItem('local-review-failed', prReview.localReview.nextAction, 'review-agent', 'unverified'));
+  if (prReview?.localReview.required && prReview.localReview.status === 'malformed') blockers.push(readinessItem('local-review-malformed', prReview.localReview.nextAction, 'review-agent', 'unverified'));
   for (const diagnostic of prReview?.checkDiagnostics ?? []) {
     if (diagnostic.status === 'failed-current-head-run') blockers.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
   }
@@ -289,8 +290,8 @@ function formatCiDiagnostics(result: PrGateResult | null): string[] {
 
 function formatLocalReview(result: PrGateResult | null): string[] {
   if (!result) return ['- local review evidence: unavailable until PR review-gate state is collected.'];
-  if (!result.localReview.required) return ['- local review evidence: not required.'];
-  const lines = [`- local review evidence: ${result.localReview.status}; lanes=${result.localReview.requiredLanes.join(', ')}; ${result.localReview.summary}`];
+  if (!result.localReview.required && result.localReview.mode !== 'shadow') return ['- local review evidence: not required.'];
+  const lines = [`- local review evidence: ${result.localReview.status}; mode=${result.localReview.mode}; profile=${result.localReview.profile}; lanes=${result.localReview.requiredLanes.join(', ')}; ${result.localReview.summary}`];
   for (const evidence of result.localReview.evidence) {
     lines.push(`  - issue #${evidence.issueNumber ?? 'unknown'} PR #${evidence.prNumber || 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
   }
@@ -303,6 +304,9 @@ function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   for (const gate of result.gates.lines) lines.push(`- ${gate.state}: ${gate.name} (${gate.stage}, ${gate.requirement}) - ${gate.recorded ? 'recorded' : 'pending evidence'}; ${gate.summary}`);
   lines.push(`- Manual UI audit: ${uiAuditState(result.uiAudit)} - ${result.uiAudit.nextAction}`);
   lines.push(`- Review-agent gate: ${reviewState(result.reviewGate)} - reviewers: ${formatReviewers(result.reviewGate)}; ${result.reviewGate.evidence.summary}`);
+  lines.push(`- Review profile: ${result.reviewGate.profile}; prompt stack=${result.reviewGate.promptStack.map(fragment => fragment.id).join(', ')}; context=${result.reviewGate.contextSources.join(', ')}`);
+  lines.push(`- Review context bundle: ${result.reviewGate.contextBundle.map(context => `${context.kind}/${context.freshness}/${context.trust}`).join(', ')}`);
+  for (const warning of result.reviewGate.promptSafetyWarnings) lines.push(`- Review prompt safety: ${warning}`);
   if (result.issueChecklist) {
     lines.push(`- Issue checklist: ${result.issueChecklist.checklist.checked}/${result.issueChecklist.checklist.total} checked.`);
     for (const item of result.issueChecklist.checklist.items.filter(item => !item.checked)) lines.push(`  - unchecked #${item.index}: ${item.text}`);
