@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ShippingPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ShippingPolicy } from '../core/policy.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
@@ -73,7 +73,9 @@ export interface LifecycleConfig {
 }
 
 export interface ReviewConfig {
+  adapter: ReviewAdapterKind;
   agents: string[];
+  localAgents: string[];
   waitMinutes: number;
   requestText: string;
 }
@@ -149,6 +151,8 @@ export interface Config extends ConfigFileShape {
   commentOnStart: boolean;
   ignoredAutomationAuthors: string[];
   reviewAgents: string[];
+  reviewAdapter: ReviewAdapterKind;
+  localReviewAgents: string[];
   reviewWaitMinutes: number;
   reviewRequestText: string;
   opencodeCommandAlias: boolean;

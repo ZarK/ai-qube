@@ -108,7 +108,9 @@ describe('doctor diagnostics', () => {
     const config = getDefaults();
     config.manualUiAudit = false;
     config.qualityControl = true;
+    config.reviewAdapter = 'mixed';
     config.reviewAgents = ['@copilot', '@coderabbitai', 'oracle', 'custom bot'];
+    config.localReviewAgents = ['local-oracle'];
     config.reviewWaitMinutes = 3;
     config.gates = [
       { name: 'build', kind: 'build', command: 'npm run build', stage: 'pre-pr', required: true, timeoutSeconds: 600, workingDirectory: '.', env: {}, externalService: false },
@@ -132,7 +134,14 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.audit.manualUiAudit, false);
     assert.equal(diagnostics.audit.readiness, 'disabled');
     assert.equal(diagnostics.prReview.readiness, 'ready');
+    assert.equal(diagnostics.prReview.adapter, 'mixed');
+    assert.deepEqual(diagnostics.prReview.localReviewers, ['local-oracle']);
+    assert.equal(diagnostics.prReview.localRunnerReadiness, 'unavailable');
     assert.equal(diagnostics.prReview.reviewWaitMinutes, 3);
+    assert.equal(diagnostics.reviewAgent.adapter, 'mixed');
+    assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
+    assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/pr-reviews');
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'unavailable');
     assert.equal(diagnostics.aiq.enabled, true);
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
@@ -140,6 +149,7 @@ describe('doctor diagnostics', () => {
     assert.ok(diagnostics.reviewAgent.externalServices.includes('coderabbitai'));
     assert.ok(diagnostics.reviewAgent.externalServices.includes('custom-pr-reviewer:custom-bot'));
     assert.ok(!diagnostics.reviewAgent.externalServices.includes('oracle'));
+    assert.ok(!diagnostics.externalServices.includes('local-oracle'));
     assert.equal(diagnostics.supplyChain.readiness, 'ready');
     assert.ok(diagnostics.supplyChain.supplyChainSensitiveGates.includes('build'));
   });

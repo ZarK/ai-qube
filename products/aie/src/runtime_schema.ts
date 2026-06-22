@@ -25,6 +25,12 @@ function schemaOptions() {
           ci: ['github'],
           layout: ['local'],
         },
+        reviewAdapters: ['github', 'local', 'mixed'],
+        localReviewEvidence: {
+          root: '.qube/aie/pr-reviews',
+          requiredLanes: ['code-quality', 'security-maintainability', 'qa', 'final-gate'],
+          runner: 'unavailable',
+        },
         defaultConfig: configToFileShape(getDefaults()),
       },
     },

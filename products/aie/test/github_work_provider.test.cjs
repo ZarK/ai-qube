@@ -56,7 +56,7 @@ function statusPolicy() {
     },
     lifecycle: { assignOnStart: config.assignOnStart, commentOnStart: config.commentOnStart, autonomousMode: config.autonomousMode },
     shipping: { autonomousMode: config.autonomousMode, mergeStrategy: config.normalizedPolicy.shipping.mergeStrategy },
-    reviews: { reviewers: config.reviewAgents, waitMinutes: config.reviewWaitMinutes, requestText: config.reviewRequestText },
+    reviews: { adapter: config.reviewAdapter, reviewers: config.reviewAgents, localReviewers: config.localReviewAgents, waitMinutes: config.reviewWaitMinutes, requestText: config.reviewRequestText },
     gates: { definitions: [] },
     audit: { manualUiAudit: config.manualUiAudit, appLaunch: config.uiAuditAppLaunch, target: config.uiAuditTarget },
     instructions: { ...config.instructions, opencodeCommandAlias: config.opencodeCommandAlias },

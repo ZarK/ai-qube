@@ -2,6 +2,7 @@ import { validateBranchPattern } from '../core/branch_rules.js';
 import type { MigrationPolicy, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError } from './types.js';
+import type { ReviewAdapterKind } from '../core/policy.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -116,6 +117,18 @@ function readMergeStrategy(value: unknown, defaultValue: ShippingPolicy['mergeSt
   if (value === undefined) return defaultValue;
   if (value === 'squash' || value === 'merge' || value === 'rebase') return value;
   errors.push({ kind: 'invalid', path, message: `${path} must be squash, merge, or rebase` });
+  return defaultValue;
+}
+
+function readReviewAdapter(value: unknown, defaultValue: ReviewAdapterKind, path: string, errors: ValidationError[]): ReviewAdapterKind {
+  if (value === undefined) return defaultValue;
+  if (value === 'github' || value === 'local' || value === 'mixed') return value;
+  errors.push({
+    kind: 'invalid',
+    path,
+    message: `${path} must be github, local, or mixed`,
+    suggestion: 'Use "github" for remote PR reviewers, "local" for repository-scoped local evidence, or "mixed" for both.',
+  });
   return defaultValue;
 }
 
@@ -331,9 +344,11 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     errors.push({ kind: 'invalid', path: 'policy.reviews', message: 'policy.reviews must be an object' });
     return { ...defaultValue, agents: [...defaultValue.agents] };
   }
-  rejectUnknownKeys(value, ['agents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'agents', 'localAgents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
   return {
+    adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     agents: readStringArray(value, 'agents', defaultValue.agents, 'policy.reviews', errors),
+    localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
   };

@@ -58,6 +58,54 @@ function basePr(overrides = {}) {
   };
 }
 
+function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', laneStatus = 'passed', summary = 'local review passed', blockers = [] } = {}) {
+  return {
+    schemaVersion: 1,
+    issueNumber,
+    prNumber,
+    headSha,
+    reviewer: { id: 'oracle', name: 'oracle', adapterKind: 'local' },
+    summary,
+    blockers,
+    recordedAt: '2026-06-22T00:00:00.000Z',
+    lanes: [
+      { id: 'code-quality', status: laneStatus, summary: 'code quality reviewed', blockers, artifacts: ['diff'], commands: ['pnpm test'], surfaces: [] },
+      { id: 'security-maintainability', status: 'passed', summary: 'security reviewed', blockers: [], artifacts: ['diff'], commands: ['pnpm test'], surfaces: [] },
+      { id: 'qa', status: 'passed', summary: 'QA reviewed', blockers: [], artifacts: ['test output'], commands: ['pnpm test'], surfaces: ['CLI'] },
+      { id: 'final-gate', status: 'passed', summary: 'final gate reviewed', blockers: [], artifacts: ['PR state'], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'] },
+    ],
+  };
+}
+
+function writeLocalEvidence(repo, evidence) {
+  const issueNumber = evidence.issueNumber;
+  const prNumber = evidence.prNumber;
+  const headSha = evidence.headSha;
+  const directory = join(repo, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, `pr-${prNumber}`);
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, `${headSha}.json`), `${typeof evidence === 'string' ? evidence : JSON.stringify(evidence, null, 2)}\n`);
+}
+
+function localReviewConfig() {
+  const config = getDefaults();
+  config.reviewAdapter = 'local';
+  config.reviewAgents = ['coderabbitai'];
+  config.localReviewAgents = ['oracle'];
+  config.reviewWaitMinutes = 10;
+  return config;
+}
+
+function cleanLocalPr(overrides = {}) {
+  return basePr({
+    reviewDecision: 'REVIEW_REQUIRED',
+    mergeStateStatus: 'CLEAN',
+    mergeable: 'MERGEABLE',
+    statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+    closingIssuesReferences: [{ number: 93 }],
+    ...overrides,
+  });
+}
+
 function threadResponse(nodes = []) {
   return { data: { repository: { pullRequest: { reviewThreads: { nodes } } } } };
 }
@@ -489,6 +537,109 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'complete');
     assert.match(result.nextAction, /no detected blockers/);
+  });
+
+  it('completes local-only PR gates when current-head local evidence passes', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence());
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.localReview.required, true);
+    assert.equal(result.localReview.status, 'passed');
+    assert.deepEqual(result.reviewers, []);
+    assert.equal(result.actions.some(action => action.kind === 'request-review'), false);
+    assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+  });
+
+  it('keeps local-only PR gates pending when local evidence is missing', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'missing');
+    assert.match(result.nextAction, /Record local review evidence/);
+  });
+
+  it('requires rerun when local evidence belongs to an older PR head', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence({ headSha: 'oldsha' }));
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'rerun-required');
+    assert.equal(result.localReview.status, 'stale');
+    assert.match(result.nextAction, /current PR head/);
+  });
+
+  it('fails local-only PR gates when local evidence records blocking findings', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence({ laneStatus: 'failed', summary: 'local review found blockers', blockers: ['Fix unsafe parser'] }));
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.localReview.status, 'failed');
+    assert.ok(result.localReview.evidence[0].blockers.includes('Fix unsafe parser'));
+  });
+
+  it('fails local-only PR gates when local evidence is malformed', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const directory = join(repo, '.qube', 'aie', 'pr-reviews', 'issue-93', 'pr-12');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'abc123.json'), '{not-json');
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.localReview.status, 'malformed');
+    assert.match(result.localReview.summary, /could not be parsed/);
+  });
+
+  it('reports unavailable local evidence distinctly', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence({ laneStatus: 'unavailable', summary: 'local runner unavailable' }));
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'unavailable');
+    assert.equal(result.localReview.status, 'unavailable');
+    assert.match(result.nextAction, /runner availability/);
+  });
+
+  it('supports mixed local evidence and remote GitHub reviewer requests', async () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = ['@coderabbitai'];
+    config.localReviewAgents = ['oracle'];
+    writeLocalEvidence(repo, localEvidence());
+    const pr = cleanLocalPr({
+      reviewDecision: 'APPROVED',
+      comments: [{ author: { login: 'executor' }, body: '<!-- aie:pr-gate:coderabbitai:abc123 -->\nExecutor recorded a configured PR reviewer request for this PR head.' }],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.reviewers.length, 1);
+    assert.equal(result.reviewers[0].requestedForHead, true);
   });
 
   it('surfaces current-head CI diagnostics in PR gate output', async () => {
@@ -943,6 +1094,28 @@ describe('PR body service', () => {
     assert.ok(result.readiness.pending.some(item => item.includes('@copilot')));
     assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'missing-evidence' && item.source === 'configured-gate'));
     assert.ok(result.readiness.pendingDetails.some(item => item.reasonCode === 'pr-review-pending' && item.source === 'pr-review-gate'));
+  });
+
+  it('includes local review-agent, QA, and final gate readiness in PR body output', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    config.manualUiAudit = false;
+    writeLocalEvidence(repo, localEvidence({ issueNumber: 103 }));
+    const currentPr = { number: 12, title: 'Local review PR', state: 'OPEN', url: 'https://github.com/example/repo/pull/12', reviewDecision: 'REVIEW_REQUIRED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false };
+    const pr = cleanLocalPr({ closingIssuesReferences: [{ number: 103 }] });
+    const { exec } = makePrExec({ prViews: [pr], issueBodies: { 103: '' } });
+    const wrappedExec = async args => {
+      if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') return { args, exitCode: 0, stdout: JSON.stringify(currentPr), stderr: '' };
+      return exec(args);
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 103, repoRoot: repo, exec: wrappedExec });
+
+    assert.match(result.body, /Local review agents:/);
+    assert.match(result.body, /local review evidence: passed/);
+    assert.match(result.body, /qa/);
+    assert.match(result.body, /final-gate/);
+    assert.equal(result.readiness.pendingDetails.some(item => item.reasonCode === 'pr-review-pending' && item.source === 'github-pr'), false);
   });
 
   it('blocks PR body readiness when the issue checklist is unchecked', async () => {

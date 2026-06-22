@@ -41,8 +41,12 @@ export interface ShippingPolicy {
   mergeStrategy: 'squash' | 'merge' | 'rebase';
 }
 
+export type ReviewAdapterKind = 'github' | 'local' | 'mixed';
+
 export interface ReviewPolicy {
+  adapter: ReviewAdapterKind;
   reviewers: string[];
+  localReviewers: string[];
   waitMinutes: number;
   requestText: string;
 }
@@ -142,7 +146,9 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
     shipping: { ...input.shipping },
     lifecycle: { ...input.lifecycle, autonomousMode: input.shipping.autonomousMode },
     reviews: {
+      adapter: input.reviews.adapter,
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
+      localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
       requestText: input.reviews.requestText,
     },

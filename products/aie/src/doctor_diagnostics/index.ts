@@ -130,7 +130,7 @@ export function buildProviderHealthDiagnostics(config: Config): ProviderHealthDi
       componentLabels: config.normalizedPolicy.labels.components.length,
       baseRef: `${config.normalizedPolicy.branch.baseRemote}/${config.normalizedPolicy.branch.baseBranch}`,
       configuredGates: config.normalizedPolicy.gates.definitions.length,
-      reviewAgents: config.normalizedPolicy.reviews.reviewers.length,
+      reviewAgents: config.normalizedPolicy.reviews.reviewers.length + config.normalizedPolicy.reviews.localReviewers.length,
     },
     warnings,
   };
@@ -204,8 +204,11 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const supplyChainSensitiveGates = gatePlan.gates.filter(gate => gate.supplyChainSensitive).map(gate => gate.name);
   const externalServiceGates = gatePlan.gates.filter(gate => gate.externalService).map(gate => gate.name);
   const configuredReviewers = config.reviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
+  const configuredLocalReviewers = config.localReviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
   const reviewerServices = unique(config.reviewAgents.map(reviewerExternalService).filter((service): service is string => service !== null));
-  const defaultOracle = configuredReviewers.length === 0;
+  const defaultOracle = configuredReviewers.length === 0 && config.reviewAdapter !== 'local';
+  const localReviewEnabled = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
+  const localEvidenceRoot = '.qube/aie/pr-reviews';
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit);
   const fallbackBrowserAutomation = toolAvailability('playwright', false);
   const aiqTool = toolAvailability('aiq', config.qualityControl);
@@ -222,6 +225,14 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       ? 'ready'
       : 'needs-action';
   const prReviewReadiness: DoctorReadinessStatus = options.ghAuthenticated ? 'ready' : 'missing';
+  const localRunner = {
+    configured: false,
+    readiness: localReviewEnabled ? 'unavailable' as const : 'disabled' as const,
+    command: null,
+    nextAction: localReviewEnabled
+      ? 'No local review runner is configured. Record local review evidence manually in the repository-scoped evidence path, or configure a real runner before relying on runner automation.'
+      : 'Local review evidence is disabled by the selected review adapter.',
+  };
   const policy = config.supplyChain;
   const supplyChainReady = policy.packageAgeDays <= policy.highRiskPackageAgeDays && policy.disableLifecycleScripts && policy.intentionalLockfileChanges;
   const externalServices = unique([
@@ -257,16 +268,24 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     reviewAgent: {
       required: true,
       readiness: 'ready',
+      adapter: config.reviewAdapter,
       reviewers: defaultOracle ? ['oracle'] : configuredReviewers,
+      localReviewers: configuredLocalReviewers,
       defaultOracle,
       fallbackPromptAvailable: true,
+      localEvidenceRoot,
+      localRunner,
       externalServices: reviewerServices,
       reviewWaitMinutes: config.reviewWaitMinutes,
     },
     prReview: {
       readiness: prReviewReadiness,
       ghAuthenticated: options.ghAuthenticated,
+      adapter: config.reviewAdapter,
       reviewers: configuredReviewers,
+      localReviewers: configuredLocalReviewers,
+      localEvidenceRoot,
+      localRunnerReadiness: localRunner.readiness,
       externalServices: reviewerServices,
       reviewWaitMinutes: config.reviewWaitMinutes,
     },

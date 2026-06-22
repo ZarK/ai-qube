@@ -3,6 +3,7 @@ import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_check
 import { configToExecutorPolicy } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
+import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
 import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
@@ -93,6 +94,7 @@ export interface PrGateResult {
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
   checkDiagnostics: PrGateCheckDiagnostic[];
+  localReview: LocalReviewGate;
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
@@ -248,12 +250,24 @@ function configuredReviewersSatisfied(reviewers: PrGateReviewer[]): boolean {
   return reviewers.every(reviewer => reviewer.requestedForHead && !reviewer.pending && !reviewer.staleRequest);
 }
 
-function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[]): PrGateStatus {
+function localStatus(status: LocalReviewStatus): PrGateStatus | null {
+  if (status === 'passed') return null;
+  if (status === 'stale') return 'rerun-required';
+  if (status === 'failed' || status === 'needs-work' || status === 'malformed') return 'failed';
+  if (status === 'unavailable') return 'unavailable';
+  return 'pending';
+}
+
+function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[], localReview: LocalReviewGate, localOnly: boolean): PrGateStatus {
+  if (localReview.required) {
+    const local = localStatus(localReview.status);
+    if (local) return local;
+  }
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
   if (feedback.some(entry => entry.source === 'thread' || (entry.source === 'review' && entry.state === 'CHANGES_REQUESTED'))) return 'failed';
   if (unavailable.length > 0) return 'unavailable';
-  if (item.reviewDecision === 'review-required' || reviewers.some(reviewer => reviewer.pending)) return 'pending';
+  if ((!localOnly && item.reviewDecision === 'review-required') || reviewers.some(reviewer => reviewer.pending)) return 'pending';
   if (item.reviewDecision === 'approved') return 'complete';
   if (configuredReviewersSatisfied(reviewers) && item.mergeability === 'mergeable' && !hasIncompleteChecks(item)) return 'complete';
   return 'pending';
@@ -263,7 +277,8 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
   return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[]): string {
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate): string {
+  if (localReview.required && localReview.status !== 'passed') return localReview.nextAction;
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Update linked GitHub issue checklist items with `aie checklist update <issue> --index <n>`, rerun affected gates if needed, then rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
@@ -288,6 +303,20 @@ function warnings(item: ReviewItem, reviewers: PrGateReviewer[]): string[] {
   if (externalReviewers.length > 0) list.push(`Configured PR review agents may contact external services: ${externalReviewers.join(', ')}.`);
   if (item.state === 'draft') list.push('The pull request is a draft; some reviewers may ignore draft PRs.');
   return list;
+}
+
+function githubReviewEnabled(config: Config): boolean {
+  return config.reviewAdapter === 'github' || config.reviewAdapter === 'mixed';
+}
+
+function localReviewEnabled(config: Config): boolean {
+  return config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
+}
+
+function githubOnlyPolicy(config: Config): ReturnType<typeof configToExecutorPolicy> {
+  const policy = configToExecutorPolicy(config);
+  if (!githubReviewEnabled(config)) return { ...policy, reviews: { ...policy.reviews, reviewers: [] } };
+  return policy;
 }
 
 function defaultSleep(milliseconds: number): Promise<void> {
@@ -322,7 +351,7 @@ async function loadIssueChecklists(issueNumbers: number[], options: PrGateOption
 
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
-  const policy = configToExecutorPolicy(config);
+  const policy = githubOnlyPolicy(config);
   const provider = createGitHubReviewProvider({ exec: options.exec, cwd: options.repoRoot });
   const firstSnapshot = await provider.loadPullRequestReview(options.prNumber);
   const firstPlan = provider.planReviewRequest(firstSnapshot.item, policy);
@@ -355,7 +384,15 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const linkedChecklistWarnings: string[] = [];
   const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings];
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists);
+  const localReview = readLocalReviewGate({
+    repoRoot: options.repoRoot ?? process.cwd(),
+    issueNumbers: finalSnapshot.closingIssueNumbers,
+    prNumber: options.prNumber,
+    headSha: finalSnapshot.pr.headRefOid,
+    reviewers: config.localReviewAgents,
+    required: localReviewEnabled(config),
+  });
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local');
   return {
     ok: true,
     command: 'pr gate',
@@ -368,6 +405,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     actions,
     feedback,
     checkDiagnostics,
+    localReview,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
@@ -380,7 +418,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview),
   };
 }
 
@@ -396,6 +434,10 @@ export function formatPrGate(result: PrGateResult): string {
   lines.push('Actions:');
   for (const action of result.actions) lines.push(`- ${action.status}: ${action.description}`);
   lines.push(`Feedback counts: comments=${result.counts.comments}, reviews=${result.counts.reviews}, reviewComments=${result.counts.reviewComments}, unresolvedThreads=${result.counts.unresolvedThreads}.`);
+  lines.push(`Local review evidence: ${result.localReview.required ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
+  if (result.localReview.required) {
+    for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+  }
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);

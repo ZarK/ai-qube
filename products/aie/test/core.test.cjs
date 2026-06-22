@@ -246,7 +246,7 @@ describe('core policy model', () => {
       },
       lifecycle: { assignOnStart: false, commentOnStart: false, autonomousMode: true },
       shipping: { autonomousMode: false, mergeStrategy: 'squash' },
-      reviews: { reviewers: ['oracle', 'oracle'], waitMinutes: 10, requestText: 'Review this change.' },
+      reviews: { adapter: 'mixed', reviewers: ['oracle', 'oracle'], localReviewers: ['local', 'local'], waitMinutes: 10, requestText: 'Review this change.' },
       gates: {
         definitions: [{
           key: 'typecheck',
@@ -275,7 +275,9 @@ describe('core policy model', () => {
 
     assert.deepEqual(policy.milestoneOrdering, { enabled: true, order: ['M7'], missingAssignment: 'block' });
     assert.deepEqual(policy.branch.ignoredReviewAuthors, ['dependabot[bot]']);
+    assert.equal(policy.reviews.adapter, 'mixed');
     assert.deepEqual(policy.reviews.reviewers, ['oracle']);
+    assert.deepEqual(policy.reviews.localReviewers, ['local']);
     assert.equal(policy.lifecycle.autonomousMode, false);
   });
 
@@ -294,7 +296,7 @@ describe('core policy model', () => {
       },
       lifecycle: { assignOnStart: false, commentOnStart: false, autonomousMode: true },
       shipping: { autonomousMode: true, mergeStrategy: 'squash' },
-      reviews: { reviewers: [], waitMinutes: -1, requestText: '' },
+      reviews: { adapter: 'github', reviewers: [], localReviewers: [], waitMinutes: -1, requestText: '' },
       gates: { definitions: [] },
       audit: { manualUiAudit: false, appLaunch: '', target: '' },
       instructions: { opencodeCommandAlias: false, namingRules: false, promptInjectionWarning: true, noCreditWarning: true, implementationGuardrails: true, supplyChainSafety: true },

@@ -84,6 +84,8 @@ describe('init service', () => {
     assert.equal(config.policy.lifecycle.assignOnStart, true);
     assert.equal(config.policy.lifecycle.commentOnStart, true);
     assert.deepEqual(config.policy.reviews.agents, ['coderabbitai']);
+    assert.equal(config.policy.reviews.adapter, 'github');
+    assert.deepEqual(config.policy.reviews.localAgents, []);
     assert.equal(config.policy.reviews.waitMinutes, 10);
     assert.equal(config.policy.instructions.opencodeCommandAlias, false);
     assert.equal(config.policy.instructions.namingRules, false);
