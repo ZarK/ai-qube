@@ -6,6 +6,10 @@ command surface for running the checks that matter now.
 
 AIQ uses repository-native tool configs by default. Existing Biome config, `tsconfig.json`, Vitest/Jest config, Playwright config or package test scripts, Ruff/Radon-compatible Python config, and metrics config files remain authoritative unless AIQ stage or tool selection explicitly narrows what runs.
 
+For the full QUBE package family and command deck, see
+https://zark.github.io/ai-qube/ or the repository landing-page artifact at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 ```sh
