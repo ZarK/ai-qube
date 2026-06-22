@@ -173,6 +173,10 @@ const GITHUB_OPERATION_MAP = new Map<string, GitHubOperationSupport>(
   GITHUB_OPERATIONS.map((operation) => [operation.id, operation]),
 );
 
+if (GITHUB_OPERATION_MAP.size !== GITHUB_OPERATIONS.length) {
+  throw new Error("Duplicate GitHub operation id detected.");
+}
+
 export const githubAdapter = defineQubeAdapter({
   id: "github",
   packageName: "@tjalve/qube-adapter-github",
@@ -234,7 +238,7 @@ export function githubReviewItemKey(prNumber: number | string): GitHubProviderKe
 }
 
 export function githubReviewRequestMarker(reviewerId: string, headSha: string): string {
-  const reviewer = normalizeStableText(reviewerId, "GitHub reviewer id");
+  const reviewer = normalizeReviewerId(reviewerId);
   const sha = normalizeGitHubSha(headSha);
   return `github-review:${reviewer}:${sha}`;
 }
@@ -247,7 +251,7 @@ export function mapGitHubCheckStatus(input: GitHubCheckStatusInput, index = 0): 
     name,
     result,
     reasonCode: checkReasonCode(result),
-    summary: `GitHub check status=${input.status ?? input.state ?? "UNKNOWN"} conclusion=${input.conclusion ?? "UNKNOWN"}.`,
+    summary: `GitHub check status=${input.status ?? "UNKNOWN"} state=${input.state ?? "UNKNOWN"} conclusion=${input.conclusion ?? "UNKNOWN"}.`,
     workflowName: normalizeOptionalText(input.workflowName),
   });
 }
@@ -292,6 +296,14 @@ function normalizeStableText(value: string, label: string): string {
     throw new Error(`${label} must be non-empty and already normalized.`);
   }
   return trimmed;
+}
+
+function normalizeReviewerId(value: string): string {
+  const reviewer = normalizeStableText(value, "GitHub reviewer id");
+  if (/[:\s]/.test(reviewer)) {
+    throw new Error("GitHub reviewer id must not contain whitespace or colon characters.");
+  }
+  return reviewer;
 }
 
 function normalizeGitHubSha(value: string): string {

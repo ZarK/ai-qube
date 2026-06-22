@@ -41,7 +41,11 @@ describe("github adapter contract", () => {
     const unknown = getGitHubOperationSupport("launch-space-elevator");
     assert.equal(unknown.support, "unsupported");
     assert.match(unknown.summary, /No product package has registered real GitHub behavior/);
-    assert.ok(listGitHubOperationSupport().length >= 13);
+
+    const operations = listGitHubOperationSupport();
+    assert.equal(operations.filter((operation) => operation.support === "supported").length, 9);
+    assert.equal(operations.filter((operation) => operation.support === "standalone").length, 1);
+    assert.equal(operations.filter((operation) => operation.support === "unsupported").length, 4);
   });
 
   it("returns immutable operation descriptors", () => {
@@ -79,6 +83,8 @@ describe("github adapter contract", () => {
       "github-review:coderabbitai:abcdef1234567",
     );
     assert.throws(() => githubReviewRequestMarker(" coderabbitai", "abcdef1"), /already normalized/);
+    assert.throws(() => githubReviewRequestMarker("some:bot", "abcdef1"), /whitespace or colon/);
+    assert.throws(() => githubReviewRequestMarker("some bot", "abcdef1"), /whitespace or colon/);
     assert.throws(() => githubReviewRequestMarker("coderabbitai", "not-a-sha"), /hexadecimal/);
   });
 
@@ -88,7 +94,7 @@ describe("github adapter contract", () => {
       name: "CI",
       result: "passed",
       reasonCode: "provider-check-passed",
-      summary: "GitHub check status=COMPLETED conclusion=SUCCESS.",
+      summary: "GitHub check status=COMPLETED state=UNKNOWN conclusion=SUCCESS.",
       workflowName: null,
     });
 
@@ -101,6 +107,10 @@ describe("github adapter contract", () => {
     assert.equal(mapGitHubCheckStatus({ name: "queue", status: "IN_PROGRESS" }).result, "pending");
     assert.equal(mapGitHubCheckStatus({ name: "skip", conclusion: "SKIPPED" }).result, "skipped");
     assert.equal(mapGitHubCheckStatus({ name: "old", conclusion: "STALE" }).result, "stale");
+    assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "SUCCESS" }).result, "passed");
+    assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "FAILURE" }).result, "failed");
+    assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "ERROR" }).result, "failed");
+    assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "PENDING" }).result, "pending");
     assert.equal(mapGitHubCheckStatus({}, 2).name, "GitHub check 3");
   });
 });
