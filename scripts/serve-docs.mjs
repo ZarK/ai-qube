@@ -20,15 +20,27 @@ const contentTypes = new Map([
 ]);
 
 function resolvePath(url) {
-  const parsed = new URL(url, `http://${host}:${port}`);
-  const decoded = decodeURIComponent(parsed.pathname);
+  let decoded;
+  try {
+    const parsed = new URL(url, `http://${host}:${port}`);
+    decoded = decodeURIComponent(parsed.pathname);
+  } catch {
+    return null;
+  }
   const relative = normalize(decoded === "/" ? "/index.html" : decoded).replace(/^[/\\]+/, "");
   const filePath = resolve(join(root, relative));
   if (filePath !== root && !filePath.startsWith(`${root}${sep}`)) return null;
   if (!existsSync(filePath)) return null;
-  const stat = statSync(filePath);
-  if (stat.isDirectory()) return resolve(join(filePath, "index.html"));
-  return filePath;
+  try {
+    const stat = statSync(filePath);
+    if (stat.isDirectory()) {
+      const indexPath = resolve(join(filePath, "index.html"));
+      return existsSync(indexPath) ? indexPath : null;
+    }
+    return stat.isFile() ? filePath : null;
+  } catch {
+    return null;
+  }
 }
 
 const server = createServer((request, response) => {
@@ -39,7 +51,14 @@ const server = createServer((request, response) => {
     return;
   }
   response.writeHead(200, { "content-type": contentTypes.get(extname(filePath)) ?? "application/octet-stream" });
-  createReadStream(filePath).pipe(response);
+  const stream = createReadStream(filePath);
+  stream.on("error", () => {
+    if (!response.headersSent) {
+      response.writeHead(500, { "content-type": "text/plain; charset=utf-8" });
+    }
+    response.end("Unable to read file\n");
+  });
+  stream.pipe(response);
 });
 
 server.listen(port, host, () => {
