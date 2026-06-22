@@ -1,10 +1,12 @@
 import { spawn } from "node:child_process";
-import { existsSync, realpathSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { appendFileSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
+import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 
@@ -93,6 +95,81 @@ interface InstallPlan {
   readonly commands: readonly InstallCommandStep[];
   readonly files: readonly string[];
   readonly notes: readonly string[];
+}
+
+type AutoresearchCommandName = "init" | "baseline" | "run" | "status" | "dashboard" | "promote";
+type AutoresearchPhase = "initialized" | "baselined" | "ran" | "promoted";
+
+interface AutoresearchFlags {
+  readonly json: boolean;
+  readonly dryRun: boolean;
+  readonly force: boolean;
+  readonly runId?: string;
+  readonly output?: string;
+}
+
+interface AutoresearchRequest {
+  readonly command: AutoresearchCommandName;
+  readonly compact: boolean;
+  readonly args: readonly string[];
+  readonly flags: AutoresearchFlags;
+}
+
+interface AutoresearchEvaluator {
+  readonly schemaVersion: 1;
+  readonly kind: "term-coverage";
+  readonly owner: "aiq";
+  readonly goal: string;
+  readonly direction: "maximize";
+  readonly terms: readonly string[];
+  readonly invariants: readonly string[];
+  readonly hash: string;
+}
+
+interface AutoresearchState {
+  readonly schemaVersion: 1;
+  readonly runId: string;
+  readonly phase: AutoresearchPhase;
+  readonly target: string;
+  readonly targetPath: string;
+  readonly targetKind: "directory";
+  readonly goal: string;
+  readonly evaluatorHash: string;
+  readonly currentBest: AutoresearchCandidate | null;
+  readonly baseline: AutoresearchEvaluation | null;
+  readonly attempts: readonly AutoresearchCandidate[];
+  readonly promoted: AutoresearchPromotion | null;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly nextAction: string;
+}
+
+interface AutoresearchEvaluation {
+  readonly score: number;
+  readonly matchedTerms: readonly string[];
+  readonly missingTerms: readonly string[];
+  readonly evaluatorHash: string;
+  readonly summary: string;
+  readonly recordedAt: string;
+}
+
+interface AutoresearchCandidate {
+  readonly id: string;
+  readonly artifactPath: string;
+  readonly evaluation: AutoresearchEvaluation;
+  readonly accepted: boolean;
+  readonly owner: {
+    readonly execution: "aie";
+    readonly evaluation: "aiq";
+    readonly continuation: "aiu";
+  };
+}
+
+interface AutoresearchPromotion {
+  readonly candidateId: string;
+  readonly outputPath: string;
+  readonly sourcePath: string;
+  readonly promotedAt: string;
 }
 
 const makeItSoFlowValues = ["planned", "issue", "direct-local"] as const;
@@ -364,6 +441,86 @@ const componentsCommand = defineCommand({
   }
 });
 
+const autoresearchCommand = defineCommand({
+  kind: "command",
+  name: "autoresearch",
+  description: "Run a safety-bounded local autoresearch arena lifecycle.",
+  arguments: [
+    defineArgument({
+      name: "args",
+      description: "Lifecycle input: init <target-directory> <goal> for an existing local directory, baseline, run, status, dashboard, promote, or compact <target-directory> <goal> as an init-only alias. State lives under .qube/autoresearch/runs/<run-id>/ with latest selection in .qube/autoresearch/latest.json.",
+      multiple: true
+    })
+  ],
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    defineFlag({
+      name: "help",
+      short: "h",
+      description: "Show command help.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "run",
+      description: "Autoresearch run id for lifecycle commands.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "output",
+      description: "Promotion output path. Defaults to <target>/autoresearch-result.md.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "force",
+      description: "Allow promotion to replace an existing output file.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    {
+      description: "Create a fixed local-directory arena under .qube/autoresearch without mutating the target.",
+      command: "qube autoresearch init <target-directory> <goal> --json"
+    },
+    {
+      description: "Use compact target/goal input as a safe init-only alias.",
+      command: "qube autoresearch ./scratch \"improve notes summary quality\" --json"
+    },
+    {
+      description: "Run the immutable fixed evaluator for the latest arena.",
+      command: "qube autoresearch baseline --json"
+    },
+    {
+      description: "Run one sandboxed candidate loop with AIE execution ownership and AIQ evaluation evidence.",
+      command: "qube autoresearch run --json"
+    },
+    {
+      description: "Report the active run, score, current best, and next safe command.",
+      command: "qube autoresearch status --json"
+    },
+    {
+      description: "promote is the only command that copies the selected best candidate to target or --output.",
+      command: "qube autoresearch promote --output ./scratch/autoresearch-result.md"
+    }
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: {
+      supported: true
+    },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  })
+});
+
 const makeItSoCommand = defineCommand({
   kind: "command",
   name: "make-it-so",
@@ -613,7 +770,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, autoresearchCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -625,6 +782,9 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   }
   if (args[0] === "install") {
     return planQubeInstall(args.slice(1));
+  }
+  if (args[0] === "autoresearch") {
+    return planAutoresearch(args.slice(1), environment);
   }
   if (args[0] === "make-it-so" || args[0] === "makeitso") {
     return planMakeItSo(args.slice(1), environment);
@@ -720,6 +880,7 @@ function createQubeCli(environment: CliEnvironment) {
         }
         return { stdout: renderInstallPlan(plan) };
       }),
+      createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
       createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
@@ -760,6 +921,693 @@ async function executeQubeDispatch(componentName: string | undefined, componentA
   }
   const exitCode = await dispatchCommand(planned.dispatch);
   return { exitCode };
+}
+
+function planAutoresearch(args: readonly string[], environment: CliEnvironment): CliExecution {
+  if (isAutoresearchHelpRequest(args)) {
+    return { exitCode: 0, stdout: renderAutoresearchHelp(), stderr: "" };
+  }
+  return runAutoresearch(args, environment, false);
+}
+
+async function executeAutoresearch(args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  if (isAutoresearchHelpRequest(args)) {
+    return { exitCode: 0, stdout: renderAutoresearchHelp() };
+  }
+  const planned = runAutoresearch(args, environment, true);
+  if (hasTopLevelJsonFlag(args)) {
+    return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  }
+  return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
+}
+
+function runAutoresearch(args: readonly string[], environment: CliEnvironment, mutate: boolean): CliExecution {
+  const parsed = parseAutoresearchArgs(args);
+  if ("error" in parsed) {
+    return parsed.error;
+  }
+  const flags = parsed.request.flags;
+  const dryRun = flags.dryRun || !mutate;
+  const result = executeAutoresearchRequest(parsed.request, environment, dryRun);
+  if ("error" in result) {
+    return autoresearchError(result.error, flags.json);
+  }
+  const payload = { ...result.payload, dryRun };
+  if (flags.json) {
+    return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "autoresearch", autoresearch: payload })}\n`, stderr: "" };
+  }
+  return { exitCode: 0, stdout: renderAutoresearchResult(payload), stderr: "" };
+}
+
+function executeAutoresearchRequest(
+  request: AutoresearchRequest,
+  environment: CliEnvironment,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  if (request.command === "init") {
+    return initAutoresearch(request, environment, dryRun);
+  }
+  const context = loadAutoresearchContext(environment, request.flags.runId ?? request.args[0]);
+  if ("error" in context) {
+    return context;
+  }
+  const immutable = validateAutoresearchEvaluator(context.state, context.evaluator);
+  if (immutable) {
+    return { error: immutable };
+  }
+  if (request.command === "baseline") {
+    return baselineAutoresearch(context, dryRun);
+  }
+  if (request.command === "run") {
+    return runAutoresearchCandidate(context, dryRun);
+  }
+  if (request.command === "status") {
+    return { payload: summarizeAutoresearch(context, "status") };
+  }
+  if (request.command === "dashboard") {
+    if (!dryRun) {
+      writeAutoresearchDashboard(context);
+    }
+    return { payload: { ...summarizeAutoresearch(context, "dashboard"), dashboardPath: path.join(context.runDirectory, "dashboard.html"), dashboardDataPath: path.join(context.runDirectory, "dashboard-data.json") } };
+  }
+  return promoteAutoresearch(context, request, environment, dryRun);
+}
+
+function initAutoresearch(
+  request: AutoresearchRequest,
+  environment: CliEnvironment,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  const [target, ...goalParts] = request.args;
+  const goal = goalParts.join(" ").trim();
+  if (!target || goal.length === 0) {
+    return { error: "Autoresearch init requires <target> and <goal>." };
+  }
+  if (/^(?:https?:|github:|gitlab:|linear:)/i.test(target)) {
+    return { error: "This first autoresearch implementation supports local directory targets only." };
+  }
+  const targetPath = path.resolve(environment.cwd, target);
+  if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
+    return { error: "This first autoresearch implementation requires an existing directory target." };
+  }
+  const now = new Date().toISOString();
+  const evaluator = createAutoresearchEvaluator(goal);
+  const runId = createAutoresearchRunId(goal, now);
+  const runDirectory = autoresearchRunDirectory(environment, runId);
+  const state: AutoresearchState = {
+    schemaVersion: 1,
+    runId,
+    phase: "initialized",
+    target,
+    targetPath,
+    targetKind: "directory",
+    goal,
+    evaluatorHash: evaluator.hash,
+    currentBest: null,
+    baseline: null,
+    attempts: [],
+    promoted: null,
+    createdAt: now,
+    updatedAt: now,
+    nextAction: `Run qube autoresearch baseline --run ${runId}.`
+  };
+  const arena = createAutoresearchArena(state, evaluator, runDirectory);
+  if (!dryRun) {
+    createAutoresearchDirectories(runDirectory);
+    writeJsonFile(path.join(runDirectory, "arena.json"), arena);
+    writeJsonFile(path.join(runDirectory, "evaluator.json"), evaluator);
+    writeJsonFile(path.join(runDirectory, "state.json"), state);
+    writeFileSync(path.join(runDirectory, "attempts.jsonl"), "", "utf8");
+    writeJsonFile(autoresearchLatestPath(environment), { runId });
+    writeAutoresearchDashboard({ runDirectory, state, evaluator, arena });
+  }
+  return {
+    payload: {
+      action: "init",
+      runId,
+      phase: state.phase,
+      target,
+      targetPath,
+      goal,
+      evaluatorHash: evaluator.hash,
+      stateDirectory: runDirectory,
+      stateLayout: autoresearchStateLayout(runDirectory),
+      safety: arena.safety,
+      nextAction: state.nextAction
+    }
+  };
+}
+
+function baselineAutoresearch(
+  context: AutoresearchContext,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  if (context.state.baseline) {
+    return { error: "Autoresearch baseline is immutable once recorded for this run." };
+  }
+  const evaluation = evaluateAutoresearchText(summarizeAutoresearchTarget(context.state), context.evaluator);
+  const state = updateAutoresearchState(context.state, {
+    phase: "baselined",
+    baseline: evaluation,
+    nextAction: `Run qube autoresearch run --run ${context.state.runId}.`
+  });
+  if (!dryRun) {
+    writeJsonFile(path.join(context.runDirectory, "baseline.json"), evaluation);
+    writeJsonFile(path.join(context.runDirectory, "state.json"), state);
+    writeAutoresearchDashboard({ ...context, state });
+  }
+  return {
+    payload: {
+      action: "baseline",
+      runId: state.runId,
+      phase: state.phase,
+      evaluation,
+      nextAction: state.nextAction
+    }
+  };
+}
+
+function runAutoresearchCandidate(
+  context: AutoresearchContext,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  if (!context.state.baseline) {
+    return { error: "Run qube autoresearch baseline before executing candidates." };
+  }
+  const candidateNumber = context.state.attempts.length + 1;
+  const candidateId = `candidate-${String(candidateNumber).padStart(3, "0")}`;
+  const candidateDirectory = path.join(context.runDirectory, "sandbox", "candidates", candidateId);
+  const artifactPath = path.join(candidateDirectory, "artifact.md");
+  const artifact = renderAutoresearchArtifact(context.state, context.evaluator, candidateId);
+  const evaluation = evaluateAutoresearchText(artifact, context.evaluator);
+  const currentScore = context.state.currentBest?.evaluation.score ?? context.state.baseline.score;
+  const accepted = evaluation.score >= currentScore;
+  const candidate: AutoresearchCandidate = {
+    id: candidateId,
+    artifactPath,
+    evaluation,
+    accepted,
+    owner: {
+      execution: "aie",
+      evaluation: "aiq",
+      continuation: "aiu"
+    }
+  };
+  const attempts = [...context.state.attempts, candidate];
+  const state = updateAutoresearchState(context.state, {
+    phase: "ran",
+    attempts,
+    currentBest: accepted ? candidate : context.state.currentBest,
+    nextAction: accepted
+      ? `Run qube autoresearch promote --run ${context.state.runId} when you are ready to apply the selected candidate.`
+      : `Inspect ${candidateId}, then run qube autoresearch run --run ${context.state.runId} again.`
+  });
+  if (!dryRun) {
+    mkdirSync(candidateDirectory, { recursive: true });
+    writeFileSync(artifactPath, artifact, "utf8");
+    writeJsonFile(path.join(candidateDirectory, "evaluation.json"), evaluation);
+    appendFileSync(path.join(context.runDirectory, "attempts.jsonl"), `${JSON.stringify(candidate)}\n`, "utf8");
+    writeJsonFile(path.join(context.runDirectory, "state.json"), state);
+    writeAutoresearchDashboard({ ...context, state });
+  }
+  return {
+    payload: {
+      action: "run",
+      runId: state.runId,
+      phase: state.phase,
+      candidate,
+      currentBest: state.currentBest,
+      nextAction: state.nextAction
+    }
+  };
+}
+
+function promoteAutoresearch(
+  context: AutoresearchContext,
+  request: AutoresearchRequest,
+  environment: CliEnvironment,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  const best = context.state.currentBest;
+  if (!best) {
+    return { error: "No accepted autoresearch candidate is available to promote." };
+  }
+  const outputPath = request.flags.output
+    ? path.resolve(environment.cwd, request.flags.output)
+    : path.join(context.state.targetPath, "autoresearch-result.md");
+  if (existsSync(outputPath) && !request.flags.force) {
+    return { error: `Promotion output already exists: ${outputPath}. Pass --force to replace it.` };
+  }
+  const promotion: AutoresearchPromotion = {
+    candidateId: best.id,
+    outputPath,
+    sourcePath: best.artifactPath,
+    promotedAt: new Date().toISOString()
+  };
+  const state = updateAutoresearchState(context.state, {
+    phase: "promoted",
+    promoted: promotion,
+    nextAction: "Promotion complete. Review the output and keep the autoresearch evidence with the run."
+  });
+  if (!dryRun) {
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    copyFileSync(best.artifactPath, outputPath);
+    writeJsonFile(path.join(context.runDirectory, "promotion.json"), promotion);
+    writeJsonFile(path.join(context.runDirectory, "state.json"), state);
+    writeAutoresearchDashboard({ ...context, state });
+  }
+  return {
+    payload: {
+      action: "promote",
+      runId: state.runId,
+      phase: state.phase,
+      promotion,
+      nextAction: state.nextAction
+    }
+  };
+}
+
+interface AutoresearchContext {
+  readonly runDirectory: string;
+  readonly state: AutoresearchState;
+  readonly evaluator: AutoresearchEvaluator;
+  readonly arena: Readonly<Record<string, unknown>>;
+}
+
+function parseAutoresearchArgs(args: readonly string[]):
+  | { readonly request: AutoresearchRequest }
+  | { readonly error: CliExecution } {
+  const flags: { json: boolean; dryRun: boolean; force: boolean; runId?: string; output?: string } = {
+    json: false,
+    dryRun: false,
+    force: false
+  };
+  const positionals: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === undefined) continue;
+    if (token === "--") {
+      positionals.push(...args.slice(index + 1));
+      break;
+    }
+    if (token === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      flags.dryRun = true;
+      continue;
+    }
+    if (token === "--force") {
+      flags.force = true;
+      continue;
+    }
+    const option = parseAutoresearchOption(args, index);
+    if (option?.kind === "missing-value") {
+      return { error: autoresearchError(`Missing value for autoresearch option --${option.key}.`, hasTopLevelJsonFlag(args)) };
+    }
+    if (option?.kind === "parsed") {
+      if (option.key === "run") flags.runId = option.value;
+      if (option.key === "output") flags.output = option.value;
+      index = option.nextIndex;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return { error: autoresearchError(`Unknown autoresearch flag: ${token}`, flags.json) };
+    }
+    positionals.push(token);
+  }
+
+  const [first, ...rest] = positionals;
+  if (first && isAutoresearchCommand(first)) {
+    return { request: { command: first, compact: false, args: rest, flags } };
+  }
+  if (first) {
+    return { request: { command: "init", compact: true, args: positionals, flags } };
+  }
+  return { request: { command: "status", compact: false, args: [], flags } };
+}
+
+function parseAutoresearchOption(
+  args: readonly string[],
+  index: number
+):
+  | { readonly kind: "parsed"; readonly key: "run" | "output"; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: "run" | "output" }
+  | undefined {
+  const token = args[index];
+  if (!token) return undefined;
+  for (const key of ["run", "output"] as const) {
+    const flag = `--${key}`;
+    if (token.startsWith(`${flag}=`)) {
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
+    }
+    if (token === flag) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { kind: "missing-value", key };
+      }
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
+    }
+  }
+  return undefined;
+}
+
+function isAutoresearchCommand(value: string): value is AutoresearchCommandName {
+  return value === "init" || value === "baseline" || value === "run" || value === "status" || value === "dashboard" || value === "promote";
+}
+
+function autoresearchError(message: string, json: boolean): CliExecution {
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "autoresearch",
+        error: {
+          kind: "invalid-command-usage",
+          likelyCause: message,
+          suggestedNextAction: "Run `qube autoresearch --help` and retry with a supported local directory target.",
+          category: "usage",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return { exitCode: 2, stdout: "", stderr: `${message}\n` };
+}
+
+function autoresearchRoot(environment: CliEnvironment): string {
+  return path.join(environment.cwd, ".qube", "autoresearch");
+}
+
+function autoresearchRunDirectory(environment: CliEnvironment, runId: string): string {
+  return path.join(autoresearchRoot(environment), "runs", runId);
+}
+
+function autoresearchLatestPath(environment: CliEnvironment): string {
+  return path.join(autoresearchRoot(environment), "latest.json");
+}
+
+function loadAutoresearchContext(environment: CliEnvironment, runIdInput: string | undefined): AutoresearchContext | { readonly error: string } {
+  const runId = runIdInput ?? readLatestAutoresearchRunId(environment);
+  if (!runId) {
+    return { error: "No autoresearch run selected. Run `qube autoresearch init <target> <goal>` first or pass --run <id>." };
+  }
+  const runDirectory = autoresearchRunDirectory(environment, runId);
+  const statePath = path.join(runDirectory, "state.json");
+  const evaluatorPath = path.join(runDirectory, "evaluator.json");
+  const arenaPath = path.join(runDirectory, "arena.json");
+  if (!existsSync(statePath) || !existsSync(evaluatorPath) || !existsSync(arenaPath)) {
+    return { error: `Autoresearch run ${runId} is missing required state files.` };
+  }
+  return {
+    runDirectory,
+    state: readJsonFile<AutoresearchState>(statePath),
+    evaluator: readJsonFile<AutoresearchEvaluator>(evaluatorPath),
+    arena: readJsonFile<Readonly<Record<string, unknown>>>(arenaPath)
+  };
+}
+
+function readLatestAutoresearchRunId(environment: CliEnvironment): string | undefined {
+  const latestPath = autoresearchLatestPath(environment);
+  if (!existsSync(latestPath)) return undefined;
+  const latest = readJsonFile<{ runId?: string }>(latestPath);
+  return typeof latest.runId === "string" && latest.runId.length > 0 ? latest.runId : undefined;
+}
+
+function validateAutoresearchEvaluator(state: AutoresearchState, evaluator: AutoresearchEvaluator): string | undefined {
+  const hash = hashAutoresearchEvaluator(evaluator.goal, evaluator.terms, evaluator.invariants);
+  if (evaluator.hash !== hash || state.evaluatorHash !== hash) {
+    return "Autoresearch evaluator changed after arena creation. Refusing to continue until a new arena is initialized.";
+  }
+  return undefined;
+}
+
+function createAutoresearchEvaluator(goal: string): AutoresearchEvaluator {
+  const terms = extractAutoresearchTerms(goal);
+  const invariants = [
+    "Candidate work stays under .qube/autoresearch until promote.",
+    "The evaluator hash must not change after init.",
+    "Promotion is explicit and leaves evidence in the run directory."
+  ];
+  return {
+    schemaVersion: 1,
+    kind: "term-coverage",
+    owner: "aiq",
+    goal,
+    direction: "maximize",
+    terms,
+    invariants,
+    hash: hashAutoresearchEvaluator(goal, terms, invariants)
+  };
+}
+
+function extractAutoresearchTerms(goal: string): readonly string[] {
+  const terms = [...new Set(goal.toLowerCase().match(/[a-z0-9][a-z0-9-]{3,}/g) ?? [])].slice(0, 12);
+  return terms.length > 0 ? terms : ["goal"];
+}
+
+function hashAutoresearchEvaluator(goal: string, terms: readonly string[], invariants: readonly string[]): string {
+  return createHash("sha256").update(JSON.stringify({ kind: "term-coverage", goal, direction: "maximize", terms, invariants })).digest("hex");
+}
+
+function createAutoresearchRunId(goal: string, timestamp: string): string {
+  const compactTime = timestamp.replace(/\D/g, "").slice(0, 14);
+  return `${compactTime}-${hashText(goal).slice(0, 8)}`;
+}
+
+function hashText(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function createAutoresearchArena(state: AutoresearchState, evaluator: AutoresearchEvaluator, runDirectory: string): Readonly<Record<string, unknown>> {
+  return {
+    schemaVersion: 1,
+    runId: state.runId,
+    goal: state.goal,
+    target: {
+      input: state.target,
+      path: state.targetPath,
+      kind: state.targetKind,
+      supportedKind: "local-directory"
+    },
+    ownership: {
+      qube: "top-level lifecycle and .qube/autoresearch state",
+      aib: "arena synthesis and acceptance criteria",
+      aie: "sandboxed candidate execution boundary",
+      aiq: "fixed evaluator and referee evidence",
+      aiu: "continuation and next safe command"
+    },
+    evaluator: {
+      kind: evaluator.kind,
+      owner: evaluator.owner,
+      hash: evaluator.hash,
+      terms: evaluator.terms
+    },
+    safety: {
+      evaluatorFixedBeforeRun: true,
+      targetMutationBeforePromote: false,
+      sandboxDirectory: path.join(runDirectory, "sandbox"),
+      promotionExplicit: true,
+      stateDirectory: runDirectory
+    },
+    lifecycle: ["init", "baseline", "run", "status", "dashboard", "promote"]
+  };
+}
+
+function createAutoresearchDirectories(runDirectory: string): void {
+  for (const directory of [
+    runDirectory,
+    path.join(runDirectory, "sandbox", "workspace"),
+    path.join(runDirectory, "sandbox", "candidates"),
+    path.join(runDirectory, "outputs"),
+    path.join(runDirectory, "logs")
+  ]) {
+    mkdirSync(directory, { recursive: true });
+  }
+}
+
+function autoresearchStateLayout(runDirectory: string): Readonly<Record<string, string>> {
+  return {
+    arena: path.join(runDirectory, "arena.json"),
+    evaluator: path.join(runDirectory, "evaluator.json"),
+    state: path.join(runDirectory, "state.json"),
+    attempts: path.join(runDirectory, "attempts.jsonl"),
+    dashboard: path.join(runDirectory, "dashboard.html"),
+    dashboardData: path.join(runDirectory, "dashboard-data.json"),
+    sandbox: path.join(runDirectory, "sandbox")
+  };
+}
+
+function summarizeAutoresearchTarget(state: AutoresearchState): string {
+  if (!existsSync(state.targetPath)) {
+    return `Missing directory target planned for ${state.targetPath}.`;
+  }
+  const entries = readdirSync(state.targetPath).slice(0, 50).join("\n");
+  return `Directory target: ${state.targetPath}\nEntries:\n${entries}`;
+}
+
+function evaluateAutoresearchText(text: string, evaluator: AutoresearchEvaluator): AutoresearchEvaluation {
+  const lower = text.toLowerCase();
+  const matchedTerms = evaluator.terms.filter(term => lower.includes(term));
+  const missingTerms = evaluator.terms.filter(term => !lower.includes(term));
+  const score = evaluator.terms.length === 0 ? 0 : Math.round((matchedTerms.length / evaluator.terms.length) * 1000) / 1000;
+  return {
+    score,
+    matchedTerms,
+    missingTerms,
+    evaluatorHash: evaluator.hash,
+    summary: `${matchedTerms.length}/${evaluator.terms.length} evaluator terms matched.`,
+    recordedAt: new Date().toISOString()
+  };
+}
+
+function renderAutoresearchArtifact(state: AutoresearchState, evaluator: AutoresearchEvaluator, candidateId: string): string {
+  return [
+    `# Autoresearch Candidate ${candidateId}`,
+    "",
+    `Target: ${state.target}`,
+    `Goal: ${state.goal}`,
+    "",
+    "## Fixed Evaluator Terms",
+    "",
+    ...evaluator.terms.map(term => `- ${term}`),
+    "",
+    "## Candidate Output",
+    "",
+    `This sandboxed candidate addresses ${state.goal}.`,
+    "It remains inside the QUBE autoresearch run directory until explicit promotion.",
+    "Promotion copies only this selected artifact back to the requested output path."
+  ].join("\n") + "\n";
+}
+
+function updateAutoresearchState(state: AutoresearchState, patch: Partial<AutoresearchState>): AutoresearchState {
+  return { ...state, ...patch, updatedAt: new Date().toISOString() };
+}
+
+function summarizeAutoresearch(context: AutoresearchContext, action: string): Readonly<Record<string, unknown>> {
+  return {
+    action,
+    runId: context.state.runId,
+    phase: context.state.phase,
+    target: context.state.target,
+    targetPath: context.state.targetPath,
+    goal: context.state.goal,
+    evaluatorHash: context.state.evaluatorHash,
+    baseline: context.state.baseline,
+    currentBest: context.state.currentBest,
+    attempts: context.state.attempts.length,
+    promoted: context.state.promoted,
+    stateDirectory: context.runDirectory,
+    nextAction: context.state.nextAction
+  };
+}
+
+function writeAutoresearchDashboard(context: AutoresearchContext): void {
+  const data = {
+    state: context.state,
+    evaluator: context.evaluator,
+    arena: context.arena
+  };
+  writeJsonFile(path.join(context.runDirectory, "dashboard-data.json"), data);
+  const bestScore = context.state.currentBest?.evaluation.score ?? context.state.baseline?.score ?? 0;
+  const html = [
+    "<!doctype html>",
+    "<html><head><meta charset=\"utf-8\"><title>QUBE Autoresearch</title></head>",
+    "<body>",
+    `<h1>QUBE Autoresearch ${escapeHtml(context.state.runId)}</h1>`,
+    `<p><strong>Phase:</strong> ${escapeHtml(context.state.phase)}</p>`,
+    `<p><strong>Goal:</strong> ${escapeHtml(context.state.goal)}</p>`,
+    `<p><strong>Current score:</strong> ${bestScore}</p>`,
+    `<p><strong>Next:</strong> ${escapeHtml(context.state.nextAction)}</p>`,
+    "<h2>Attempts</h2>",
+    "<ul>",
+    ...context.state.attempts.map(candidate => `<li>${escapeHtml(candidate.id)}: score ${candidate.evaluation.score}, accepted=${String(candidate.accepted)}</li>`),
+    "</ul>",
+    "</body></html>"
+  ].join("\n");
+  writeFileSync(path.join(context.runDirectory, "dashboard.html"), html, "utf8");
+}
+
+function renderAutoresearchResult(payload: Readonly<Record<string, unknown>>): string {
+  const runId = typeof payload.runId === "string" ? payload.runId : "(none)";
+  const action = typeof payload.action === "string" ? payload.action : "status";
+  const phase = typeof payload.phase === "string" ? payload.phase : "(unknown)";
+  const nextAction = typeof payload.nextAction === "string" ? payload.nextAction : "Inspect autoresearch status.";
+  return [
+    "QUBE autoresearch",
+    "",
+    `Action: ${action}`,
+    `Run: ${runId}`,
+    `Phase: ${phase}`,
+    `Next: ${nextAction}`
+  ].join("\n") + "\n";
+}
+
+function isAutoresearchHelpRequest(args: readonly string[]): boolean {
+  const topLevelArgs = topLevelTokens(args);
+  return topLevelArgs.includes("--help") || topLevelArgs.includes("-h");
+}
+
+function renderAutoresearchHelp(): string {
+  return [
+    "autoresearch",
+    "Run a safety-bounded local autoresearch arena lifecycle.",
+    "",
+    "Usage:",
+    "  qube autoresearch init <target-directory> <goal> [--json] [--dry-run]",
+    "  qube autoresearch baseline [--run <id>] [--json] [--dry-run]",
+    "  qube autoresearch run [--run <id>] [--json] [--dry-run]",
+    "  qube autoresearch status [--run <id>] [--json]",
+    "  qube autoresearch dashboard [--run <id>] [--json] [--dry-run]",
+    "  qube autoresearch promote [--run <id>] [--output <path>] [--force] [--json] [--dry-run]",
+    "  qube autoresearch <target-directory> <goal> [--json] [--dry-run]",
+    "",
+    "Target and goal:",
+    "  The first supported target is an existing local directory.",
+    "  The goal is plain text used to create a fixed term-coverage evaluator before candidate work starts.",
+    "  The compact <target-directory> <goal> form is a safe alias for init only.",
+    "",
+    "State:",
+    "  Runs write arena.json, evaluator.json, state.json, attempts.jsonl, dashboards, logs, and sandbox files under .qube/autoresearch/runs/<run-id>/.",
+    "  .qube/autoresearch/latest.json selects the latest run when --run is omitted.",
+    "",
+    "Safety boundaries:",
+    "  init creates the arena and evaluator without target mutation.",
+    "  baseline records immutable fixed-evaluator evidence.",
+    "  run writes sandboxed candidates under .qube/autoresearch/ and records AIE execution, AIQ evaluation, and AIU continuation ownership.",
+    "  promote is the only command that copies the selected best candidate to the target workspace or --output path.",
+    "  evaluator.json changes after init stop lifecycle commands until a new arena is created.",
+    "",
+    "Examples:",
+    "  qube autoresearch init ./scratch \"improve notes summary quality\" --json",
+    "  qube autoresearch baseline --json",
+    "  qube autoresearch run --json",
+    "  qube autoresearch status --json",
+    "  qube autoresearch dashboard --json",
+    "  qube autoresearch promote --output ./scratch/autoresearch-result.md",
+    "",
+    "Behavior:",
+    "  JSON output: supported",
+    "  Dry run: supported",
+    "  Mutation: local-files",
+    "  Supply chain: standard"
+  ].join("\n") + "\n";
+}
+
+function writeJsonFile(filePath: string, value: unknown): void {
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+function readJsonFile<Value>(filePath: string): Value {
+  return JSON.parse(readFileSync(filePath, "utf8")) as Value;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
 async function executeMakeItSo(args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
