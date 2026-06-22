@@ -65,11 +65,20 @@ paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 
 ```sh
 qube components
+qube make-it-so "Ship a local notes CLI" --dry-run --json
 qube aib init . --idea "Ship a local notes CLI" --json
 qube aie queue --json
 qube aiq doctor --format json
 qube aiu status --json
 ```
+
+`qube make-it-so` is the cardinal work command. It does not invent a hidden
+workflow. By default, free-form text maps to the planned flow through
+`qube aib init`, while `--flow issue next` or an issue number maps to the AIE
+issue lifecycle. The direct-local flow is blocked until QUBE has a real oneshot
+workflow; it reports the missing setup instead of creating placeholder work.
+Use `--dry-run --json` to inspect the mapped command and boundaries before
+running it.
 
 The composer first resolves component binaries from its own install scope, then
 from the local workspace, then from ambient `PATH`. PATH fallback is diagnostic:

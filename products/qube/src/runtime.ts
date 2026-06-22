@@ -49,7 +49,7 @@ const jsonFlag = defineFlag({
 });
 const dryRunFlag = defineFlag({
   name: "dry-run",
-  description: "Print the install plan and commands without running package-manager commands.",
+  description: "Print the plan without running mapped commands.",
   type: "boolean"
 });
 const yesFlag = defineFlag({
@@ -93,6 +93,26 @@ interface InstallPlan {
   readonly commands: readonly InstallCommandStep[];
   readonly files: readonly string[];
   readonly notes: readonly string[];
+}
+
+const makeItSoFlowValues = ["planned", "issue", "direct-local"] as const;
+type MakeItSoFlow = typeof makeItSoFlowValues[number];
+
+interface MakeItSoMappedCommand {
+  readonly component: QubeComponent["command"];
+  readonly args: readonly string[];
+  readonly command: string;
+}
+
+interface MakeItSoPlan {
+  readonly flow: MakeItSoFlow;
+  readonly intent: string | null;
+  readonly target: string;
+  readonly dryRun: boolean;
+  readonly status: "dispatch" | "blocked";
+  readonly mappedCommand: MakeItSoMappedCommand | null;
+  readonly boundaries: readonly string[];
+  readonly nextAction: string;
 }
 
 const scopeChoices = defineInstallerChoiceGroup({
@@ -344,6 +364,67 @@ const componentsCommand = defineCommand({
   }
 });
 
+const makeItSoCommand = defineCommand({
+  kind: "command",
+  name: "make-it-so",
+  aliases: ["makeitso"],
+  description: "Map an intent to the safest real QUBE workflow.",
+  arguments: [
+    defineArgument({
+      name: "intent",
+      description: "Idea text, issue number, or next for the selected flow.",
+      required: false
+    }),
+    defineArgument({
+      name: "args",
+      description: "Additional arguments forwarded to the mapped component command.",
+      multiple: true
+    })
+  ],
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    defineFlag({
+      name: "flow",
+      description: "Workflow to run.",
+      type: "option",
+      options: [...makeItSoFlowValues]
+    }),
+    defineFlag({
+      name: "target",
+      description: "Planning target path for the planned flow.",
+      type: "string"
+    })
+  ],
+  examples: [
+    {
+      description: "Start planning from a concise intent.",
+      command: "qube make-it-so \"Ship a local notes CLI\""
+    },
+    {
+      description: "Start the next provider-backed issue through Executor.",
+      command: "qube make-it-so --flow issue next --json"
+    },
+    {
+      description: "Preview the mapped workflow without running it.",
+      command: "qube make-it-so \"Ship a local notes CLI\" --dry-run --json"
+    }
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: {
+      supported: true
+    },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  }
+});
+
 interface DirectQubeCommand {
   readonly command: ReturnType<typeof defineCommand>;
   readonly component: QubeComponent["command"];
@@ -530,7 +611,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -542,6 +623,9 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   }
   if (args[0] === "install") {
     return planQubeInstall(args.slice(1));
+  }
+  if (args[0] === "make-it-so" || args[0] === "makeitso") {
+    return planMakeItSo(args.slice(1), environment);
   }
 
   const direct = planDirectCommand(args, environment);
@@ -634,6 +718,7 @@ function createQubeCli(environment: CliEnvironment) {
         }
         return { stdout: renderInstallPlan(plan) };
       }),
+      createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
         ({ argv }) => executeDirectCommand(definition, argv, environment)
@@ -673,6 +758,25 @@ async function executeQubeDispatch(componentName: string | undefined, componentA
   }
   const exitCode = await dispatchCommand(planned.dispatch);
   return { exitCode };
+}
+
+async function executeMakeItSo(args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const planned = planMakeItSo(args, environment);
+  if (!planned.dispatch) {
+    return makeItSoRuntimeResult(args, planned);
+  }
+  if (planned.stderr.length > 0) {
+    process.stderr.write(planned.stderr);
+  }
+  const exitCode = await dispatchCommand(planned.dispatch);
+  return { exitCode };
+}
+
+function makeItSoRuntimeResult(args: readonly string[], planned: CliExecution): RuntimeCommandResult {
+  if (args.includes("--json")) {
+    return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  }
+  return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
 }
 
 function planDirectCommand(args: readonly string[], environment: CliEnvironment): CliExecution | undefined {
@@ -770,6 +874,242 @@ function mapIdeaArgs(args: readonly string[]): readonly string[] {
     return ["init", ".", "--idea", idea, ...rest];
   }
   return ["init", ".", ...normalized];
+}
+
+function planMakeItSo(args: readonly string[], environment: CliEnvironment): CliExecution {
+  const parsed = parseMakeItSoArgs(args);
+  if ("error" in parsed) {
+    return parsed.error;
+  }
+  const plan = createMakeItSoPlan(parsed.flags, parsed.positionals);
+  if ("error" in plan) {
+    return makeItSoError(plan.error, parsed.flags.json === true);
+  }
+  if (plan.status === "blocked" && parsed.flags["dry-run"] !== true) {
+    if (parsed.flags.json === true) {
+      return {
+        exitCode: 2,
+        stdout: `${JSON.stringify({
+          ok: false,
+          command: "make-it-so",
+          makeItSo: plan,
+          error: {
+            kind: "unsupported-flow",
+            likelyCause: "Direct-local make-it-so execution requires the QUBE oneshot workflow.",
+            suggestedNextAction: plan.nextAction,
+            category: "usage",
+            exitCode: 2
+          }
+        })}\n`,
+        stderr: ""
+      };
+    }
+    return { exitCode: 2, stdout: renderMakeItSoPlan(plan), stderr: "" };
+  }
+  if (parsed.flags["dry-run"] === true) {
+    if (parsed.flags.json === true) {
+      return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "make-it-so", makeItSo: plan })}\n`, stderr: "" };
+    }
+    return { exitCode: 0, stdout: renderMakeItSoPlan(plan), stderr: "" };
+  }
+  if (!plan.mappedCommand) {
+    return makeItSoError("No mapped command is available for this make-it-so flow.", parsed.flags.json === true);
+  }
+  return planQubeDispatch(plan.mappedCommand.component, plan.mappedCommand.args, environment);
+}
+
+function createMakeItSoPlan(
+  flags: Readonly<Record<string, unknown>>,
+  positionals: readonly string[]
+): MakeItSoPlan | { readonly error: string } {
+  const explicitFlow = readOption<MakeItSoFlow>(flags, "flow");
+  if (explicitFlow && !makeItSoFlowValues.includes(explicitFlow)) {
+    return { error: `Invalid make-it-so flow: ${explicitFlow}. Use one of: ${makeItSoFlowValues.join(", ")}.` };
+  }
+  const flow = explicitFlow ?? (positionals.length > 0 ? "planned" : "issue");
+  const target = readOption<string>(flags, "target") ?? ".";
+  const [intent = null, ...rest] = positionals;
+  const wantsJson = flags.json === true;
+
+  if (flow === "direct-local") {
+    return {
+      flow,
+      intent,
+      target,
+      dryRun: flags["dry-run"] === true,
+      status: "blocked",
+      mappedCommand: null,
+      boundaries: [
+        "Direct-local artifact generation is intentionally not implemented here until QUBE oneshot exists.",
+        "No GitHub issue, branch, pull request, dependency, or workspace mutation is performed."
+      ],
+      nextAction: "Use `qube make-it-so --flow planned <intent>` to create a real AIB plan, or implement the oneshot workflow before enabling direct-local execution."
+    };
+  }
+
+  if (flow === "issue") {
+    const selector = intent ?? "next";
+    if (selector !== "next" && !/^#?\d+$/.test(selector)) {
+      return { error: "Issue flow requires an existing issue number, #number, or next. Use planned flow for free-form ideas." };
+    }
+    const issue = selector.startsWith("#") ? selector.slice(1) : selector;
+    const args = ["start", issue, ...rest, ...(wantsJson ? ["--json"] : [])];
+    return {
+      flow,
+      intent: selector,
+      target,
+      dryRun: flags["dry-run"] === true,
+      status: "dispatch",
+      mappedCommand: makeMappedCommand("aie", args),
+      boundaries: [
+        "Uses the Executor issue lifecycle with configured pre-start checks.",
+        "Branch policy, review gates, PR checks, completion, and queue continuation remain active."
+      ],
+      nextAction: `Run ${formatQubeCommand("aie", args)}.`
+    };
+  }
+
+  const args = intent
+    ? ["init", target, "--idea", intent, ...rest, ...(wantsJson ? ["--json"] : [])]
+    : ["init", target, ...rest, ...(wantsJson ? ["--json"] : [])];
+  return {
+    flow,
+    intent,
+    target,
+    dryRun: flags["dry-run"] === true,
+    status: "dispatch",
+    mappedCommand: makeMappedCommand("aib", args),
+    boundaries: [
+      "Uses AIB planning state only; it does not create a GitHub issue, branch, pull request, or review request.",
+      "Execution still requires explicit work item creation and AIE issue workflow after planning."
+    ],
+    nextAction: `Run ${formatQubeCommand("aib", args)}.`
+  };
+}
+
+function makeMappedCommand(component: QubeComponent["command"], args: readonly string[]): MakeItSoMappedCommand {
+  return {
+    component,
+    args,
+    command: formatQubeCommand(component, args)
+  };
+}
+
+function renderMakeItSoPlan(plan: MakeItSoPlan): string {
+  return [
+    "QUBE make-it-so plan",
+    "",
+    `Flow: ${plan.flow}`,
+    `Status: ${plan.status}`,
+    `Intent: ${plan.intent ?? "(none)"}`,
+    `Target: ${plan.target}`,
+    ...(plan.mappedCommand ? [`Mapped command: ${plan.mappedCommand.command}`] : ["Mapped command: (none)"]),
+    "",
+    "Boundaries:",
+    ...plan.boundaries.map(boundary => `- ${boundary}`),
+    "",
+    `Next: ${plan.nextAction}`,
+    plan.dryRun ? "No commands were run." : ""
+  ].filter(line => line !== "").join("\n") + "\n";
+}
+
+function formatQubeCommand(component: QubeComponent["command"], args: readonly string[]): string {
+  return ["qube", component, ...args].map(quoteShellArg).join(" ");
+}
+
+function quoteShellArg(value: string): string {
+  return /^[A-Za-z0-9_./:@=-]+$/.test(value) ? value : JSON.stringify(value);
+}
+
+function parseMakeItSoArgs(args: readonly string[]):
+  | { readonly flags: Readonly<Record<string, unknown>>; readonly positionals: readonly string[] }
+  | { readonly error: CliExecution } {
+  const flags: Record<string, unknown> = {};
+  const positionals: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === undefined) {
+      continue;
+    }
+    if (token === "--") {
+      positionals.push(...args.slice(index + 1));
+      break;
+    }
+    if (token === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      flags["dry-run"] = true;
+      continue;
+    }
+    const parsed = parseMakeItSoOption(args, index);
+    if (parsed?.kind === "missing-value") {
+      return {
+        error: makeItSoError(`Missing value for make-it-so option --${parsed.key}.`, flags.json === true)
+      };
+    }
+    if (parsed?.kind === "parsed") {
+      flags[parsed.key] = parsed.value;
+      index = parsed.nextIndex;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return {
+        error: makeItSoError(`Unknown make-it-so flag: ${token}`, flags.json === true)
+      };
+    }
+    positionals.push(token);
+  }
+  return { flags, positionals };
+}
+
+function parseMakeItSoOption(
+  args: readonly string[],
+  index: number
+):
+  | { readonly kind: "parsed"; readonly key: string; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: string }
+  | undefined {
+  const token = args[index];
+  if (!token) {
+    return undefined;
+  }
+  for (const key of ["flow", "target"]) {
+    const flag = `--${key}`;
+    if (token.startsWith(`${flag}=`)) {
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
+    }
+    if (token === flag) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { kind: "missing-value", key };
+      }
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
+    }
+  }
+  return undefined;
+}
+
+function makeItSoError(message: string, json: boolean): CliExecution {
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "make-it-so",
+        error: {
+          kind: "invalid-command-usage",
+          likelyCause: message,
+          suggestedNextAction: "Use `qube make-it-so --dry-run --json` to inspect the mapped workflow.",
+          category: "usage",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return { exitCode: 2, stdout: "", stderr: `${message}\n` };
 }
 
 function translateJsonFlag(args: readonly string[]): readonly string[] {

@@ -48,6 +48,7 @@ qube components
 qube --help
 qube components
 qube install --yes --dry-run --json
+qube make-it-so "Ship a local notes CLI" --dry-run --json
 
 # Plan from an idea.
 qube idea "Ship a local notes CLI"
@@ -112,6 +113,26 @@ QUBE remains the preferred entry point for automation, agent instructions, hooks
 and durable examples in this monorepo. Direct package commands share QUBE-owned
 repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 `.qube/aiq/out/`.
+
+## Make-It-So Contract
+
+`qube make-it-so` is the cardinal work command for turning intent into the
+safest real QUBE workflow. It exposes the mapped command and the workflow
+boundary instead of hiding provider checks, review gates, or setup gaps.
+
+- `planned` maps free-form intent to `qube aib init <target> --idea <intent>`.
+  This creates planning state only; it does not create a GitHub issue, branch,
+  pull request, or review request.
+- `issue` maps `next`, an issue number, or `#number` to `qube aie start`.
+  Executor pre-start checks, branch policy, review gates, PR checks, completion,
+  and queue continuation stay in force.
+- `direct-local` is refused until QUBE has a real oneshot workflow. The command
+  reports the missing capability and points users back to planned or issue
+  flows instead of running mock local work.
+
+Use `--dry-run --json` to inspect the exact mapped command, flow, boundaries,
+and next action without dispatching any component command. Non-interactive JSON
+errors use exit code 2 for unsupported or unsafe states.
 
 ## Dispatch Model
 
