@@ -9,7 +9,6 @@ packages:
   - "packages/hook"
   - "packages/github-action"
   - "packages/opencode-plugin"
-  - "packages/mcp"
 
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:

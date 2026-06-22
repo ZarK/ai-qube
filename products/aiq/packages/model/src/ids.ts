@@ -13,16 +13,7 @@ export const stageIds = [
 
 export type StageId = (typeof stageIds)[number];
 
-export const surfaceIds = [
-  "cli",
-  "hook",
-  "github",
-  "opencode",
-  "lsp",
-  "mcp",
-  "watch",
-  "serve",
-] as const;
+export const surfaceIds = ["cli", "hook", "github", "opencode", "lsp", "watch", "serve"] as const;
 
 export type SurfaceId = (typeof surfaceIds)[number];
 

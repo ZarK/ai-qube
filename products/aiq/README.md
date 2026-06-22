@@ -31,7 +31,6 @@ Use the package README for install and command documentation:
 | `aiq-internal-hook` | Hook adapter. |
 | `aiq-internal-github-action` | GitHub Action adapter. |
 | `aiq-internal-lsp` | LSP adapter. |
-| `aiq-internal-mcp` | MCP adapter. |
 | `aiq-internal-opencode-plugin` | OpenCode adapter. |
 
 ## Development

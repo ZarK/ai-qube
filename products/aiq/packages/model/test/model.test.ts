@@ -5,16 +5,7 @@ import { languageIds, runContexts, surfaceIds } from "../src/index.js";
 describe("model package", () => {
   it("uses one canonical surface list for runtime contexts", () => {
     expect(runContexts).toBe(surfaceIds);
-    expect(surfaceIds).toEqual([
-      "cli",
-      "hook",
-      "github",
-      "opencode",
-      "lsp",
-      "mcp",
-      "watch",
-      "serve",
-    ]);
+    expect(surfaceIds).toEqual(["cli", "hook", "github", "opencode", "lsp", "watch", "serve"]);
   });
 
   it("captures the rewrite language ids in one place", () => {

@@ -5,7 +5,7 @@ Right now the codebase has a good outer shape:
 * `config-schema` owns config
 * `engine` owns execution
 * `reporters` owns output shaping
-* `cli`, `hook`, `github-action`, `lsp`, `mcp`, `opencode-plugin` are surface adapters
+* `cli`, `hook`, `github-action`, `lsp`, `opencode-plugin` are surface adapters
 
 That part is good.
 
@@ -71,7 +71,6 @@ That is good SRP.
 Also, the adapters are mostly thin already, which is good:
 
 * `packages/lsp/src/index.ts`
-* `packages/mcp/src/index.ts`
 * `packages/opencode-plugin/src/index.ts`
 * `packages/hook/src/index.ts`
 * `packages/github-action/src/index.ts`
