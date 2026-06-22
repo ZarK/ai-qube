@@ -57,6 +57,8 @@ describe('config validation', () => {
     assert.equal(defaults.uiAuditAppLaunch, '');
     assert.equal(defaults.uiAuditTarget, '');
     assert.deepEqual(defaults.reviewAgents, ['coderabbitai']);
+    assert.equal(defaults.reviewAdapter, 'github');
+    assert.deepEqual(defaults.localReviewAgents, []);
     assert.equal(defaults.reviewWaitMinutes, 10);
     assert.equal(defaults.milestoneOrdering.enabled, false);
     assert.equal(defaults.milestoneOrdering.missingAssignment, 'warn');
@@ -77,7 +79,9 @@ describe('config validation', () => {
     const input = defaultFile();
     input.policy.labels.priorities = ['P1', 'P2'];
     input.policy.branch.noWorktree = false;
+    input.policy.reviews.adapter = 'mixed';
     input.policy.reviews.waitMinutes = 15;
+    input.policy.reviews.localAgents = ['local-check'];
     input.policy.instructions.opencodeCommandAlias = true;
 
     const result = validateConfig(input);
@@ -85,7 +89,9 @@ describe('config validation', () => {
     assert.equal(result.ok, true);
     assert.deepEqual(result.config.priorityLabels, ['P1', 'P2']);
     assert.equal(result.config.noWorktree, false);
+    assert.equal(result.config.reviewAdapter, 'mixed');
     assert.equal(result.config.reviewWaitMinutes, 15);
+    assert.deepEqual(result.config.localReviewAgents, ['local-check']);
     assert.equal(result.config.opencodeCommandAlias, true);
   });
 
@@ -158,6 +164,7 @@ describe('config validation', () => {
   it('rejects unsupported nested policy values with actionable paths', () => {
     const input = defaultFile();
     input.policy.reviews.waitMinutes = '15';
+    input.policy.reviews.adapter = 'remote';
     input.policy.milestoneOrdering.missingAssignment = 'required';
     input.policy.supplyChain.packageAgeDays = true;
     input.policy.supplyChain.highRiskPackageAgeDays = 7;
@@ -166,6 +173,7 @@ describe('config validation', () => {
 
     assert.equal(result.ok, false);
     assert.ok(result.errors.some((error) => error.path === 'policy.reviews.waitMinutes'));
+    assert.ok(result.errors.some((error) => error.path === 'policy.reviews.adapter'));
     assert.ok(result.errors.some((error) => error.path === 'policy.milestoneOrdering.missingAssignment'));
     assert.ok(result.errors.some((error) => error.path === 'policy.supplyChain.packageAgeDays'));
   });

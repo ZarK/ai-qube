@@ -273,7 +273,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'review gate',
-    description: 'Render the configured review-agent gate prompt, Oracle-style fallback, and evidence requirements without treating review output as policy.',
+    description: 'Render the configured review-agent gate prompt, local evidence status, Oracle-style fallback, and evidence requirements without treating review output as policy.',
     args: ['issue'],
     flags: REVIEW_GATE_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: REVIEW_GATE_FLAG_DETAILS,
@@ -312,7 +312,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'pr body',
-    description: 'Draft a PR body with issue closure text, configured gate state, UI audit state, review-agent evidence, and merge-readiness guidance. Read-only.',
+    description: 'Draft a PR body with issue closure text, configured gate state, UI audit state, local and remote review-agent evidence, and merge-readiness guidance. Read-only.',
     args: ['issue'],
     flags: PR_BODY_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: PR_BODY_FLAG_DETAILS,
@@ -326,7 +326,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'pr gate',
-    description: 'Request configured PR reviewers idempotently, wait the configured duration, and inspect review state before merge.',
+    description: 'Request configured PR reviewers idempotently, validate local review evidence when configured, wait the configured duration, and inspect review state before merge.',
     args: ['pr'],
     flags: PR_GATE_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: PR_GATE_FLAG_DETAILS,

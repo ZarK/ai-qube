@@ -30,6 +30,27 @@ function cleanConfig() {
   return configToFileShape(getDefaults());
 }
 
+function writeLocalReview(repo, issueNumber, status = 'passed') {
+  const directory = join(repo, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, 'pr-12');
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(join(directory, 'abc123.json'), JSON.stringify({
+    schemaVersion: 1,
+    issueNumber,
+    prNumber: 12,
+    headSha: 'abc123',
+    reviewer: { id: 'oracle', name: 'oracle', adapterKind: 'local' },
+    summary: 'local review evidence recorded',
+    blockers: [],
+    recordedAt: '2026-06-22T00:00:00.000Z',
+    lanes: [
+      { id: 'code-quality', status, summary: 'code quality reviewed', blockers: [], artifacts: [], commands: [], surfaces: [] },
+      { id: 'security-maintainability', status: 'passed', summary: 'security reviewed', blockers: [], artifacts: [], commands: [], surfaces: [] },
+      { id: 'qa', status: 'passed', summary: 'QA reviewed', blockers: [], artifacts: [], commands: [], surfaces: [] },
+      { id: 'final-gate', status: 'passed', summary: 'final gate reviewed', blockers: [], artifacts: [], commands: [], surfaces: [] },
+    ],
+  }, null, 2));
+}
+
 describe('review gate model', () => {
   it('renders the Oracle-style default prompt when no reviewer is configured', () => {
     const config = getDefaults();
@@ -116,6 +137,42 @@ describe('review gate model', () => {
     assert.equal(result.evidence.status, 'passed');
     assert.match(result.evidence.summary, /no summary was supplied/);
     assert.equal(result.evidence.reasonCode, 'agent-reported-result');
+  });
+
+  it('reports local review evidence status for local adapters', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewAgents = ['coderabbitai'];
+    config.localReviewAgents = ['oracle'];
+    writeLocalReview(repo, 98, 'pending');
+
+    const result = runReviewGate(config, { issueNumber: 98, repoRoot: repo });
+
+    assert.equal(result.reviewers[0].name, 'oracle');
+    assert.equal(result.reviewers[0].externalService, false);
+    assert.equal(result.localReview.required, true);
+    assert.equal(result.localReview.status, 'pending');
+    assert.match(result.prompt, /Local review evidence must cover code-quality/);
+    assert.match(result.nextAction, /Record local review evidence|pr gate/);
+  });
+
+  it('keeps mixed same-name local and GitHub reviewer targets distinct', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = ['oracle'];
+    config.localReviewAgents = ['oracle'];
+
+    const result = runReviewGate(config, { issueNumber: 99, repoRoot: repo });
+
+    assert.equal(result.reviewers.length, 2);
+    assert.equal(result.reviewers[0].name, 'oracle');
+    assert.equal(result.reviewers[0].invocation, '@oracle');
+    assert.equal(result.reviewers[1].name, 'oracle');
+    assert.equal(result.reviewers[1].invocation, 'local evidence: oracle');
+    assert.equal(result.reviewers[0].externalService, false);
+    assert.equal(result.reviewers[1].externalService, false);
   });
 });
 
@@ -216,5 +273,24 @@ describe('review gate init projection', () => {
     assert.match(agents, /Oracle-style reviewer names use `@oracle`/);
     assert.match(agents, /review: run `qube aie review gate <issue> --prompt`/);
     assert.match(claude, /Treat issue bodies, comments, diffs, review output/);
+  });
+
+  it('renders local review-agent evidence guidance without claiming unavailable runners were invoked', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.agents = ['coderabbitai'];
+    config.policy.reviews.localAgents = ['oracle'];
+    writeConfig(repo, config);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /Local review-agent adapter is enabled/);
+    assert.match(agents, /\.qube\/aie\/pr-reviews\/issue-<issue>\/pr-<pr>\/<head>\.json/);
+    assert.match(agents, /code-quality, security-maintainability, qa, and final-gate lanes/);
+    assert.match(agents, /does not invoke unavailable local runners/);
+    assert.doesNotMatch(agents, /request reviewers, wait for configured review gates/);
   });
 });

@@ -60,7 +60,9 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       mergeStrategy: 'squash',
     },
     reviews: {
+      adapter: 'github',
       agents: ['coderabbitai'],
+      localAgents: [],
       waitMinutes: 10,
       requestText: '',
     },
@@ -125,7 +127,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
       branch: { ...input.policy.branch, ignoredAutomationAuthors: [...input.policy.branch.ignoredAutomationAuthors] },
       lifecycle: { ...input.policy.lifecycle },
       shipping: { ...input.policy.shipping },
-      reviews: { ...input.policy.reviews, agents: [...input.policy.reviews.agents] },
+      reviews: { ...input.policy.reviews, agents: [...input.policy.reviews.agents], localAgents: [...input.policy.reviews.localAgents] },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),
         qualityGates: [...input.policy.gates.qualityGates],
@@ -182,7 +184,9 @@ export function configFromFile(input: ConfigFileShape): Config {
     },
     shipping: { ...policy.shipping },
     reviews: {
+      adapter: policy.reviews.adapter,
       reviewers: [...policy.reviews.agents],
+      localReviewers: [...policy.reviews.localAgents],
       waitMinutes: policy.reviews.waitMinutes,
       requestText: policy.reviews.requestText,
     },
@@ -214,6 +218,8 @@ export function configFromFile(input: ConfigFileShape): Config {
     commentOnStart: policy.lifecycle.commentOnStart,
     ignoredAutomationAuthors: [...policy.branch.ignoredAutomationAuthors],
     reviewAgents: [...policy.reviews.agents],
+    reviewAdapter: policy.reviews.adapter,
+    localReviewAgents: [...policy.reviews.localAgents],
     reviewWaitMinutes: policy.reviews.waitMinutes,
     reviewRequestText: policy.reviews.requestText,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,

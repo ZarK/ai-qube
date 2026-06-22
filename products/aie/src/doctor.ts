@@ -221,6 +221,7 @@ class DoctorDiagnosticsBuilder {
     if (gateReadiness.audit.readiness === 'needs-action') recommendations.push('Manual UI audit is enabled but agent-browser was not found on PATH. Install agent-browser or use fallback browser automation manually.');
     if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') recommendations.push('Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.');
     if (gateReadiness.prReview.readiness === 'missing') recommendations.push('PR review gates need authenticated GitHub CLI access. Run `gh auth login` before requesting or inspecting PR reviewers.');
+    if (gateReadiness.reviewAgent.localRunner.readiness === 'unavailable') recommendations.push('Local review-agent adapter is configured without a local runner. Record repository-scoped local evidence manually before relying on local review gates.');
     if (gateReadiness.supplyChain.readiness === 'needs-action') recommendations.push('Supply-chain policy is configured but not strict enough for normal readiness. Review lifecycle-script, lockfile, and package-age settings in the selected Executor config.');
   }
 

@@ -15,7 +15,7 @@ function redactText(text: string): string {
 
 export type PrBodyReadinessStatus = 'ready' | 'blocked' | 'pending';
 export type PrBodyGateState = 'passed' | 'failed' | 'skipped' | 'pending' | 'unknown' | 'stale' | 'missing';
-export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable' | 'missing-current-head-ci-run' | 'stale-old-head-ci-run' | 'current-head-check-run-pending' | 'current-head-check-run-failed' | 'current-head-check-run-skipped';
+export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable' | 'local-review-missing' | 'local-review-pending' | 'local-review-stale' | 'local-review-unavailable' | 'local-review-malformed' | 'local-review-failed' | 'missing-current-head-ci-run' | 'stale-old-head-ci-run' | 'current-head-check-run-pending' | 'current-head-check-run-failed' | 'current-head-check-run-skipped';
 
 export interface PrBodyReadinessItem {
   reasonCode: PrBodyReadinessReasonCode;
@@ -206,15 +206,20 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   const pending: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'pending' || gate.state === 'unknown' || gate.state === 'stale' || gate.state === 'missing') pending.push(readinessItem(gate.reasonCode, `Record evidence for ${gate.name} (${gate.stage}).`, gate.source, gate.trust));
   if (audit.required && audit.evidence.state !== 'visual-analysis-recorded') pending.push(readinessItem(audit.evidence.reasonCode, 'Record browser-observation evidence, capture screenshots, and add visual analysis notes for the real running app.', audit.evidence.source, audit.evidence.trust));
-  if (reviewEvidencePending(review.evidence)) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
+  if (reviewEvidencePending(review.evidence) && !(review.localReview.required && review.localReview.status === 'passed')) pending.push(readinessItem(review.evidence.reasonCode, 'Run the configured review-agent gate and record evidence.', review.evidence.evidenceSource, review.evidence.trust));
   if (!pr) pending.push(readinessItem('missing-pr', 'Create a non-draft, ready-for-review pull request, then run `aie pr gate <pr>`.', 'github-pr', 'trusted-provider'));
   else {
-    if (pr.reviewDecision !== 'APPROVED' && !githubReviewDecisionBlocks(pr)) pending.push(readinessItem('pr-review-pending', `Run or rerun \`aie pr gate ${pr.number}\` until PR review state is ready.`, 'github-pr', 'trusted-provider'));
+    if (!prReview && pr.reviewDecision !== 'APPROVED' && !githubReviewDecisionBlocks(pr)) pending.push(readinessItem('pr-review-pending', `Run or rerun \`aie pr gate ${pr.number}\` until PR review state is ready.`, 'github-pr', 'trusted-provider'));
     if (pr.mergeStateStatus !== 'CLEAN') pending.push(readinessItem('merge-state-not-ready', `Wait for or fix GitHub merge state ${pr.mergeStateStatus}.`, 'github-pr', 'trusted-provider'));
     if (pr.mergeable !== 'MERGEABLE') pending.push(readinessItem('mergeability-not-ready', `Wait for or fix GitHub mergeability ${pr.mergeable}.`, 'github-pr', 'trusted-provider'));
   }
   if (pr && !prReview) pending.push(readinessItem('pr-review-state-unavailable', `Run \`aie pr gate ${pr.number}\` to collect PR review-gate state before merge.`, 'pr-review-gate', 'trusted-provider'));
   if (prReview) {
+    if (prReview.localReview.required) {
+      if (prReview.localReview.status === 'missing') pending.push(readinessItem('local-review-missing', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+      if (prReview.localReview.status === 'pending' || prReview.localReview.status === 'stale') pending.push(readinessItem(prReview.localReview.status === 'stale' ? 'local-review-stale' : 'local-review-pending', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+      if (prReview.localReview.status === 'unavailable') pending.push(readinessItem('local-review-unavailable', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+    }
     if (prReview.status === 'pending') pending.push(readinessItem('pr-review-pending', `Rerun \`aie pr gate ${prReview.pr.number}\` after pending PR review requirements complete.`, 'pr-review-gate', 'trusted-provider'));
     for (const diagnostic of prReview.checkDiagnostics) {
       if (['missing-current-head-run', 'stale-old-head-run', 'pending-current-head-run', 'skipped-current-head-run'].includes(diagnostic.status)) pending.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
@@ -232,7 +237,7 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
 function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: ReviewGateResult, pr: PrBodyPullRequest | null, prReview: PrGateResult | null, issueChecklist: IssueChecklistSummary | null): PrBodyReadinessItem[] {
   const blockers: PrBodyReadinessItem[] = [];
   for (const gate of gates) if (gate.state === 'failed' && gate.requirement === 'required') blockers.push(readinessItem(gate.reasonCode, `Required gate ${gate.name} failed.`, gate.source, gate.trust));
-  if (review.evidence.status === 'failed' || review.evidence.status === 'needs-work') blockers.push(readinessItem(review.evidence.reasonCode, 'Review-agent evidence reports findings that need work.', review.evidence.evidenceSource, review.evidence.trust));
+  if ((review.evidence.status === 'failed' || review.evidence.status === 'needs-work') && !(review.localReview.required && review.localReview.status === 'passed')) blockers.push(readinessItem(review.evidence.reasonCode, 'Review-agent evidence reports findings that need work.', review.evidence.evidenceSource, review.evidence.trust));
   if (pr?.state !== undefined && pr.state !== 'OPEN') blockers.push(readinessItem('pull-request-not-open', `Pull request is ${pr.state}.`, 'github-pr', 'trusted-provider'));
   if (pr?.isDraft) blockers.push(readinessItem('pull-request-draft', 'Pull request is still a draft.', 'github-pr', 'trusted-provider'));
   if (githubReviewDecisionBlocks(pr)) blockers.push(readinessItem('pr-review-blocked', 'GitHub review state is CHANGES_REQUESTED; address requested changes before merge.', 'github-pr', 'trusted-provider'));
@@ -240,6 +245,8 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr?.mergeStateStatus === 'DIRTY') blockers.push(readinessItem('merge-conflict', 'Pull request branch is dirty and cannot merge cleanly.', 'github-pr', 'trusted-provider'));
   if (audit.required && (audit.evidence.state === 'metadata-only' || audit.evidence.state === 'browser-visited' || audit.evidence.state === 'screenshots-captured')) blockers.push(readinessItem(audit.evidence.reasonCode, 'Manual UI audit evidence directory exists but visual evidence is incomplete.', audit.evidence.source, audit.evidence.trust));
   if (prReview?.status === 'failed') blockers.push(readinessItem('review-feedback-blocker', 'PR review gate reports feedback that must be addressed.', 'pr-review-gate', 'trusted-provider'));
+  if (prReview?.localReview.required && (prReview.localReview.status === 'failed' || prReview.localReview.status === 'needs-work')) blockers.push(readinessItem('local-review-failed', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
+  if (prReview?.localReview.required && prReview.localReview.status === 'malformed') blockers.push(readinessItem('local-review-malformed', prReview.localReview.nextAction, 'pr-review-gate', 'trusted-provider'));
   for (const diagnostic of prReview?.checkDiagnostics ?? []) {
     if (diagnostic.status === 'failed-current-head-run') blockers.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
   }
@@ -280,6 +287,16 @@ function formatCiDiagnostics(result: PrGateResult | null): string[] {
   return result.checkDiagnostics.map(diagnostic => `- ${diagnostic.checkName}: ${diagnostic.status}; ${diagnostic.summary} Next action: ${diagnostic.nextAction}`);
 }
 
+function formatLocalReview(result: PrGateResult | null): string[] {
+  if (!result) return ['- local review evidence: unavailable until PR review-gate state is collected.'];
+  if (!result.localReview.required) return ['- local review evidence: not required.'];
+  const lines = [`- local review evidence: ${result.localReview.status}; lanes=${result.localReview.requiredLanes.join(', ')}; ${result.localReview.summary}`];
+  for (const evidence of result.localReview.evidence) {
+    lines.push(`  - issue #${evidence.issueNumber ?? 'unknown'} PR #${evidence.prNumber || 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+  }
+  return lines;
+}
+
 function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   const lines = ['## Summary', `- Complete Executor issue #${result.issue}.`, '', '## Verification'];
   if (result.gates.lines.length === 0) lines.push('- Configured gates: none configured.');
@@ -294,6 +311,8 @@ function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   }
   lines.push('- PR review agents:');
   lines.push(...formatPrReviewers(result.prReviewGate, result.pullRequest));
+  lines.push('- Local review agents:');
+  lines.push(...formatLocalReview(result.prReviewGate.result).map(line => `  ${line}`));
   lines.push('- PR CI diagnostics:');
   lines.push(...formatCiDiagnostics(result.prReviewGate.result).map(line => `  ${line}`));
   lines.push('', '## Merge readiness');

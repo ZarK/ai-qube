@@ -116,7 +116,7 @@ export interface LifecycleDiagnostics {
   lifecycleCommandsReady: boolean;
 }
 
-export type DoctorReadinessStatus = 'ready' | 'disabled' | 'missing' | 'needs-action';
+export type DoctorReadinessStatus = 'ready' | 'disabled' | 'missing' | 'needs-action' | 'unavailable';
 
 export interface DoctorToolAvailability {
   command: string;
@@ -159,16 +159,29 @@ export interface GateReadinessDiagnostics {
   reviewAgent: {
     required: boolean;
     readiness: DoctorReadinessStatus;
+    adapter: string;
     reviewers: string[];
+    localReviewers: string[];
     defaultOracle: boolean;
     fallbackPromptAvailable: boolean;
+    localEvidenceRoot: string;
+    localRunner: {
+      configured: boolean;
+      readiness: DoctorReadinessStatus;
+      command: string | null;
+      nextAction: string;
+    };
     externalServices: string[];
     reviewWaitMinutes: number;
   };
   prReview: {
     readiness: DoctorReadinessStatus;
     ghAuthenticated: boolean;
+    adapter: string;
     reviewers: string[];
+    localReviewers: string[];
+    localEvidenceRoot: string;
+    localRunnerReadiness: DoctorReadinessStatus;
     externalServices: string[];
     reviewWaitMinutes: number;
   };
