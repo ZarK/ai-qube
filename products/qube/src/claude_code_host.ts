@@ -233,7 +233,7 @@ export function listClaudeCodeInstallNotes(): readonly string[] {
   ]);
 }
 
-function unsupportedCapability(capability: string): ClaudeCodeHostCapability {
+function createUnsupportedCapability(capability: string): ClaudeCodeHostCapability {
   return freezeCapability({
     id: capability,
     support: "unsupported",
@@ -244,7 +244,7 @@ function unsupportedCapability(capability: string): ClaudeCodeHostCapability {
 }
 
 function lookupClaudeCodeHostCapability(capability: string): ClaudeCodeHostCapability {
-  return CLAUDE_CODE_CAPABILITY_MAP.get(capability) ?? unsupportedCapability(capability);
+  return CLAUDE_CODE_CAPABILITY_MAP.get(capability) ?? createUnsupportedCapability(capability);
 }
 
 function freezeCapability(capability: ClaudeCodeHostCapability): ClaudeCodeHostCapability {
