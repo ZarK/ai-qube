@@ -1,10 +1,10 @@
 export {
   assertCodexHostCapabilityAvailable,
-  codexInstallFiles,
-  codexInstallNotes,
-  codexUnsupportedCapabilityMessage,
+  formatCodexUnsupportedCapabilityMessage,
   getCodexHostCapability,
   inspectCodexWorkspace,
+  listCodexInstallFiles,
+  listCodexInstallNotes,
   listCodexHostCapabilities,
 } from "./codex_host.js";
 export type {

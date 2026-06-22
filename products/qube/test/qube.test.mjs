@@ -9,12 +9,12 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertCodexHostCapabilityAvailable,
-  codexInstallFiles,
-  codexInstallNotes,
-  codexUnsupportedCapabilityMessage,
+  formatCodexUnsupportedCapabilityMessage,
   findQubeComponent,
   getCodexHostCapability,
   inspectCodexWorkspace,
+  listCodexInstallFiles,
+  listCodexInstallNotes,
   listCodexHostCapabilities,
   planQubeCli,
   resolveCommand,
@@ -210,14 +210,14 @@ describe("qube composer CLI", () => {
 
     assert.equal(assertCodexHostCapabilityAvailable("read-instructions").support, "supported");
     assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
-    assert.deepEqual(codexInstallFiles(), [
+    assert.deepEqual(listCodexInstallFiles(), [
       "AGENTS.md policy notes: Codex project instructions use AGENTS.md with repository policy precedence.",
     ]);
-    assert.equal(codexInstallNotes().length, 4);
+    assert.equal(listCodexInstallNotes().length, 4);
 
     const unknownCapability = getCodexHostCapability("completely-unknown-id");
     assert.equal(unknownCapability.support, "unsupported");
-    assert.match(codexUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
+    assert.match(formatCodexUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
     assert.throws(() => assertCodexHostCapabilityAvailable("install-project-command"), /Unsupported Codex capability/);
 
     const repo = mkdtempSync(path.join(tmpdir(), "qube-codex-host-"));

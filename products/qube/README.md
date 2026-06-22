@@ -117,7 +117,7 @@ repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 `.qube/aiq/out/`.
 
 Codex host setup and limitations are documented in the repository guide:
-[Codex host support](../../docs/qube-codex-host-support.md).
+[Codex host support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-codex-host-support.md).
 
 ## Make-It-So Contract
 

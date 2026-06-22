@@ -136,14 +136,14 @@ export function listCodexHostCapabilities(): readonly CodexHostCapability[] {
 
 export function assertCodexHostCapabilityAvailable(capability: CodexHostCapabilityId): CodexHostCapability;
 export function assertCodexHostCapabilityAvailable(capability: string): CodexHostCapability {
-  const support = lookupCodexHostCapability(capability);
-  if (support.support === "unsupported") {
-    throw new Error(codexUnsupportedCapabilityMessage(support));
+  const resolvedCapability = lookupCodexHostCapability(capability);
+  if (resolvedCapability.support === "unsupported") {
+    throw new Error(formatCodexUnsupportedCapabilityMessage(resolvedCapability));
   }
-  return support;
+  return resolvedCapability;
 }
 
-export function codexUnsupportedCapabilityMessage(capability: CodexHostCapability): string {
+export function formatCodexUnsupportedCapabilityMessage(capability: CodexHostCapability): string {
   return `Unsupported Codex capability "${capability.id}": ${capability.summary} Next action: ${capability.nextAction}`;
 }
 
@@ -162,12 +162,12 @@ export function inspectCodexWorkspace(cwd = process.cwd()): CodexWorkspaceInspec
   });
 }
 
-export function codexInstallFiles(): readonly string[] {
+export function listCodexInstallFiles(): readonly string[] {
   const instruction = getCodexHostCapability("read-instructions");
   return Object.freeze([`${CODEX_INSTRUCTION_PATH} policy notes: ${instruction.summary}`]);
 }
 
-export function codexInstallNotes(): readonly string[] {
+export function listCodexInstallNotes(): readonly string[] {
   const todos = getCodexHostCapability("use-local-todos");
   const browser = getCodexHostCapability("audit-ui-with-browser");
   const unsupportedCommand = getCodexHostCapability("install-project-command");
