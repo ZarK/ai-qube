@@ -34,9 +34,11 @@ export interface LinearWorkProviderOptions {
   teamId?: string;
   limit?: number;
   endpoint?: string;
+  requestTimeoutMs?: number;
 }
 
 const LINEAR_ENDPOINT = 'https://api.linear.app/graphql';
+const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const LIST_OPEN_ISSUES_QUERY = `
 query QubeLinearIssues($teamId: String!, $first: Int!) {
@@ -91,13 +93,28 @@ function graphqlErrors(errors: LinearGraphqlResponse<unknown>['errors']): string
   return (errors ?? []).map(error => error.message ?? 'unknown GraphQL error').join('; ');
 }
 
+function requestTimeoutMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_REQUEST_TIMEOUT_MS;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new Error('Linear work provider requestTimeoutMs must be a positive number of milliseconds.');
+  }
+  return value;
+}
+
+function isAbortTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === 'TimeoutError' || error.name === 'AbortError';
+}
+
 class FetchLinearGraphqlClient implements LinearGraphqlClient {
   private readonly endpoint: string;
   private readonly apiKey: string;
+  private readonly requestTimeoutMs: number;
 
   constructor(options: LinearWorkProviderOptions) {
     this.endpoint = options.endpoint ?? LINEAR_ENDPOINT;
     this.apiKey = required(options.apiKey ?? process.env.LINEAR_API_KEY, 'LINEAR_API_KEY');
+    this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
   }
 
   async listOpenIssues(input: { teamId: string; limit: number }): Promise<LinearIssue[]> {
@@ -114,14 +131,23 @@ class FetchLinearGraphqlClient implements LinearGraphqlClient {
   }
 
   private async query<T>(query: string, variables: Record<string, unknown>): Promise<T> {
-    const response = await fetch(this.endpoint, {
-      method: 'POST',
-      headers: {
-        Authorization: this.apiKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ query, variables }),
-    });
+    let response: Response;
+    try {
+      response = await fetch(this.endpoint, {
+        method: 'POST',
+        headers: {
+          Authorization: this.apiKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ query, variables }),
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
+      });
+    } catch (error) {
+      if (isAbortTimeout(error)) {
+        throw new Error(`Linear GraphQL request timed out after ${this.requestTimeoutMs}ms. Service may be stalling or unreachable. Verify LINEAR_API_KEY and endpoint, then retry.`);
+      }
+      throw error;
+    }
     if (!response.ok) {
       throw new Error(`Linear GraphQL request failed with HTTP ${response.status}.`);
     }

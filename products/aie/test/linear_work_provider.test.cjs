@@ -162,6 +162,30 @@ describe('Linear work provider', () => {
     );
   });
 
+  it('times out stalled Linear GraphQL requests with a diagnostic error', async () => {
+    const originalFetch = globalThis.fetch;
+    let capturedSignal = null;
+    try {
+      globalThis.fetch = async (_url, options) => {
+        capturedSignal = options.signal;
+        throw new DOMException('The operation timed out.', 'TimeoutError');
+      };
+      const provider = createLinearWorkProvider({
+        apiKey: 'linear-token',
+        teamId: 'team-1',
+        requestTimeoutMs: 25,
+      });
+
+      await assert.rejects(
+        () => provider.listOpenWorkItems(),
+        /Linear GraphQL request timed out after 25ms\. Service may be stalling or unreachable\. Verify LINEAR_API_KEY and endpoint, then retry\./,
+      );
+      assert.ok(capturedSignal instanceof AbortSignal);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it('accepts Linear as a configured work provider only for the work surface', () => {
     const raw = configToFileShape(getDefaults());
     raw.providers.work = { kind: 'linear' };
