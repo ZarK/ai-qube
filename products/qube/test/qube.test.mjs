@@ -24,6 +24,7 @@ import {
   listCodexInstallNotes,
   listCodexHostCapabilities,
   planQubeCli,
+  qubeAdapterReports,
   resolveCommand,
   resolveComponentCommand,
 } from "../dist/index.js";
@@ -146,8 +147,47 @@ describe("qube composer CLI", () => {
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
     );
+    assert.ok(parsed.sections.adapterCapabilities.some(report => report.id === "github-work-provider"));
+    assert.ok(parsed.sections.adapterCapabilities.some(report => report.capabilities.some(capability => capability.support === "unsupported")));
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component])).status, "aiu");
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component]))["pr gate"], "aie");
+  });
+
+  it("reports adapter capabilities without implying unsupported behavior", () => {
+    const result = runCli(["components", "--json"]);
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    const reports = Object.fromEntries(parsed.adapterCapabilities.map(report => [report.id, report]));
+
+    assert.equal(parsed.command, "components");
+    assert.equal(parsed.components.length, 4);
+    assert.equal(reports["github-work-provider"].installStatus, "installed");
+    assert.equal(reports["gitlab-work-provider"].installStatus, "missing");
+    assert.match(reports["gitlab-work-provider"].installGuidance, /optional GitLab adapter package/);
+    assert.equal(
+      reports["github-work-provider"].capabilities.find(capability => capability.id === "publish-release").support,
+      "unsupported"
+    );
+    assert.equal(
+      reports["opencode-host"].capabilities.find(capability => capability.id === "open-pull-request").support,
+      "unsupported"
+    );
+    assert.ok(parsed.adapterCapabilities.every(report => !report.installGuidance.includes("fallback to GitHub")));
+    assert.ok(qubeAdapterReports.some(report => report.id === "local-layout" && report.surface === "layout"));
+
+    const planned = planQubeCli(["components", "--json"]);
+    assert.equal(planned.exitCode, 0);
+    const plannedParsed = JSON.parse(planned.stdout);
+    assert.deepEqual(
+      plannedParsed.adapterCapabilities.map(report => report.id),
+      parsed.adapterCapabilities.map(report => report.id)
+    );
+
+    const human = runCli(["components"]);
+    assert.equal(human.status, 0);
+    assert.match(human.stdout, /Adapter capabilities:/);
+    assert.match(human.stdout, /github-work-provider\s+work-provider\s+installed/);
+    assert.match(human.stdout, /gitlab-work-provider\s+work-provider\s+missing/);
   });
 
   it("renders a non-interactive guided install plan as JSON", () => {

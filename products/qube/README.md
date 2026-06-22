@@ -49,6 +49,13 @@ qube components
 | `aiq` | `@tjalve/aiq` | `aiq` | Staged quality gates and evidence. |
 | `aiu` | `@tjalve/aiu` | `aiu` | Continuation policy from trusted local state. |
 
+`qube components --json` also reports adapter capabilities for host, provider,
+CI, review, and layout surfaces. The report distinguishes installed, missing,
+standalone, and unsupported behavior so missing add-ons never fall back to
+GitHub semantics, shell guesses, or fake success. See
+[`docs/qube-adapter-add-on-policy.md`](../../docs/qube-adapter-add-on-policy.md)
+for the add-on package policy.
+
 ## Usage
 
 ```sh

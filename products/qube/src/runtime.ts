@@ -12,7 +12,7 @@ import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, 
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
-import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
+import { findQubeComponent, qubeAdapterReports, qubeComponents, type QubeComponent } from "./components.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -981,7 +981,7 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   const args = [...input];
   if (args[0] === "components") {
     if (args.includes("--json")) {
-      return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents })}\n`, stderr: "" };
+      return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "components", components: qubeComponents, adapterCapabilities: qubeAdapterReports })}\n`, stderr: "" };
     }
     return { exitCode: 0, stdout: renderComponents(), stderr: "" };
   }
@@ -1077,7 +1077,7 @@ function createQubeCli(environment: CliEnvironment) {
     commands: [
       createRuntimeCommand(componentsCommand, ({ flags }) => {
         if (flags.json === true) {
-          return { json: { components: qubeComponents } };
+          return { json: { components: qubeComponents, adapterCapabilities: qubeAdapterReports } };
         }
         return { stdout: renderComponents() };
       }),
@@ -1107,6 +1107,7 @@ function createQubeCli(environment: CliEnvironment) {
         packageVersion,
         sections: {
           components: qubeComponents,
+          adapterCapabilities: qubeAdapterReports,
           directCommands: directCommandDefinitions.map(definition => ({
             command: definition.command.name,
             component: definition.component
@@ -3557,7 +3558,13 @@ function ambiguityError(args: readonly string[]): CliExecution | undefined {
 }
 
 function renderComponents(): string {
-  return `${qubeComponents.map(component => `${component.command}\t${component.packageName}\t${component.packageVersion}\t${component.summary}`).join("\n")}\n`;
+  return [
+    ...qubeComponents.map(component => `${component.command}\t${component.packageName}\t${component.packageVersion}\t${component.summary}`),
+    "",
+    "Adapter capabilities:",
+    ...qubeAdapterReports.map(report => `${report.id}\t${report.surface}\t${report.installStatus}\t${report.packageName}\t${report.capabilityFlags.join(",")}`),
+    ""
+  ].join("\n");
 }
 
 function pathEntries(env: NodeJS.ProcessEnv): string[] {

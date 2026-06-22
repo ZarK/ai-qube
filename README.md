@@ -83,6 +83,13 @@ qube aiq doctor --format json
 qube aiu status --json
 ```
 
+`qube components --json` also reports adapter capabilities for host, provider,
+CI, review, and layout surfaces. The report distinguishes installed, missing,
+standalone, and unsupported behavior so missing add-ons never fall back to
+GitHub semantics, shell guesses, or fake success. See
+[`docs/qube-adapter-add-on-policy.md`](docs/qube-adapter-add-on-policy.md) for
+the add-on package policy.
+
 `qube make-it-so` is the cardinal work command. It does not invent a hidden
 workflow. By default, free-form text maps to the planned flow through
 `qube aib init`, while `--flow issue next` or `--flow issue <number>` maps to

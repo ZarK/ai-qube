@@ -1,6 +1,6 @@
 # QUBE Host And Adapter Surfaces
 
-This matrix records host integration ownership by product. It separates real product surfaces from shared adapter contract packages.
+This matrix records host integration ownership by product. It separates real product surfaces from shared adapter contract packages. See [QUBE Adapter Add-On Policy](./qube-adapter-add-on-policy.md) for the core-versus-optional package rules, discovery fields, and supply-chain intake requirements.
 
 | Product | Package | CLI | GitHub | GitLab | Linear | Codex | OpenCode | Claude Code | Ownership decision |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
@@ -29,6 +29,8 @@ Product packages still own Claude Code-specific side effects:
 - Claude Code todo and conversation state remains local host state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
 - QUBE composer install notes do not create `.claude/commands` or `.claude/skills` assets.
 
+## OpenCode Host Surface
+
 `@tjalve/qube-adapter-opencode` is the shared OpenCode host adapter. It detects `AGENTS.md` and `.opencode/commands`, reports the host todo tools (`todowrite` and `todoread`), records the supported project-command and prompt/stop-hook capability boundaries, and returns explicit unsupported-capability results for behavior that OpenCode does not own, such as external review requests, branch creation, or pull request creation.
 
 Product packages still own product-specific side effects:
@@ -37,6 +39,8 @@ Product packages still own product-specific side effects:
 - AIE installs Executor OpenCode project commands and renders Oracle-style review prompts without invoking host-only reviewers.
 - AIU owns OpenCode session continuation, prompt delivery, and stop-hook decisions from trusted state.
 - AIQ exposes OpenCode quality tools through its standalone plugin package, not through a QUBE-facing host surface.
+
+## GitHub Provider Surface
 
 `@tjalve/qube-adapter-github` is the private shared GitHub provider adapter. It records the explicit capability model for GitHub issue work items, queue reads, status-label synchronization, pull request reads, review-gate requests, CI status normalization, CI diagnostics, review-thread reads, standalone AIQ GitHub Action behavior, and unsupported GitHub operations such as workflow-run triggering, pull request approval, repository file mutation, and release publishing.
 
