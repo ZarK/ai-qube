@@ -234,6 +234,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(parsed.installPlan.selections.workProvider, "linear");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-linear/);
     assert.match(parsed.installPlan.notes.join("\n"), /LINEAR_API_KEY and LINEAR_TEAM_ID/);
     assert.match(parsed.installPlan.notes.join("\n"), /workflow-state mutations/);
   });
@@ -264,6 +265,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(parsed.installPlan.selections.workProvider, "gitlab");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-gitlab/);
     assert.match(parsed.installPlan.notes.join("\n"), /GITLAB_TOKEN, GITLAB_PROJECT_ID/);
     assert.match(parsed.installPlan.notes.join("\n"), /merge request pipeline status for CI gates stay unsupported/);
   });

@@ -12,11 +12,13 @@ Supported now:
 
 - AIB can render provider-neutral work item drafts into Linear issue previews
   with `qube aib work-items render --provider linear --dry-run --json`.
-- AIE has a Linear work-provider adapter that maps Linear issues into QUBE
-  work items for read flows.
+- AIE resolves Linear through the optional `@tjalve/qube-adapter-linear`
+  work-provider package boundary. The adapter maps Linear issues into QUBE work
+  items for read flows.
 - Linear workflow state, priority, labels, assignee, project, blockers, and
   source metadata are normalized into the shared work item contract.
-- QUBE install notes can target `--work-provider linear`.
+- QUBE install notes can target `--work-provider linear` and name the required
+  optional adapter package.
 
 Explicitly unsupported now:
 

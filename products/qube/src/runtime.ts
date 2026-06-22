@@ -3334,9 +3334,9 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   if (selections.workProvider === "github") {
     notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
   } else if (selections.workProvider === "gitlab") {
-    notes.push("GitLab-backed work uses GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL for read mapping; lifecycle mutations, merge request mutations, and merge request pipeline status for CI gates stay unsupported until tested GitLab adapters exist.");
+    notes.push("GitLab-backed work requires the optional @tjalve/qube-adapter-gitlab package; it uses GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL for read mapping while lifecycle mutations, merge request mutations, and merge request pipeline status for CI gates stay unsupported until tested GitLab adapters exist.");
   } else if (selections.workProvider === "linear") {
-    notes.push("Linear-backed work uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping; lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
+    notes.push("Linear-backed work requires the optional @tjalve/qube-adapter-linear package; it uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping while lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
   } else {
     notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
   }

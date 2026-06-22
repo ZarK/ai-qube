@@ -1,12 +1,20 @@
 # @tjalve/aie
 
-`@tjalve/aie` is the AI Executor CLI for GitHub issue execution. It helps an
-agent inspect ready issues, start a scoped branch, run repository gates, open or
+`@tjalve/aie` is the AI Executor CLI for issue-driven execution. It helps an
+agent inspect ready work, start a scoped branch, run repository gates, open or
 update pull requests, check reviews, and complete work after merge.
 
 Executor is intentionally repository-centered. It works from the target checkout
-and uses the repository's own scripts, policy, branch state, GitHub issues, and
-pull requests as the source of truth.
+and uses the repository's own scripts, policy, branch state, configured work
+provider, and pull requests as the source of truth.
+
+GitHub work support is available through the built-in Executor adapter boundary.
+Non-default work providers such as Linear and GitLab are optional adapter
+package boundaries: AIE core keeps provider-neutral lifecycle behavior, while
+adapter packages own provider API clients, credentials, mapping, capability
+flags, and unsupported-operation diagnostics. Selecting an optional provider
+without its adapter installed fails with setup guidance instead of falling back
+to GitHub semantics.
 
 For the full QUBE package family and command deck, see
 https://zark.github.io/ai-qube/ or the repository landing-page artifact at
@@ -30,8 +38,8 @@ aie --help
 
 - Node.js 24 or newer
 - `git`
-- GitHub CLI `gh`
-- access to the GitHub repository whose issues and pull requests will be managed
+- GitHub CLI `gh` for GitHub-backed issues, pull requests, and checks
+- access to the configured work and review providers
 
 ## Common Commands
 

@@ -12,11 +12,11 @@ import type { ReviewItem } from '../core/review_item.js';
 import type { WorkItem } from '../core/work_item.js';
 import { githubIssueNumber } from '../providers/github/github_work_codec.js';
 import { createGitHubReviewProvider, type CurrentGitHubReview } from '../providers/github/github_review_provider.js';
-import { createGitHubWorkProvider } from '../providers/github/github_work_provider.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
 import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../providers/repository_provider.js';
 import type { ReviewProvider, ReviewProviderCapabilities } from '../providers/review_provider.js';
 import type { WorkProvider, WorkProviderCapabilities } from '../providers/work_provider.js';
+import { createWorkProvider } from '../providers/work_provider_adapters.js';
 
 export type StatusDecisionState = 'continue' | 'stop' | 'wait' | 'unknown';
 export type StatusReasonCode =
@@ -154,7 +154,7 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const configLoad = await loadConfigFile(options.cwd);
   const config = configLoad.ok && configLoad.config ? configLoad.config : getDefaults();
   const policy = configToExecutorPolicy(config);
-  const workProvider = createGitHubWorkProvider({ cwd: options.cwd });
+  const workProvider = createWorkProvider(config.providers.work.kind, { cwd: options.cwd });
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
   const githubReviewProvider = createGitHubReviewProvider({ cwd: options.cwd });
   return {

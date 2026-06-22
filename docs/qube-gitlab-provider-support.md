@@ -12,12 +12,14 @@ Supported now:
 
 - AIB can render provider-neutral work item drafts into GitLab issue previews
   with `qube aib work-items render --provider gitlab --dry-run --json`.
-- AIE has a GitLab work-provider adapter that maps GitLab project issues into
+- AIE resolves GitLab through the optional `@tjalve/qube-adapter-gitlab`
+  work-provider package boundary. The adapter maps GitLab project issues into
   QUBE work items for read flows.
 - GitLab issue `iid`, state, labels, assignees, milestones, task-completion
   status, native issue links, and source metadata are normalized into the
   shared work item contract.
-- QUBE install notes can target `--work-provider gitlab`.
+- QUBE install notes can target `--work-provider gitlab` and name the required
+  optional adapter package.
 
 Explicitly unsupported now:
 

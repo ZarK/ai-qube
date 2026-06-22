@@ -19,7 +19,7 @@ function schemaOptions() {
         path: AIE_CONFIG_FILENAME,
         shape: ['version', 'providers', 'policy'],
         supportedProviders: {
-          work: ['github'],
+          work: ['github', 'gitlab', 'linear'],
           review: ['github'],
           repository: ['local-git'],
           ci: ['github'],
