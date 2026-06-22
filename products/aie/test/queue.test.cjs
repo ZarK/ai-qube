@@ -127,7 +127,7 @@ describe('queue service (computeQueue + getNextIssue via GhExec fixtures)', () =
     const result = await runNextWorkService(await createLifecycleContext({ exec, config: getDefaults() }));
 
     assert.equal(result.workItem.key.id, '21');
-    assert.equal(result.reason, 'Resuming the single active S-InProgress issue #21');
+    assert.equal(result.reason, 'Resuming the single active in-progress work item #21');
     assert.equal(result.multipleInProgress, false);
   });
 });

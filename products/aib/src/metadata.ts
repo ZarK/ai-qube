@@ -581,7 +581,7 @@ export const workItemsGenerateCommand = defineCommand({
 export const workItemsRenderCommand = defineCommand({
   kind: "command",
   name: "work-items render",
-  description: "Render recorded provider-neutral work item drafts to GitHub previews or markdown files.",
+  description: "Render recorded provider-neutral work item drafts to provider previews or markdown files.",
   flags: [
     defineFlag({
       name: "json",
@@ -599,7 +599,7 @@ export const workItemsRenderCommand = defineCommand({
       name: "provider",
       description: "Work item render target.",
       type: "option",
-      options: ["github", "markdown"],
+      options: ["github", "linear", "markdown"],
       required: true
     }),
     defineFlag({
@@ -617,6 +617,10 @@ export const workItemsRenderCommand = defineCommand({
     defineExample({
       description: "Preview GitHub issues from recorded work item drafts.",
       command: "aib work-items render --provider github --dry-run --json"
+    }),
+    defineExample({
+      description: "Preview Linear issues from recorded work item drafts.",
+      command: "aib work-items render --provider linear --dry-run --json"
     }),
     defineExample({
       description: "Write markdown work item drafts without network access.",

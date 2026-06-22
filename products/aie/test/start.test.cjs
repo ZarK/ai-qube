@@ -309,7 +309,7 @@ describe('start service', () => {
 
     assert.equal(result.ok, false);
     assert.equal(result.action, 'blocked');
-    assert.match(result.reason, /already S-InProgress/);
+    assert.match(result.reason, /already in progress/);
     assert.equal(calls.some(args => args[0] === 'issue' && args[1] === 'edit'), false);
   });
 

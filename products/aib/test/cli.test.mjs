@@ -696,6 +696,34 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.match(githubPreview.plannedIssues[0].body, /^Sequence: \d+/m);
   assert.deepEqual(githubPreview.plannedIssues[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
 
+  const linearPreview = parseJsonStdout(runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "linear",
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(linearPreview.mutated, false);
+  assert.equal(linearPreview.provider, "linear");
+  assert.equal(linearPreview.plannedLinearIssues.length, 3);
+  assert.match(linearPreview.plannedLinearIssues[0].description, /^Sequence: \d+/m);
+  assert.equal(linearPreview.plannedLinearIssues[0].priority, 2);
+
+  const blockedLinearApply = runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "linear",
+    "--json"
+  ]);
+  assert.equal(blockedLinearApply.status, 5);
+  assert.equal(JSON.parse(blockedLinearApply.stdout).error.kind, "provider-mutation-unsupported");
+
   const blockedGithubApply = runAib([
     "work-items",
     "render",

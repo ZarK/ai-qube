@@ -111,7 +111,7 @@ export function buildInstructionPolicyDiagnostics(config: Config, repoRoot: stri
 export function buildProviderHealthDiagnostics(config: Config): ProviderHealthDiagnostics {
   const warnings: string[] = [];
   const providers = {
-    work: { kind: config.providers.work.kind, supported: config.providers.work.kind === 'github', required: config.providers.capabilities.work },
+    work: { kind: config.providers.work.kind, supported: config.providers.work.kind === 'github' || config.providers.work.kind === 'linear', required: config.providers.capabilities.work },
     review: { kind: config.providers.review.kind, supported: config.providers.review.kind === 'github', required: config.providers.capabilities.review },
     repository: { kind: config.providers.repository.kind, supported: config.providers.repository.kind === 'local-git', required: config.providers.capabilities.repository },
     ci: { kind: config.providers.ci.kind, supported: config.providers.ci.kind === 'github', required: config.providers.capabilities.ci },

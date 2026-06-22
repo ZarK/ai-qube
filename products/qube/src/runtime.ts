@@ -66,7 +66,7 @@ const yesFlag = defineFlag({
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "generic" | "codex" | "opencode" | "claude-code";
-type InstallWorkProvider = "github" | "local";
+type InstallWorkProvider = "github" | "linear" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
@@ -359,6 +359,11 @@ const workProviderChoices = defineInstallerChoiceGroup({
       recommended: true
     },
     {
+      value: "linear",
+      label: "Linear",
+      description: "Use Linear issues as the planning/work queue while keeping review and CI provider limits explicit."
+    },
+    {
       value: "local",
       label: "Local only",
       description: "Install QUBE without assuming a forge-backed work provider."
@@ -450,7 +455,7 @@ const installCommand = defineCommand({
       name: "work-provider",
       description: "Work provider to mention in setup notes.",
       type: "option",
-      options: ["github", "local"]
+      options: ["github", "linear", "local"]
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -3304,7 +3309,7 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
   }
-  if (selections.workProvider === "github") {
+  if (selections.workProvider === "github" || selections.workProvider === "linear") {
     files.push(".qube/aie/config.json provider notes");
   }
   return files;
@@ -3323,6 +3328,8 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   }
   if (selections.workProvider === "github") {
     notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
+  } else if (selections.workProvider === "linear") {
+    notes.push("Linear-backed work uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping; lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
   } else {
     notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
   }

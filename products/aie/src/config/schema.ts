@@ -193,21 +193,21 @@ function readGateConfigs(value: unknown, path: string, errors: ValidationError[]
   return gates;
 }
 
-function readProviderSelection<K extends string>(input: Record<string, unknown>, field: string, defaultValue: ProviderSelection<K>, supportedKind: K, errors: ValidationError[]): ProviderSelection<K> {
+function readProviderSelection<K extends string>(input: Record<string, unknown>, field: string, defaultValue: ProviderSelection<K>, supportedKinds: readonly K[], errors: ValidationError[]): ProviderSelection<K> {
   const path = `providers.${field}`;
   const section = readPlainObject(input, field, 'providers', errors);
   if (!section) return { ...defaultValue };
   rejectUnknownKeys(section, ['kind'], path, errors);
   const value = section.kind;
-  if (value === supportedKind) return { kind: supportedKind };
+  if (supportedKinds.includes(value as K)) return { kind: value as K };
   if (typeof value !== 'string') {
-    errors.push({ kind: 'invalid', path: `${path}.kind`, message: `${path}.kind must be ${supportedKind}` });
+    errors.push({ kind: 'invalid', path: `${path}.kind`, message: `${path}.kind must be ${supportedKinds.join(' or ')}` });
   } else {
     errors.push({
       kind: 'invalid',
       path: `${path}.kind`,
       message: `${value} is not a supported ${field} provider kind in Executor v1`,
-      suggestion: `Use ${supportedKind}; additional providers require a real end-to-end implementation before they can be configured.`,
+      suggestion: `Use ${supportedKinds.join(' or ')}; additional providers require a real end-to-end implementation before they can be configured.`,
     });
   }
   return { ...defaultValue };
@@ -234,11 +234,11 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
   }
   rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'capabilities'], 'providers', errors);
   return {
-    work: readProviderSelection(value, 'work', defaultValue.work, 'github', errors),
-    review: readProviderSelection(value, 'review', defaultValue.review, 'github', errors),
-    repository: readProviderSelection(value, 'repository', defaultValue.repository, 'local-git', errors),
-    ci: readProviderSelection(value, 'ci', defaultValue.ci, 'github', errors),
-    layout: readProviderSelection(value, 'layout', defaultValue.layout, 'local', errors),
+    work: readProviderSelection(value, 'work', defaultValue.work, ['github', 'linear'], errors),
+    review: readProviderSelection(value, 'review', defaultValue.review, ['github'], errors),
+    repository: readProviderSelection(value, 'repository', defaultValue.repository, ['local-git'], errors),
+    ci: readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors),
+    layout: readProviderSelection(value, 'layout', defaultValue.layout, ['local'], errors),
     capabilities: readProviderCapabilities(value, defaultValue.capabilities, errors),
   };
 }
