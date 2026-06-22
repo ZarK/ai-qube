@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/qube-adapter-opencode",
   "version": "0.1.0",
-  "description": "Private OpenCode adapter boundary for QUBE host prompt and stop-hook integrations.",
+  "description": "Private OpenCode host capability adapter for QUBE command, prompt, and stop-hook integrations.",
   "private": true,
   "type": "module",
   "license": "MIT",

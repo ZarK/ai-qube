@@ -29,7 +29,15 @@ export interface QubeAdapterContract {
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
   readonly boundary: string;
+  readonly capabilities?: readonly QubeAdapterCapability[];
   readonly contractOnly: boolean;
+}
+
+export interface QubeAdapterCapability {
+  readonly id: string;
+  readonly support: "supported" | "standalone" | "unsupported";
+  readonly owner: string;
+  readonly summary: string;
 }
 
 export interface QubeCommandSurfaceContract {
