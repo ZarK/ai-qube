@@ -41,10 +41,49 @@ export interface ShippingPolicy {
   mergeStrategy: 'squash' | 'merge' | 'rebase';
 }
 
-export type ReviewAdapterKind = 'github' | 'local' | 'mixed';
+export type ReviewAdapterKind = 'github' | 'remote' | 'local' | 'mixed' | 'shadow';
+export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-comprehensive' | 'local-shadow';
+export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
+export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
+
+export interface ReviewPromptFragments {
+  repository: string[];
+  safety: string[];
+  style: string[];
+  adapter: string[];
+  reviewer: string[];
+  commandAddendum: string[];
+}
+
+export interface ReviewContextSources {
+  instructions: string[];
+  requirements: string[];
+  issues: 'github' | 'disabled';
+  issueComments: 'github' | 'disabled';
+  linkedIssues: 'github' | 'disabled';
+  milestones: 'github' | 'disabled';
+  pullRequests: 'github' | 'disabled';
+  prComments: 'github' | 'disabled';
+  reviewThreads: 'github' | 'disabled';
+}
+
+export interface ReviewLanePolicy {
+  id: string;
+  required: ReviewLaneRequiredMode;
+  match: string[];
+  severityThreshold: ReviewSeverityThreshold;
+  prompt: string[];
+  tools: string[];
+  runner: 'github-comment' | 'github-reviewer' | 'local-command' | 'local-host' | 'manual-evidence';
+}
 
 export interface ReviewPolicy {
   adapter: ReviewAdapterKind;
+  profile: ReviewProfileKind;
+  severityThreshold: ReviewSeverityThreshold;
+  promptFragments: ReviewPromptFragments;
+  contextSources: ReviewContextSources;
+  lanes: ReviewLanePolicy[];
   reviewers: string[];
   localReviewers: string[];
   waitMinutes: number;
@@ -121,6 +160,9 @@ function nonNegativeNumber(value: number, field: string): number {
 export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
   const packageAgeDays = nonNegativeNumber(input.supplyChain.packageAgeDays, 'supplyChain.packageAgeDays');
   const highRiskPackageAgeDays = nonNegativeNumber(input.supplyChain.highRiskPackageAgeDays, 'supplyChain.highRiskPackageAgeDays');
+  const promptFragments = input.reviews.promptFragments ?? { repository: [], safety: ['builtin:executor-review-safety'], style: [], adapter: [], reviewer: [], commandAddendum: [] };
+  const contextSources = input.reviews.contextSources ?? { instructions: ['AGENTS.md', '**/AGENTS.md'], requirements: [], issues: 'github', issueComments: 'github', linkedIssues: 'github', milestones: 'github', pullRequests: 'github', prComments: 'github', reviewThreads: 'github' };
+  const lanes = input.reviews.lanes ?? [];
   if (highRiskPackageAgeDays < packageAgeDays) {
     throw new Error('normalize executor policy failed: supplyChain.highRiskPackageAgeDays must be greater than or equal to supplyChain.packageAgeDays.');
   }
@@ -147,6 +189,34 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
     lifecycle: { ...input.lifecycle, autonomousMode: input.shipping.autonomousMode },
     reviews: {
       adapter: input.reviews.adapter,
+      profile: input.reviews.profile ?? 'remote-compatible',
+      severityThreshold: input.reviews.severityThreshold ?? 'high',
+      promptFragments: {
+        repository: uniqueStrings(promptFragments.repository ?? [], 'reviews.promptFragments.repository'),
+        safety: uniqueStrings(promptFragments.safety ?? [], 'reviews.promptFragments.safety'),
+        style: uniqueStrings(promptFragments.style ?? [], 'reviews.promptFragments.style'),
+        adapter: uniqueStrings(promptFragments.adapter ?? [], 'reviews.promptFragments.adapter'),
+        reviewer: uniqueStrings(promptFragments.reviewer ?? [], 'reviews.promptFragments.reviewer'),
+        commandAddendum: uniqueStrings(promptFragments.commandAddendum ?? [], 'reviews.promptFragments.commandAddendum'),
+      },
+      contextSources: {
+        instructions: uniqueStrings(contextSources.instructions, 'reviews.contextSources.instructions'),
+        requirements: uniqueStrings(contextSources.requirements, 'reviews.contextSources.requirements'),
+        issues: contextSources.issues,
+        issueComments: contextSources.issueComments ?? contextSources.issues,
+        linkedIssues: contextSources.linkedIssues ?? contextSources.issues,
+        milestones: contextSources.milestones,
+        pullRequests: contextSources.pullRequests,
+        prComments: contextSources.prComments ?? contextSources.pullRequests,
+        reviewThreads: contextSources.reviewThreads ?? contextSources.pullRequests,
+      },
+      lanes: lanes.map(lane => ({
+        ...lane,
+        id: nonEmpty(lane.id, 'reviews.lanes.id'),
+        match: uniqueStrings(lane.match, 'reviews.lanes.match'),
+        prompt: uniqueStrings(lane.prompt, 'reviews.lanes.prompt'),
+        tools: uniqueStrings(lane.tools, 'reviews.lanes.tools'),
+      })),
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),

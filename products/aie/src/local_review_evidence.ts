@@ -2,24 +2,67 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { redact } from './gh.js';
 
-export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed';
+export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
+export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-comprehensive' | 'local-shadow';
+export type LocalReviewSeverity = 'none' | 'low' | 'medium' | 'high' | 'critical';
+export type LocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
+export type LocalReviewContextKind = 'agents' | 'issue-body' | 'issue-comment' | 'milestone' | 'functional-requirement' | 'linked-issue' | 'pr-body' | 'pr-comment' | 'review-thread' | 'doc' | 'diff' | 'ci' | 'manual-qa';
+export type LocalReviewTrust = 'policy' | 'trusted-provider' | 'repo-doc' | 'untrusted-task-input' | 'local-evidence';
+export type LocalReviewFreshness = 'current' | 'stale' | 'unknown' | 'missing' | 'unavailable' | 'not-configured';
 
-export type LocalReviewLaneId = 'code-quality' | 'security-maintainability' | 'qa' | 'final-gate';
+export type LocalReviewLaneId =
+  | 'task-record-compliance'
+  | 'issue-compliance'
+  | 'code-quality'
+  | 'security'
+  | 'performance'
+  | 'data-database'
+  | 'concurrency-resource'
+  | 'error-observability'
+  | 'tests-quality'
+  | 'api-contract-compatibility'
+  | 'docs-instructions'
+  | 'ui-ux-accessibility'
+  | 'release-ci-supply-chain'
+  | 'manual-qa'
+  | 'final-gate';
+
+export interface LocalReviewContextReviewed {
+  kind: LocalReviewContextKind;
+  source: string;
+  trust: LocalReviewTrust;
+  freshness: LocalReviewFreshness;
+}
+
+export interface LocalReviewPromptStackItem {
+  id: string;
+  source: 'builtin' | 'repo-configured' | 'command-supplied' | 'evidence';
+  path: string | null;
+  sha256: string | null;
+  trust: LocalReviewTrust;
+}
 
 export interface LocalReviewLane {
   id: LocalReviewLaneId;
   status: LocalReviewStatus;
+  severity: LocalReviewSeverity;
+  recommendation: LocalReviewRecommendation;
   summary: string;
   blockers: string[];
   artifacts: string[];
   commands: string[];
   surfaces: string[];
+  contextReviewed: LocalReviewContextReviewed[];
+  promptStack: LocalReviewPromptStackItem[];
+  toolsUsed: string[];
 }
 
 export interface LocalReviewEvidence {
   issueNumber: number | null;
   prNumber: number;
   headSha: string;
+  profile: LocalReviewProfile;
+  adapter: 'local-command' | 'local-host' | 'manual-evidence';
   status: LocalReviewStatus;
   path: string | null;
   reviewer: {
@@ -30,12 +73,16 @@ export interface LocalReviewEvidence {
   summary: string;
   blockers: string[];
   lanes: LocalReviewLane[];
+  contextReviewed: LocalReviewContextReviewed[];
+  promptStack: LocalReviewPromptStackItem[];
   recordedAt: string | null;
   stale: boolean;
 }
 
 export interface LocalReviewGate {
   required: boolean;
+  mode: 'disabled' | 'required' | 'shadow';
+  profile: LocalReviewProfile;
   reviewers: string[];
   requiredLanes: LocalReviewLaneId[];
   evidence: LocalReviewEvidence[];
@@ -45,10 +92,42 @@ export interface LocalReviewGate {
 }
 
 export const REQUIRED_LOCAL_REVIEW_LANES: readonly LocalReviewLaneId[] = [
+  'task-record-compliance',
+  'issue-compliance',
   'code-quality',
-  'security-maintainability',
-  'qa',
+  'tests-quality',
+  'manual-qa',
   'final-gate',
+];
+
+export const COMPREHENSIVE_LOCAL_REVIEW_LANES: readonly LocalReviewLaneId[] = [
+  'task-record-compliance',
+  'issue-compliance',
+  'code-quality',
+  'security',
+  'performance',
+  'data-database',
+  'concurrency-resource',
+  'error-observability',
+  'tests-quality',
+  'api-contract-compatibility',
+  'docs-instructions',
+  'ui-ux-accessibility',
+  'release-ci-supply-chain',
+  'manual-qa',
+  'final-gate',
+];
+
+const REQUIRED_TASK_CONTEXT: readonly LocalReviewContextKind[] = [
+  'agents',
+  'issue-body',
+  'issue-comment',
+  'milestone',
+  'functional-requirement',
+  'linked-issue',
+  'pr-body',
+  'pr-comment',
+  'review-thread',
 ];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -63,14 +142,138 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map(redact) : [];
 }
 
+function artifactArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const artifacts: string[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    const kind = stringValue(item.kind, 'artifact');
+    const path = typeof item.path === 'string' && item.path.trim() !== '' ? redact(item.path.trim()) : '';
+    const sha = typeof item.sha256 === 'string' && item.sha256.trim() !== '' ? `#${redact(item.sha256.trim())}` : '';
+    artifacts.push(path === '' ? kind : `${kind}:${path}${sha}`);
+  }
+  return artifacts;
+}
+
+function readSeverity(value: unknown): LocalReviewSeverity {
+  if (value === 'none' || value === 'low' || value === 'medium' || value === 'high' || value === 'critical') return value;
+  return 'none';
+}
+
+function readRecommendation(value: unknown, status: LocalReviewStatus): LocalReviewRecommendation {
+  if (value === 'approve' || value === 'request-changes' || value === 'pending' || value === 'inconclusive') return value;
+  if (status === 'passed') return 'approve';
+  if (status === 'failed' || status === 'needs-work') return 'request-changes';
+  if (status === 'inconclusive' || status === 'unavailable' || status === 'malformed') return 'inconclusive';
+  return 'pending';
+}
+
 function readStatus(value: unknown): LocalReviewStatus {
-  if (value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable') return value;
+  if (value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable' || value === 'inconclusive') return value;
   return 'malformed';
 }
 
 function readLaneId(value: unknown): LocalReviewLaneId | null {
-  if (value === 'code-quality' || value === 'security-maintainability' || value === 'qa' || value === 'final-gate') return value;
+  if (
+    value === 'task-record-compliance' ||
+    value === 'issue-compliance' ||
+    value === 'code-quality' ||
+    value === 'security' ||
+    value === 'performance' ||
+    value === 'data-database' ||
+    value === 'concurrency-resource' ||
+    value === 'error-observability' ||
+    value === 'tests-quality' ||
+    value === 'api-contract-compatibility' ||
+    value === 'docs-instructions' ||
+    value === 'ui-ux-accessibility' ||
+    value === 'release-ci-supply-chain' ||
+    value === 'manual-qa' ||
+    value === 'final-gate'
+  ) return value;
+  if (value === 'security-maintainability') return 'security';
+  if (value === 'qa') return 'manual-qa';
   return null;
+}
+
+function readProfile(value: unknown, fallback: LocalReviewProfile): LocalReviewProfile {
+  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-comprehensive' || value === 'local-shadow') return value;
+  return fallback;
+}
+
+function readContextKind(value: unknown): LocalReviewContextKind | null {
+  if (
+    value === 'agents' ||
+    value === 'issue-body' ||
+    value === 'issue-comment' ||
+    value === 'milestone' ||
+    value === 'functional-requirement' ||
+    value === 'linked-issue' ||
+    value === 'pr-body' ||
+    value === 'pr-comment' ||
+    value === 'review-thread' ||
+    value === 'doc' ||
+    value === 'diff' ||
+    value === 'ci' ||
+    value === 'manual-qa'
+  ) return value;
+  return null;
+}
+
+function readTrust(value: unknown): LocalReviewTrust {
+  if (value === 'policy' || value === 'trusted-provider' || value === 'repo-doc' || value === 'untrusted-task-input' || value === 'local-evidence') return value;
+  return 'local-evidence';
+}
+
+function readFreshness(value: unknown): LocalReviewFreshness {
+  if (value === 'current' || value === 'stale' || value === 'unknown' || value === 'missing' || value === 'unavailable' || value === 'not-configured') return value;
+  return 'unknown';
+}
+
+function readContextReviewed(value: unknown): LocalReviewContextReviewed[] {
+  if (!Array.isArray(value)) return [];
+  const contexts: LocalReviewContextReviewed[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const kind = readContextKind(entry.kind);
+    if (!kind) continue;
+    contexts.push({
+      kind,
+      source: stringValue(entry.source, kind),
+      trust: readTrust(entry.trust),
+      freshness: readFreshness(entry.freshness),
+    });
+  }
+  return contexts;
+}
+
+function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
+  if (!Array.isArray(value)) return [];
+  const stack: LocalReviewPromptStackItem[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const source = entry.source === 'builtin' || entry.source === 'repo-configured' || entry.source === 'command-supplied' || entry.source === 'evidence' ? entry.source : 'evidence';
+    stack.push({
+      id: stringValue(entry.id, 'unknown-prompt-fragment'),
+      source,
+      path: typeof entry.path === 'string' && entry.path.trim() !== '' ? redact(entry.path.trim()) : null,
+      sha256: typeof entry.sha256 === 'string' && entry.sha256.trim() !== '' ? redact(entry.sha256.trim()) : null,
+      trust: readTrust(entry.trust),
+    });
+  }
+  return stack;
+}
+
+export function requiredLocalReviewLanes(profile: LocalReviewProfile): readonly LocalReviewLaneId[] {
+  if (profile === 'local-comprehensive' || profile === 'local-shadow') return COMPREHENSIVE_LOCAL_REVIEW_LANES;
+  if (profile === 'local-standard') return REQUIRED_LOCAL_REVIEW_LANES;
+  return [];
+}
+
+function effectiveProfile(profile: LocalReviewProfile, required: boolean, shadow: boolean): LocalReviewProfile {
+  if (shadow) return 'local-shadow';
+  if (required && profile === 'remote-compatible') return 'local-standard';
+  return profile;
 }
 
 function safeSegment(value: string): string {
@@ -85,32 +288,46 @@ function evidenceDirectory(repoRoot: string, issueNumber: number, prNumber: numb
   return join(repoRoot, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, `pr-${prNumber}`);
 }
 
+function laneEvidenceDirectory(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeSegment(headSha));
+}
+
+function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
+}
+
 function fallbackReviewer(reviewers: readonly string[]): LocalReviewEvidence['reviewer'] {
   const first = reviewers.map(name => name.trim()).find(name => name !== '') ?? 'local-reviewer';
   return { id: safeSegment(first), name: redact(first), adapterKind: 'local' };
 }
 
-function malformedEvidence(issueNumber: number | null, prNumber: number, headSha: string, path: string | null, summary: string, reviewers: readonly string[]): LocalReviewEvidence {
+function malformedEvidence(issueNumber: number | null, prNumber: number, headSha: string, path: string | null, summary: string, reviewers: readonly string[], profile: LocalReviewProfile): LocalReviewEvidence {
   return {
     issueNumber,
     prNumber,
     headSha: redact(headSha),
+    profile,
+    adapter: 'manual-evidence',
     status: 'malformed',
     path: path ? redact(path) : null,
     reviewer: fallbackReviewer(reviewers),
     summary,
     blockers: [summary],
     lanes: [],
+    contextReviewed: [],
+    promptStack: [],
     recordedAt: null,
     stale: false,
   };
 }
 
-function missingEvidence(issueNumber: number | null, prNumber: number, headSha: string, path: string | null, reviewers: readonly string[]): LocalReviewEvidence {
+function missingEvidence(issueNumber: number | null, prNumber: number, headSha: string, path: string | null, reviewers: readonly string[], profile: LocalReviewProfile): LocalReviewEvidence {
   return {
     issueNumber,
     prNumber,
     headSha: redact(headSha),
+    profile,
+    adapter: 'manual-evidence',
     status: 'missing',
     path: path ? redact(path) : null,
     reviewer: fallbackReviewer(reviewers),
@@ -119,22 +336,28 @@ function missingEvidence(issueNumber: number | null, prNumber: number, headSha: 
       : 'No local review evidence is recorded for this issue, pull request, and PR head.',
     blockers: [],
     lanes: [],
+    contextReviewed: [],
+    promptStack: [],
     recordedAt: null,
     stale: false,
   };
 }
 
-function staleEvidence(issueNumber: number, prNumber: number, headSha: string, path: string, reviewers: readonly string[]): LocalReviewEvidence {
+function staleEvidence(issueNumber: number, prNumber: number, headSha: string, path: string, reviewers: readonly string[], profile: LocalReviewProfile): LocalReviewEvidence {
   return {
     issueNumber,
     prNumber,
     headSha: redact(headSha),
+    profile,
+    adapter: 'manual-evidence',
     status: 'stale',
     path: redact(path),
     reviewer: fallbackReviewer(reviewers),
     summary: 'Local review evidence exists for an older PR head. Rerun local review lanes for the current head.',
     blockers: [],
     lanes: [],
+    contextReviewed: [],
+    promptStack: [],
     recordedAt: null,
     stale: true,
   };
@@ -147,31 +370,89 @@ function readLanes(value: unknown): LocalReviewLane[] | null {
     if (!isRecord(entry)) return null;
     const id = readLaneId(entry.id);
     if (!id) return null;
+    const status = readStatus(entry.status);
     lanes.push({
       id,
-      status: readStatus(entry.status),
+      status,
+      severity: readSeverity(entry.severity),
+      recommendation: readRecommendation(entry.recommendation, status),
       summary: stringValue(entry.summary, `${id} local review lane did not provide a summary.`),
       blockers: stringArray(entry.blockers),
-      artifacts: stringArray(entry.artifacts),
+      artifacts: artifactArray(entry.artifacts),
       commands: stringArray(entry.commands),
       surfaces: stringArray(entry.surfaces),
+      contextReviewed: readContextReviewed(entry.contextReviewed),
+      promptStack: readPromptStack(entry.promptStack),
+      toolsUsed: stringArray(entry.toolsUsed),
     });
   }
   return lanes;
 }
 
-function laneStatus(lanes: readonly LocalReviewLane[]): LocalReviewStatus {
+function missingRequiredContext(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile): LocalReviewContextKind[] {
+  if (profile !== 'local-comprehensive' && profile !== 'local-shadow') return [];
+  const reviewed = new Set(lanes.flatMap(lane => lane.contextReviewed).filter(context => context.freshness === 'current').map(context => context.kind));
+  return REQUIRED_TASK_CONTEXT.filter(kind => !reviewed.has(kind));
+}
+
+function severityRank(severity: LocalReviewSeverity): number {
+  return {
+    none: 0,
+    low: 1,
+    medium: 2,
+    high: 3,
+    critical: 4,
+  }[severity];
+}
+
+function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSeverity): boolean {
+  if (lane.severity === 'none') return false;
+  if (severityRank(lane.severity) < severityRank(threshold)) return false;
+  return lane.recommendation === 'request-changes' || lane.blockers.length > 0;
+}
+
+function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalReviewSeverity): string[] {
+  return lanes
+    .filter(lane => laneExceedsThreshold(lane, threshold))
+    .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
+}
+
+function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[]): string[] {
+  const blockers: string[] = [];
+  if (requiredLocalReviewLanes(profile).length > 0 && promptStack.length === 0) {
+    blockers.push(`Local review evidence for ${profile} must include a non-empty top-level promptStack.`);
+  }
+  const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
+  for (const laneId of requiredLocalReviewLanes(profile)) {
+    const lane = lanesById.get(laneId);
+    if (!lane || lane.status !== 'passed') continue;
+    if (lane.artifacts.length === 0) blockers.push(`${laneId} passed without artifact references.`);
+    if (lane.promptStack.length === 0) blockers.push(`${laneId} passed without promptStack coverage.`);
+  }
+  const finalGate = lanesById.get('final-gate');
+  if (requiredLocalReviewLanes(profile).includes('final-gate') && finalGate) {
+    if (finalGate.status !== 'passed' || finalGate.recommendation !== 'approve') {
+      blockers.push('final-gate must pass with recommendation approve before local review evidence can satisfy the gate.');
+    }
+  }
+  return blockers;
+}
+
+function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity): LocalReviewStatus {
   for (const lane of lanes) if (lane.status === 'malformed') return 'malformed';
   for (const lane of lanes) if (lane.status === 'unavailable') return 'unavailable';
   for (const lane of lanes) if (lane.status === 'failed') return 'failed';
+  for (const lane of lanes) if (laneExceedsThreshold(lane, threshold)) return 'failed';
   for (const lane of lanes) if (lane.status === 'needs-work') return 'needs-work';
+  for (const lane of lanes) if (lane.status === 'inconclusive') return 'inconclusive';
   for (const lane of lanes) if (lane.status === 'stale') return 'stale';
   for (const lane of lanes) if (lane.status === 'pending') return 'pending';
   const byId = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of REQUIRED_LOCAL_REVIEW_LANES) {
+  for (const laneId of requiredLocalReviewLanes(profile)) {
     if (!byId.has(laneId)) return 'missing';
     if (byId.get(laneId)?.status !== 'passed') return 'pending';
   }
+  if (missingRequiredContext(lanes, profile).length > 0) return 'inconclusive';
   return 'passed';
 }
 
@@ -182,67 +463,210 @@ function reviewerFrom(value: unknown, reviewers: readonly string[]): LocalReview
   return { id: safeSegment(id || name), name, adapterKind: 'local' };
 }
 
-function parseEvidence(path: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[]): LocalReviewEvidence {
+function readAdapter(value: unknown): LocalReviewEvidence['adapter'] {
+  if (value === 'local-command' || value === 'local-host' || value === 'manual-evidence') return value;
+  return 'manual-evidence';
+}
+
+function statusWithAdapter(status: LocalReviewStatus, adapter: LocalReviewEvidence['adapter'], shadow: boolean): LocalReviewStatus {
+  if (shadow) return status;
+  if (adapter === 'manual-evidence' && status === 'passed') return 'inconclusive';
+  return status;
+}
+
+function adapterBlockers(adapter: LocalReviewEvidence['adapter'], status: LocalReviewStatus, shadow: boolean): string[] {
+  if (shadow || adapter !== 'manual-evidence' || status !== 'inconclusive') return [];
+  return ['Manual local review evidence is unverified and cannot satisfy a required local review gate without local-command or local-host provenance.'];
+}
+
+function evidenceSchemaVersion(parsed: Record<string, unknown>): unknown {
+  return parsed.version ?? parsed.schemaVersion;
+}
+
+function parseEvidence(path: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers);
-    if (parsed.schemaVersion !== 1) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence schemaVersion must be 1.', reviewers);
-    if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers);
-    if (typeof parsed.headSha !== 'string' || parsed.headSha.trim() === '') return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence headSha metadata must be a non-empty string for this gate.', reviewers);
-    if (parsed.headSha !== headSha) return staleEvidence(issueNumber, prNumber, headSha, path, reviewers);
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers, profile);
+    if (evidenceSchemaVersion(parsed) !== 1) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence version must be 1.', reviewers, profile);
+    if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers, profile);
+    if (typeof parsed.headSha !== 'string' || parsed.headSha.trim() === '') return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence headSha metadata must be a non-empty string for this gate.', reviewers, profile);
+    if (parsed.headSha !== headSha) return staleEvidence(issueNumber, prNumber, headSha, path, reviewers, profile);
     const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers);
-    const status = laneStatus(lanes);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers)].filter((value, index, values) => values.indexOf(value) === index);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
+    const adapter = readAdapter(parsed.adapter);
+    const contextReviewed = readContextReviewed(parsed.contextReviewed);
+    const promptStack = readPromptStack(parsed.promptStack);
+    const missingContext = missingRequiredContext(lanes, profile);
+    const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
+    const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
+    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const status = statusWithAdapter(rawStatus, adapter, shadow);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
       headSha: redact(headSha),
+      profile,
+      adapter,
       status,
       path: redact(path),
       reviewer: reviewerFrom(parsed.reviewer, reviewers),
-      summary: stringValue(parsed.summary, status === 'passed' ? 'All required local review lanes passed.' : 'Local review evidence requires attention.'),
-      blockers,
+      summary: stringValue(parsed.summary, status === 'passed' ? 'All required local review lanes passed.' : status === 'inconclusive' ? `Local review evidence is inconclusive because required task context was not reviewed: ${missingContext.join(', ')}.` : 'Local review evidence requires attention.'),
+      blockers: [...blockers, ...contextBlockers],
       lanes,
+      contextReviewed,
+      promptStack,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };
   } catch {
-    return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON could not be parsed.', reviewers);
+    return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON could not be parsed.', reviewers, profile);
   }
 }
 
-function parseIssueEvidence(path: string, issueNumber: number, reviewers: readonly string[]): LocalReviewEvidence {
+function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter'] } | null {
   try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as unknown;
-    if (!isRecord(parsed)) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON must be an object.', reviewers);
-    if (parsed.schemaVersion !== 1) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence schemaVersion must be 1.', reviewers);
-    if (parsed.issueNumber !== issueNumber) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence issue metadata does not match this gate.', reviewers);
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
+    const parsedIssueNumber = parsed.issueNumber ?? parsed.issue;
+    const parsedPrNumber = parsed.prNumber ?? parsed.pr;
+    if (parsedIssueNumber !== issueNumber || parsedPrNumber !== prNumber || parsed.headSha !== headSha) return null;
+    const id = readLaneId(parsed.lane ?? parsed.id);
+    if (!id) return null;
+    const status = readStatus(parsed.status);
+    return {
+      adapter: readAdapter(parsed.adapter),
+      lane: {
+        id,
+        status,
+        severity: readSeverity(parsed.severity),
+        recommendation: readRecommendation(parsed.recommendation, status),
+        summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
+        blockers: stringArray(parsed.blockers),
+        artifacts: artifactArray(parsed.artifacts),
+        commands: stringArray(parsed.commands),
+        surfaces: stringArray(parsed.surfaces),
+        contextReviewed: readContextReviewed(parsed.contextReviewed),
+        promptStack: readPromptStack(parsed.promptStack),
+        toolsUsed: stringArray(parsed.toolsUsed),
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence | null {
+  const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
+  if (!existsSync(directory)) return null;
+  const requiredLanes = requiredLocalReviewLanes(profile);
+  const lanes: LocalReviewLane[] = [];
+  const missing: string[] = [];
+  const adapters: LocalReviewEvidence['adapter'][] = [];
+  try {
+    for (const laneId of requiredLanes) {
+      const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+      if (!existsSync(path)) {
+        missing.push(laneId);
+        continue;
+      }
+      const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+      lanes.push(parsed.lane);
+      adapters.push(parsed.adapter);
+    }
+  } catch {
+    return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
+  }
+  if (lanes.length === 0) return null;
+  if (missing.length > 0) {
+    const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
+    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
+  }
+  const finalGate = lanes.find(lane => lane.id === 'final-gate');
+  const contextReviewed = lanes.flatMap(lane => lane.contextReviewed);
+  const promptStack = lanes.flatMap(lane => lane.promptStack);
+  const missingContext = missingRequiredContext(lanes, profile);
+  const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
+  const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
+  const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
+  const status = statusWithAdapter(rawStatus, adapter, shadow);
+  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
+  return {
+    issueNumber,
+    prNumber,
+    headSha: redact(headSha),
+    profile,
+    adapter,
+    status,
+    path: redact(directory),
+    reviewer: fallbackReviewer(reviewers),
+    summary: finalGate?.summary ?? 'Local review lane evidence was loaded.',
+    blockers,
+    lanes,
+    contextReviewed,
+    promptStack,
+    recordedAt: null,
+    stale: false,
+  };
+}
+
+function parseIssueEvidence(path: string, issueNumber: number, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed)) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON must be an object.', reviewers, profile);
+    if (evidenceSchemaVersion(parsed) !== 1) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence version must be 1.', reviewers, profile);
+    if (parsed.issueNumber !== issueNumber) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence issue metadata does not match this gate.', reviewers, profile);
     const prNumber = typeof parsed.prNumber === 'number' && Number.isSafeInteger(parsed.prNumber) && parsed.prNumber > 0 ? parsed.prNumber : 0;
     const headSha = typeof parsed.headSha === 'string' && parsed.headSha.trim() !== '' ? parsed.headSha : 'unknown';
     const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers);
-    const status = laneStatus(lanes);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers)].filter((value, index, values) => values.indexOf(value) === index);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
+    const adapter = readAdapter(parsed.adapter);
+    const contextReviewed = readContextReviewed(parsed.contextReviewed);
+    const promptStack = readPromptStack(parsed.promptStack);
+    const missingContext = missingRequiredContext(lanes, profile);
+    const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
+    const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
+    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const status = statusWithAdapter(rawStatus, adapter, shadow);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
       headSha: redact(headSha),
+      profile,
+      adapter,
       status,
       path: redact(path),
       reviewer: reviewerFrom(parsed.reviewer, reviewers),
-      summary: stringValue(parsed.summary, status === 'passed' ? 'All required local review lanes passed.' : 'Local review evidence requires attention.'),
-      blockers,
+      summary: stringValue(parsed.summary, status === 'passed' ? 'All required local review lanes passed.' : status === 'inconclusive' ? `Local review evidence is inconclusive because required task context was not reviewed: ${missingContext.join(', ')}.` : 'Local review evidence requires attention.'),
+      blockers: [...blockers, ...contextBlockers],
       lanes,
+      contextReviewed,
+      promptStack,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };
   } catch {
-    return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON could not be parsed.', reviewers);
+    return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON could not be parsed.', reviewers, profile);
   }
 }
 
 function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number): string | null {
+  const laneRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
+  if (existsSync(laneRoot)) {
+    try {
+      const directories = readdirSync(laneRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort();
+      const newest = directories.at(-1);
+      if (newest) return join(laneRoot, newest);
+    } catch {
+      return null;
+    }
+  }
   const directory = evidenceDirectory(repoRoot, issueNumber, prNumber);
   if (!existsSync(directory)) return null;
   try {
@@ -283,6 +707,7 @@ function statusPriority(status: LocalReviewStatus): number {
     unavailable: 6,
     failed: 5,
     'needs-work': 4,
+    inconclusive: 4,
     stale: 3,
     pending: 2,
     missing: 1,
@@ -301,6 +726,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number): string {
     : 'Local review evidence is recorded; inspect PR state, checks, issue checklist, and any feedback before merge.';
   if (status === 'stale') return `Rerun local review lanes for the current PR head, refresh local evidence, then rerun ${rerunCommand}.`;
   if (status === 'failed' || status === 'needs-work') return 'Address local review blockers, rerun affected checks, refresh local evidence, and rerun the PR gate.';
+  if (status === 'inconclusive') return 'Refresh local review evidence with required AGENTS, issue, issue comments, milestone, functional requirement, linked issue, PR, and review-thread context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review evidence format or runner availability, then rerun the PR gate.';
   return `Record local review evidence for all required lanes, then rerun ${rerunCommand}.`;
 }
@@ -312,30 +738,39 @@ export function readLocalReviewGate(input: {
   headSha: string;
   reviewers: readonly string[];
   required: boolean;
+  profile?: LocalReviewProfile;
+  severityThreshold?: LocalReviewSeverity;
+  shadow?: boolean;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
-  if (!input.required) {
-    return { required: false, reviewers, requiredLanes: [...REQUIRED_LOCAL_REVIEW_LANES], evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
-  }
+  const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
+  const severityThreshold = input.severityThreshold ?? 'high';
+  const requiredLanes = [...requiredLocalReviewLanes(profile)];
+  const mode = input.shadow ? 'shadow' : input.required ? 'required' : 'disabled';
+  if (!input.required && !input.shadow) return { required: false, mode, profile, reviewers, requiredLanes, evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
   if (input.issueNumbers.length === 0) {
-    const evidence = [missingEvidence(null, input.prNumber, input.headSha, null, input.reviewers)];
-    return { required: true, reviewers, requiredLanes: [...REQUIRED_LOCAL_REVIEW_LANES], evidence, status: 'missing', summary: evidence[0].summary, nextAction: gateNextAction('missing', input.prNumber) };
+    const evidence = [missingEvidence(null, input.prNumber, input.headSha, null, input.reviewers, profile)];
+    return { required: input.required, mode, profile, reviewers, requiredLanes, evidence, status: 'missing', summary: evidence[0].summary, nextAction: gateNextAction('missing', input.prNumber) };
   }
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
+    if (laneEvidence) return laneEvidence;
+    if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber);
-    if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers);
-    return missingEvidence(issueNumber, input.prNumber, input.headSha, currentPath, input.reviewers);
+    if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers, profile);
+    return missingEvidence(issueNumber, input.prNumber, input.headSha, currentPath, input.reviewers, profile);
   });
   const status = gateStatus(evidence);
   return {
-    required: true,
+    required: input.required,
+    mode,
+    profile,
     reviewers,
-    requiredLanes: [...REQUIRED_LOCAL_REVIEW_LANES],
+    requiredLanes,
     evidence,
     status,
-    summary: evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' '),
+    summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
     nextAction: gateNextAction(status, input.prNumber),
   };
 }
@@ -345,23 +780,30 @@ export function readLocalIssueReviewGate(input: {
   issueNumber: number;
   reviewers: readonly string[];
   required: boolean;
+  profile?: LocalReviewProfile;
+  severityThreshold?: LocalReviewSeverity;
+  shadow?: boolean;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
-  if (!input.required) {
-    return { required: false, reviewers, requiredLanes: [...REQUIRED_LOCAL_REVIEW_LANES], evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
-  }
+  const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
+  const severityThreshold = input.severityThreshold ?? 'high';
+  const requiredLanes = [...requiredLocalReviewLanes(profile)];
+  const mode = input.shadow ? 'shadow' : input.required ? 'required' : 'disabled';
+  if (!input.required && !input.shadow) return { required: false, mode, profile, reviewers, requiredLanes, evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
   const evidencePaths = findIssueEvidence(input.repoRoot, input.issueNumber);
   const evidence = evidencePaths.length === 0
-    ? [missingEvidence(input.issueNumber, 0, 'unknown', null, input.reviewers)]
-    : evidencePaths.map(path => parseIssueEvidence(path, input.issueNumber, input.reviewers));
+    ? [missingEvidence(input.issueNumber, 0, 'unknown', null, input.reviewers, profile)]
+    : evidencePaths.map(path => parseIssueEvidence(path, input.issueNumber, input.reviewers, profile, severityThreshold, input.shadow ?? false));
   const status = gateStatus(evidence);
   return {
-    required: true,
+    required: input.required,
+    mode,
+    profile,
     reviewers,
-    requiredLanes: [...REQUIRED_LOCAL_REVIEW_LANES],
+    requiredLanes,
     evidence,
     status,
-    summary: evidence.map(item => `#${item.issueNumber ?? 'unknown'} PR #${item.prNumber || 'unknown'}: ${item.status} - ${item.summary}`).join(' '),
+    summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'} PR #${item.prNumber || 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
     nextAction: gateNextAction(status, evidence.find(item => item.prNumber > 0)?.prNumber ?? 0),
   };
 }

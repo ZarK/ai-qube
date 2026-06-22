@@ -1,5 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
-import type { MigrationPolicy, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -122,14 +122,154 @@ function readMergeStrategy(value: unknown, defaultValue: ShippingPolicy['mergeSt
 
 function readReviewAdapter(value: unknown, defaultValue: ReviewAdapterKind, path: string, errors: ValidationError[]): ReviewAdapterKind {
   if (value === undefined) return defaultValue;
-  if (value === 'github' || value === 'local' || value === 'mixed') return value;
+  if (value === 'github' || value === 'remote' || value === 'local' || value === 'mixed' || value === 'shadow') return value;
   errors.push({
     kind: 'invalid',
     path,
-    message: `${path} must be github, local, or mixed`,
-    suggestion: 'Use "github" for remote PR reviewers, "local" for repository-scoped local evidence, or "mixed" for both.',
+    message: `${path} must be github, remote, local, mixed, or shadow`,
+    suggestion: 'Use "github" or "remote" for remote PR reviewers, "local" for repository-scoped local evidence, "mixed" for both, or "shadow" for non-blocking local evidence.',
   });
   return defaultValue;
+}
+
+function readReviewProfile(value: unknown, defaultValue: ReviewProfileKind, path: string, errors: ValidationError[]): ReviewProfileKind {
+  if (value === undefined) return defaultValue;
+  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-comprehensive' || value === 'local-shadow') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be remote-compatible, local-standard, local-comprehensive, or local-shadow` });
+  return defaultValue;
+}
+
+function readReviewSeverity(value: unknown, defaultValue: ReviewSeverityThreshold, path: string, errors: ValidationError[]): ReviewSeverityThreshold {
+  if (value === undefined) return defaultValue;
+  if (value === 'low' || value === 'medium' || value === 'high' || value === 'critical') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be low, medium, high, or critical` });
+  return defaultValue;
+}
+
+function readReviewRequiredMode(value: unknown, defaultValue: ReviewLaneRequiredMode, path: string, errors: ValidationError[]): ReviewLaneRequiredMode {
+  if (value === undefined) return defaultValue;
+  if (value === 'always' || value === 'when-matched' || value === 'optional' || value === 'shadow') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be always, when-matched, optional, or shadow` });
+  return defaultValue;
+}
+
+function readReviewRunner(value: unknown, defaultValue: ReviewLanePolicy['runner'], path: string, errors: ValidationError[]): ReviewLanePolicy['runner'] {
+  if (value === undefined) return defaultValue;
+  if (value === 'github-comment' || value === 'github-reviewer' || value === 'local-command' || value === 'local-host' || value === 'manual-evidence') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be github-comment, github-reviewer, local-command, local-host, or manual-evidence` });
+  return defaultValue;
+}
+
+function readPromptFragments(value: unknown, defaultValue: ReviewPromptFragments, path: string, errors: ValidationError[]): ReviewPromptFragments {
+  if (value === undefined) return {
+    repository: [...defaultValue.repository],
+    safety: [...defaultValue.safety],
+    style: [...defaultValue.style],
+    adapter: [...defaultValue.adapter],
+    reviewer: [...defaultValue.reviewer],
+    commandAddendum: [...defaultValue.commandAddendum],
+  };
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return {
+      repository: [...defaultValue.repository],
+      safety: [...defaultValue.safety],
+      style: [...defaultValue.style],
+      adapter: [...defaultValue.adapter],
+      reviewer: [...defaultValue.reviewer],
+      commandAddendum: [...defaultValue.commandAddendum],
+    };
+  }
+  rejectUnknownKeys(value, ['repository', 'safety', 'style', 'adapter', 'reviewer', 'commandAddendum'], path, errors);
+  return {
+    repository: readStringArray(value, 'repository', defaultValue.repository, path, errors),
+    safety: readStringArray(value, 'safety', defaultValue.safety, path, errors),
+    style: readStringArray(value, 'style', defaultValue.style, path, errors),
+    adapter: readStringArray(value, 'adapter', defaultValue.adapter, path, errors),
+    reviewer: readStringArray(value, 'reviewer', defaultValue.reviewer, path, errors),
+    commandAddendum: readStringArray(value, 'commandAddendum', defaultValue.commandAddendum, path, errors),
+  };
+}
+
+function readContextSourceMode(value: unknown, defaultValue: 'github' | 'disabled', path: string, errors: ValidationError[]): 'github' | 'disabled' {
+  if (value === undefined) return defaultValue;
+  if (value === 'github' || value === 'disabled') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be github or disabled` });
+  return defaultValue;
+}
+
+function readContextSources(value: unknown, defaultValue: ReviewContextSources, path: string, errors: ValidationError[]): ReviewContextSources {
+  if (value === undefined) {
+    return {
+      instructions: [...defaultValue.instructions],
+      requirements: [...defaultValue.requirements],
+      issues: defaultValue.issues,
+      issueComments: defaultValue.issueComments,
+      linkedIssues: defaultValue.linkedIssues,
+      milestones: defaultValue.milestones,
+      pullRequests: defaultValue.pullRequests,
+      prComments: defaultValue.prComments,
+      reviewThreads: defaultValue.reviewThreads,
+    };
+  }
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return {
+      instructions: [...defaultValue.instructions],
+      requirements: [...defaultValue.requirements],
+      issues: defaultValue.issues,
+      issueComments: defaultValue.issueComments,
+      linkedIssues: defaultValue.linkedIssues,
+      milestones: defaultValue.milestones,
+      pullRequests: defaultValue.pullRequests,
+      prComments: defaultValue.prComments,
+      reviewThreads: defaultValue.reviewThreads,
+    };
+  }
+  rejectUnknownKeys(value, ['instructions', 'requirements', 'issues', 'issueComments', 'linkedIssues', 'milestones', 'pullRequests', 'prComments', 'reviewThreads'], path, errors);
+  return {
+    instructions: readStringArray(value, 'instructions', defaultValue.instructions, path, errors),
+    requirements: readStringArray(value, 'requirements', defaultValue.requirements, path, errors),
+    issues: readContextSourceMode(value.issues, defaultValue.issues, `${path}.issues`, errors),
+    issueComments: readContextSourceMode(value.issueComments, defaultValue.issueComments, `${path}.issueComments`, errors),
+    linkedIssues: readContextSourceMode(value.linkedIssues, defaultValue.linkedIssues, `${path}.linkedIssues`, errors),
+    milestones: readContextSourceMode(value.milestones, defaultValue.milestones, `${path}.milestones`, errors),
+    pullRequests: readContextSourceMode(value.pullRequests, defaultValue.pullRequests, `${path}.pullRequests`, errors),
+    prComments: readContextSourceMode(value.prComments, defaultValue.prComments, `${path}.prComments`, errors),
+    reviewThreads: readContextSourceMode(value.reviewThreads, defaultValue.reviewThreads, `${path}.reviewThreads`, errors),
+  };
+}
+
+function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path: string, errors: ValidationError[]): ReviewLanePolicy[] {
+  if (value === undefined) return defaultValue.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] }));
+  if (!Array.isArray(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an array of lane objects` });
+    return defaultValue.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] }));
+  }
+  const lanes: ReviewLanePolicy[] = [];
+  value.forEach((entry, index) => {
+    const lanePath = `${path}[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
+      return;
+    }
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner'], lanePath, errors);
+    const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
+    if (!id) {
+      errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
+      return;
+    }
+    lanes.push({
+      id,
+      required: readReviewRequiredMode(entry.required, 'when-matched', `${lanePath}.required`, errors),
+      match: readStringArray(entry, 'match', [], lanePath, errors),
+      severityThreshold: readReviewSeverity(entry.severityThreshold, 'high', `${lanePath}.severityThreshold`, errors),
+      prompt: readStringArray(entry, 'prompt', [], lanePath, errors),
+      tools: readStringArray(entry, 'tools', [], lanePath, errors),
+      runner: readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors),
+    });
+  });
+  return lanes;
 }
 
 function readLegacyScriptsPolicy(value: unknown, defaultValue: MigrationPolicy['legacyScripts'], path: string, errors: ValidationError[]): MigrationPolicy['legacyScripts'] {
@@ -339,14 +479,69 @@ function readShipping(value: unknown, defaultValue: ShippingPolicy, errors: Vali
 }
 
 function readReviews(value: unknown, defaultValue: ReviewConfig, errors: ValidationError[]): ReviewConfig {
-  if (value === undefined) return { ...defaultValue, agents: [...defaultValue.agents] };
+  if (value === undefined) {
+    return {
+      ...defaultValue,
+      promptFragments: {
+        repository: [...defaultValue.promptFragments.repository],
+        safety: [...defaultValue.promptFragments.safety],
+        style: [...defaultValue.promptFragments.style],
+        adapter: [...defaultValue.promptFragments.adapter],
+        reviewer: [...defaultValue.promptFragments.reviewer],
+        commandAddendum: [...defaultValue.promptFragments.commandAddendum],
+      },
+      contextSources: {
+        instructions: [...defaultValue.contextSources.instructions],
+        requirements: [...defaultValue.contextSources.requirements],
+        issues: defaultValue.contextSources.issues,
+        issueComments: defaultValue.contextSources.issueComments,
+        linkedIssues: defaultValue.contextSources.linkedIssues,
+        milestones: defaultValue.contextSources.milestones,
+        pullRequests: defaultValue.contextSources.pullRequests,
+        prComments: defaultValue.contextSources.prComments,
+        reviewThreads: defaultValue.contextSources.reviewThreads,
+      },
+      lanes: defaultValue.lanes.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] })),
+      agents: [...defaultValue.agents],
+      localAgents: [...defaultValue.localAgents],
+    };
+  }
   if (!isPlainObject(value)) {
     errors.push({ kind: 'invalid', path: 'policy.reviews', message: 'policy.reviews must be an object' });
-    return { ...defaultValue, agents: [...defaultValue.agents] };
+    return {
+      ...defaultValue,
+      promptFragments: {
+        repository: [...defaultValue.promptFragments.repository],
+        safety: [...defaultValue.promptFragments.safety],
+        style: [...defaultValue.promptFragments.style],
+        adapter: [...defaultValue.promptFragments.adapter],
+        reviewer: [...defaultValue.promptFragments.reviewer],
+        commandAddendum: [...defaultValue.promptFragments.commandAddendum],
+      },
+      contextSources: {
+        instructions: [...defaultValue.contextSources.instructions],
+        requirements: [...defaultValue.contextSources.requirements],
+        issues: defaultValue.contextSources.issues,
+        issueComments: defaultValue.contextSources.issueComments,
+        linkedIssues: defaultValue.contextSources.linkedIssues,
+        milestones: defaultValue.contextSources.milestones,
+        pullRequests: defaultValue.contextSources.pullRequests,
+        prComments: defaultValue.contextSources.prComments,
+        reviewThreads: defaultValue.contextSources.reviewThreads,
+      },
+      lanes: defaultValue.lanes.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] })),
+      agents: [...defaultValue.agents],
+      localAgents: [...defaultValue.localAgents],
+    };
   }
-  rejectUnknownKeys(value, ['adapter', 'agents', 'localAgents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
+    profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
+    severityThreshold: readReviewSeverity(value.severityThreshold, defaultValue.severityThreshold, 'policy.reviews.severityThreshold', errors),
+    promptFragments: readPromptFragments(value.promptFragments, defaultValue.promptFragments, 'policy.reviews.promptFragments', errors),
+    contextSources: readContextSources(value.contextSources, defaultValue.contextSources, 'policy.reviews.contextSources', errors),
+    lanes: readReviewLanes(value.lanes, defaultValue.lanes, 'policy.reviews.lanes', errors),
     agents: readStringArray(value, 'agents', defaultValue.agents, 'policy.reviews', errors),
     localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),

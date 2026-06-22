@@ -145,6 +145,60 @@ describe('config validation', () => {
     assert.equal(result.config.supplyChain.writePackageManagerDefaults, true);
   });
 
+  it('accepts local review profiles, custom prompts, context sources, and lane policy', () => {
+    const input = defaultFile();
+    input.policy.reviews = {
+      ...input.policy.reviews,
+      adapter: 'shadow',
+      profile: 'local-comprehensive',
+      severityThreshold: 'medium',
+      promptFragments: {
+        repository: ['.qube/aie/review-prompts/repository.md'],
+        safety: ['builtin:executor-review-safety'],
+        style: ['.github/copilot-instructions.md'],
+        adapter: ['builtin:local-host-review'],
+        reviewer: ['.qube/aie/review-prompts/oracle.md'],
+        commandAddendum: ['Focus on concurrency regressions.'],
+      },
+      contextSources: {
+        instructions: ['AGENTS.md', '**/AGENTS.md'],
+        requirements: ['docs/spec.md'],
+        issues: 'github',
+        issueComments: 'github',
+        linkedIssues: 'github',
+        milestones: 'github',
+        pullRequests: 'github',
+        prComments: 'github',
+        reviewThreads: 'github',
+      },
+      lanes: [{
+        id: 'security',
+        required: 'when-matched',
+        match: ['**/api/**'],
+        severityThreshold: 'medium',
+        prompt: ['builtin:security-review', '.qube/aie/review-prompts/security.md'],
+        tools: ['rg', 'ast-grep'],
+        runner: 'local-host',
+      }],
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.reviewAdapter, 'shadow');
+    assert.equal(result.config.reviewProfile, 'local-comprehensive');
+    assert.equal(result.config.reviewSeverityThreshold, 'medium');
+    assert.deepEqual(result.config.reviewPromptFragments.adapter, ['builtin:local-host-review']);
+    assert.deepEqual(result.config.reviewPromptFragments.reviewer, ['.qube/aie/review-prompts/oracle.md']);
+    assert.deepEqual(result.config.reviewPromptFragments.commandAddendum, ['Focus on concurrency regressions.']);
+    assert.deepEqual(result.config.reviewContextSources.requirements, ['docs/spec.md']);
+    assert.equal(result.config.reviewContextSources.issueComments, 'github');
+    assert.equal(result.config.reviewContextSources.linkedIssues, 'github');
+    assert.equal(result.config.reviewContextSources.prComments, 'github');
+    assert.equal(result.config.reviewContextSources.reviewThreads, 'github');
+    assert.equal(result.config.reviewLanes[0].runner, 'local-host');
+  });
+
   it('rejects unknown fields and unsupported provider kinds with actionable paths', () => {
     const input = defaultFile();
     input.legacyFlatField = true;
@@ -164,7 +218,7 @@ describe('config validation', () => {
   it('rejects unsupported nested policy values with actionable paths', () => {
     const input = defaultFile();
     input.policy.reviews.waitMinutes = '15';
-    input.policy.reviews.adapter = 'remote';
+    input.policy.reviews.adapter = 'unsupported';
     input.policy.milestoneOrdering.missingAssignment = 'required';
     input.policy.supplyChain.packageAgeDays = true;
     input.policy.supplyChain.highRiskPackageAgeDays = 7;

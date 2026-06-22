@@ -25,10 +25,11 @@ function schemaOptions() {
           ci: ['github'],
           layout: ['local'],
         },
-        reviewAdapters: ['github', 'local', 'mixed'],
+        reviewAdapters: ['github', 'remote', 'local', 'mixed', 'shadow'],
         localReviewEvidence: {
           root: '.qube/aie/pr-reviews',
-          requiredLanes: ['code-quality', 'security-maintainability', 'qa', 'final-gate'],
+          requiredLanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'],
+          comprehensiveLanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'security', 'performance', 'data-database', 'concurrency-resource', 'error-observability', 'tests-quality', 'api-contract-compatibility', 'docs-instructions', 'ui-ux-accessibility', 'release-ci-supply-chain', 'manual-qa', 'final-gate'],
           runner: 'unavailable',
         },
         defaultConfig: configToFileShape(getDefaults()),

@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ShippingPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewLanePolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
@@ -74,6 +74,11 @@ export interface LifecycleConfig {
 
 export interface ReviewConfig {
   adapter: ReviewAdapterKind;
+  profile: ReviewProfileKind;
+  severityThreshold: ReviewSeverityThreshold;
+  promptFragments: ReviewPromptFragments;
+  contextSources: ReviewContextSources;
+  lanes: ReviewLanePolicy[];
   agents: string[];
   localAgents: string[];
   waitMinutes: number;
@@ -152,6 +157,11 @@ export interface Config extends ConfigFileShape {
   ignoredAutomationAuthors: string[];
   reviewAgents: string[];
   reviewAdapter: ReviewAdapterKind;
+  reviewProfile: ReviewProfileKind;
+  reviewSeverityThreshold: ReviewSeverityThreshold;
+  reviewPromptFragments: ReviewPromptFragments;
+  reviewContextSources: ReviewContextSources;
+  reviewLanes: ReviewLanePolicy[];
   localReviewAgents: string[];
   reviewWaitMinutes: number;
   reviewRequestText: string;
