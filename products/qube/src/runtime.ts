@@ -66,7 +66,7 @@ const yesFlag = defineFlag({
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "generic" | "codex" | "opencode" | "claude-code";
-type InstallWorkProvider = "github" | "linear" | "local";
+type InstallWorkProvider = "github" | "gitlab" | "linear" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
@@ -359,6 +359,11 @@ const workProviderChoices = defineInstallerChoiceGroup({
       recommended: true
     },
     {
+      value: "gitlab",
+      label: "GitLab",
+      description: "Use GitLab issues as the planning/work queue while keeping merge request and CI provider limits explicit."
+    },
+    {
       value: "linear",
       label: "Linear",
       description: "Use Linear issues as the planning/work queue while keeping review and CI provider limits explicit."
@@ -455,7 +460,7 @@ const installCommand = defineCommand({
       name: "work-provider",
       description: "Work provider to mention in setup notes.",
       type: "option",
-      options: ["github", "linear", "local"]
+      options: ["github", "gitlab", "linear", "local"]
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -3309,7 +3314,7 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
   }
-  if (selections.workProvider === "github" || selections.workProvider === "linear") {
+  if (selections.workProvider === "github" || selections.workProvider === "gitlab" || selections.workProvider === "linear") {
     files.push(".qube/aie/config.json provider notes");
   }
   return files;
@@ -3328,6 +3333,8 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   }
   if (selections.workProvider === "github") {
     notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
+  } else if (selections.workProvider === "gitlab") {
+    notes.push("GitLab-backed work uses GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL for read mapping; lifecycle mutations, merge request mutations, and merge request pipeline status for CI gates stay unsupported until tested GitLab adapters exist.");
   } else if (selections.workProvider === "linear") {
     notes.push("Linear-backed work uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping; lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
   } else {

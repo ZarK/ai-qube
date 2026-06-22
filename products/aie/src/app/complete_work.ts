@@ -39,6 +39,7 @@ function statusLabelsToRemove(item: WorkItem, context: LifecycleServiceContext):
 async function milestoneContext(item: WorkItem, context: LifecycleServiceContext, warnings: string[]): Promise<CompletionMilestoneContext | null> {
   if (!item.project) return null;
   const fallback = { number: Number(item.project.id), title: item.project.title, state: item.project.state.toUpperCase(), dueOn: item.project.dueOn, openIssues: null, closedIssues: null, remainingOpenIssues: null };
+  if (context.provider.id !== 'github') return fallback;
   try {
     const repository = await getRepositoryIdentity({ exec: context.exec, cwd: context.cwd });
     const milestones = await listMilestones(repository, { exec: context.exec, cwd: context.cwd });
@@ -99,7 +100,7 @@ function blocked(item: WorkItem, state: CompletionState, list: CompletionCheckli
 
 export async function runCompleteService(options: { issueNumber: number; dryRun: boolean; checkOnly: boolean; force: boolean; context: LifecycleServiceContext }): Promise<CompleteServiceResult> {
   const { issueNumber, dryRun, checkOnly, force, context } = options;
-  const item = await context.provider.getWorkItem({ providerId: 'github', id: String(issueNumber) });
+  const item = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(issueNumber) });
   const list = checklist(item.body);
   const allOpenItems = await context.provider.listOpenWorkItems();
   const dependents = directDependents(allOpenItems, item).sort((left, right) => githubIssueNumber(left) - githubIssueNumber(right));

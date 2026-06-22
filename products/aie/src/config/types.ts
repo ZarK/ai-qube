@@ -2,7 +2,7 @@ import type { ExecutorPolicy, MigrationPolicy, ShippingPolicy } from '../core/po
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
-export type WorkProviderKind = 'github' | 'linear';
+export type WorkProviderKind = 'github' | 'gitlab' | 'linear';
 export type ReviewProviderKind = 'github';
 export type RepositoryProviderKind = 'local-git';
 export type CiProviderKind = 'github';

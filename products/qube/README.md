@@ -14,6 +14,7 @@ qube install --yes --dry-run --json
 qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
 qube install --scope local --package-manager pnpm --host claude-code --work-provider github --yes
 qube install --scope local --package-manager pnpm --host codex --work-provider linear --yes
+qube install --scope local --package-manager pnpm --host codex --work-provider gitlab --yes
 ```
 
 `qube install` is a guided installer planner. It asks about project-local versus
@@ -126,6 +127,9 @@ Claude Code host setup and limitations are documented in the repository guide:
 
 Linear provider setup and limitations are documented in the repository guide:
 [Linear provider support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-linear-provider-support.md).
+
+GitLab provider setup and limitations are documented in the repository guide:
+[GitLab provider support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-gitlab-provider-support.md).
 
 ## Make-It-So Contract
 

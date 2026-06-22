@@ -1,6 +1,6 @@
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
-export type QubeIntegrationSurface = "cli" | "github" | "linear" | "codex" | "opencode" | "claude-code";
+export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code";
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
@@ -24,7 +24,7 @@ export interface QubeProductContract {
 }
 
 export interface QubeAdapterContract {
-  readonly id: "github" | "linear" | "codex" | "opencode" | "claude-code";
+  readonly id: "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code";
   readonly packageName: string;
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
@@ -72,7 +72,7 @@ export const qubeProductContracts = [
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
     standalone: true,
-    surfaces: ["cli", "github", "linear", "codex", "opencode", "claude-code"],
+    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code"],
   },
   {
     id: "executor",
@@ -80,7 +80,7 @@ export const qubeProductContracts = [
     commandName: "aie",
     role: "Execute GitHub issue work through repository and review gates.",
     standalone: true,
-    surfaces: ["cli", "github", "linear", "codex", "opencode", "claude-code"],
+    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code"],
   },
   {
     id: "quality",

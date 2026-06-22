@@ -10,7 +10,7 @@ export interface WorkProviderCapabilities {
   applyLifecycleMutations: boolean;
 }
 
-export type WorkProviderId = 'github' | 'linear';
+export type WorkProviderId = 'github' | 'gitlab' | 'linear';
 
 export interface WorkProvider {
   readonly id: WorkProviderId;

@@ -11,6 +11,7 @@ import {
   selectProjectProfile,
   selectSpecChapters,
   renderGitHubIssueDraft,
+  renderGitLabIssueDraft,
   renderLinearIssueDraft,
   renderWorkItemDrafts,
   renderMarkdownWorkItemDraft,
@@ -143,6 +144,27 @@ test("Linear rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://linear.app/acme/issue/ENG-2/build-neutral-contracts");
 });
 
+test("GitLab rendering adapts canonical drafts at the provider edge", () => {
+  const rendered = renderGitLabIssueDraft({
+    ...sampleDraft,
+    providerMetadata: {
+      gitlab: {
+        blockedBy: [1],
+        labels: ["S-Ready", "P2-High", "backend"],
+        milestone: "Provider expansion",
+        url: "https://gitlab.example.com/acme/qube/-/issues/2"
+      }
+    }
+  });
+  assert.equal(rendered.title, sampleDraft.title);
+  assert.deepEqual(rendered.blockedBy, [1]);
+  assert.deepEqual(rendered.labels, ["S-Ready", "P2-High", "backend"]);
+  assert.equal(rendered.milestone, "Provider expansion");
+  assert.match(rendered.description, /^Blocked by: #1/m);
+  assert.match(rendered.description, /^Sequence: 2/m);
+  assert.equal(rendered.url, "https://gitlab.example.com/acme/qube/-/issues/2");
+});
+
 test("provider-neutral work item drafts render to GitHub previews and markdown exports", () => {
   const state = {
     version: 1,
@@ -188,6 +210,13 @@ test("provider-neutral work item drafts render to GitHub previews and markdown e
   assert.equal(linear.rendered[0].draftId, "draft-foundation");
   assert.equal(linear.rendered[0].priority, 2);
   assert.match(linear.rendered[0].description, /^Blocked by: draft-package/m);
+
+  const gitlab = renderWorkItemDrafts(state, "gitlab");
+  assert.equal(gitlab.provider, "gitlab");
+  assert.deepEqual(gitlab.artifacts, []);
+  assert.equal(gitlab.rendered[0].draftId, "draft-foundation");
+  assert.deepEqual(gitlab.rendered[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
+  assert.match(gitlab.rendered[0].description, /^Blocked by: draft-package/m);
 
   const markdown = renderWorkItemDrafts(state, "markdown", { outputDir: "review/issues" });
   assert.equal(markdown.provider, "markdown");
