@@ -11,7 +11,11 @@ import {
   surfaceIds,
 } from "@tjalve/aiq/model";
 
-export const aiqConfigFileNames = [".qube/aiq/config.json", ".aiq/aiq.config.json", "aiq.config.json"] as const;
+export const aiqConfigFileNames = [
+  ".qube/aiq/config.json",
+  ".aiq/aiq.config.json",
+  "aiq.config.json",
+] as const;
 export const aiqProgressFileNames = [".qube/aiq/progress.json", ".aiq/progress.json"] as const;
 export const aiqProgressFileName = aiqProgressFileNames[0];
 
@@ -342,9 +346,6 @@ export const defaultConfig: AiqConfig = {
     lsp: {
       profile: "fast",
       publishDiagnostics: true,
-    },
-    mcp: {
-      profile: "fast",
     },
     watch: {
       profile: "fast",

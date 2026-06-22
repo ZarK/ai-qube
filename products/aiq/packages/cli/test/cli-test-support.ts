@@ -51,7 +51,6 @@ export const internalPackageWorkspaces = [
   "packages/github-action",
   "packages/hook",
   "packages/lsp",
-  "packages/mcp",
   "packages/model",
   "packages/opencode-plugin",
   "packages/reporters",
@@ -60,7 +59,6 @@ export const adapterPackageWorkspaces = [
   "packages/github-action",
   "packages/hook",
   "packages/lsp",
-  "packages/mcp",
   "packages/opencode-plugin",
 ] as const;
 export const describePackageSmoke = process.env.AIQ_SMOKE === "1" ? describe : describe.skip;
