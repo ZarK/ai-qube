@@ -9,6 +9,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   assertCodexHostCapabilityAvailable,
+  codexInstallFiles,
+  codexInstallNotes,
+  codexUnsupportedCapabilityMessage,
   findQubeComponent,
   getCodexHostCapability,
   inspectCodexWorkspace,
@@ -203,9 +206,18 @@ describe("qube composer CLI", () => {
     assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
     assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 4);
     assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
+    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
 
     assert.equal(assertCodexHostCapabilityAvailable("read-instructions").support, "supported");
     assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
+    assert.deepEqual(codexInstallFiles(), [
+      "AGENTS.md policy notes: Codex project instructions use AGENTS.md with repository policy precedence.",
+    ]);
+    assert.equal(codexInstallNotes().length, 4);
+
+    const unknownCapability = getCodexHostCapability("completely-unknown-id");
+    assert.equal(unknownCapability.support, "unsupported");
+    assert.match(codexUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
     assert.throws(() => assertCodexHostCapabilityAvailable("install-project-command"), /Unsupported Codex capability/);
 
     const repo = mkdtempSync(path.join(tmpdir(), "qube-codex-host-"));
@@ -221,6 +233,10 @@ describe("qube composer CLI", () => {
     assert.throws(() => {
       inspection.capabilities[0].summary = "mutated";
     }, TypeError);
+
+    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-codex-host-missing-"));
+    const missingInspection = inspectCodexWorkspace(repoWithoutInstructions);
+    assert.equal(missingInspection.instructionTarget.present, false);
   });
 
   it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {

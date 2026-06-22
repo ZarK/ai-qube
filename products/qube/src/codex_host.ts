@@ -125,20 +125,18 @@ const CODEX_CAPABILITY_MAP = new Map<string, CodexHostCapability>(
   CODEX_CAPABILITIES.map((capability) => [capability.id, capability]),
 );
 
-if (CODEX_CAPABILITY_MAP.size !== CODEX_CAPABILITIES.length) {
-  throw new Error("Duplicate Codex host capability id detected.");
-}
-
-export function getCodexHostCapability(capability: CodexHostCapabilityId | string): CodexHostCapability {
-  return CODEX_CAPABILITY_MAP.get(capability) ?? unsupportedCapability(capability);
+export function getCodexHostCapability(capability: CodexHostCapabilityId): CodexHostCapability;
+export function getCodexHostCapability(capability: string): CodexHostCapability {
+  return lookupCodexHostCapability(capability);
 }
 
 export function listCodexHostCapabilities(): readonly CodexHostCapability[] {
   return Object.freeze([...CODEX_CAPABILITIES]);
 }
 
-export function assertCodexHostCapabilityAvailable(capability: CodexHostCapabilityId | string): CodexHostCapability {
-  const support = getCodexHostCapability(capability);
+export function assertCodexHostCapabilityAvailable(capability: CodexHostCapabilityId): CodexHostCapability;
+export function assertCodexHostCapabilityAvailable(capability: string): CodexHostCapability {
+  const support = lookupCodexHostCapability(capability);
   if (support.support === "unsupported") {
     throw new Error(codexUnsupportedCapabilityMessage(support));
   }
@@ -189,6 +187,10 @@ function unsupportedCapability(capability: string): CodexHostCapability {
     summary: "No QUBE package has registered real Codex behavior for this capability.",
     nextAction: "Use a documented QUBE command or add a tested Codex host capability before exposing this operation.",
   });
+}
+
+function lookupCodexHostCapability(capability: string): CodexHostCapability {
+  return CODEX_CAPABILITY_MAP.get(capability) ?? unsupportedCapability(capability);
 }
 
 function freezeCapability(capability: CodexHostCapability): CodexHostCapability {
