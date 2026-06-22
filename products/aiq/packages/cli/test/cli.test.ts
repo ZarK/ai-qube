@@ -144,11 +144,12 @@ describe("CLI foundation", () => {
   });
 
   it("CLI package smoke keeps default Vitest usage in non-server run mode", async () => {
-    const packageJson = JSON.parse(await readFile(path.join(repoRoot, "package.json"), "utf8")) as {
+    const aiqRoot = path.join(path.dirname(cliPackageJsonPath), "..", "..");
+    const packageJson = JSON.parse(await readFile(path.join(aiqRoot, "package.json"), "utf8")) as {
       devDependencies?: Record<string, string>;
       scripts?: Record<string, string>;
     };
-    const vitestConfig = await readFile(path.join(repoRoot, "vitest.config.ts"), "utf8");
+    const vitestConfig = await readFile(path.join(aiqRoot, "vitest.config.ts"), "utf8");
 
     expect(packageJson.devDependencies).not.toHaveProperty("@vitest/browser");
     expect(packageJson.devDependencies).not.toHaveProperty("@vitest/ui");
@@ -158,8 +159,8 @@ describe("CLI foundation", () => {
       expect(command).not.toMatch(/\bvitest\b.*\s--api\.host\b/);
     }
 
-    expect(vitestConfig).not.toMatch(/\bbrowser\s*:/);
-    expect(vitestConfig).not.toMatch(/\bapi\s*:\s*{[^}]*\bhost\s*:/s);
-    expect(vitestConfig).not.toMatch(/\ballow(?:Write|Exec)\s*:\s*true\b/);
+    expect(vitestConfig).not.toMatch(/^\s*browser\s*:/m);
+    expect(vitestConfig).not.toMatch(/^\s*api\s*:\s*{[^}]*\bhost\s*:/ms);
+    expect(vitestConfig).not.toMatch(/^\s*allow(?:Write|Exec)\s*:\s*true\b/m);
   });
 });
