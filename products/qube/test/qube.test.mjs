@@ -234,6 +234,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /CLAUDE\.md policy notes/);
     assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
     assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
+    assert.match(result.stdout, /Use TodoWrite and TodoRead/);
     assert.match(result.stdout, /do not create Claude Code slash command or skill assets/);
     assert.match(result.stdout, /No commands were run\./);
   });
@@ -285,6 +286,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(assertClaudeCodeHostCapabilityAvailable("read-instructions").support, "supported");
     assert.equal(getClaudeCodeHostCapability("install-slash-command").support, "unsupported");
+    assert.deepEqual(getClaudeCodeHostCapability("use-task-state").tools, ["TodoWrite", "TodoRead"]);
     assert.deepEqual(listClaudeCodeInstallFiles(), [
       "CLAUDE.md policy notes: Claude Code project instructions use CLAUDE.md with repository policy precedence.",
       ".claude/settings.json hook notes: Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop.",

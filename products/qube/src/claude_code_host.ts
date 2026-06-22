@@ -53,7 +53,7 @@ const CLAUDE_CODE_PROJECT_SETTINGS_PATH = ".claude/settings.json";
 const CLAUDE_CODE_LOCAL_SETTINGS_PATH = ".claude/settings.local.json";
 const CLAUDE_CODE_COMMAND_DIRECTORY = ".claude/commands";
 const CLAUDE_CODE_SKILLS_DIRECTORY = ".claude/skills";
-const CLAUDE_CODE_TASK_TOOLS = ["TaskCreate", "TaskGet", "TaskUpdate", "TaskList", "TodoWrite"] as const;
+const CLAUDE_CODE_TODO_TOOLS = ["TodoWrite", "TodoRead"] as const;
 
 const SUPPORTED_CAPABILITIES = Object.freeze([
   freezeCapability({
@@ -86,9 +86,9 @@ const HOST_PROVIDED_CAPABILITIES = Object.freeze([
     id: "use-task-state",
     support: "host-provided",
     owner: "Claude Code host",
-    summary: "Claude Code task and todo state is host session state; durable QUBE state stays in GitHub issues, pull requests, and .qube artifacts.",
-    nextAction: "Use TaskCreate, TaskUpdate, TaskList, or the current host-exposed task tools from the main Claude Code agent when available.",
-    tools: CLAUDE_CODE_TASK_TOOLS,
+    summary: "Claude Code todo state is host session state; durable QUBE state stays in GitHub issues, pull requests, and .qube artifacts.",
+    nextAction: "Use TodoWrite and TodoRead from the main Claude Code agent when available.",
+    tools: CLAUDE_CODE_TODO_TOOLS,
   }),
   freezeCapability({
     id: "run-commands",

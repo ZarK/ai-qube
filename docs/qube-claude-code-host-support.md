@@ -1,7 +1,7 @@
 # QUBE Claude Code Host Support
 
 QUBE treats Claude Code as a first-class host surface for repository instruction
-discovery, task-state guidance, and continuation boundaries. Claude Code support
+discovery, todo guidance, and continuation boundaries. Claude Code support
 is intentionally separate from Codex, OpenCode, and generic shell behavior.
 
 ## Capability Model
@@ -20,8 +20,8 @@ Supported QUBE-owned behavior:
 
 Host-provided behavior:
 
-- Claude Code task and todo state is session working memory. Keep durable task
-  state in GitHub issues, pull requests, and `.qube/` artifacts.
+- Claude Code todo state is session working memory. Keep durable task state in
+  GitHub issues, pull requests, and `.qube/` artifacts.
 - Claude Code command execution follows active host settings, permissions,
   hooks, and repository policy.
 - Claude Code hooks are host settings. Review `.claude/settings.json` before
@@ -70,7 +70,7 @@ qube aiq doctor --format json
 qube aiu status --json
 ```
 
-Treat Claude Code task tools as working memory. Use GitHub issue comments,
+Treat Claude Code todo tools as working memory. Use GitHub issue comments,
 checklists, pull requests, and QUBE evidence files for durable shared state.
 
 ## Review And Continuation

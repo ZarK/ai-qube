@@ -18,7 +18,7 @@ Product packages still own Codex-specific side effects:
 - QUBE installer guidance consumes the Codex capability layer for `qube install --host codex` notes.
 - Codex host todo state remains local session state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
 
-`@tjalve/qube` includes the installed Claude Code host capability layer. It detects project `CLAUDE.md`, `.claude/settings.json`, `.claude/commands`, and `.claude/skills`, reports Claude Code task state, command execution, hooks, slash commands, subagents, and session continuation as host-provided, and reports unsupported Claude Code operations such as QUBE-managed slash-command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
+`@tjalve/qube` includes the installed Claude Code host capability layer. It detects project `CLAUDE.md`, `.claude/settings.json`, `.claude/commands`, and `.claude/skills`, reports Claude Code todo state, command execution, hooks, slash commands, subagents, and session continuation as host-provided, and reports unsupported Claude Code operations such as QUBE-managed slash-command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
 
 Product packages still own Claude Code-specific side effects:
 
@@ -26,7 +26,7 @@ Product packages still own Claude Code-specific side effects:
 - AIE can install managed Executor instructions for Claude Code through `qube aie init . --tool claude-code` and still owns branch, PR, review, and completion workflow.
 - AIU owns the experimental Claude Code Stop hook integration through `qube aiu init --tool claude-code` and `qube aiu hook-stop --tool claude-code`.
 - QUBE installer guidance consumes the Claude Code capability layer for `qube install --host claude-code` notes.
-- Claude Code task and conversation state remains local host state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
+- Claude Code todo and conversation state remains local host state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
 - QUBE composer install notes do not create `.claude/commands` or `.claude/skills` assets.
 
 `@tjalve/qube-adapter-opencode` is the shared OpenCode host adapter. It detects `AGENTS.md` and `.opencode/commands`, reports the host todo tools (`todowrite` and `todoread`), records the supported project-command and prompt/stop-hook capability boundaries, and returns explicit unsupported-capability results for behavior that OpenCode does not own, such as external review requests, branch creation, or pull request creation.
