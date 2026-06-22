@@ -1158,10 +1158,14 @@ function promoteAutoresearch(
   if (existsSync(outputPath) && !request.flags.force) {
     return { error: `Promotion output already exists: ${outputPath}. Pass --force to replace it.` };
   }
+  const sourcePath = validateAutoresearchCandidateArtifact(context, best);
+  if (typeof sourcePath !== "string") {
+    return sourcePath;
+  }
   const promotion: AutoresearchPromotion = {
     candidateId: best.id,
     outputPath,
-    sourcePath: best.artifactPath,
+    sourcePath,
     promotedAt: new Date().toISOString()
   };
   const state = updateAutoresearchState(context.state, {
@@ -1171,7 +1175,7 @@ function promoteAutoresearch(
   });
   if (!dryRun) {
     mkdirSync(path.dirname(outputPath), { recursive: true });
-    copyFileSync(best.artifactPath, outputPath);
+    copyFileSync(sourcePath, outputPath);
     writeJsonFile(path.join(context.runDirectory, "promotion.json"), promotion);
     writeJsonFile(path.join(context.runDirectory, "state.json"), state);
     writeAutoresearchDashboard({ ...context, state });
@@ -1192,6 +1196,30 @@ interface AutoresearchContext {
   readonly state: AutoresearchState;
   readonly evaluator: AutoresearchEvaluator;
   readonly arena: Readonly<Record<string, unknown>>;
+}
+
+function validateAutoresearchCandidateArtifact(
+  context: AutoresearchContext,
+  candidate: AutoresearchCandidate
+): string | { readonly error: string } {
+  const sandboxDirectory = path.join(context.runDirectory, "sandbox", "candidates");
+  const artifactPath = path.resolve(candidate.artifactPath);
+  if (!existsSync(sandboxDirectory)) {
+    return { error: `Autoresearch candidate sandbox is missing: ${sandboxDirectory}.` };
+  }
+  if (!existsSync(artifactPath)) {
+    return { error: `Selected autoresearch candidate artifact is missing: ${artifactPath}.` };
+  }
+  const realSandboxDirectory = realpathSync(sandboxDirectory);
+  const realArtifactPath = realpathSync(artifactPath);
+  const relativeArtifactPath = path.relative(realSandboxDirectory, realArtifactPath);
+  if (relativeArtifactPath.startsWith("..") || path.isAbsolute(relativeArtifactPath)) {
+    return { error: "Selected autoresearch candidate artifact is outside the sandbox. Refusing promotion." };
+  }
+  if (!statSync(realArtifactPath).isFile()) {
+    return { error: `Selected autoresearch candidate artifact is not a file: ${realArtifactPath}.` };
+  }
+  return realArtifactPath;
 }
 
 function parseAutoresearchArgs(args: readonly string[]):
@@ -1233,13 +1261,21 @@ function parseAutoresearchArgs(args: readonly string[]):
       continue;
     }
     if (token.startsWith("-")) {
-      return { error: autoresearchError(`Unknown autoresearch flag: ${token}`, flags.json) };
+      return { error: autoresearchError(`Unknown autoresearch flag: ${token}`, hasTopLevelJsonFlag(args)) };
     }
     positionals.push(token);
   }
 
   const [first, ...rest] = positionals;
   if (first && isAutoresearchCommand(first)) {
+    if (first !== "init") {
+      if (flags.runId && rest.length > 0) {
+        return { error: autoresearchError(`Autoresearch ${first} accepts either --run <id> or one positional run id, not both.`, hasTopLevelJsonFlag(args)) };
+      }
+      if (rest.length > 1) {
+        return { error: autoresearchError(`Autoresearch ${first} accepts at most one positional run id.`, hasTopLevelJsonFlag(args)) };
+      }
+    }
     return { request: { command: first, compact: false, args: rest, flags } };
   }
   if (first) {

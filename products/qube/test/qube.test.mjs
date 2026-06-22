@@ -303,6 +303,54 @@ describe("qube composer CLI", () => {
     assert.match(parsed.error.likelyCause, /existing directory target/);
   });
 
+  it("keeps autoresearch usage errors structured regardless of flag order", () => {
+    const unknown = runCli(["autoresearch", "--bogus", "--json"]);
+    assert.equal(unknown.status, 2);
+    const unknownParsed = JSON.parse(unknown.stdout);
+    assert.equal(unknownParsed.ok, false);
+    assert.match(unknownParsed.error.likelyCause, /--bogus/);
+
+    const extra = runCli(["autoresearch", "status", "run-one", "extra", "--json"]);
+    assert.equal(extra.status, 2);
+    const extraParsed = JSON.parse(extra.stdout);
+    assert.equal(extraParsed.ok, false);
+    assert.match(extraParsed.error.likelyCause, /at most one positional run id/);
+
+    const mixed = runCli(["autoresearch", "status", "run-one", "--run", "run-two", "--json"]);
+    assert.equal(mixed.status, 2);
+    const mixedParsed = JSON.parse(mixed.stdout);
+    assert.equal(mixedParsed.ok, false);
+    assert.match(mixedParsed.error.likelyCause, /either --run <id> or one positional run id/);
+  });
+
+  it("refuses to promote an autoresearch artifact outside the sandbox", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-promotion-cwd-"));
+    const target = path.join(cwd, "target");
+    mkdirSync(target, { recursive: true });
+    const targetReadme = path.join(target, "README.md");
+    writeFileSync(targetReadme, "Existing notes target.\n", "utf8");
+
+    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const statePath = path.join(initialized.stateDirectory, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    state.currentBest.artifactPath = targetReadme;
+    state.attempts = state.attempts.map((attempt) => (
+      attempt.id === state.currentBest.id ? { ...attempt, artifactPath: targetReadme } : attempt
+    ));
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+    const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside the sandbox/);
+  });
+
   it("renders make-it-so dry-run plans without dispatching", () => {
     const planned = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--json"]);
     assert.equal(planned.status, 0);
