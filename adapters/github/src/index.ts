@@ -281,8 +281,7 @@ function freezeOperation(operation: GitHubOperationSupport): GitHubOperationSupp
 function normalizeGitHubNumber(value: number | string, label: string): string {
   if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
   if (typeof value === "string" && value === value.trim() && /^[1-9]\d*$/.test(value)) {
-    const numericValue = Number(value);
-    if (Number.isSafeInteger(numericValue) && numericValue > 0) return value;
+    if (BigInt(value) <= BigInt(Number.MAX_SAFE_INTEGER)) return value;
   }
   throw new RangeError(`${label} numbers must be positive safe integers.`);
 }

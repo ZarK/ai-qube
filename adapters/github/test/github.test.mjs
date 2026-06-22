@@ -70,6 +70,7 @@ describe("github adapter contract", () => {
     assert.throws(() => githubIssueReference(0), /positive safe integers/);
     assert.throws(() => githubPullRequestReference(" 7"), /positive safe integers/);
     assert.throws(() => githubWorkItemKey(Number.MAX_SAFE_INTEGER + 1), /positive safe integers/);
+    assert.throws(() => githubWorkItemKey("9007199254740992"), /positive safe integers/);
   });
 
   it("keeps review request markers normalized", () => {
