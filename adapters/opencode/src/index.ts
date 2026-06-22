@@ -149,7 +149,7 @@ export const opencodeAdapter = defineQubeAdapter({
   surface: "opencode",
   owns: ["host-detection", "instruction-targets", "project-commands", "todo-tools", "session-prompts", "stop-hooks", "unsupported-capability-reporting"],
   boundary: "OpenCode host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: OPENCODE_OPERATIONS.map(toQubeCapability),
+  capabilities: Object.freeze(OPENCODE_OPERATIONS.map(toQubeCapability)),
   contractOnly: false,
 } satisfies QubeAdapterContract);
 

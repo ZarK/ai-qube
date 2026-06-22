@@ -61,6 +61,7 @@ describe("opencode adapter contract", () => {
     const detect = getOpenCodeOperationSupport("detect-host");
     assert.throws(() => detect.paths.push("mutated"), TypeError);
 
+    assert.throws(() => opencodeAdapter.capabilities.push(opencodeAdapter.capabilities[0]), TypeError);
     assert.throws(() => {
       opencodeAdapter.capabilities[0].summary = "mutated";
     }, TypeError);
