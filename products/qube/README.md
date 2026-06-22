@@ -49,6 +49,7 @@ qube --help
 qube components
 qube install --yes --dry-run --json
 qube autoresearch init ./scratch "improve notes summary quality" --json
+qube oneshot "Ship a local notes CLI" --kind code --json
 qube make-it-so "Ship a local notes CLI" --dry-run --json
 
 # Plan from an idea.
@@ -166,6 +167,36 @@ candidate loop or mutate the target.
 - `promote` is the only command that copies the selected best candidate to the
   target workspace or `--output` path, and it refuses to replace existing output
   unless `--force` is explicit.
+
+## Oneshot Contract
+
+`qube oneshot` is a direct local delivery mode. It creates a concrete scratch
+artifact from an idea without entering the normal GitHub issue, branch, pull
+request, review-request, merge, or approval workflow.
+
+```sh
+qube oneshot "Ship a local notes CLI" --kind code --json
+qube oneshot "Create a README draft" --kind doc --dry-run --json
+qube oneshot status <run-id> --json
+qube oneshot checks <run-id> --json
+qube oneshot summary <run-id>
+```
+
+The first implementation supports doc and code artifacts. It writes local run
+state under `.qube/oneshot/<run-id>/`, including `input.json`, `manifest.json`,
+`plan.json`, `assumptions.md`, `mission.md`, `state.json`, `loop.jsonl`,
+`actions.jsonl`, `checks.json`, `aiq-evidence.json`, `review.md`, `risk.md`,
+`summary.md`, `final.json`, and scratch `workspace/`, `outputs/`, `snapshots/`,
+and `logs/` directories.
+
+- `--dry-run --json` reports the inferred assumptions, mutation policy, planned
+  checks, and run paths without writing files.
+- Default runs mutate only the `.qube/oneshot/<run-id>/` scratch workspace.
+- New `--target` paths can receive copied local results; existing targets are
+  refused in the first implementation instead of being mutated implicitly.
+- `--output` copies the selected artifact to an explicit file and refuses
+  overwrites unless `--force-output` is set.
+- Summaries state that local checks and local self-review are not PR approval.
 
 ## Dispatch Model
 

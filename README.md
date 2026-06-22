@@ -66,6 +66,7 @@ paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 ```sh
 qube components
 qube autoresearch init ./scratch "improve notes summary quality" --json
+qube oneshot "Ship a local notes CLI" --kind code --json
 qube make-it-so "Ship a local notes CLI" --dry-run --json
 qube aib init . --idea "Ship a local notes CLI" --json
 qube aie queue --json
@@ -87,6 +88,13 @@ running it.
 baseline evidence, `run` creates a sandboxed candidate, `status` and
 `dashboard` report structured state, and `promote` is the only step that copies
 the selected candidate back to the target or requested output path.
+
+`qube oneshot` creates a bounded local artifact without entering the normal
+GitHub issue, pull request, or review-gate workflow. The first supported path is
+a scratch doc or code artifact under `.qube/oneshot/<run-id>/`: it records
+inputs, assumptions, plan, actions, checks, local review, risks, summary, and
+final output. The summary explicitly states that no GitHub issue, branch, pull
+request, review request, merge, or approval was created by default.
 
 The composer first resolves component binaries from its own install scope, then
 from the local workspace, then from ambient `PATH`. PATH fallback is diagnostic:

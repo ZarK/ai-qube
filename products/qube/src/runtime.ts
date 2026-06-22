@@ -1,5 +1,5 @@
-import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { spawn, spawnSync } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import { appendFileSync, copyFileSync, existsSync, mkdirSync, realpathSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -170,6 +170,95 @@ interface AutoresearchPromotion {
   readonly outputPath: string;
   readonly sourcePath: string;
   readonly promotedAt: string;
+}
+
+type OneshotCommandName = "run" | "status" | "inspect" | "resume" | "review" | "checks" | "summary";
+type OneshotKind = "auto" | "code" | "doc" | "app" | "repo-change" | "research" | "config" | "data";
+type OneshotAgent = "auto" | "opencode" | "codex" | "claude-code" | "manual";
+type OneshotQuality = "basic" | "standard" | "strict";
+type OneshotStatus = "dry-run-complete" | "success" | "blocked-unsupported-target" | "blocked-human-approval-required" | "failed-checks";
+
+interface OneshotFlags {
+  readonly json: boolean;
+  readonly dryRun: boolean;
+  readonly apply: boolean;
+  readonly forceOutput: boolean;
+  readonly target?: string;
+  readonly output?: string;
+  readonly kind: OneshotKind;
+  readonly agent: OneshotAgent;
+  readonly quality: OneshotQuality;
+  readonly maxIterations: number;
+}
+
+interface OneshotRequest {
+  readonly command: OneshotCommandName;
+  readonly idea?: string;
+  readonly runId?: string;
+  readonly flags: OneshotFlags;
+}
+
+interface OneshotPlan {
+  readonly schemaVersion: 1;
+  readonly kind: "code" | "doc";
+  readonly title: string;
+  readonly intent: string;
+  readonly assumptions: readonly { readonly id: string; readonly summary: string; readonly risk: "low" | "medium" | "high" }[];
+  readonly acceptanceCriteria: readonly string[];
+  readonly nonGoals: readonly string[];
+  readonly mutationPolicy: {
+    readonly targetMode: "scratch" | "new-directory" | "existing-target-blocked";
+    readonly allowedMutationPaths: readonly string[];
+    readonly githubSideEffects: false;
+    readonly requiresApply: boolean;
+  };
+  readonly checkPlan: {
+    readonly required: readonly string[];
+    readonly optional: readonly string[];
+  };
+}
+
+interface OneshotState {
+  readonly schemaVersion: 1;
+  readonly runId: string;
+  readonly status: OneshotStatus;
+  readonly phase: "planned" | "finalized" | "blocked";
+  readonly idea: string;
+  readonly kind: "code" | "doc";
+  readonly targetMode: OneshotPlan["mutationPolicy"]["targetMode"];
+  readonly runDirectory: string;
+  readonly workspaceDirectory: string;
+  readonly outputDirectory: string;
+  readonly summaryPath: string;
+  readonly artifactPath: string | null;
+  readonly checksPath: string;
+  readonly githubSideEffects: {
+    readonly issueCreated: false;
+    readonly branchCreated: false;
+    readonly pullRequestCreated: false;
+    readonly reviewRequested: false;
+    readonly mergeAttempted: false;
+  };
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly nextAction: string;
+}
+
+interface OneshotContext {
+  readonly runDirectory: string;
+  readonly state: OneshotState;
+  readonly plan: OneshotPlan;
+}
+
+interface OneshotCheck {
+  readonly id: string;
+  readonly name: string;
+  readonly command?: readonly string[];
+  readonly status: "passed" | "failed" | "skipped";
+  readonly summary: string;
+  readonly stdout?: string;
+  readonly stderr?: string;
+  readonly exitCode?: number | null;
 }
 
 const makeItSoFlowValues = ["planned", "issue", "direct-local"] as const;
@@ -521,6 +610,110 @@ const autoresearchCommand = defineCommand({
   })
 });
 
+const oneshotKindValues = ["auto", "code", "doc", "app", "repo-change", "research", "config", "data"] as const;
+const oneshotAgentValues = ["auto", "opencode", "codex", "claude-code", "manual"] as const;
+const oneshotQualityValues = ["basic", "standard", "strict"] as const;
+
+const oneshotCommand = defineCommand({
+  kind: "command",
+  name: "oneshot",
+  description: "Create a bounded local artifact without the normal issue, PR, or review-gate workflow.",
+  arguments: [
+    defineArgument({
+      name: "args",
+      description: "Idea text, or status/inspect/resume/review/checks/summary <run-id>. Default runs use .qube/oneshot/<run-id>/ scratch state and create no GitHub issue, branch, PR, review request, merge, or approval.",
+      multiple: true
+    })
+  ],
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    defineFlag({
+      name: "help",
+      short: "h",
+      description: "Show command help.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "target",
+      description: "Target path. Missing paths become explicit new-directory targets; existing targets are refused unless a future apply path supports them.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "output",
+      description: "Optional final artifact output path. Existing files require --force-output.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "kind",
+      description: "Artifact kind. The first implementation supports auto, code, and doc.",
+      type: "option",
+      options: [...oneshotKindValues]
+    }),
+    defineFlag({
+      name: "agent",
+      description: "Agent host preference recorded in run input.",
+      type: "option",
+      options: [...oneshotAgentValues]
+    }),
+    defineFlag({
+      name: "quality",
+      description: "Local quality posture recorded in the check plan.",
+      type: "option",
+      options: [...oneshotQualityValues]
+    }),
+    defineFlag({
+      name: "max-iterations",
+      description: "Bounded local loop budget. The first implementation performs one concrete iteration.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "apply",
+      description: "Explicitly request existing target mutation. Existing-target mutation is refused in the first implementation.",
+      type: "boolean"
+    }),
+    defineFlag({
+      name: "force-output",
+      description: "Allow --output to replace an existing file.",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    {
+      description: "Create a scratch code artifact with local checks and no GitHub side effects.",
+      command: "qube oneshot \"Ship a local notes CLI\" --kind code --json"
+    },
+    {
+      description: "Preview inferred assumptions, mutation policy, checks, and run paths without writing files.",
+      command: "qube oneshot \"Create a README draft\" --kind doc --dry-run --json"
+    },
+    {
+      description: "Inspect trusted state for an existing local run.",
+      command: "qube oneshot status <run-id> --json"
+    },
+    {
+      description: "Read the final handoff summary for a run.",
+      command: "qube oneshot summary <run-id>"
+    }
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    dryRun: {
+      supported: true
+    },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("local-files")
+  })
+});
+
 const makeItSoCommand = defineCommand({
   kind: "command",
   name: "make-it-so",
@@ -770,7 +963,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, autoresearchCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -785,6 +978,9 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   }
   if (args[0] === "autoresearch") {
     return planAutoresearch(args.slice(1), environment);
+  }
+  if (args[0] === "oneshot") {
+    return planOneshot(args.slice(1), environment);
   }
   if (args[0] === "make-it-so" || args[0] === "makeitso") {
     return planMakeItSo(args.slice(1), environment);
@@ -881,6 +1077,7 @@ function createQubeCli(environment: CliEnvironment) {
         return { stdout: renderInstallPlan(plan) };
       }),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
+      createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
       createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
       ...directCommandDefinitions.map(definition => createRuntimeCommand(
         definition.command,
@@ -1631,6 +1828,824 @@ function renderAutoresearchHelp(): string {
     "  Mutation: local-files",
     "  Supply chain: standard"
   ].join("\n") + "\n";
+}
+
+function planOneshot(args: readonly string[], environment: CliEnvironment): CliExecution {
+  if (isOneshotHelpRequest(args)) {
+    return { exitCode: 0, stdout: renderOneshotHelp(), stderr: "" };
+  }
+  return runOneshot(args, environment, false);
+}
+
+async function executeOneshot(args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  if (isOneshotHelpRequest(args)) {
+    return { exitCode: 0, stdout: renderOneshotHelp() };
+  }
+  const planned = runOneshot(args, environment, true);
+  if (hasTopLevelJsonFlag(args)) {
+    return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  }
+  return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
+}
+
+function runOneshot(args: readonly string[], environment: CliEnvironment, mutate: boolean): CliExecution {
+  const parsed = parseOneshotArgs(args);
+  if ("error" in parsed) {
+    return parsed.error;
+  }
+  const request = parsed.request;
+  const dryRun = request.flags.dryRun || (!mutate && request.command === "run");
+  const result = executeOneshotRequest(request, environment, dryRun);
+  if ("error" in result) {
+    return oneshotError(result.error, request.flags.json);
+  }
+  const payload = { ...result.payload, dryRun };
+  if (request.flags.json) {
+    return { exitCode: 0, stdout: `${JSON.stringify({ ok: true, command: "oneshot", oneshot: payload })}\n`, stderr: "" };
+  }
+  return { exitCode: 0, stdout: renderOneshotResult(payload), stderr: "" };
+}
+
+function executeOneshotRequest(
+  request: OneshotRequest,
+  environment: CliEnvironment,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  if (request.command === "run") {
+    return runOneshotMission(request, environment, dryRun);
+  }
+  const context = loadOneshotContext(environment, request.runId);
+  if ("error" in context) {
+    return context;
+  }
+  if (request.command === "status" || request.command === "resume" || request.command === "inspect") {
+    return { payload: summarizeOneshot(context, request.command) };
+  }
+  if (request.command === "checks") {
+    return { payload: { ...summarizeOneshot(context, "checks"), checks: readJsonFile<readonly OneshotCheck[]>(context.state.checksPath) } };
+  }
+  if (request.command === "review") {
+    return { payload: { ...summarizeOneshot(context, "review"), review: readTextIfPresent(path.join(context.runDirectory, "review.md")) } };
+  }
+  return { payload: { ...summarizeOneshot(context, "summary"), summary: readTextIfPresent(context.state.summaryPath) } };
+}
+
+function runOneshotMission(
+  request: OneshotRequest,
+  environment: CliEnvironment,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  const idea = request.idea?.trim() ?? "";
+  if (idea.length === 0) {
+    return { error: "qube oneshot requires an idea or a supported inspection command." };
+  }
+  const planned = createOneshotPlan(idea, request.flags, environment);
+  if ("error" in planned) {
+    return planned;
+  }
+  const { runId, runDirectory, workspaceDirectory, outputDirectory, plan, manifest, state } = planned;
+  if (dryRun) {
+    return {
+      payload: {
+        action: "run",
+        status: "dry-run-complete",
+        runId,
+        runDirectory,
+        workspaceDirectory,
+        outputDirectory,
+        plan,
+        manifest,
+        githubSideEffects: state.githubSideEffects,
+        nextAction: `Run qube oneshot ${JSON.stringify(idea)} --kind ${plan.kind} --json to create the local artifact.`
+      }
+    };
+  }
+  if (plan.mutationPolicy.targetMode === "existing-target-blocked") {
+    return { error: "Existing target mutation is not supported by the first oneshot implementation. Use the default scratch workspace or a new target directory." };
+  }
+  const outputIssue = validateOneshotOutputPath(request.flags, environment);
+  if (outputIssue) {
+    return { error: outputIssue };
+  }
+
+  createOneshotDirectories(runDirectory);
+  writeJsonFile(path.join(runDirectory, "input.json"), {
+    schemaVersion: 1,
+    idea,
+    cwd: environment.cwd,
+    flags: request.flags,
+    components: qubeComponents.map(component => ({ id: component.id, command: component.command, packageName: component.packageName, packageVersion: component.packageVersion }))
+  });
+  writeJsonFile(path.join(runDirectory, "manifest.json"), manifest);
+  writeJsonFile(path.join(runDirectory, "plan.json"), plan);
+  writeFileSync(path.join(runDirectory, "assumptions.md"), renderOneshotAssumptions(plan), "utf8");
+  writeFileSync(path.join(runDirectory, "mission.md"), renderOneshotMission(plan, state), "utf8");
+  writeFileSync(path.join(runDirectory, "loop.jsonl"), "", "utf8");
+  writeFileSync(path.join(runDirectory, "actions.jsonl"), "", "utf8");
+  writeFileSync(path.join(runDirectory, "patch.diff"), "", "utf8");
+  appendJsonLine(path.join(runDirectory, "loop.jsonl"), { phase: "planned", status: "started", recordedAt: new Date().toISOString() });
+
+  const artifact = plan.kind === "code"
+    ? writeOneshotCodeArtifact(plan, state)
+    : writeOneshotDocArtifact(plan, state);
+  for (const writtenPath of artifact.writtenPaths) {
+    appendJsonLine(path.join(runDirectory, "actions.jsonl"), { action: "write", path: writtenPath, recordedAt: new Date().toISOString() });
+  }
+  const checks = runOneshotChecks(plan, artifact);
+  const passed = checks.every(check => check.status === "passed");
+  writeJsonFile(state.checksPath, checks);
+  writeJsonFile(path.join(runDirectory, "aiq-evidence.json"), renderOneshotEvidence(plan, checks));
+  writeFileSync(path.join(runDirectory, "review.md"), renderOneshotReview(plan, checks), "utf8");
+  writeFileSync(path.join(runDirectory, "risk.md"), renderOneshotRisk(plan), "utf8");
+
+  const finalArtifactPath = copyOneshotResult(request.flags, environment, plan, artifact);
+  const finalState = updateOneshotState(state, {
+    status: passed ? "success" : "failed-checks",
+    phase: passed ? "finalized" : "blocked",
+    artifactPath: finalArtifactPath,
+    nextAction: passed ? `Inspect ${state.summaryPath}.` : `Inspect ${state.checksPath} and rerun qube oneshot resume ${runId}.`
+  });
+  writeFileSync(finalState.summaryPath, renderOneshotSummary(plan, finalState, checks), "utf8");
+  writeJsonFile(path.join(runDirectory, "final.json"), {
+    schemaVersion: 1,
+    runId,
+    status: finalState.status,
+    artifactPath: finalState.artifactPath,
+    summaryPath: finalState.summaryPath,
+    checksPath: finalState.checksPath,
+    githubSideEffects: finalState.githubSideEffects
+  });
+  writeJsonFile(path.join(runDirectory, "state.json"), finalState);
+  writeJsonFile(oneshotLatestPath(environment), { runId });
+  appendJsonLine(path.join(runDirectory, "loop.jsonl"), { phase: finalState.phase, status: finalState.status, recordedAt: finalState.updatedAt });
+
+  return {
+    payload: {
+      action: "run",
+      runId,
+      status: finalState.status,
+      artifactPath: finalState.artifactPath,
+      summaryPath: finalState.summaryPath,
+      checks,
+      githubSideEffects: finalState.githubSideEffects,
+      nextAction: finalState.nextAction
+    }
+  };
+}
+
+function parseOneshotArgs(args: readonly string[]):
+  | { readonly request: OneshotRequest }
+  | { readonly error: CliExecution } {
+  const flags: {
+    json: boolean;
+    dryRun: boolean;
+    apply: boolean;
+    forceOutput: boolean;
+    kind: OneshotKind;
+    agent: OneshotAgent;
+    quality: OneshotQuality;
+    maxIterations: number;
+    target?: string;
+    output?: string;
+  } = {
+    json: false,
+    dryRun: false,
+    apply: false,
+    forceOutput: false,
+    kind: "auto",
+    agent: "auto",
+    quality: "standard",
+    maxIterations: 8
+  };
+  const positionals: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (!token) continue;
+    if (token === "--") {
+      positionals.push(...args.slice(index + 1));
+      break;
+    }
+    if (token === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      flags.dryRun = true;
+      continue;
+    }
+    if (token === "--apply") {
+      flags.apply = true;
+      continue;
+    }
+    if (token === "--force-output") {
+      flags.forceOutput = true;
+      continue;
+    }
+    const option = parseOneshotOption(args, index);
+    if (option?.kind === "missing-value") {
+      return { error: oneshotError(`Missing value for oneshot option --${option.key}.`, hasTopLevelJsonFlag(args)) };
+    }
+    if (option?.kind === "parsed") {
+      const validation = assignOneshotOption(flags, option.key, option.value);
+      if (validation) {
+        return { error: oneshotError(validation, hasTopLevelJsonFlag(args)) };
+      }
+      index = option.nextIndex;
+      continue;
+    }
+    if (token.startsWith("-")) {
+      return { error: oneshotError(`Unknown oneshot flag: ${token}`, hasTopLevelJsonFlag(args)) };
+    }
+    positionals.push(token);
+  }
+
+  const [first, ...rest] = positionals;
+  if (first && isOneshotCommand(first)) {
+    if (first === "run") {
+      if (rest.length === 0) {
+        return { error: oneshotError("qube oneshot run requires an idea.", hasTopLevelJsonFlag(args)) };
+      }
+      return { request: { command: "run", idea: rest.join(" "), flags } };
+    }
+    if (rest.length > 1) {
+      return { error: oneshotError(`qube oneshot ${first} accepts at most one run id.`, hasTopLevelJsonFlag(args)) };
+    }
+    return { request: { command: first, runId: rest[0], flags } };
+  }
+  if (positionals.length === 0) {
+    return { request: { command: "status", flags } };
+  }
+  return { request: { command: "run", idea: positionals.join(" "), flags } };
+}
+
+function parseOneshotOption(
+  args: readonly string[],
+  index: number
+):
+  | { readonly kind: "parsed"; readonly key: "target" | "output" | "kind" | "agent" | "quality" | "max-iterations"; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: "target" | "output" | "kind" | "agent" | "quality" | "max-iterations" }
+  | undefined {
+  const token = args[index];
+  if (!token) return undefined;
+  for (const key of ["target", "output", "kind", "agent", "quality", "max-iterations"] as const) {
+    const flag = `--${key}`;
+    if (token.startsWith(`${flag}=`)) {
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
+    }
+    if (token === flag) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { kind: "missing-value", key };
+      }
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
+    }
+  }
+  return undefined;
+}
+
+function assignOneshotOption(
+  flags: { target?: string; output?: string; kind: OneshotKind; agent: OneshotAgent; quality: OneshotQuality; maxIterations: number },
+  key: "target" | "output" | "kind" | "agent" | "quality" | "max-iterations",
+  value: string
+): string | undefined {
+  if (key === "target") flags.target = value;
+  if (key === "output") flags.output = value;
+  if (key === "kind") {
+    if (!isOneshotKind(value)) return `Invalid oneshot kind: ${value}.`;
+    flags.kind = value;
+  }
+  if (key === "agent") {
+    if (!isOneshotAgent(value)) return `Invalid oneshot agent: ${value}.`;
+    flags.agent = value;
+  }
+  if (key === "quality") {
+    if (!isOneshotQuality(value)) return `Invalid oneshot quality: ${value}.`;
+    flags.quality = value;
+  }
+  if (key === "max-iterations") {
+    const parsed = Number.parseInt(value, 10);
+    if (!Number.isInteger(parsed) || parsed < 1) return "Oneshot --max-iterations must be a positive integer.";
+    flags.maxIterations = parsed;
+  }
+  return undefined;
+}
+
+function isOneshotCommand(value: string): value is OneshotCommandName {
+  return value === "run" || value === "status" || value === "inspect" || value === "resume" || value === "review" || value === "checks" || value === "summary";
+}
+
+function isOneshotKind(value: string): value is OneshotKind {
+  return (oneshotKindValues as readonly string[]).includes(value);
+}
+
+function isOneshotAgent(value: string): value is OneshotAgent {
+  return (oneshotAgentValues as readonly string[]).includes(value);
+}
+
+function isOneshotQuality(value: string): value is OneshotQuality {
+  return (oneshotQualityValues as readonly string[]).includes(value);
+}
+
+function createOneshotPlan(idea: string, flags: OneshotFlags, environment: CliEnvironment):
+  | {
+    readonly runId: string;
+    readonly runDirectory: string;
+    readonly workspaceDirectory: string;
+    readonly outputDirectory: string;
+    readonly plan: OneshotPlan;
+    readonly manifest: Readonly<Record<string, unknown>>;
+    readonly state: OneshotState;
+  }
+  | { readonly error: string } {
+  const kind = inferOneshotKind(idea, flags.kind);
+  if (!kind) {
+    return { error: "The first oneshot implementation supports only code and doc artifacts." };
+  }
+  const now = new Date().toISOString();
+  const runId = createOneshotRunId(idea, now);
+  const runDirectory = oneshotRunDirectory(environment, runId);
+  const workspaceDirectory = path.join(runDirectory, "workspace");
+  const outputDirectory = path.join(runDirectory, "outputs");
+  const targetMode = resolveOneshotTargetMode(flags, environment);
+  const plan = buildOneshotPlan(idea, kind, flags, targetMode, runDirectory, workspaceDirectory);
+  const summaryPath = path.join(runDirectory, "summary.md");
+  const state: OneshotState = {
+    schemaVersion: 1,
+    runId,
+    status: "dry-run-complete",
+    phase: "planned",
+    idea,
+    kind,
+    targetMode,
+    runDirectory,
+    workspaceDirectory,
+    outputDirectory,
+    summaryPath,
+    artifactPath: null,
+    checksPath: path.join(runDirectory, "checks.json"),
+    githubSideEffects: noGithubSideEffects(),
+    createdAt: now,
+    updatedAt: now,
+    nextAction: `Run qube oneshot status ${runId} --json.`
+  };
+  const manifest = {
+    schemaVersion: 1,
+    runId,
+    createdAt: now,
+    targetMode,
+    runDirectory,
+    workspaceDirectory,
+    outputDirectory,
+    outputPath: flags.output ? path.resolve(environment.cwd, flags.output) : null,
+    policy: {
+      githubSideEffects: false,
+      dependencyAdditions: "disabled",
+      network: "not-used",
+      maxIterations: flags.maxIterations,
+      existingTargetMutation: "blocked"
+    }
+  };
+  return { runId, runDirectory, workspaceDirectory, outputDirectory, plan, manifest, state };
+}
+
+function inferOneshotKind(idea: string, kind: OneshotKind): "code" | "doc" | undefined {
+  if (kind === "code" || kind === "doc") return kind;
+  if (kind !== "auto") return undefined;
+  return /\b(cli|app|tool|script|server|game|component|code)\b/i.test(idea) ? "code" : "doc";
+}
+
+function resolveOneshotTargetMode(flags: OneshotFlags, environment: CliEnvironment): OneshotPlan["mutationPolicy"]["targetMode"] {
+  if (!flags.target) return "scratch";
+  const targetPath = path.resolve(environment.cwd, flags.target);
+  return existsSync(targetPath) ? "existing-target-blocked" : "new-directory";
+}
+
+function buildOneshotPlan(
+  idea: string,
+  kind: "code" | "doc",
+  flags: OneshotFlags,
+  targetMode: OneshotPlan["mutationPolicy"]["targetMode"],
+  runDirectory: string,
+  workspaceDirectory: string
+): OneshotPlan {
+  const title = titleFromIdea(idea);
+  const acceptanceCriteria = kind === "code"
+    ? ["Artifact has a runnable help command.", "Smoke check exits successfully.", "Summary and evidence are written."]
+    : ["Markdown artifact has a title.", "Markdown artifact records assumptions and next steps.", "Summary and evidence are written."];
+  return {
+    schemaVersion: 1,
+    kind,
+    title,
+    intent: idea,
+    assumptions: [
+      { id: "scope", summary: "Use a scratch local run workspace unless an explicit new target path is provided.", risk: "low" },
+      { id: "review-level", summary: "Result receives local checks and local review only; no PR approval is created.", risk: "medium" },
+      { id: "dependencies", summary: "Do not add dependencies or run package managers in the first implementation.", risk: "low" }
+    ],
+    acceptanceCriteria,
+    nonGoals: ["No GitHub issue, branch, PR, review request, merge, or approval.", "No publishing, deployment, credentials, or dependency additions.", "No existing checkout mutation in the first implementation."],
+    mutationPolicy: {
+      targetMode,
+      allowedMutationPaths: targetMode === "new-directory" && flags.target ? [runDirectory, flags.target] : [runDirectory],
+      githubSideEffects: false,
+      requiresApply: targetMode === "existing-target-blocked"
+    },
+    checkPlan: {
+      required: kind === "code" ? ["node-help-smoke", "local-artifact-audit"] : ["markdown-structure", "local-artifact-audit"],
+      optional: flags.quality === "strict" ? ["manual-review"] : []
+    }
+  };
+}
+
+function titleFromIdea(idea: string): string {
+  const words = idea.replace(/[^a-zA-Z0-9 ]/g, " ").trim().split(/\s+/).filter(Boolean).slice(0, 8);
+  return words.length > 0 ? words.map(word => `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`).join(" ") : "Oneshot Artifact";
+}
+
+function noGithubSideEffects(): OneshotState["githubSideEffects"] {
+  return {
+    issueCreated: false,
+    branchCreated: false,
+    pullRequestCreated: false,
+    reviewRequested: false,
+    mergeAttempted: false
+  };
+}
+
+function createOneshotDirectories(runDirectory: string): void {
+  for (const directory of [
+    runDirectory,
+    path.join(runDirectory, "workspace"),
+    path.join(runDirectory, "outputs"),
+    path.join(runDirectory, "snapshots"),
+    path.join(runDirectory, "logs")
+  ]) {
+    mkdirSync(directory, { recursive: true });
+  }
+}
+
+function writeOneshotCodeArtifact(plan: OneshotPlan, state: OneshotState): { readonly artifactPath: string; readonly writtenPaths: readonly string[] } {
+  const packagePath = path.join(state.workspaceDirectory, "package.json");
+  const readmePath = path.join(state.workspaceDirectory, "README.md");
+  const artifactPath = path.join(state.workspaceDirectory, "index.mjs");
+  writeJsonFile(packagePath, {
+    type: "module",
+    scripts: {
+      smoke: "node index.mjs --help"
+    }
+  });
+  writeFileSync(artifactPath, [
+    "#!/usr/bin/env node",
+    `const title = ${JSON.stringify(plan.title)};`,
+    `const intent = ${JSON.stringify(plan.intent)};`,
+    "if (process.argv.includes('--help') || process.argv.includes('-h') || process.argv.length <= 2) {",
+    "  console.log(`${title}\\n\\nLocal oneshot artifact.\\nIntent: ${intent}\\nUsage: node index.mjs --help`);",
+    "} else {",
+    "  console.log(`${title}: ${process.argv.slice(2).join(' ')}`);",
+    "}"
+  ].join("\n") + "\n", "utf8");
+  writeFileSync(readmePath, [
+    `# ${plan.title}`,
+    "",
+    "Local QUBE oneshot code artifact.",
+    "",
+    "```sh",
+    "node index.mjs --help",
+    "```",
+    ""
+  ].join("\n"), "utf8");
+  return { artifactPath, writtenPaths: [packagePath, artifactPath, readmePath] };
+}
+
+function writeOneshotDocArtifact(plan: OneshotPlan, state: OneshotState): { readonly artifactPath: string; readonly writtenPaths: readonly string[] } {
+  const artifactPath = path.join(state.outputDirectory, "artifact.md");
+  writeFileSync(artifactPath, [
+    `# ${plan.title}`,
+    "",
+    `Intent: ${plan.intent}`,
+    "",
+    "## Assumptions",
+    "",
+    ...plan.assumptions.map(assumption => `- ${assumption.summary}`),
+    "",
+    "## Acceptance Criteria",
+    "",
+    ...plan.acceptanceCriteria.map(criterion => `- ${criterion}`),
+    "",
+    "## Next Steps",
+    "",
+    "- Review this local artifact.",
+    "- Promote it into normal QUBE issue/PR work only with an explicit future bridge.",
+    ""
+  ].join("\n"), "utf8");
+  return { artifactPath, writtenPaths: [artifactPath] };
+}
+
+function runOneshotChecks(plan: OneshotPlan, artifact: { readonly artifactPath: string }): readonly OneshotCheck[] {
+  if (plan.kind === "code") {
+    const result = spawnSync(process.execPath, [artifact.artifactPath, "--help"], {
+      encoding: "utf8",
+      windowsHide: true
+    });
+    const passed = result.status === 0 && result.stdout.includes(plan.title);
+    return [
+      {
+        id: "node-help-smoke",
+        name: "Node help smoke",
+        command: [process.execPath, artifact.artifactPath, "--help"],
+        status: passed ? "passed" : "failed",
+        summary: passed ? "Generated CLI help ran successfully." : "Generated CLI help did not produce the expected output.",
+        stdout: result.stdout,
+        stderr: result.stderr,
+        exitCode: result.status
+      },
+      localAuditCheck(plan, artifact.artifactPath)
+    ];
+  }
+  const text = readTextIfPresent(artifact.artifactPath);
+  return [
+    {
+      id: "markdown-structure",
+      name: "Markdown structure",
+      status: text.startsWith(`# ${plan.title}`) && text.includes("## Assumptions") ? "passed" : "failed",
+      summary: "Markdown artifact includes the expected title and assumptions section."
+    },
+    localAuditCheck(plan, artifact.artifactPath)
+  ];
+}
+
+function localAuditCheck(plan: OneshotPlan, artifactPath: string): OneshotCheck {
+  const text = readTextIfPresent(artifactPath);
+  const suspicious = /\b(todo|placeholder|not implemented)\b/i.test(text);
+  return {
+    id: "local-artifact-audit",
+    name: "Local artifact audit",
+    status: suspicious ? "failed" : "passed",
+    summary: suspicious
+      ? "Artifact contains placeholder language."
+      : `Artifact matches the ${plan.kind} oneshot shape without placeholder language.`
+  };
+}
+
+function copyOneshotResult(
+  flags: OneshotFlags,
+  environment: CliEnvironment,
+  plan: OneshotPlan,
+  artifact: { readonly artifactPath: string; readonly writtenPaths: readonly string[] }
+): string {
+  if (flags.output) {
+    const outputPath = path.resolve(environment.cwd, flags.output);
+    mkdirSync(path.dirname(outputPath), { recursive: true });
+    copyFileSync(artifact.artifactPath, outputPath);
+    return outputPath;
+  }
+  if (plan.mutationPolicy.targetMode === "new-directory" && flags.target) {
+    const targetPath = path.resolve(environment.cwd, flags.target);
+    mkdirSync(targetPath, { recursive: true });
+    for (const writtenPath of artifact.writtenPaths) {
+      copyFileSync(writtenPath, path.join(targetPath, path.basename(writtenPath)));
+    }
+    return targetPath;
+  }
+  return artifact.artifactPath;
+}
+
+function validateOneshotOutputPath(flags: OneshotFlags, environment: CliEnvironment): string | undefined {
+  if (!flags.output) return undefined;
+  const outputPath = path.resolve(environment.cwd, flags.output);
+  if (existsSync(outputPath) && statSync(outputPath).isDirectory()) {
+    return `Oneshot output must be a file path, not a directory: ${outputPath}.`;
+  }
+  if (existsSync(outputPath) && !flags.forceOutput) {
+    return `Oneshot output already exists: ${outputPath}. Pass --force-output to replace it.`;
+  }
+  return undefined;
+}
+
+function renderOneshotEvidence(plan: OneshotPlan, checks: readonly OneshotCheck[]): Readonly<Record<string, unknown>> {
+  return {
+    schemaVersion: 1,
+    owner: "aiq",
+    kind: "local-oneshot-evidence",
+    artifactKind: plan.kind,
+    requiredChecks: plan.checkPlan.required,
+    checks,
+    trustedNarration: false
+  };
+}
+
+function renderOneshotAssumptions(plan: OneshotPlan): string {
+  return [
+    "# Assumptions",
+    "",
+    ...plan.assumptions.map(assumption => `- ${assumption.id}: ${assumption.summary} (risk: ${assumption.risk})`),
+    ""
+  ].join("\n");
+}
+
+function renderOneshotMission(plan: OneshotPlan, state: OneshotState): string {
+  return [
+    `# ${plan.title}`,
+    "",
+    plan.intent,
+    "",
+    "## Boundaries",
+    "",
+    "- Local oneshot mode only.",
+    "- No GitHub side effects.",
+    "- Mutate only allowed local run paths.",
+    "",
+    "## Run",
+    "",
+    `Run id: ${state.runId}`,
+    `Workspace: ${state.workspaceDirectory}`,
+    ""
+  ].join("\n");
+}
+
+function renderOneshotReview(plan: OneshotPlan, checks: readonly OneshotCheck[]): string {
+  return [
+    "# Local Review",
+    "",
+    `Artifact kind: ${plan.kind}`,
+    `Checks: ${checks.filter(check => check.status === "passed").length}/${checks.length} passed`,
+    "",
+    "This is local checks plus local self-review only. It is not an approved pull request.",
+    ""
+  ].join("\n");
+}
+
+function renderOneshotRisk(plan: OneshotPlan): string {
+  return [
+    "# Residual Risk",
+    "",
+    "- No GitHub issue, branch, PR, external review, merge, or approval was created.",
+    "- The first implementation does not mutate existing repositories.",
+    `- Artifact kind is limited to ${plan.kind}.`,
+    ""
+  ].join("\n");
+}
+
+function renderOneshotSummary(plan: OneshotPlan, state: OneshotState, checks: readonly OneshotCheck[]): string {
+  return [
+    `# ${plan.title}`,
+    "",
+    `Status: ${state.status}`,
+    `Artifact: ${state.artifactPath ?? "(none)"}`,
+    `Checks: ${checks.map(check => `${check.id}=${check.status}`).join(", ")}`,
+    "",
+    "Review level: local checks + local self-review only.",
+    "GitHub side effects: none. No issue, branch, PR, review request, merge, or approval was created.",
+    "",
+    "## Assumptions",
+    "",
+    ...plan.assumptions.map(assumption => `- ${assumption.summary}`),
+    ""
+  ].join("\n");
+}
+
+function updateOneshotState(state: OneshotState, patch: Partial<OneshotState>): OneshotState {
+  return { ...state, ...patch, updatedAt: new Date().toISOString() };
+}
+
+function summarizeOneshot(context: OneshotContext, action: string): Readonly<Record<string, unknown>> {
+  return {
+    action,
+    runId: context.state.runId,
+    status: context.state.status,
+    phase: context.state.phase,
+    kind: context.state.kind,
+    targetMode: context.state.targetMode,
+    runDirectory: context.runDirectory,
+    workspaceDirectory: context.state.workspaceDirectory,
+    artifactPath: context.state.artifactPath,
+    summaryPath: context.state.summaryPath,
+    checksPath: context.state.checksPath,
+    githubSideEffects: context.state.githubSideEffects,
+    nextAction: context.state.nextAction
+  };
+}
+
+function loadOneshotContext(environment: CliEnvironment, runIdInput: string | undefined): OneshotContext | { readonly error: string } {
+  const runId = runIdInput ?? readLatestOneshotRunId(environment);
+  if (!runId) {
+    return { error: "No oneshot run selected. Run `qube oneshot \"idea\"` first or pass a run id." };
+  }
+  const runDirectory = oneshotRunDirectory(environment, runId);
+  const statePath = path.join(runDirectory, "state.json");
+  const planPath = path.join(runDirectory, "plan.json");
+  if (!existsSync(statePath) || !existsSync(planPath)) {
+    return { error: `Oneshot run ${runId} is missing required state files.` };
+  }
+  return {
+    runDirectory,
+    state: readJsonFile<OneshotState>(statePath),
+    plan: readJsonFile<OneshotPlan>(planPath)
+  };
+}
+
+function createOneshotRunId(idea: string, timestamp: string): string {
+  const compactTime = timestamp.replace(/\D/g, "").slice(0, 17);
+  return `${compactTime}-${hashText(idea).slice(0, 8)}-${randomUUID().slice(0, 8)}`;
+}
+
+function oneshotRoot(environment: CliEnvironment): string {
+  return path.join(environment.cwd, ".qube", "oneshot");
+}
+
+function oneshotRunDirectory(environment: CliEnvironment, runId: string): string {
+  return path.join(oneshotRoot(environment), runId);
+}
+
+function oneshotLatestPath(environment: CliEnvironment): string {
+  return path.join(oneshotRoot(environment), "latest.json");
+}
+
+function readLatestOneshotRunId(environment: CliEnvironment): string | undefined {
+  const latestPath = oneshotLatestPath(environment);
+  if (!existsSync(latestPath)) return undefined;
+  const latest = readJsonFile<{ runId?: string }>(latestPath);
+  return typeof latest.runId === "string" && latest.runId.length > 0 ? latest.runId : undefined;
+}
+
+function oneshotError(message: string, json: boolean): CliExecution {
+  if (json) {
+    return {
+      exitCode: 2,
+      stdout: `${JSON.stringify({
+        ok: false,
+        command: "oneshot",
+        error: {
+          kind: "invalid-command-usage",
+          likelyCause: message,
+          suggestedNextAction: "Run `qube oneshot --help` and retry with a scratch doc or code artifact.",
+          category: "usage",
+          exitCode: 2
+        }
+      })}\n`,
+      stderr: ""
+    };
+  }
+  return { exitCode: 2, stdout: "", stderr: `${message}\n` };
+}
+
+function renderOneshotResult(payload: Readonly<Record<string, unknown>>): string {
+  const runId = typeof payload.runId === "string" ? payload.runId : "(none)";
+  const status = typeof payload.status === "string" ? payload.status : "(unknown)";
+  const artifactPath = typeof payload.artifactPath === "string" ? payload.artifactPath : "(planned)";
+  const nextAction = typeof payload.nextAction === "string" ? payload.nextAction : "Inspect oneshot status.";
+  return [
+    "QUBE oneshot",
+    "",
+    `Run: ${runId}`,
+    `Status: ${status}`,
+    `Artifact: ${artifactPath}`,
+    `Next: ${nextAction}`
+  ].join("\n") + "\n";
+}
+
+function isOneshotHelpRequest(args: readonly string[]): boolean {
+  const topLevelArgs = topLevelTokens(args);
+  return topLevelArgs.includes("--help") || topLevelArgs.includes("-h");
+}
+
+function renderOneshotHelp(): string {
+  return [
+    "oneshot",
+    "Create a bounded local artifact without the normal issue, PR, or review-gate workflow.",
+    "",
+    "Usage:",
+    "  qube oneshot <idea> [--kind code|doc|auto] [--json] [--dry-run]",
+    "  qube oneshot run <idea> [--kind code|doc|auto] [--json]",
+    "  qube oneshot status <run-id> --json",
+    "  qube oneshot checks <run-id> --json",
+    "  qube oneshot review <run-id> --json",
+    "  qube oneshot summary <run-id>",
+    "",
+    "Boundary:",
+    "  Default runs write only .qube/oneshot/<run-id>/ scratch state.",
+    "  No GitHub issue, branch, PR, review request, merge, or approval is created by default.",
+    "  Existing targets are refused in the first implementation.",
+    "",
+    "Examples:",
+    "  qube oneshot \"Ship a local notes CLI\" --kind code --json",
+    "  qube oneshot \"Create a README draft\" --kind doc --dry-run --json",
+    "  qube oneshot status <run-id> --json",
+    "",
+    "Behavior:",
+    "  JSON output: supported",
+    "  Dry run: supported",
+    "  Mutation: local-files",
+    "  Supply chain: standard"
+  ].join("\n") + "\n";
+}
+
+function readTextIfPresent(filePath: string): string {
+  return existsSync(filePath) ? readFileSync(filePath, "utf8") : "";
+}
+
+function appendJsonLine(filePath: string, value: unknown): void {
+  appendFileSync(filePath, `${JSON.stringify(value)}\n`, "utf8");
 }
 
 function writeJsonFile(filePath: string, value: unknown): void {
