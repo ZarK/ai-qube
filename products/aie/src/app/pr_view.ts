@@ -158,7 +158,7 @@ function warnings(item: ReviewItem): string[] {
 }
 
 function actionableCiDiagnostic(checks: PrViewCheck[]): PrViewCheckDiagnostic | undefined {
-  return checks.map(check => check.diagnostic).find((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined && ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run'].includes(diagnostic.status));
+  return checks.map(check => check.diagnostic).find((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined && ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
 function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability' | 'unavailable' | 'checks'>): string {

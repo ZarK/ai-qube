@@ -267,12 +267,18 @@ function checkRunId(run: RawCheckRun | RawWorkflowRun): string | null {
   return typeof run.id === 'number' ? String(run.id) : null;
 }
 
+function explicitCheckName(check: RawStatusCheck): string | null {
+  const name = check.name ?? check.context ?? null;
+  return typeof name === 'string' && name.trim() !== '' ? name : null;
+}
+
 function uniqueStrings(values: Array<string | null>): string[] {
   return [...new Set(values.filter((value): value is string => typeof value === 'string' && value !== ''))];
 }
 
 function checkMatchesRun(check: RawStatusCheck, run: RawCheckRun): boolean {
-  return normalizeCheckName(run.name ?? '') === normalizeCheckName(checkName(check, 0));
+  const name = explicitCheckName(check);
+  return name !== null && normalizeCheckName(run.name ?? '') === normalizeCheckName(name);
 }
 
 function checkMatchesWorkflowRun(check: RawStatusCheck, run: RawWorkflowRun): boolean {
@@ -280,7 +286,8 @@ function checkMatchesWorkflowRun(check: RawStatusCheck, run: RawWorkflowRun): bo
   const runId = checkRunId(run);
   if (detailRunId !== null && runId === detailRunId) return true;
   if (check.workflowName && normalizeCheckName(run.name ?? '') === normalizeCheckName(check.workflowName)) return true;
-  return normalizeCheckName(run.name ?? '') === normalizeCheckName(checkName(check, 0));
+  const name = explicitCheckName(check);
+  return name !== null && normalizeCheckName(run.name ?? '') === normalizeCheckName(name);
 }
 
 function diagnosticSummary(status: GitHubCiDiagnosticStatus, checkNameValue: string, currentHeadRunIds: string[], staleRunIds: string[]): string {

@@ -258,7 +258,7 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
 }
 
 function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGateCheckDiagnostic | undefined {
-  return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run'].includes(diagnostic.status));
+  return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
 function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[]): string {

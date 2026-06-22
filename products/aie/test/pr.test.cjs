@@ -222,6 +222,47 @@ describe('PR gate service', () => {
     assert.match(result.ciDiagnostics[0].nextAction, /workflow_dispatch/);
   });
 
+  it('does not map unnamed checks through generated fallback names', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [{ id: 200, name: 'GitHub check 1', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+      workflowRuns: [{ id: 100, name: 'GitHub check 1', head_sha: 'abc123', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+    });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'missing-current-head-run');
+    assert.deepEqual(result.ciDiagnostics[0].currentHeadRunIds, []);
+  });
+
+  it('surfaces pending current-head CI guidance in PR view next action', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [{ id: 200, name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+      workflowRuns: [],
+    });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'pending-current-head-run');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'current-head-check-run-pending');
+    assert.match(result.nextAction, /Wait for the current-head CI run/);
+  });
+
   it('reports failed current-head CI runs and recommends rerunning failed jobs', async () => {
     const repo = makeGitRepo();
     writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
@@ -450,6 +491,28 @@ describe('PR gate service', () => {
 
     assert.equal(result.checkDiagnostics[0].status, 'missing-current-head-run');
     assert.match(result.nextAction, /Push a new commit/);
+  });
+
+  it('surfaces pending current-head CI guidance in PR gate next action', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+    });
+    const { exec } = makePrExec({
+      prViews: [pr],
+      checkRuns: [{ id: 200, name: 'core', status: 'IN_PROGRESS', conclusion: null }],
+      workflowRuns: [],
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.checkDiagnostics[0].status, 'pending-current-head-run');
+    assert.match(result.nextAction, /Wait for the current-head CI run/);
   });
 
   it('blocks PR gate when a linked issue has unchecked checklist items', async () => {
