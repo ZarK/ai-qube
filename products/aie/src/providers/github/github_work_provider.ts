@@ -100,6 +100,9 @@ export class GitHubWorkProvider implements WorkProvider {
       planStatusSync: true,
       planLifecycleMutations: true,
       applyLifecycleMutations: true,
+      commentMutations: true,
+      reviewIntegration: true,
+      ciMergeStatus: true,
     };
   }
 

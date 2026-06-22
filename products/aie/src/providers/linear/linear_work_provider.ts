@@ -212,6 +212,9 @@ export class LinearWorkProvider implements WorkProvider {
       planStatusSync: false,
       planLifecycleMutations: false,
       applyLifecycleMutations: false,
+      commentMutations: false,
+      reviewIntegration: false,
+      ciMergeStatus: false,
     };
   }
 

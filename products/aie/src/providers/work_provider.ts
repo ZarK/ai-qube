@@ -8,6 +8,9 @@ export interface WorkProviderCapabilities {
   planStatusSync: boolean;
   planLifecycleMutations: boolean;
   applyLifecycleMutations: boolean;
+  commentMutations: boolean;
+  reviewIntegration: boolean;
+  ciMergeStatus: boolean;
 }
 
 export type WorkProviderId = 'github' | 'gitlab' | 'linear';

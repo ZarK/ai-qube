@@ -99,7 +99,7 @@ describe('schema command', () => {
     assert.equal(parsed.package.name, '@tjalve/aie');
     assert.equal(parsed.bin, 'aie');
     assert.deepEqual(parsed.sections.config.shape, ['version', 'providers', 'policy']);
-    assert.deepEqual(parsed.sections.config.supportedProviders.work, ['github']);
+    assert.deepEqual(parsed.sections.config.supportedProviders.work, ['github', 'gitlab', 'linear']);
     assert.deepEqual(parsed.sections.config.supportedProviders.repository, ['local-git']);
     assert.equal(parsed.sections.config.defaultConfig.providers.work.kind, 'github');
     assert.equal(parsed.sections.config.defaultConfig.policy.branch.baseBranch, 'main');

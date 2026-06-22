@@ -9,9 +9,7 @@ import type { WorkItem } from '../core/work_item.js';
 import { workItemNumber } from '../core/work_item.js';
 import type { GhExec } from '../gh.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle.js';
-import { createGitHubWorkProvider } from '../providers/github/github_work_provider.js';
-import { createGitLabWorkProvider } from '../providers/gitlab/gitlab_work_provider.js';
-import { createLinearWorkProvider } from '../providers/linear/linear_work_provider.js';
+import { createWorkProvider } from '../providers/work_provider_adapters.js';
 import type { WorkProvider } from '../providers/work_provider.js';
 
 export interface LifecycleServiceContext {
@@ -40,11 +38,7 @@ export interface ApplyResult {
 
 export async function createLifecycleContext(options: { config?: Config; cwd?: string; exec?: GhExec; limit?: number }): Promise<LifecycleServiceContext> {
   const config = options.config ?? (await loadConfig(options.cwd)) ?? getDefaults();
-  const provider = config.providers.work.kind === 'linear'
-    ? createLinearWorkProvider({ limit: options.limit })
-    : config.providers.work.kind === 'gitlab'
-      ? createGitLabWorkProvider({ limit: options.limit })
-      : createGitHubWorkProvider({ exec: options.exec, cwd: options.cwd, includeAssignees: false, limit: options.limit });
+  const provider = createWorkProvider(config.providers.work.kind, { exec: options.exec, cwd: options.cwd, limit: options.limit });
   return {
     config,
     policy: configToExecutorPolicy(config),

@@ -49,23 +49,23 @@ Product packages still own GitHub-specific side effects:
 
 ## Linear Provider Surface
 
-`@tjalve/aie` includes a Linear work-provider adapter for read mapping. It maps Linear issue identifiers, workflow states, priorities, labels, assignees, projects, blockers, and source metadata into provider-neutral QUBE work items without inventing GitHub issue numbers or milestone semantics.
+Linear support is an optional work-provider adapter package boundary, not bundled AIE core behavior. The planned `@tjalve/qube-adapter-linear` package owns Linear API access, credential diagnostics, issue mapping, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
 
 Product boundaries:
 
 - AIB renders provider-neutral work item drafts into Linear issue previews through `work-items render --provider linear --dry-run`.
-- AIE reads Linear issues when `providers.work.kind` is `linear` and the documented Linear credentials are present.
+- AIE reads Linear issues only when `providers.work.kind` is `linear`, the optional Linear adapter package is installed, and the documented Linear credentials are present.
 - AIE lifecycle mutations for Linear workflow state, comments, assignees, and completion are explicitly unsupported until a tested Linear mutation adapter exists.
 - Review and CI behavior remain separate provider choices; Linear work does not imply GitHub pull requests or GitHub Actions.
 
 ## GitLab Provider Surface
 
-`@tjalve/aie` includes a GitLab work-provider adapter for read mapping. It maps GitLab issue IIDs, states, labels, assignees, milestones, task completion status, native issue links, and source metadata into provider-neutral QUBE work items without inventing GitHub issue numbers or pull request semantics.
+GitLab support is an optional work-provider adapter package boundary, not bundled AIE core behavior. The planned `@tjalve/qube-adapter-gitlab` package owns GitLab API access, credential diagnostics, issue mapping, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
 
 Product boundaries:
 
 - AIB renders provider-neutral work item drafts into GitLab issue previews through `work-items render --provider gitlab --dry-run`.
-- AIE reads GitLab issues when `providers.work.kind` is `gitlab` and the documented GitLab credentials are present.
+- AIE reads GitLab issues only when `providers.work.kind` is `gitlab`, the optional GitLab adapter package is installed, and the documented GitLab credentials are present.
 - AIE lifecycle mutations for GitLab issue state, labels, comments, assignees, completion, merge requests, approvals, and CI pipelines are explicitly unsupported until tested GitLab mutation/review/CI adapters exist.
 - Review and CI behavior remain separate provider choices; GitLab work does not imply GitHub pull requests or GitHub Actions.
 

@@ -187,6 +187,9 @@ export class GitLabWorkProvider implements WorkProvider {
       planStatusSync: false,
       planLifecycleMutations: false,
       applyLifecycleMutations: false,
+      commentMutations: false,
+      reviewIntegration: false,
+      ciMergeStatus: false,
     };
   }
 

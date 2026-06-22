@@ -96,7 +96,7 @@ function makeContext(input = {}) {
     policy,
     workProvider: {
       id: 'github',
-      capabilities: () => ({ listOpenWork: true, loadWork: true, planStatusSync: true, planLifecycleMutations: true, applyLifecycleMutations: true }),
+      capabilities: () => ({ listOpenWork: true, loadWork: true, planStatusSync: true, planLifecycleMutations: true, applyLifecycleMutations: true, commentMutations: true, reviewIntegration: true, ciMergeStatus: true }),
       listOpenWorkItems: async () => workItems,
     },
     repositoryProvider: {
