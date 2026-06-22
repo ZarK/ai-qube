@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
-  assertCodexHostCapabilitySupported,
+  assertCodexHostCapabilityAvailable,
   findQubeComponent,
   getCodexHostCapability,
   inspectCodexWorkspace,
@@ -204,9 +204,9 @@ describe("qube composer CLI", () => {
     assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 4);
     assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
 
-    assert.equal(assertCodexHostCapabilitySupported("read-instructions").support, "supported");
+    assert.equal(assertCodexHostCapabilityAvailable("read-instructions").support, "supported");
     assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
-    assert.throws(() => assertCodexHostCapabilitySupported("install-project-command"), /Unsupported Codex capability/);
+    assert.throws(() => assertCodexHostCapabilityAvailable("install-project-command"), /Unsupported Codex capability/);
 
     const repo = mkdtempSync(path.join(tmpdir(), "qube-codex-host-"));
     writeFileSync(path.join(repo, "AGENTS.md"), "Repository policy\n");

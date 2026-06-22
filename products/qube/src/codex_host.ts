@@ -137,7 +137,7 @@ export function listCodexHostCapabilities(): readonly CodexHostCapability[] {
   return Object.freeze([...CODEX_CAPABILITIES]);
 }
 
-export function assertCodexHostCapabilitySupported(capability: CodexHostCapabilityId | string): CodexHostCapability {
+export function assertCodexHostCapabilityAvailable(capability: CodexHostCapabilityId | string): CodexHostCapability {
   const support = getCodexHostCapability(capability);
   if (support.support === "unsupported") {
     throw new Error(codexUnsupportedCapabilityMessage(support));

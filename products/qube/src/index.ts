@@ -1,5 +1,5 @@
 export {
-  assertCodexHostCapabilitySupported,
+  assertCodexHostCapabilityAvailable,
   codexInstallFiles,
   codexInstallNotes,
   codexUnsupportedCapabilityMessage,
