@@ -38,7 +38,7 @@ export interface ApplyResult {
 
 export async function createLifecycleContext(options: { config?: Config; cwd?: string; exec?: GhExec; limit?: number }): Promise<LifecycleServiceContext> {
   const config = options.config ?? (await loadConfig(options.cwd)) ?? getDefaults();
-  const provider = createWorkProvider(config.providers.work.kind, { exec: options.exec, cwd: options.cwd, limit: options.limit });
+  const provider = await createWorkProvider(config.providers.work.kind, { exec: options.exec, cwd: options.cwd, limit: options.limit });
   return {
     config,
     policy: configToExecutorPolicy(config),

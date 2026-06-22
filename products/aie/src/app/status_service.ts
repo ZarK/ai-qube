@@ -154,7 +154,7 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const configLoad = await loadConfigFile(options.cwd);
   const config = configLoad.ok && configLoad.config ? configLoad.config : getDefaults();
   const policy = configToExecutorPolicy(config);
-  const workProvider = createWorkProvider(config.providers.work.kind, { cwd: options.cwd });
+  const workProvider = await createWorkProvider(config.providers.work.kind, { cwd: options.cwd });
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
   const githubReviewProvider = createGitHubReviewProvider({ cwd: options.cwd });
   return {

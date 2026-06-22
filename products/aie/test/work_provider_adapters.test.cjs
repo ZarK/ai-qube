@@ -23,7 +23,7 @@ describe('work provider adapter boundary', () => {
 
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
-    const provider = createWorkProvider('linear');
+    const provider = await createWorkProvider('linear');
 
     assert.equal(provider.id, 'linear');
     assert.deepEqual(provider.capabilities(), {

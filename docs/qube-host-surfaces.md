@@ -49,11 +49,11 @@ Product packages still own GitHub-specific side effects:
 
 ## Linear Provider Surface
 
-Linear support is an optional work-provider adapter package boundary, not bundled AIE core behavior. The planned `@tjalve/qube-adapter-linear` package owns Linear API access, credential diagnostics, issue mapping, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
+Linear support is an optional work-provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-linear` owns Linear API access, credential diagnostics, issue mapping, AIB issue-preview rendering, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
 
 Product boundaries:
 
-- AIB renders provider-neutral work item drafts into Linear issue previews through `work-items render --provider linear --dry-run`.
+- AIB renders provider-neutral work item drafts into Linear issue previews through the Linear adapter package and `work-items render --provider linear --dry-run`.
 - AIE reads Linear issues only when `providers.work.kind` is `linear`, the optional Linear adapter package is installed, and the documented Linear credentials are present.
 - AIE lifecycle mutations for Linear workflow state, comments, assignees, and completion are explicitly unsupported until a tested Linear mutation adapter exists.
 - Review and CI behavior remain separate provider choices; Linear work does not imply GitHub pull requests or GitHub Actions.
