@@ -10,6 +10,7 @@ import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mut
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 
+import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
@@ -3297,6 +3298,9 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.host === "codex") {
     files.push(...listCodexInstallFiles());
   }
+  if (selections.host === "claude-code") {
+    files.push(...listClaudeCodeInstallFiles());
+  }
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
   }
@@ -3324,6 +3328,9 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   }
   if (selections.host === "codex") {
     notes.push(...listCodexInstallNotes());
+  }
+  if (selections.host === "claude-code") {
+    notes.push(...listClaudeCodeInstallNotes());
   }
   if (selections.migration === "standalone-globals") {
     notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");

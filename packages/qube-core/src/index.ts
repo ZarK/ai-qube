@@ -1,6 +1,6 @@
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
-export type QubeIntegrationSurface = "cli" | "github" | "codex" | "opencode";
+export type QubeIntegrationSurface = "cli" | "github" | "codex" | "opencode" | "claude-code";
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
@@ -24,7 +24,7 @@ export interface QubeProductContract {
 }
 
 export interface QubeAdapterContract {
-  readonly id: "github" | "codex" | "opencode";
+  readonly id: "github" | "codex" | "opencode" | "claude-code";
   readonly packageName: string;
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
@@ -72,7 +72,7 @@ export const qubeProductContracts = [
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
     standalone: true,
-    surfaces: ["cli", "github", "codex", "opencode"],
+    surfaces: ["cli", "github", "codex", "opencode", "claude-code"],
   },
   {
     id: "executor",
@@ -80,7 +80,7 @@ export const qubeProductContracts = [
     commandName: "aie",
     role: "Execute GitHub issue work through repository and review gates.",
     standalone: true,
-    surfaces: ["cli", "github", "codex", "opencode"],
+    surfaces: ["cli", "github", "codex", "opencode", "claude-code"],
   },
   {
     id: "quality",
@@ -96,7 +96,7 @@ export const qubeProductContracts = [
     commandName: "aiu",
     role: "Coordinate safe agent continuation and host stop hooks.",
     standalone: true,
-    surfaces: ["cli", "opencode"],
+    surfaces: ["cli", "opencode", "claude-code"],
   },
 ] as const satisfies readonly QubeProductContract[];
 
