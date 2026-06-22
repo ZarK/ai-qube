@@ -37,7 +37,7 @@ import {
 import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 import type { SpecChapterId } from "./spec_chapters.js";
 import { createWorkItemDrafts, renderWorkItemDrafts, WorkItemQueueOrderError, writeRenderedMarkdownWorkItems, writeWorkItemDrafts } from "./work_items.js";
-import type { WorkItemDraftResult, WorkItemRenderProvider, WorkItemRenderResult } from "./work_items.js";
+import type { RenderedMarkdownWorkItem, WorkItemDraftResult, WorkItemRenderProvider, WorkItemRenderResult } from "./work_items.js";
 
 let runtimeRegistry = bootstrapRegistry;
 
@@ -853,10 +853,10 @@ function renderWorkItemJson(result: WorkItemRenderResult, mutated: boolean, stat
   readonly plannedWrites?: readonly unknown[];
   readonly written?: readonly unknown[];
 } {
-  const markdown = result.rendered.filter((item) => "path" in item);
-  const github = result.rendered.filter((item) => "labels" in item);
-  const gitlab = result.rendered.filter((item) => "labels" in item && "description" in item && "blockedBy" in item);
-  const linear = result.rendered.filter((item) => "labelNames" in item);
+  const markdown = result.provider === "markdown" ? result.rendered.filter((item): item is RenderedMarkdownWorkItem => "path" in item) : [];
+  const github = result.provider === "github" ? result.rendered : [];
+  const gitlab = result.provider === "gitlab" ? result.rendered : [];
+  const linear = result.provider === "linear" ? result.rendered : [];
   return {
     mutated,
     dryRun: !mutated,

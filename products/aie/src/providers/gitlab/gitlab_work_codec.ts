@@ -54,8 +54,9 @@ export interface GitLabIssue {
   links?: GitLabIssueLink[] | null;
 }
 
-export function gitLabWorkItemKey(issueIid: number | string): WorkItemKey {
-  return normalizeWorkItemKey(PROVIDER_ID, String(issueIid).replace(/^#/, ''));
+export function gitLabWorkItemKey(issueIid: number | string, projectId?: number | string | null): WorkItemKey {
+  const iid = String(issueIid).replace(/^#/, '');
+  return normalizeWorkItemKey(PROVIDER_ID, projectId === undefined || projectId === null ? iid : `${projectId}:${iid}`);
 }
 
 function mapStatus(issue: GitLabIssue): WorkStatus {
@@ -129,20 +130,23 @@ function isCurrentIssue(issue: GitLabIssue, linked: GitLabLinkedIssue | null | u
   return linked?.iid === issue.iid && linked?.project_id === issue.project_id;
 }
 
-function linkedIssueKey(linked: GitLabLinkedIssue | null | undefined): WorkItemKey | null {
+function linkedIssueKey(currentProjectId: number, linked: GitLabLinkedIssue | null | undefined): WorkItemKey | null {
   if (!linked?.iid) return null;
-  return gitLabWorkItemKey(linked.iid);
+  const projectId = linked.project_id !== undefined && linked.project_id !== null && linked.project_id !== currentProjectId
+    ? linked.project_id
+    : undefined;
+  return gitLabWorkItemKey(linked.iid, projectId);
 }
 
 function relationBlockers(issue: GitLabIssue): WorkItemKey[] {
   const keys: WorkItemKey[] = [];
   for (const link of issue.links ?? []) {
     if (link.link_type === 'is_blocked_by' && isCurrentIssue(issue, link.source_issue)) {
-      const key = linkedIssueKey(link.target_issue);
+      const key = linkedIssueKey(issue.project_id, link.target_issue);
       if (key) keys.push(key);
     }
     if (link.link_type === 'blocks' && isCurrentIssue(issue, link.target_issue)) {
-      const key = linkedIssueKey(link.source_issue);
+      const key = linkedIssueKey(issue.project_id, link.source_issue);
       if (key) keys.push(key);
     }
   }
@@ -153,11 +157,11 @@ function relationBlockedBy(issue: GitLabIssue): WorkItemKey[] {
   const keys: WorkItemKey[] = [];
   for (const link of issue.links ?? []) {
     if (link.link_type === 'blocks' && isCurrentIssue(issue, link.source_issue)) {
-      const key = linkedIssueKey(link.target_issue);
+      const key = linkedIssueKey(issue.project_id, link.target_issue);
       if (key) keys.push(key);
     }
     if (link.link_type === 'is_blocked_by' && isCurrentIssue(issue, link.target_issue)) {
-      const key = linkedIssueKey(link.source_issue);
+      const key = linkedIssueKey(issue.project_id, link.source_issue);
       if (key) keys.push(key);
     }
   }

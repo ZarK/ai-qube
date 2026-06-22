@@ -78,7 +78,7 @@ export const qubeProductContracts = [
     id: "executor",
     packageName: "@tjalve/aie",
     commandName: "aie",
-    role: "Execute GitHub issue work through repository and review gates.",
+    role: "Execute issue-driven work through repository and review gates.",
     standalone: true,
     surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code"],
   },

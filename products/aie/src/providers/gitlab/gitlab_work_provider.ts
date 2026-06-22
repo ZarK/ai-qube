@@ -21,7 +21,8 @@ export interface GitLabWorkProviderOptions {
 
 const GITLAB_BASE_URL = 'https://gitlab.com';
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
-const DEFAULT_LIMIT = 100;
+const GITLAB_PAGE_LIMIT = 100;
+const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER;
 
 function required(value: string | undefined, name: string): string {
   if (value && value.trim() !== '') return value.trim();
@@ -41,7 +42,7 @@ function requestLimit(value: number | undefined): number {
   if (!Number.isInteger(value) || value <= 0) {
     throw new Error('GitLab work provider limit must be a positive integer.');
   }
-  return Math.min(value, 100);
+  return value;
 }
 
 function isAbortTimeout(error: unknown): boolean {
@@ -71,11 +72,19 @@ class FetchGitLabRestClient implements GitLabRestClient {
   }
 
   async listOpenIssues(input: { projectId: string; limit: number }): Promise<GitLabIssue[]> {
-    const issues = await this.get<GitLabIssue[]>(`/projects/${encodeProjectId(input.projectId)}/issues`, {
-      state: 'opened',
-      scope: 'all',
-      per_page: String(input.limit),
-    });
+    const issues: GitLabIssue[] = [];
+    let page: string | null = '1';
+    while (page && issues.length < input.limit) {
+      const perPage = Math.min(GITLAB_PAGE_LIMIT, input.limit - issues.length);
+      const result: { value: GitLabIssue[]; nextPage: string | null } = await this.getPage<GitLabIssue[]>(`/projects/${encodeProjectId(input.projectId)}/issues`, {
+        state: 'opened',
+        scope: 'all',
+        per_page: String(perPage),
+        page,
+      });
+      issues.push(...result.value);
+      page = result.nextPage;
+    }
     if (!this.includeIssueLinks) return issues;
     return Promise.all(issues.map(async issue => ({
       ...issue,
@@ -97,6 +106,10 @@ class FetchGitLabRestClient implements GitLabRestClient {
   }
 
   private async get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+    return (await this.getPage<T>(path, query)).value;
+  }
+
+  private async getPage<T>(path: string, query: Record<string, string> = {}): Promise<{ value: T; nextPage: string | null }> {
     const url = new URL(`${this.apiBaseUrl}${path}`);
     for (const [key, value] of Object.entries(query)) {
       url.searchParams.set(key, value);
@@ -117,9 +130,10 @@ class FetchGitLabRestClient implements GitLabRestClient {
       throw error;
     }
     if (!response.ok) {
-      throw new Error(`GitLab API request failed with HTTP ${response.status}.`);
+      throw new Error(`GitLab API request failed while reading ${path}. Cause: HTTP ${response.status}. Next action: verify GITLAB_TOKEN, GITLAB_BASE_URL, GITLAB_PROJECT_ID, and project permissions, then retry.`);
     }
-    return response.json() as Promise<T>;
+    const nextPage = response.headers.get('x-next-page')?.trim() || null;
+    return { value: await response.json() as T, nextPage };
   }
 }
 

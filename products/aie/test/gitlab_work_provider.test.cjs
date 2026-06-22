@@ -67,6 +67,11 @@ describe('GitLab work provider', () => {
           target_issue: { iid: 7, project_id: 7 },
         },
         {
+          link_type: 'is_blocked_by',
+          source_issue: { iid: 42, project_id: 7 },
+          target_issue: { iid: 7, project_id: 99 },
+        },
+        {
           link_type: 'blocks',
           source_issue: { iid: 42, project_id: 7 },
           target_issue: { iid: 99, project_id: 7 },
@@ -80,7 +85,7 @@ describe('GitLab work provider', () => {
     assert.equal(item.status, 'in-progress');
     assert.equal(item.priority, 'high');
     assert.deepEqual(item.assignees, ['Ada']);
-    assert.deepEqual(item.blockers, [{ providerId: 'gitlab', id: '7' }, { providerId: 'gitlab', id: '8' }]);
+    assert.deepEqual(item.blockers, [{ providerId: 'gitlab', id: '7' }, { providerId: 'gitlab', id: '99:7' }, { providerId: 'gitlab', id: '8' }]);
     assert.deepEqual(item.blockedBy, [{ providerId: 'gitlab', id: '99' }]);
     assert.deepEqual(item.checklist, { total: 2, completed: 1 });
     assert.deepEqual(item.project, { id: '3', title: 'Provider expansion', state: 'open', dueOn: '2026-08-01' });
@@ -189,6 +194,68 @@ describe('GitLab work provider', () => {
         /GitLab API request timed out after 25ms\. Service may be stalling or unreachable\. Verify GITLAB_TOKEN, GITLAB_BASE_URL, and GITLAB_PROJECT_ID, then retry\./,
       );
       assert.ok(capturedSignal instanceof AbortSignal);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('uses self-managed GitLab base URLs and follows paginated issue reads', async () => {
+    const originalFetch = globalThis.fetch;
+    const urls = [];
+    try {
+      globalThis.fetch = async (url) => {
+        urls.push(String(url));
+        const requestUrl = new URL(String(url));
+        const page = requestUrl.searchParams.get('page');
+        const headers = new Headers();
+        if (page === '1') headers.set('x-next-page', '2');
+        const issue = makeGitLabIssue({
+          id: page === '1' ? 1001 : 1002,
+          iid: page === '1' ? 1 : 2,
+          labels: ['S-Ready'],
+          description: '',
+          task_completion_status: { count: 0, completed_count: 0 },
+          references: { short: `#${page}`, relative: `#${page}`, full: `acme/qube#${page}` },
+        });
+        return new Response(JSON.stringify([issue]), { status: 200, headers });
+      };
+      const provider = createGitLabWorkProvider({
+        token: 'gitlab-token',
+        projectId: 'acme/qube',
+        baseUrl: 'https://gitlab.internal.example.com/',
+        includeIssueLinks: false,
+        limit: 2,
+      });
+
+      const items = await provider.listOpenWorkItems();
+      const first = new URL(urls[0]);
+      const second = new URL(urls[1]);
+
+      assert.deepEqual(items.map(item => item.key.id), ['1', '2']);
+      assert.equal(first.origin, 'https://gitlab.internal.example.com');
+      assert.match(first.pathname, /\/api\/v4\/projects\/acme%2Fqube\/issues$/);
+      assert.equal(first.searchParams.get('page'), '1');
+      assert.equal(first.searchParams.get('per_page'), '2');
+      assert.equal(second.searchParams.get('page'), '2');
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it('reports non-OK GitLab API responses with the HTTP status', async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async () => new Response(JSON.stringify({ message: 'unauthorized' }), { status: 401 });
+      const provider = createGitLabWorkProvider({
+        token: 'gitlab-token',
+        projectId: 'acme/qube',
+        includeIssueLinks: false,
+      });
+
+      await assert.rejects(
+        () => provider.listOpenWorkItems(),
+        /GitLab API request failed while reading .*\/issues\. Cause: HTTP 401\. Next action: verify GITLAB_TOKEN/,
+      );
     } finally {
       globalThis.fetch = originalFetch;
     }

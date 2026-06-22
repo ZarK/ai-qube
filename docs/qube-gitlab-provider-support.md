@@ -70,6 +70,12 @@ Keep `GITLAB_TOKEN` out of repository files. The adapter reads the documented
 environment variable at runtime and fails with an actionable message when it is
 missing.
 
+Issue list reads follow GitLab pagination until all open issues are loaded or a
+configured provider `limit` is reached. Native issue links are fetched with one
+additional GitLab REST request per issue because GitLab does not expose a bulk
+issue-links endpoint; set `includeIssueLinks: false` in provider options when a
+read flow does not need native link relationships.
+
 ## Work Item Mapping
 
 GitLab issue fields map to QUBE work items as follows:
