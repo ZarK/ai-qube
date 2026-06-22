@@ -10,6 +10,7 @@ import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mut
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 
+import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
@@ -3294,7 +3295,7 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   }
   const files = ["README.md install snippet"];
   if (selections.host === "codex") {
-    files.push("AGENTS.md policy notes");
+    files.push(...listCodexInstallFiles());
   }
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
@@ -3320,6 +3321,9 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
     notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
   } else {
     notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
+  }
+  if (selections.host === "codex") {
+    notes.push(...listCodexInstallNotes());
   }
   if (selections.migration === "standalone-globals") {
     notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");

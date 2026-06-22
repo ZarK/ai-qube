@@ -1,3 +1,18 @@
+export {
+  assertCodexHostCapabilityAvailable,
+  formatCodexUnsupportedCapabilityMessage,
+  getCodexHostCapability,
+  inspectCodexWorkspace,
+  listCodexInstallFiles,
+  listCodexInstallNotes,
+  listCodexHostCapabilities,
+} from "./codex_host.js";
+export type {
+  CodexHostCapability,
+  CodexHostCapabilityId,
+  CodexHostSupport,
+  CodexWorkspaceInspection,
+} from "./codex_host.js";
 export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { planQubeCli, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
