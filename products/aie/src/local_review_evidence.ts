@@ -525,31 +525,35 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
 }
 
 function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter'] } | null {
-  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-  if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
-  const parsedIssueNumber = parsed.issueNumber ?? parsed.issue;
-  const parsedPrNumber = parsed.prNumber ?? parsed.pr;
-  if (parsedIssueNumber !== issueNumber || parsedPrNumber !== prNumber || parsed.headSha !== headSha) return null;
-  const id = readLaneId(parsed.lane ?? parsed.id);
-  if (!id) return null;
-  const status = readStatus(parsed.status);
-  return {
-    adapter: readAdapter(parsed.adapter),
-    lane: {
-      id,
-      status,
-      severity: readSeverity(parsed.severity),
-      recommendation: readRecommendation(parsed.recommendation, status),
-      summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
-      blockers: stringArray(parsed.blockers),
-      artifacts: artifactArray(parsed.artifacts),
-      commands: stringArray(parsed.commands),
-      surfaces: stringArray(parsed.surfaces),
-      contextReviewed: readContextReviewed(parsed.contextReviewed),
-      promptStack: readPromptStack(parsed.promptStack),
-      toolsUsed: stringArray(parsed.toolsUsed),
-    },
-  };
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
+    const parsedIssueNumber = parsed.issueNumber ?? parsed.issue;
+    const parsedPrNumber = parsed.prNumber ?? parsed.pr;
+    if (parsedIssueNumber !== issueNumber || parsedPrNumber !== prNumber || parsed.headSha !== headSha) return null;
+    const id = readLaneId(parsed.lane ?? parsed.id);
+    if (!id) return null;
+    const status = readStatus(parsed.status);
+    return {
+      adapter: readAdapter(parsed.adapter),
+      lane: {
+        id,
+        status,
+        severity: readSeverity(parsed.severity),
+        recommendation: readRecommendation(parsed.recommendation, status),
+        summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
+        blockers: stringArray(parsed.blockers),
+        artifacts: artifactArray(parsed.artifacts),
+        commands: stringArray(parsed.commands),
+        surfaces: stringArray(parsed.surfaces),
+        contextReviewed: readContextReviewed(parsed.contextReviewed),
+        promptStack: readPromptStack(parsed.promptStack),
+        toolsUsed: stringArray(parsed.toolsUsed),
+      },
+    };
+  } catch {
+    return null;
+  }
 }
 
 function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence | null {
@@ -567,7 +571,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
         continue;
       }
       const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
-      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} is malformed or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
       lanes.push(parsed.lane);
       adapters.push(parsed.adapter);
     }
