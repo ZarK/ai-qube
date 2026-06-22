@@ -58,85 +58,85 @@ const KNOWN_COMMANDS: Readonly<Record<string, string>> = Object.freeze({
   "makeitso.md": "Optional AIE make-it-so alias.",
 });
 
-const SUPPORTED_OPERATIONS = [
-  {
+const SUPPORTED_OPERATIONS = Object.freeze([
+  freezeOperation({
     id: "detect-host",
     support: "supported",
     owner: "@tjalve/qube-adapter-opencode",
     summary: "Detect OpenCode repository affordances from AGENTS.md and .opencode/commands.",
     nextAction: "Use inspectOpenCodeWorkspace(cwd) before claiming installed OpenCode command support.",
     paths: [OPENCODE_INSTRUCTION_PATH, OPENCODE_COMMAND_DIRECTORY],
-  },
-  {
+  }),
+  freezeOperation({
     id: "read-instructions",
     support: "supported",
     owner: "@tjalve/aib and @tjalve/aie",
     summary: "OpenCode reads AGENTS.md as the repository instruction target for QUBE workflows.",
     nextAction: "Install or update AGENTS.md through the owning package init command.",
     paths: [OPENCODE_INSTRUCTION_PATH],
-  },
-  {
+  }),
+  freezeOperation({
     id: "install-project-command",
     support: "supported",
     owner: "@tjalve/aib and @tjalve/aie",
     summary: "AIB and AIE install concrete OpenCode project commands under .opencode/commands.",
     nextAction: "Use qube aib init --agent opencode or qube aie init . --tool opencode for managed files; standalone aib remains valid for single-package installs.",
     paths: [OPENCODE_COMMAND_DIRECTORY],
-  },
-  {
+  }),
+  freezeOperation({
     id: "use-todos",
     support: "supported",
     owner: "OpenCode host",
     summary: "OpenCode todo state is available through host todo tools, not through a hidden adapter store.",
     nextAction: "Use todowrite and todoread from the main OpenCode session when available.",
     tools: OPENCODE_TODO_TOOLS,
-  },
-  {
+  }),
+  freezeOperation({
     id: "deliver-session-prompt",
     support: "supported",
     owner: "@tjalve/aiu",
     summary: "AIU can route continuation prompts from trusted state through an explicit OpenCode prompt deliverer.",
     nextAction: "Use createAiuOpenCodePlugin with a host deliverPrompt implementation.",
-  },
-  {
+  }),
+  freezeOperation({
     id: "handle-stop-hook",
     support: "supported",
     owner: "@tjalve/aiu",
     summary: "AIU owns OpenCode stop-hook and idle-session continuation decisions.",
     nextAction: "Use AIU OpenCode plugin or hook-stop surfaces for continuation policy.",
-  },
-  {
+  }),
+  freezeOperation({
     id: "run-aiq-plugin",
     support: "standalone",
     owner: "@tjalve/aiq OpenCode plugin package",
     summary: "AIQ exposes OpenCode quality tools as a standalone adapter package, not as a QUBE-facing host command.",
     nextAction: "Use the AIQ OpenCode plugin package for aiq_check_files, aiq_plan_files, aiq_status, and aiq_doctor.",
-  },
-] as const satisfies readonly OpenCodeOperationSupport[];
+  }),
+]);
 
-const UNSUPPORTED_OPERATIONS = [
-  {
+const UNSUPPORTED_OPERATIONS = Object.freeze([
+  freezeOperation({
     id: "request-external-review",
     support: "unsupported",
     owner: "OpenCode host",
     summary: "OpenCode does not provide a QUBE API for requesting external reviewers.",
     nextAction: "Render the review prompt with qube aie review gate <issue> --prompt and send it to @oracle manually when that reviewer is available.",
-  },
-  {
+  }),
+  freezeOperation({
     id: "create-git-branch",
     support: "unsupported",
     owner: "@tjalve/aie",
     summary: "OpenCode host support does not create repository branches.",
     nextAction: "Use qube aie branch create <issue> or the configured repository provider workflow.",
-  },
-  {
+  }),
+  freezeOperation({
     id: "open-pull-request",
     support: "unsupported",
     owner: "@tjalve/aie GitHub provider",
     summary: "OpenCode host support does not open or approve pull requests.",
     nextAction: "Use qube aie pr body <issue>, repository PR tooling, and qube aie pr gate <pr>.",
-  },
-] as const satisfies readonly OpenCodeOperationSupport[];
+  }),
+]);
 
 const OPENCODE_OPERATIONS = Object.freeze([...SUPPORTED_OPERATIONS, ...UNSUPPORTED_OPERATIONS]);
 const OPENCODE_OPERATION_MAP = new Map<string, OpenCodeOperationSupport>(
@@ -158,7 +158,7 @@ export function getOpenCodeOperationSupport(operation: OpenCodeOperation | strin
 }
 
 export function listOpenCodeOperationSupport(): readonly OpenCodeOperationSupport[] {
-  return OPENCODE_OPERATIONS;
+  return Object.freeze([...OPENCODE_OPERATIONS]);
 }
 
 export function assertOpenCodeOperationSupported(operation: OpenCodeOperation | string): OpenCodeOperationSupport {
@@ -190,7 +190,7 @@ export function inspectOpenCodeWorkspace(cwd = process.cwd()): OpenCodeWorkspace
       present: commandDirectoryPresent,
     }),
     commands: Object.freeze(commandDirectoryPresent ? readOpenCodeCommands(commandDirectoryPath) : []),
-    capabilities: SUPPORTED_OPERATIONS,
+    capabilities: Object.freeze([...SUPPORTED_OPERATIONS]),
   });
 }
 
@@ -218,7 +218,7 @@ function readOpenCodeCommands(commandDirectoryPath: string): OpenCodeCommandInsp
 }
 
 function unsupportedOperation(operation: string): OpenCodeOperationSupport {
-  return Object.freeze({
+  return freezeOperation({
     id: operation,
     support: "unsupported",
     owner: "@tjalve/qube-adapter-opencode",
@@ -228,12 +228,20 @@ function unsupportedOperation(operation: string): OpenCodeOperationSupport {
 }
 
 function toQubeCapability(operation: OpenCodeOperationSupport): QubeAdapterCapability {
-  return {
+  return Object.freeze({
     id: operation.id,
     support: operation.support,
     owner: operation.owner,
     summary: operation.summary,
-  };
+  });
+}
+
+function freezeOperation(operation: OpenCodeOperationSupport): OpenCodeOperationSupport {
+  return Object.freeze({
+    ...operation,
+    ...(operation.paths ? { paths: Object.freeze([...operation.paths]) } : {}),
+    ...(operation.tools ? { tools: Object.freeze([...operation.tools]) } : {}),
+  });
 }
 
 function fileExists(filePath: string): boolean {

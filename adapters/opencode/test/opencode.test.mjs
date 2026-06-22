@@ -51,6 +51,21 @@ describe("opencode adapter contract", () => {
     assert.ok(listOpenCodeOperationSupport().length >= 8);
   });
 
+  it("returns immutable operation descriptors", () => {
+    const operations = listOpenCodeOperationSupport();
+    assert.throws(() => operations.push(operations[0]), TypeError);
+    assert.throws(() => {
+      operations[0].summary = "mutated";
+    }, TypeError);
+
+    const detect = getOpenCodeOperationSupport("detect-host");
+    assert.throws(() => detect.paths.push("mutated"), TypeError);
+
+    assert.throws(() => {
+      opencodeAdapter.capabilities[0].summary = "mutated";
+    }, TypeError);
+  });
+
   it("discovers installed OpenCode instruction and command assets", () => {
     const repo = makeRepo("qube-opencode-adapter-");
     writeFileSync(path.join(repo, "AGENTS.md"), "OpenCode instructions\n");
@@ -67,6 +82,10 @@ describe("opencode adapter contract", () => {
     assert.equal(inspected.commands.find((command) => command.name === "make-it-so.md")?.known, true);
     assert.equal(inspected.commands.find((command) => command.name === "custom.md")?.known, false);
     assert.ok(inspected.capabilities.some((capability) => capability.id === "use-todos"));
+    assert.throws(() => inspected.capabilities.push(inspected.capabilities[0]), TypeError);
+    assert.throws(() => {
+      inspected.capabilities[0].summary = "mutated";
+    }, TypeError);
   });
 
   it("keeps OpenCode session targets normalized", () => {
