@@ -10,8 +10,9 @@ repository config explicitly chooses otherwise.
 
 Supported now:
 
-- AIB can render provider-neutral work item drafts into GitLab issue previews
-  with `qube aib work-items render --provider gitlab --dry-run --json`.
+- AIB renders provider-neutral work item drafts into GitLab issue previews
+  through `@tjalve/qube-adapter-gitlab` with
+  `qube aib work-items render --provider gitlab --dry-run --json`.
 - AIE resolves GitLab through the optional `@tjalve/qube-adapter-gitlab`
   work-provider package boundary. The adapter maps GitLab project issues into
   QUBE work items for read flows.
