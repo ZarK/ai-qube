@@ -1,0 +1,843 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="QUBE is one command deck for agent-assisted software work, from idea capture through issue execution, quality evidence, continuation policy, and completion.">
+  <title>QUBE - Command deck for agent-assisted software work</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ink: #171512;
+      --text: #26231f;
+      --muted: #625d55;
+      --page: #fbfaf7;
+      --line: rgba(23, 21, 18, 0.13);
+      --soft: #f0ece3;
+      --deck: #131313;
+      --deck-panel: #1d1c1a;
+      --deck-line: rgba(245, 241, 232, 0.18);
+      --cream: #f5f1e8;
+      --blue: #6d9ff2;
+      --green: #58c49a;
+      --amber: #d99d45;
+      --violet: #9d86e8;
+      --rose: #d96b84;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      background: var(--page);
+      color: var(--text);
+      font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.55;
+    }
+
+    a {
+      color: inherit;
+    }
+
+    code {
+      font-family: "Cascadia Mono", Consolas, "SFMono-Regular", monospace;
+      font-size: 0.95em;
+    }
+
+    .skip-link {
+      position: absolute;
+      left: 16px;
+      top: 12px;
+      z-index: 10;
+      transform: translateY(-150%);
+      background: var(--cream);
+      color: var(--ink);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 8px 10px;
+      text-decoration: none;
+    }
+
+    .skip-link:focus {
+      transform: translateY(0);
+    }
+
+    .site-header {
+      position: absolute;
+      inset: 0 0 auto;
+      z-index: 4;
+      color: var(--cream);
+    }
+
+    .header-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+    }
+
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+      font-weight: 650;
+    }
+
+    .brand-mark {
+      display: inline-grid;
+      width: 28px;
+      height: 28px;
+      place-items: center;
+      border: 1px solid rgba(245, 241, 232, 0.45);
+      border-radius: 6px;
+      color: var(--green);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 15px;
+      font-weight: 700;
+    }
+
+    .desktop-nav {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      font-size: 14px;
+    }
+
+    .desktop-nav a,
+    .mobile-menu a {
+      text-decoration: none;
+      color: rgba(245, 241, 232, 0.82);
+    }
+
+    .desktop-nav a:hover,
+    .mobile-menu a:hover {
+      color: var(--cream);
+    }
+
+    .mobile-menu {
+      display: none;
+      color: var(--cream);
+    }
+
+    .mobile-menu summary {
+      cursor: pointer;
+      list-style: none;
+      border: 1px solid rgba(245, 241, 232, 0.32);
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 15px;
+    }
+
+    .mobile-menu summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .mobile-menu[open] nav {
+      position: absolute;
+      right: 22px;
+      top: 58px;
+      display: grid;
+      gap: 10px;
+      min-width: 180px;
+      padding: 12px;
+      border: 1px solid rgba(245, 241, 232, 0.2);
+      border-radius: 8px;
+      background: #1b1a18;
+    }
+
+    .hero {
+      min-height: 84vh;
+      background: var(--deck);
+      color: var(--cream);
+      position: relative;
+      overflow: hidden;
+      display: grid;
+      align-items: end;
+      padding: 104px 0 72px;
+    }
+
+    .deck-scene {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      grid-template-columns: repeat(12, minmax(64px, 1fr));
+      grid-auto-rows: 74px;
+      gap: 1px;
+      opacity: 0.82;
+      pointer-events: none;
+    }
+
+    .deck-cell {
+      border-right: 1px solid rgba(245, 241, 232, 0.05);
+      border-bottom: 1px solid rgba(245, 241, 232, 0.05);
+    }
+
+    .deck-panel {
+      position: absolute;
+      border: 1px solid var(--deck-line);
+      border-radius: 8px;
+      background: rgba(29, 28, 26, 0.86);
+      padding: 12px;
+      min-width: 210px;
+    }
+
+    .deck-panel strong {
+      display: block;
+      margin-bottom: 8px;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .deck-panel code {
+      display: block;
+      color: rgba(245, 241, 232, 0.9);
+      white-space: normal;
+      overflow-wrap: anywhere;
+      font-size: 12px;
+    }
+
+    .deck-panel.one {
+      left: 9%;
+      top: 19%;
+      border-color: rgba(109, 159, 242, 0.55);
+    }
+
+    .deck-panel.two {
+      right: 9%;
+      top: 23%;
+      border-color: rgba(88, 196, 154, 0.55);
+    }
+
+    .deck-panel.three {
+      right: 18%;
+      bottom: 15%;
+      border-color: rgba(217, 157, 69, 0.55);
+    }
+
+    .deck-lane {
+      position: absolute;
+      left: 6%;
+      right: 6%;
+      height: 1px;
+      background: rgba(245, 241, 232, 0.16);
+    }
+
+    .deck-lane.a {
+      top: 36%;
+    }
+
+    .deck-lane.b {
+      top: 62%;
+    }
+
+    .hero-inner {
+      position: relative;
+      z-index: 2;
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 22px;
+      display: grid;
+      grid-template-columns: minmax(0, 1.1fr) minmax(280px, 0.75fr);
+      gap: 56px;
+      align-items: end;
+    }
+
+    .eyebrow {
+      margin: 0 0 14px;
+      color: var(--green);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 13px;
+      font-weight: 650;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    h1,
+    h2,
+    h3 {
+      margin: 0;
+      color: inherit;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    h1 {
+      max-width: 18ch;
+      font-size: 64px;
+      line-height: 1.02;
+    }
+
+    .hero-copy {
+      max-width: 56ch;
+      margin: 22px 0 0;
+      color: rgba(245, 241, 232, 0.78);
+      font-size: 19px;
+    }
+
+    .hero-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 28px;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      min-height: 44px;
+      border-radius: 7px;
+      padding: 10px 14px;
+      font-weight: 650;
+      text-decoration: none;
+      border: 1px solid transparent;
+    }
+
+    .button.primary {
+      background: var(--green);
+      color: #10100f;
+      border-color: var(--green);
+    }
+
+    .button.secondary {
+      color: var(--cream);
+      border-color: rgba(245, 241, 232, 0.28);
+    }
+
+    .hero-terminal {
+      border: 1px solid rgba(245, 241, 232, 0.22);
+      border-radius: 8px;
+      background: rgba(12, 12, 12, 0.78);
+      padding: 14px;
+    }
+
+    .terminal-row {
+      display: flex;
+      gap: 10px;
+      padding: 9px 0;
+      border-top: 1px solid rgba(245, 241, 232, 0.09);
+      color: rgba(245, 241, 232, 0.8);
+      font-family: "Cascadia Mono", Consolas, monospace;
+      font-size: 13px;
+    }
+
+    .terminal-row:first-child {
+      border-top: 0;
+    }
+
+    .terminal-tag {
+      flex: 0 0 56px;
+      color: var(--amber);
+    }
+
+    .section {
+      padding: 82px 0;
+    }
+
+    .section.alt {
+      background: #f1eee6;
+    }
+
+    .container {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 22px;
+    }
+
+    .section-heading {
+      max-width: 38ch;
+      font-size: 38px;
+      line-height: 1.1;
+    }
+
+    .section-copy {
+      max-width: 58ch;
+      margin: 16px 0 0;
+      color: var(--muted);
+      font-size: 17px;
+    }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 18px;
+      margin-top: 34px;
+    }
+
+    .flow-item {
+      border-top: 3px solid var(--line);
+      padding-top: 16px;
+    }
+
+    .flow-item:nth-child(1) {
+      border-color: var(--blue);
+    }
+
+    .flow-item:nth-child(2) {
+      border-color: var(--green);
+    }
+
+    .flow-item:nth-child(3) {
+      border-color: var(--amber);
+    }
+
+    .flow-item:nth-child(4) {
+      border-color: var(--violet);
+    }
+
+    .flow-item:nth-child(5) {
+      border-color: var(--rose);
+    }
+
+    .flow-item dt {
+      margin: 0;
+      color: var(--ink);
+      font-weight: 650;
+    }
+
+    .flow-item dd {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .split {
+      display: grid;
+      grid-template-columns: minmax(0, 0.95fr) minmax(300px, 1.05fr);
+      gap: 48px;
+      align-items: start;
+    }
+
+    .command-list {
+      display: grid;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .command-list code {
+      display: block;
+      padding: 12px 13px;
+      border: 1px solid rgba(23, 21, 18, 0.12);
+      border-radius: 7px;
+      background: #fffdf8;
+      color: var(--ink);
+      overflow-wrap: anywhere;
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .role {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 18px;
+      background: rgba(251, 250, 247, 0.7);
+    }
+
+    .role h3 {
+      font-size: 18px;
+    }
+
+    .role p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 15px;
+    }
+
+    .visual-frame {
+      margin-top: 32px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fffdf8;
+    }
+
+    .visual-frame iframe {
+      display: block;
+      width: 100%;
+      height: 620px;
+      border: 0;
+    }
+
+    .install-panel {
+      margin-top: 34px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fffdf8;
+      overflow: hidden;
+    }
+
+    .install-row {
+      display: grid;
+      grid-template-columns: 180px minmax(0, 1fr);
+      gap: 18px;
+      padding: 18px;
+      border-top: 1px solid var(--line);
+    }
+
+    .install-row:first-child {
+      border-top: 0;
+    }
+
+    .install-row strong {
+      color: var(--ink);
+    }
+
+    .install-row p {
+      margin: 0 0 10px;
+      color: var(--muted);
+    }
+
+    .install-row code {
+      display: block;
+      padding: 10px 11px;
+      border-radius: 7px;
+      background: var(--soft);
+      overflow-wrap: anywhere;
+    }
+
+    .docs-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 26px;
+    }
+
+    .docs-links a {
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 8px 11px;
+      color: var(--ink);
+      text-decoration: none;
+      font-size: 15px;
+    }
+
+    .site-footer {
+      border-top: 1px solid var(--line);
+      padding: 32px 0;
+      color: var(--muted);
+    }
+
+    .footer-inner {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 0 22px;
+      display: flex;
+      justify-content: space-between;
+      gap: 18px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    .footer-links a {
+      font-weight: 400;
+      text-decoration: none;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --ink: #f5f1e8;
+        --text: #ece7dd;
+        --muted: #b8b0a2;
+        --page: #151412;
+        --line: rgba(245, 241, 232, 0.14);
+        --soft: #23211d;
+      }
+
+      .section.alt {
+        background: #1b1916;
+      }
+
+      .command-list code,
+      .role,
+      .install-panel,
+      .install-row code,
+      .visual-frame {
+        background: #1f1d19;
+      }
+    }
+
+    @media (max-width: 980px) {
+      .desktop-nav {
+        display: none;
+      }
+
+      .mobile-menu {
+        display: block;
+      }
+
+      .hero {
+        min-height: auto;
+        padding: 96px 0 54px;
+      }
+
+      .hero-inner,
+      .split {
+        grid-template-columns: 1fr;
+        gap: 32px;
+      }
+
+      h1 {
+        max-width: 12ch;
+        font-size: 48px;
+      }
+
+      .hero-copy {
+        font-size: 18px;
+      }
+
+      .flow,
+      .role-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .deck-scene {
+        opacity: 0.35;
+      }
+
+      .deck-panel,
+      .deck-lane {
+        display: none;
+      }
+
+      .visual-frame iframe {
+        height: 520px;
+      }
+    }
+
+    @media (max-width: 640px) {
+      .header-inner {
+        padding-inline: 16px;
+      }
+
+      .hero-inner,
+      .container,
+      .footer-inner {
+        padding-inline: 16px;
+      }
+
+      h1 {
+        font-size: 38px;
+      }
+
+      .section {
+        padding: 58px 0;
+      }
+
+      .section-heading {
+        font-size: 30px;
+      }
+
+      .install-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="header-inner">
+      <a class="brand" href="./" aria-label="Homepage">
+        <span class="brand-mark">Q</span>
+        <span>QUBE</span>
+      </a>
+      <nav class="desktop-nav" aria-label="Primary navigation">
+        <a href="#flow">Flow</a>
+        <a href="#packages">Packages</a>
+        <a href="#install">Install</a>
+        <a href="qube-command-surface-visual.html">Visual profile</a>
+      </nav>
+      <details class="mobile-menu">
+        <summary>Menu</summary>
+        <nav aria-label="Mobile navigation">
+          <a href="#flow">Flow</a>
+          <a href="#packages">Packages</a>
+          <a href="#install">Install</a>
+          <a href="qube-command-surface-visual.html">Visual profile</a>
+        </nav>
+      </details>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero" aria-label="QUBE command deck">
+      <div class="deck-scene" aria-hidden="true">
+        <span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span>
+        <span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span>
+        <span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span><span class="deck-cell"></span>
+      </div>
+      <div class="deck-lane a" aria-hidden="true"></div>
+      <div class="deck-lane b" aria-hidden="true"></div>
+      <div class="deck-panel one" aria-hidden="true">
+        <strong>Plan</strong>
+        <code>qube aib init . --idea "Ship it" --json</code>
+      </div>
+      <div class="deck-panel two" aria-hidden="true">
+        <strong>Execute</strong>
+        <code>qube aie start next --json</code>
+      </div>
+      <div class="deck-panel three" aria-hidden="true">
+        <strong>Gate</strong>
+        <code>qube aie pr gate 112 --json</code>
+      </div>
+      <div class="hero-inner">
+        <div>
+          <p class="eyebrow">Command deck for agent-assisted work</p>
+          <h1>QUBE moves ideas to completed implementation.</h1>
+          <p class="hero-copy">Use one composer CLI to plan work, execute issue branches, gather quality evidence, inspect continuation state, and keep each component package independently installable.</p>
+          <div class="hero-actions">
+            <a class="button primary" href="#install">Install QUBE</a>
+            <a class="button secondary" href="qube-command-surface-visual.html">Open the command surface</a>
+          </div>
+        </div>
+        <div class="hero-terminal" aria-label="Representative QUBE command sequence">
+          <div class="terminal-row"><span class="terminal-tag">QUBE</span><code>qube components</code></div>
+          <div class="terminal-row"><span class="terminal-tag">AIB</span><code>qube idea "Ship a local notes CLI"</code></div>
+          <div class="terminal-row"><span class="terminal-tag">AIE</span><code>qube start next --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">AIQ</span><code>qube check src --json</code></div>
+          <div class="terminal-row"><span class="terminal-tag">AIU</span><code>qube status --json</code></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="flow" class="section">
+      <div class="container">
+        <h2 class="section-heading">One deck, five responsibilities.</h2>
+        <p class="section-copy">QUBE keeps agent work explicit. The composer command routes to the installed package that owns each stage, so automation can use QUBE while single-package installs still work when a team only needs one tool.</p>
+        <dl class="flow">
+          <div class="flow-item">
+            <dt>Compose</dt>
+            <dd>QUBE discovers installed components and dispatches regular commands from one entry point.</dd>
+          </div>
+          <div class="flow-item">
+            <dt>Plan</dt>
+            <dd>AIB turns intent into accepted specs, milestones, and provider-ready work item drafts.</dd>
+          </div>
+          <div class="flow-item">
+            <dt>Execute</dt>
+            <dd>AIE owns issue selection, branch policy, pull requests, review gates, and completion.</dd>
+          </div>
+          <div class="flow-item">
+            <dt>Check</dt>
+            <dd>AIQ produces staged quality evidence for source, tests, packaging, and release readiness.</dd>
+          </div>
+          <div class="flow-item">
+            <dt>Continue</dt>
+            <dd>AIU reads trusted state and tells an idle agent when continuing is safe and bounded.</dd>
+          </div>
+        </dl>
+      </div>
+    </section>
+
+    <section id="packages" class="section alt">
+      <div class="container split">
+        <div>
+          <h2 class="section-heading">The regular path stays readable.</h2>
+          <p class="section-copy">QUBE uses product-language commands for the common workflow and keeps the advanced escape hatch available when a component command needs to be forwarded exactly.</p>
+          <div class="command-list" aria-label="Command examples">
+            <code>qube make-it-so "Ship a local notes CLI" --dry-run --json</code>
+            <code>qube aib spec draft --json</code>
+            <code>qube aie pr gate 87 --json</code>
+            <code>qube aiq doctor --format json</code>
+            <code>qube run aie -- queue --json</code>
+          </div>
+        </div>
+        <div class="role-grid" aria-label="Package boundaries">
+          <article class="role">
+            <h3>AIB plans</h3>
+            <p>Planning state, specs, milestones, and work item drafts.</p>
+          </article>
+          <article class="role">
+            <h3>AIE executes</h3>
+            <p>Issue work, branches, pull requests, reviews, and completion.</p>
+          </article>
+          <article class="role">
+            <h3>AIQ checks</h3>
+            <p>Quality gates, evidence, package readiness, and reports.</p>
+          </article>
+          <article class="role">
+            <h3>AIU continues</h3>
+            <p>Trusted state inspection and bounded continuation prompts.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="container">
+        <h2 class="section-heading">Visual profile for public surfaces.</h2>
+        <p class="section-copy">The command-deck profile uses operational hierarchy, status lanes, precise grids, and the cardinal <code>make-it-so</code> command language while avoiding protected franchise marks and layouts.</p>
+        <div class="visual-frame">
+          <iframe src="qube-command-surface-visual.html" title="QUBE command surface visual profile"></iframe>
+        </div>
+      </div>
+    </section>
+
+    <section id="install" class="section alt">
+      <div class="container">
+        <h2 class="section-heading">Install the deck or only the station you need.</h2>
+        <p class="section-copy">Use exact package versions, keep lifecycle scripts disabled where possible, and prefer project-local installs for reproducible agent automation.</p>
+        <div class="install-panel">
+          <div class="install-row">
+            <strong>Project-local QUBE</strong>
+            <div>
+              <p>Recommended for agents, hooks, CI, and repository instructions.</p>
+              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1</code>
+            </div>
+          </div>
+          <div class="install-row">
+            <strong>Guided plan</strong>
+            <div>
+              <p>Choose host, provider, package manager, docs notes, and migration posture without installing hidden dependencies.</p>
+              <code>qube install --scope local --package-manager pnpm --host codex --work-provider github --yes --dry-run --json</code>
+            </div>
+          </div>
+          <div class="install-row">
+            <strong>Single package</strong>
+            <div>
+              <p>Install a component directly when you only need that package. Repository state still uses QUBE-owned paths.</p>
+              <code>pnpm add -D --save-exact --ignore-scripts @tjalve/aie@0.1.4</code>
+            </div>
+          </div>
+        </div>
+        <div class="docs-links" aria-label="Documentation links">
+          <a href="qube-command-surfaces.md">Command surfaces</a>
+          <a href="qube-host-surfaces.md">Host surfaces</a>
+          <a href="qube-paths-and-artifacts.md">Paths and artifacts</a>
+          <a href="release/install-migration.md">Install migration</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="site-footer">
+    <div class="footer-inner">
+      <span>QUBE command deck for agent-assisted software work.</span>
+      <nav class="footer-links" aria-label="Footer navigation">
+        <a href="https://github.com/ZarK/ai-qube">GitHub</a>
+        <a href="./">Landing page</a>
+        <a href="qube-command-surface-visual.html">Visual profile</a>
+      </nav>
+    </div>
+  </footer>
+</body>
+</html>

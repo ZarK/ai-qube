@@ -5,6 +5,15 @@ cover planning, issue execution, quality gates, and continuation policy. Each
 tool can be installed and used on its own; `@tjalve/qube` provides one composer
 CLI for discovering and dispatching to the installed tools.
 
+## Website
+
+The public-ready QUBE landing page lives at `docs/index.html` and is designed
+for GitHub Pages at https://zark.github.io/ai-qube/. Preview it locally with:
+
+```sh
+pnpm run site:preview
+```
+
 ## Packages
 
 | Package | Command | Purpose |
@@ -159,6 +168,7 @@ pnpm --filter @tjalve/qube run verify
 
 Useful public docs:
 
+- `docs/index.html`
 - `docs/qube-command-surfaces.md`
 - `docs/qube-claude-code-host-support.md`
 - `docs/qube-codex-host-support.md`

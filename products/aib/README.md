@@ -8,6 +8,10 @@ The CLI is designed for structured agent use: human-readable output is available
 for setup and debugging, while JSON output is the stable contract for automated
 flows.
 
+For the full QUBE package family and command deck, see
+https://zark.github.io/ai-qube/ or the repository landing-page artifact at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 ```sh

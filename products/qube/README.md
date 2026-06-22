@@ -4,6 +4,10 @@
 one command for discovering the installed planning, execution, quality, and
 continuation tools while keeping each component package independently usable.
 
+QUBE's public landing page is designed for GitHub Pages at
+https://zark.github.io/ai-qube/ and lives in the repository at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 Prefer project-local installs for automation:

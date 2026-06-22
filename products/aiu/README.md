@@ -9,6 +9,10 @@ AIU does not decide quality, planning, or issue status from agent narration. It
 expects structured local state from trusted commands and treats unknown,
 malformed, stale, blocked, or untrusted state as a stop condition.
 
+For the full QUBE package family and command deck, see
+https://zark.github.io/ai-qube/ or the repository landing-page artifact at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 ```sh

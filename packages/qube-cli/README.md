@@ -8,6 +8,10 @@ and test utilities for package-backed CLIs.
 It is a library, not a product CLI. Consuming packages own their command
 behavior, validation rules, state, service integrations, and side effects.
 
+For the product command deck and component package family, see
+https://zark.github.io/ai-qube/ or the repository landing-page artifact at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 ```sh

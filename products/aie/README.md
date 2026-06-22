@@ -8,6 +8,10 @@ Executor is intentionally repository-centered. It works from the target checkout
 and uses the repository's own scripts, policy, branch state, GitHub issues, and
 pull requests as the source of truth.
 
+For the full QUBE package family and command deck, see
+https://zark.github.io/ai-qube/ or the repository landing-page artifact at
+https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
+
 ## Install
 
 ```sh
