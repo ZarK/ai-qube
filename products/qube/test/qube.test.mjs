@@ -3,7 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -51,6 +51,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
     assert.match(help.stdout, /install\s+Build a guided, supply-chain-safe QUBE install plan\./);
     assert.match(help.stdout, /autoresearch\s+Run a safety-bounded local autoresearch arena lifecycle\./);
+    assert.match(help.stdout, /oneshot\s+Create a bounded local artifact without the normal issue, PR, or review-gate workflow\./);
     assert.match(help.stdout, /make-it-so\s+Map an intent to the safest real QUBE workflow\./);
     assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
     assert.match(help.stdout, /spec draft\s+Draft the Bootstrap spec artifact\./);
@@ -91,12 +92,18 @@ describe("qube composer CLI", () => {
     assert.match(autoresearchHelp.stdout, /\.qube\/autoresearch\/runs\/<run-id>\//);
     assert.match(autoresearchHelp.stdout, /promote is the only command that copies the selected best candidate/);
 
+    const oneshotHelp = runCli(["oneshot", "--help"]);
+    assert.equal(oneshotHelp.status, 0);
+    assert.match(oneshotHelp.stdout, /normal issue, PR, or review-gate workflow/);
+    assert.match(oneshotHelp.stdout, /\.qube\/oneshot\/<run-id>\//);
+    assert.match(oneshotHelp.stdout, /no GitHub issue, branch, PR, review request, merge, or approval/);
+
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
     const commandNames = parsed.commands.map(command => command.name);
-    for (const command of ["install", "autoresearch", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+    for (const command of ["install", "autoresearch", "oneshot", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
       assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
     }
     const installCommand = parsed.commands.find(command => command.name === "install");
@@ -106,6 +113,9 @@ describe("qube composer CLI", () => {
     assert.equal(makeItSoCommand?.dryRun.supported, true);
     const autoresearchCommand = parsed.commands.find(command => command.name === "autoresearch");
     assert.equal(autoresearchCommand?.dryRun.supported, true);
+    const oneshotCommand = parsed.commands.find(command => command.name === "oneshot");
+    assert.equal(oneshotCommand?.dryRun.supported, true);
+    assert.deepEqual(oneshotCommand?.mutation.categories, ["local-files"]);
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
@@ -349,6 +359,84 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(promote.stdout);
     assert.equal(parsed.ok, false);
     assert.match(parsed.error.likelyCause, /outside the sandbox/);
+  });
+
+  it("renders oneshot dry-run plans without local mutation", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-dry-cwd-"));
+    const planned = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--dry-run", "--json"], { cwd });
+    assert.equal(planned.status, 0);
+    const parsed = JSON.parse(planned.stdout).oneshot;
+    assert.equal(parsed.status, "dry-run-complete");
+    assert.equal(parsed.plan.kind, "doc");
+    assert.equal(parsed.plan.mutationPolicy.githubSideEffects, false);
+    assert.equal(parsed.githubSideEffects.issueCreated, false);
+    assert.equal(existsSync(path.join(cwd, ".qube", "oneshot")), false);
+  });
+
+  it("runs a local code oneshot with trusted state and no GitHub side effects", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-code-cwd-"));
+    const binDir = path.join(cwd, "bin");
+    mkdirSync(binDir, { recursive: true });
+    const ghLog = path.join(cwd, "gh-called.log");
+    const ghShim = process.platform === "win32" ? path.join(binDir, "gh.cmd") : path.join(binDir, "gh");
+    writeFileSync(
+      ghShim,
+      process.platform === "win32"
+        ? `@echo off\r\necho gh called>>"${ghLog}"\r\nexit /b 9\r\n`
+        : `#!/usr/bin/env sh\necho gh called >> "${ghLog}"\nexit 9\n`,
+      "utf8"
+    );
+    if (process.platform !== "win32") chmodSync(ghShim, 0o755);
+
+    const run = runCli(["oneshot", "Ship a local notes CLI", "--kind", "code", "--json"], {
+      cwd,
+      env: { PATH: `${binDir}${path.delimiter}${process.env.PATH ?? ""}` }
+    });
+    assert.equal(run.status, 0);
+    const ran = JSON.parse(run.stdout).oneshot;
+    assert.equal(ran.status, "success");
+    assert.equal(ran.githubSideEffects.issueCreated, false);
+    assert.equal(ran.githubSideEffects.branchCreated, false);
+    assert.equal(ran.githubSideEffects.pullRequestCreated, false);
+    assert.equal(ran.githubSideEffects.reviewRequested, false);
+    assert.equal(existsSync(ghLog), false);
+    assert.ok(existsSync(ran.artifactPath));
+    assert.ok(existsSync(ran.summaryPath));
+    assert.match(readFileSync(ran.summaryPath, "utf8"), /GitHub side effects: none/);
+
+    const status = runCli(["oneshot", "status", ran.runId, "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).oneshot;
+    assert.equal(current.status, "success");
+    assert.equal(current.artifactPath, ran.artifactPath);
+
+    const checks = runCli(["oneshot", "checks", ran.runId, "--json"], { cwd });
+    assert.equal(checks.status, 0);
+    const checkState = JSON.parse(checks.stdout).oneshot;
+    assert.equal(checkState.checks.every((check) => check.status === "passed"), true);
+
+    const summary = runCli(["oneshot", "summary", ran.runId], { cwd });
+    assert.equal(summary.status, 0);
+    assert.match(summary.stdout, /QUBE oneshot/);
+  });
+
+  it("refuses unsafe oneshot targets and output overwrites", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-safe-cwd-"));
+    const existingTarget = path.join(cwd, "target");
+    mkdirSync(existingTarget, { recursive: true });
+    const dryRun = runCli(["oneshot", "Create a README draft", "--target", "target", "--kind", "doc", "--dry-run", "--json"], { cwd });
+    assert.equal(dryRun.status, 0);
+    assert.equal(JSON.parse(dryRun.stdout).oneshot.plan.mutationPolicy.targetMode, "existing-target-blocked");
+
+    const blockedTarget = runCli(["oneshot", "Create a README draft", "--target", "target", "--kind", "doc", "--json"], { cwd });
+    assert.equal(blockedTarget.status, 2);
+    assert.match(JSON.parse(blockedTarget.stdout).error.likelyCause, /Existing target mutation/);
+
+    const outputPath = path.join(cwd, "result.md");
+    writeFileSync(outputPath, "keep me\n", "utf8");
+    const blockedOutput = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--output", "result.md", "--json"], { cwd });
+    assert.equal(blockedOutput.status, 2);
+    assert.match(JSON.parse(blockedOutput.stdout).error.likelyCause, /output already exists/);
   });
 
   it("renders make-it-so dry-run plans without dispatching", () => {
