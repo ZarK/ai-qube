@@ -231,6 +231,11 @@ describe("qube composer CLI", () => {
       ["init", ".", "--idea", "Ship a local notes CLI", "--acceptance", "fast", "--json"]
     );
 
+    const forwardedJson = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--", "--json"]);
+    assert.equal(forwardedJson.status, 0);
+    assert.match(forwardedJson.stdout, /QUBE make-it-so plan/);
+    assert.throws(() => JSON.parse(forwardedJson.stdout));
+
     const directLocal = runCli(["make-it-so", "Ship a local notes CLI", "--flow", "direct-local", "--dry-run", "--json"]);
     assert.equal(directLocal.status, 0);
     const directParsed = JSON.parse(directLocal.stdout);
@@ -298,6 +303,16 @@ describe("qube composer CLI", () => {
         input: ["make-it-so", "Ship a local notes CLI", "--target", "./notes"],
         component: "aib",
         args: ["init", "./notes", "--idea", "Ship a local notes CLI"]
+      },
+      {
+        input: ["make-it-so", "Ship a local notes CLI", "--resume"],
+        component: "aib",
+        args: ["init", ".", "--idea", "Ship a local notes CLI", "--resume"]
+      },
+      {
+        input: ["make-it-so", "--target", "./notes", "--resume"],
+        component: "aib",
+        args: ["init", "./notes", "--resume"]
       },
       {
         input: ["make-it-so", "--flow", "issue", "next", "--json"],
@@ -438,6 +453,12 @@ describe("qube composer CLI", () => {
 
     assert.equal(issueIdea.exitCode, 2);
     assert.match(issueIdea.stderr, /Issue flow requires an existing issue number/);
+
+    const parseErrorJson = runCli(["make-it-so", "--flow", "--json"]);
+    assert.equal(parseErrorJson.status, 2);
+    const parseError = JSON.parse(parseErrorJson.stdout);
+    assert.equal(parseError.ok, false);
+    assert.equal(parseError.command, "make-it-so");
   });
 
   it("rejects JSON on helper topics that do not support JSON", () => {

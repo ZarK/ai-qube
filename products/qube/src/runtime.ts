@@ -371,19 +371,20 @@ const makeItSoCommand = defineCommand({
   description: "Map an intent to the safest real QUBE workflow.",
   arguments: [
     defineArgument({
-      name: "intent",
-      description: "Idea text, issue number, or next for the selected flow.",
-      required: false
-    }),
-    defineArgument({
       name: "args",
-      description: "Additional arguments forwarded to the mapped component command.",
+      description: "Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
       multiple: true
     })
   ],
   flags: [
     jsonFlag,
     dryRunFlag,
+    defineFlag({
+      name: "help",
+      short: "h",
+      description: "Show command help.",
+      type: "boolean"
+    }),
     defineFlag({
       name: "flow",
       description: "Workflow to run.",
@@ -422,7 +423,8 @@ const makeItSoCommand = defineCommand({
     noColor: true,
     nonInteractive: true,
     ttyPrompt: false
-  }
+  },
+  extensions: passthroughExtensions
 });
 
 interface DirectQubeCommand {
@@ -761,6 +763,9 @@ async function executeQubeDispatch(componentName: string | undefined, componentA
 }
 
 async function executeMakeItSo(args: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  if (isMakeItSoHelpRequest(args)) {
+    return { exitCode: 0, stdout: renderMakeItSoHelp() };
+  }
   const planned = planMakeItSo(args, environment);
   if (!planned.dispatch) {
     return makeItSoRuntimeResult(args, planned);
@@ -773,10 +778,55 @@ async function executeMakeItSo(args: readonly string[], environment: CliEnvironm
 }
 
 function makeItSoRuntimeResult(args: readonly string[], planned: CliExecution): RuntimeCommandResult {
-  if (args.includes("--json")) {
+  if (hasTopLevelJsonFlag(args)) {
     return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
   }
   return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
+}
+
+function isMakeItSoHelpRequest(args: readonly string[]): boolean {
+  const topLevelArgs = topLevelTokens(args);
+  return topLevelArgs.includes("--help") || topLevelArgs.includes("-h");
+}
+
+function hasTopLevelJsonFlag(args: readonly string[]): boolean {
+  return topLevelTokens(args).includes("--json");
+}
+
+function topLevelTokens(args: readonly string[]): readonly string[] {
+  const separator = args.indexOf("--");
+  return separator === -1 ? args : args.slice(0, separator);
+}
+
+function renderMakeItSoHelp(): string {
+  return [
+    "make-it-so",
+    "Map an intent to the safest real QUBE workflow.",
+    "",
+    "Usage:",
+    "  qube make-it-so [args] [--json] [--dry-run] [--flow <value>] [--target <value>]",
+    "",
+    "Arguments:",
+    "  [args]  Intent text, issue selector, and additional arguments forwarded to the mapped component command.",
+    "",
+    "Flags:",
+    "  --json            Render machine-readable JSON output.",
+    "  --dry-run         Print the plan without running mapped commands.",
+    "  -h, --help        Show command help.",
+    "  --flow <value>    Workflow to run.; options: planned, issue, direct-local",
+    "  --target <value>  Planning target path for the planned flow.",
+    "",
+    "Examples:",
+    "  qube make-it-so \"Ship a local notes CLI\"  # Start planning from a concise intent.",
+    "  qube make-it-so --flow issue next --json  # Start the next provider-backed issue through Executor.",
+    "  qube make-it-so \"Ship a local notes CLI\" --dry-run --json  # Preview the mapped workflow without running it.",
+    "",
+    "Behavior:",
+    "  JSON output: supported",
+    "  Dry run: supported",
+    "  Mutation: none",
+    "  Supply chain: standard"
+  ].join("\n") + "\n";
 }
 
 function planDirectCommand(args: readonly string[], environment: CliEnvironment): CliExecution | undefined {
@@ -928,7 +978,10 @@ function createMakeItSoPlan(
   }
   const flow = explicitFlow ?? (positionals.length > 0 ? "planned" : "issue");
   const target = readOption<string>(flags, "target") ?? ".";
-  const [intent = null, ...rest] = positionals;
+  const [first = null, ...remaining] = positionals;
+  const hasSelectorOrIntent = first !== null && !first.startsWith("-");
+  const intent = hasSelectorOrIntent ? first : null;
+  const rest = hasSelectorOrIntent ? remaining : positionals;
   const wantsJson = flags.json === true;
 
   if (flow === "direct-local") {
@@ -1024,6 +1077,7 @@ function quoteShellArg(value: string): string {
 function parseMakeItSoArgs(args: readonly string[]):
   | { readonly flags: Readonly<Record<string, unknown>>; readonly positionals: readonly string[] }
   | { readonly error: CliExecution } {
+  const wantsJsonOutput = hasTopLevelJsonFlag(args);
   const flags: Record<string, unknown> = {};
   const positionals: string[] = [];
   for (let index = 0; index < args.length; index += 1) {
@@ -1046,18 +1100,13 @@ function parseMakeItSoArgs(args: readonly string[]):
     const parsed = parseMakeItSoOption(args, index);
     if (parsed?.kind === "missing-value") {
       return {
-        error: makeItSoError(`Missing value for make-it-so option --${parsed.key}.`, flags.json === true)
+        error: makeItSoError(`Missing value for make-it-so option --${parsed.key}.`, wantsJsonOutput)
       };
     }
     if (parsed?.kind === "parsed") {
       flags[parsed.key] = parsed.value;
       index = parsed.nextIndex;
       continue;
-    }
-    if (token.startsWith("-")) {
-      return {
-        error: makeItSoError(`Unknown make-it-so flag: ${token}`, flags.json === true)
-      };
     }
     positionals.push(token);
   }

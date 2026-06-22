@@ -123,9 +123,10 @@ boundary instead of hiding provider checks, review gates, or setup gaps.
 - `planned` maps free-form intent to `qube aib init <target> --idea <intent>`.
   This creates planning state only; it does not create a GitHub issue, branch,
   pull request, or review request.
-- `issue` maps `next`, an issue number, or `#number` to `qube aie start`.
-  Executor pre-start checks, branch policy, review gates, PR checks, completion,
-  and queue continuation stay in force.
+- `issue` maps `--flow issue next`, `--flow issue <number>`, or
+  `--flow issue #<number>` to `qube aie start`. Executor pre-start checks,
+  branch policy, review gates, PR checks, completion, and queue continuation
+  stay in force.
 - `direct-local` is refused until QUBE has a real oneshot workflow. The command
   reports the missing capability and points users back to planned or issue
   flows instead of running mock local work.
