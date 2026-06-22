@@ -116,6 +116,9 @@ and durable examples in this monorepo. Direct package commands share QUBE-owned
 repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 `.qube/aiq/out/`.
 
+Codex host setup and limitations are documented in the repository guide:
+<https://github.com/ZarK/ai-qube/blob/main/docs/qube-codex-host-support.md>.
+
 ## Make-It-So Contract
 
 `qube make-it-so` is the cardinal work command for turning intent into the

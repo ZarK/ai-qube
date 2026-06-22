@@ -160,6 +160,7 @@ pnpm --filter @tjalve/qube run verify
 Useful public docs:
 
 - `docs/qube-command-surfaces.md`
+- `docs/qube-codex-host-support.md`
 - `docs/qube-host-surfaces.md`
 - `docs/qube-paths-and-artifacts.md`
 - `docs/release/install-migration.md`

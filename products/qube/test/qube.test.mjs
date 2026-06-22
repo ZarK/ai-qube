@@ -7,7 +7,16 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileS
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { findQubeComponent, planQubeCli, resolveCommand, resolveComponentCommand } from "../dist/index.js";
+import {
+  assertCodexHostCapabilitySupported,
+  findQubeComponent,
+  getCodexHostCapability,
+  inspectCodexWorkspace,
+  listCodexHostCapabilities,
+  planQubeCli,
+  resolveCommand,
+  resolveComponentCommand,
+} from "../dist/index.js";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const binPath = fileURLToPath(new URL("../dist/bin/qube.js", import.meta.url));
@@ -183,8 +192,35 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /Host surface: codex/);
     assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.1\.1/);
     assert.match(result.stdout, /AGENTS\.md policy notes/);
+    assert.match(result.stdout, /Codex host support uses AGENTS\.md/);
+    assert.match(result.stdout, /Codex does not use OpenCode-style project command files/);
     assert.match(result.stdout, /remove stale standalone global commands/);
     assert.match(result.stdout, /No commands were run\./);
+  });
+
+  it("reports Codex host capabilities without current-session assumptions", () => {
+    const capabilities = listCodexHostCapabilities();
+    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
+    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 4);
+    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
+
+    assert.equal(assertCodexHostCapabilitySupported("read-instructions").support, "supported");
+    assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
+    assert.throws(() => assertCodexHostCapabilitySupported("install-project-command"), /Unsupported Codex capability/);
+
+    const repo = mkdtempSync(path.join(tmpdir(), "qube-codex-host-"));
+    writeFileSync(path.join(repo, "AGENTS.md"), "Repository policy\n");
+    const inspection = inspectCodexWorkspace(repo);
+
+    assert.equal(inspection.cwd, repo);
+    assert.equal(inspection.instructionTarget.present, true);
+    assert.equal(path.basename(inspection.instructionTarget.path), "AGENTS.md");
+    assert.ok(inspection.capabilities.some(capability => capability.id === "use-local-todos"));
+    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
+    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
+    assert.throws(() => {
+      inspection.capabilities[0].summary = "mutated";
+    }, TypeError);
   });
 
   it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {
