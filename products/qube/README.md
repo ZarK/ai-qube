@@ -48,6 +48,7 @@ qube components
 qube --help
 qube components
 qube install --yes --dry-run --json
+qube autoresearch init ./scratch "improve notes summary quality" --json
 qube make-it-so "Ship a local notes CLI" --dry-run --json
 
 # Plan from an idea.
@@ -134,6 +135,37 @@ boundary instead of hiding provider checks, review gates, or setup gaps.
 Use `--dry-run --json` to inspect the exact mapped command, flow, boundaries,
 and next action without dispatching any component command. Non-interactive JSON
 errors use exit code 2 for unsupported or unsafe states.
+
+## Autoresearch Contract
+
+`qube autoresearch` creates a bounded local arena for sustained target/goal
+optimization. The first implementation supports local directory targets only
+and keeps all working state under `.qube/autoresearch/` until explicit
+promotion.
+
+```sh
+qube autoresearch init <target-directory> <goal>
+qube autoresearch baseline
+qube autoresearch run
+qube autoresearch status --json
+qube autoresearch dashboard
+qube autoresearch promote
+```
+
+The compact form `qube autoresearch <target-directory> <goal>` is a safe alias
+for `init`: it creates the arena and fixed evaluator, but it does not start a
+candidate loop or mutate the target.
+
+- `init` writes `arena.json`, `evaluator.json`, `state.json`, `attempts.jsonl`,
+  and dashboard files under `.qube/autoresearch/runs/<run-id>/`.
+- `baseline` records immutable evidence from the fixed evaluator. Later changes
+  to `evaluator.json` stop the run instead of redefining the score.
+- `run` creates a sandboxed candidate artifact under the run directory, records
+  AIE execution ownership, AIQ evaluation evidence, and AIU continuation state.
+- `status` and `dashboard` read structured run state rather than agent prose.
+- `promote` is the only command that copies the selected best candidate to the
+  target workspace or `--output` path, and it refuses to replace existing output
+  unless `--force` is explicit.
 
 ## Dispatch Model
 

@@ -65,6 +65,7 @@ paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 
 ```sh
 qube components
+qube autoresearch init ./scratch "improve notes summary quality" --json
 qube make-it-so "Ship a local notes CLI" --dry-run --json
 qube aib init . --idea "Ship a local notes CLI" --json
 qube aie queue --json
@@ -79,6 +80,13 @@ the AIE issue lifecycle. The direct-local flow is blocked until QUBE has a real
 oneshot workflow; it reports the missing setup instead of creating placeholder work.
 Use `--dry-run --json` to inspect the mapped command and boundaries before
 running it.
+
+`qube autoresearch` creates a safety-bounded local arena under
+`.qube/autoresearch/`. The first supported target type is a local directory:
+`init` writes a fixed evaluator and arena plan, `baseline` records immutable
+baseline evidence, `run` creates a sandboxed candidate, `status` and
+`dashboard` report structured state, and `promote` is the only step that copies
+the selected candidate back to the target or requested output path.
 
 The composer first resolves component binaries from its own install scope, then
 from the local workspace, then from ambient `PATH`. PATH fallback is diagnostic:
