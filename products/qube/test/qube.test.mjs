@@ -97,6 +97,13 @@ describe("qube composer CLI", () => {
     assert.match(oneshotHelp.stdout, /normal issue, PR, or review-gate workflow/);
     assert.match(oneshotHelp.stdout, /\.qube\/oneshot\/<run-id>\//);
     assert.match(oneshotHelp.stdout, /no GitHub issue, branch, PR, review request, merge, or approval/);
+    const plannedOneshotHelp = planQubeCli(["oneshot", "--help"], {
+      cwd: mkdtempSync(path.join(tmpdir(), "qube-oneshot-help-cwd-")),
+      env: {},
+      packageRoot: mkdtempSync(path.join(tmpdir(), "qube-oneshot-help-root-"))
+    });
+    assert.equal(plannedOneshotHelp.exitCode, 0);
+    assert.match(plannedOneshotHelp.stdout, /qube oneshot <idea>/);
 
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
@@ -369,6 +376,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.status, "dry-run-complete");
     assert.equal(parsed.plan.kind, "doc");
     assert.equal(parsed.plan.mutationPolicy.githubSideEffects, false);
+    assert.ok(parsed.plan.mutationPolicy.allowedMutationPaths.includes(parsed.runDirectory));
     assert.equal(parsed.githubSideEffects.issueCreated, false);
     assert.equal(existsSync(path.join(cwd, ".qube", "oneshot")), false);
   });
@@ -413,11 +421,25 @@ describe("qube composer CLI", () => {
     const checks = runCli(["oneshot", "checks", ran.runId, "--json"], { cwd });
     assert.equal(checks.status, 0);
     const checkState = JSON.parse(checks.stdout).oneshot;
+    assert.ok(checkState.checks.length > 0);
     assert.equal(checkState.checks.every((check) => check.status === "passed"), true);
 
     const summary = runCli(["oneshot", "summary", ran.runId], { cwd });
     assert.equal(summary.status, 0);
     assert.match(summary.stdout, /QUBE oneshot/);
+  });
+
+  it("supports explicit oneshot run subcommand and unique run ids", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-run-cwd-"));
+    const first = runCli(["oneshot", "run", "Create a README draft", "--kind", "doc", "--json"], { cwd });
+    const second = runCli(["oneshot", "run", "Create a README draft", "--kind", "doc", "--json"], { cwd });
+    assert.equal(first.status, 0);
+    assert.equal(second.status, 0);
+    const firstRun = JSON.parse(first.stdout).oneshot;
+    const secondRun = JSON.parse(second.stdout).oneshot;
+    assert.notEqual(firstRun.runId, secondRun.runId);
+    assert.ok(existsSync(path.join(cwd, ".qube", "oneshot", firstRun.runId, "state.json")));
+    assert.ok(existsSync(path.join(cwd, ".qube", "oneshot", secondRun.runId, "state.json")));
   });
 
   it("refuses unsafe oneshot targets and output overwrites", () => {
@@ -437,6 +459,10 @@ describe("qube composer CLI", () => {
     const blockedOutput = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--output", "result.md", "--json"], { cwd });
     assert.equal(blockedOutput.status, 2);
     assert.match(JSON.parse(blockedOutput.stdout).error.likelyCause, /output already exists/);
+
+    const blockedDirectoryOutput = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--output", "target", "--force-output", "--json"], { cwd });
+    assert.equal(blockedDirectoryOutput.status, 2);
+    assert.match(JSON.parse(blockedDirectoryOutput.stdout).error.likelyCause, /must be a file path/);
   });
 
   it("renders make-it-so dry-run plans without dispatching", () => {
