@@ -252,7 +252,7 @@ class DoctorDiagnosticsBuilder {
             assignees: issue.assignees,
             milestone: issue.milestone,
             url: issue.url,
-            declaredBlockers: issue.declaredBlockers,
+            declaredBlockers: issue.declaredBlockers.filter((blocker): blocker is number => typeof blocker === 'number'),
           });
         }
       }

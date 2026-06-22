@@ -22,14 +22,14 @@ export interface QueueIssueSummary {
     dueOn: string | null;
   } | null;
   url: string;
-  declaredBlockers: number[];
+  declaredBlockers: Array<number | string>;
 }
 
 export interface QueueItem {
   workItem: WorkItem;
   issue: QueueIssueSummary;
   effectiveStatus: 'InProgress' | 'Ready' | 'Blocked';
-  openBlockers: number[];
+  openBlockers: Array<number | string>;
   drifted: boolean;
 }
 
@@ -116,7 +116,7 @@ export function workItemToIssueSummary(item: WorkItem): QueueIssueSummary {
       dueOn: item.project.dueOn,
     } : null,
     url: item.url ?? '',
-    declaredBlockers: item.blockers.map(maybeWorkItemKeyNumber).filter((blockerNumber): blockerNumber is number => blockerNumber !== null),
+    declaredBlockers: item.blockers.map(workItemNumericOrDisplay),
   };
 }
 
@@ -158,7 +158,7 @@ export function computeQueueFromWorkItems(openWorkItems: WorkItem[], config: Con
   const items = coreQueue.items.map((item): QueueItem => {
     const workItem = item.workItem;
     const issue = workItemToIssueSummary(workItem);
-    const openBlockers = item.openBlockerKeys.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null);
+    const openBlockers = item.openBlockerKeys.map(workItemNumericOrDisplay);
     return { workItem, issue, effectiveStatus: item.effectiveStatus, openBlockers, drifted: item.drifted };
   });
 

@@ -141,7 +141,7 @@ function relationBlockedBy(issue: LinearIssue): WorkItemKey[] {
 
 export function parseLinearBlockerKeys(description: string | null | undefined): WorkItemKey[] {
   if (!description) return [];
-  const matches = description.matchAll(/Blocked by:\s*([A-Z][A-Z0-9]+-\d+)/g);
+  const matches = description.matchAll(/Blocked by:\s*\b([A-Z][A-Z0-9]+-\d+)/g);
   return [...matches].map(match => linearWorkItemKey(match[1]));
 }
 

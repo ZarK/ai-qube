@@ -95,19 +95,24 @@ describe('Linear work provider', () => {
           return issues;
         },
         async getIssue(id) {
-          return issues.find(issue => issue.identifier === id || issue.id === id);
+          const issue = issues.find(issue => issue.identifier === id || issue.id === id);
+          if (!issue) throw new Error(`missing fixture issue ${id}`);
+          return issue;
         },
       },
     });
 
     const items = await provider.listOpenWorkItems();
     const queue = computeQueueFromWorkItems(items);
+    const blockedItem = queue.items.find(item => item.issue.displayId === 'ENG-123');
 
     assert.equal(provider.capabilities().listOpenWork, true);
     assert.equal(provider.capabilities().applyLifecycleMutations, false);
     assert.deepEqual(items.find(item => item.key.id === 'ENG-100').blockedBy, [{ providerId: 'linear', id: 'ENG-123' }]);
     assert.deepEqual(queue.items.map(item => item.issue.displayId), ['ENG-100', 'ENG-123']);
     assert.deepEqual(queue.items.map(item => item.effectiveStatus), ['Ready', 'Blocked']);
+    assert.deepEqual(blockedItem.openBlockers, ['ENG-100']);
+    assert.deepEqual(blockedItem.issue.declaredBlockers, ['ENG-100']);
   });
 
   it('reports unsupported lifecycle mutations instead of falling back to GitHub labels', async () => {
@@ -132,6 +137,29 @@ describe('Linear work provider', () => {
     assert.equal(result.status, 'failed');
     assert.match(result.failure.cause, /not implemented/);
     assert.match(result.failure.nextAction, /Linear workflow-state/);
+  });
+
+  it('handles unknown Linear states and rejects non-Linear work item keys', async () => {
+    const item = linearIssueToWorkItem(makeLinearIssue({ state: null, priority: null, description: 'No blockers here.' }));
+    const provider = createLinearWorkProvider({
+      teamId: 'team-1',
+      client: {
+        async listOpenIssues() {
+          return [];
+        },
+        async getIssue() {
+          return makeLinearIssue();
+        },
+      },
+    });
+
+    assert.equal(item.status, 'unknown');
+    assert.equal(item.priority, 'none');
+    assert.deepEqual(item.blockers, []);
+    await assert.rejects(
+      () => provider.getWorkItem({ providerId: 'github', id: '123' }),
+      /providerId github is unsupported/,
+    );
   });
 
   it('accepts Linear as a configured work provider only for the work surface', () => {

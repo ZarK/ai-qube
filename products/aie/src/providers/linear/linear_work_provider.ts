@@ -211,12 +211,12 @@ export class LinearWorkProvider implements WorkProvider {
     return createActionPlan({ id: `linear:start:${item.key.id}`, purpose: `Start ${item.displayId}.`, dryRun: true, actions: [action] });
   }
 
-  planPause(item: WorkItem): ActionPlan {
+  planPause(item: WorkItem, _openItems: WorkItem[], _policy: ExecutorPolicy): ActionPlan {
     const action = unsupportedAction(item, 'pause-work', `Pause Linear issue ${item.displayId}`);
     return createActionPlan({ id: `linear:pause:${item.key.id}`, purpose: `Pause ${item.displayId}.`, dryRun: true, actions: [action] });
   }
 
-  planComplete(item: WorkItem): ActionPlan {
+  planComplete(item: WorkItem, _dependents: WorkItem[], _policy: ExecutorPolicy): ActionPlan {
     const action = unsupportedAction(item, 'close-work', `Complete Linear issue ${item.displayId}`);
     return createActionPlan({ id: `linear:complete:${item.key.id}`, purpose: `Complete ${item.displayId}.`, dryRun: true, actions: [action] });
   }
