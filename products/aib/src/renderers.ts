@@ -13,16 +13,6 @@ export interface GitHubIssueDraft {
   readonly url?: string;
 }
 
-export interface LinearIssueDraft {
-  readonly title: string;
-  readonly description: string;
-  readonly priority: number;
-  readonly labelNames: readonly string[];
-  readonly blockedBy: readonly string[];
-  readonly teamKey?: string;
-  readonly url?: string;
-}
-
 export interface GitLabIssueDraft {
   readonly title: string;
   readonly description: string;
@@ -56,22 +46,6 @@ export function renderGitHubIssueDraft(draft: WorkItemDraft): GitHubIssueDraft {
   };
 }
 
-export function renderLinearIssueDraft(draft: WorkItemDraft): LinearIssueDraft {
-  const metadata = readLinearMetadata(draft.providerMetadata?.linear);
-  return {
-    title: draft.title,
-    description: renderDraftBody(draft, metadata.blockedBy),
-    priority: metadata.priority ?? linearPriority(draft.priority),
-    labelNames: metadata.labelNames.length > 0 ? metadata.labelNames : [
-      statusName(draft.status),
-      ...draft.components.map((component) => component.toLowerCase())
-    ],
-    blockedBy: metadata.blockedBy,
-    ...(metadata.teamKey ? { teamKey: metadata.teamKey } : {}),
-    ...(metadata.url ? { url: metadata.url } : {})
-  };
-}
-
 export function renderGitLabIssueDraft(draft: WorkItemDraft): GitLabIssueDraft {
   const metadata = readGitLabMetadata(draft.providerMetadata?.gitlab);
   return {
@@ -96,25 +70,6 @@ function renderDraftBody(draft: WorkItemDraft, providerBlockers: readonly (numbe
   const metadata = [...blockers, ...sequence];
   const sections = draft.bodySections.map((section) => `## ${section.heading}\n\n${section.body.trim()}`);
   return [...metadata, "", `# ${draft.title}`, "", ...sections].join("\n").trimEnd() + "\n";
-}
-
-function readLinearMetadata(value: unknown): { readonly blockedBy: readonly string[]; readonly labelNames: readonly string[]; readonly priority?: number; readonly teamKey?: string; readonly url?: string } {
-  if (!isRecord(value)) {
-    return { blockedBy: [], labelNames: [] };
-  }
-  const blockedBy = Array.isArray(value.blockedBy)
-    ? value.blockedBy.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-  const labelNames = Array.isArray(value.labelNames)
-    ? value.labelNames.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-  return {
-    blockedBy,
-    labelNames,
-    ...(typeof value.priority === "number" && Number.isInteger(value.priority) && value.priority >= 0 && value.priority <= 4 ? { priority: value.priority } : {}),
-    ...(typeof value.teamKey === "string" && value.teamKey.length > 0 ? { teamKey: value.teamKey } : {}),
-    ...(typeof value.url === "string" && value.url.length > 0 ? { url: value.url } : {})
-  };
 }
 
 function readGithubMetadata(value: unknown): { readonly blockedBy: readonly number[]; readonly url?: string } {
@@ -155,23 +110,10 @@ function priorityLabel(priority: WorkItemDraft["priority"]): string {
   return "P3-Normal";
 }
 
-function linearPriority(priority: WorkItemDraft["priority"]): number {
-  if (priority === "critical") return 1;
-  if (priority === "high") return 2;
-  if (priority === "low") return 4;
-  return 3;
-}
-
 function statusLabel(status: WorkItemDraft["status"]): string {
   if (status === "blocked") return "S-Blocked";
   if (status === "ready" || status === "rendered") return "S-Ready";
   return "S-Draft";
-}
-
-function statusName(status: WorkItemDraft["status"]): string {
-  if (status === "blocked") return "blocked";
-  if (status === "ready" || status === "rendered") return "ready";
-  return "draft";
 }
 
 function safeFileName(value: string): string {

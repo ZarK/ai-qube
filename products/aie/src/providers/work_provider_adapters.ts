@@ -21,8 +21,10 @@ export interface WorkProviderAdapterMetadata {
 }
 
 interface WorkProviderAdapter extends WorkProviderAdapterMetadata {
-  create(options: WorkProviderAdapterOptions): WorkProvider;
+  create(options: WorkProviderAdapterOptions): Promise<WorkProvider>;
 }
+
+type WorkProviderFactory = (options: WorkProviderAdapterOptions) => WorkProvider;
 
 const GITHUB_CAPABILITIES: WorkProviderCapabilities = Object.freeze({
   listOpenWork: true,
@@ -67,7 +69,7 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
       'GitHub work support is available through the built-in Executor adapter boundary.',
       'Authenticate gh for the target repository before running mutating lifecycle commands.',
     ]),
-    create: (options: WorkProviderAdapterOptions) => createGitHubWorkProvider({
+    create: async (options: WorkProviderAdapterOptions) => createGitHubWorkProvider({
       exec: options.exec,
       cwd: options.cwd,
       includeAssignees: false,
@@ -91,8 +93,32 @@ function missingOptionalAdapter(id: Exclude<WorkProviderId, 'github'>, packageNa
     installed: false,
     capabilities: OPTIONAL_READ_CAPABILITIES,
     setup: Object.freeze([...setup]),
-    create: () => new MissingWorkProvider(id, packageName, setup),
+    create: async (options: WorkProviderAdapterOptions) => {
+      const loaded = await loadOptionalAdapter(packageName, `create${capitalizeProviderId(id)}WorkProvider`);
+      return loaded ? loaded(options) : new MissingWorkProvider(id, packageName, setup);
+    },
   });
+}
+
+async function loadOptionalAdapter(packageName: string, factoryName: string): Promise<WorkProviderFactory | null> {
+  try {
+    const imported = await import(packageName);
+    const factory = (imported as Record<string, unknown>)[factoryName];
+    return typeof factory === 'function' ? factory as WorkProviderFactory : null;
+  } catch (error) {
+    if (isModuleMissing(error, packageName)) return null;
+    throw error;
+  }
+}
+
+function isModuleMissing(error: unknown, packageName: string): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
+  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
+}
+
+function capitalizeProviderId(id: string): string {
+  return `${id.charAt(0).toUpperCase()}${id.slice(1)}`;
 }
 
 function adapterFor(id: WorkProviderId): WorkProviderAdapter {
@@ -117,7 +143,7 @@ export function workProviderAdapterPackage(id: WorkProviderId): string {
   return adapterFor(id).packageName;
 }
 
-export function createWorkProvider(id: WorkProviderId, options: WorkProviderAdapterOptions = {}): WorkProvider {
+export async function createWorkProvider(id: WorkProviderId, options: WorkProviderAdapterOptions = {}): Promise<WorkProvider> {
   return adapterFor(id).create(options);
 }
 

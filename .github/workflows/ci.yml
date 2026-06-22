@@ -81,6 +81,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run build
           pnpm --filter @tjalve/qube-adapter-github run build
           pnpm --filter @tjalve/qube-adapter-opencode run build
+          pnpm --filter @tjalve/qube-adapter-linear run build
           pnpm --filter @tjalve/qube-cli run build
           pnpm --filter @tjalve/aib run build
           pnpm --filter @tjalve/aie run build
@@ -92,6 +93,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run typecheck
           pnpm --filter @tjalve/qube-adapter-github run typecheck
           pnpm --filter @tjalve/qube-adapter-opencode run typecheck
+          pnpm --filter @tjalve/qube-adapter-linear run typecheck
           pnpm --filter @tjalve/qube-cli run typecheck
           pnpm --filter @tjalve/aib run typecheck
           pnpm --filter @tjalve/aie run typecheck
@@ -103,6 +105,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run verify
           pnpm --filter @tjalve/qube-adapter-github run verify
           pnpm --filter @tjalve/qube-adapter-opencode run verify
+          pnpm --filter @tjalve/qube-adapter-linear run verify
           pnpm --filter @tjalve/qube-cli run verify
           pnpm --filter @tjalve/aib run verify
           pnpm --filter @tjalve/aie run verify

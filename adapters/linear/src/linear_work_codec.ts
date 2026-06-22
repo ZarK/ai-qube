@@ -1,5 +1,4 @@
-import { normalizeProviderSource } from '../../core/provider_source.js';
-import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item.js';
+import { normalizeProviderSource, normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '@tjalve/qube-core';
 
 const PROVIDER_ID = 'linear';
 

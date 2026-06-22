@@ -1,8 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { renderLinearIssueDraft, type LinearIssueDraft } from "@tjalve/qube-adapter-linear";
 
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
-import { renderGitHubIssueDraft, renderGitLabIssueDraft, renderLinearIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type GitLabIssueDraft, type LinearIssueDraft, type MarkdownWorkItem } from "./renderers.js";
+import { renderGitHubIssueDraft, renderGitLabIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type GitLabIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
 
 export type WorkItemRenderProvider = "github" | "gitlab" | "linear" | "markdown";

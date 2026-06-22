@@ -10,8 +10,9 @@ explicitly chooses otherwise.
 
 Supported now:
 
-- AIB can render provider-neutral work item drafts into Linear issue previews
-  with `qube aib work-items render --provider linear --dry-run --json`.
+- AIB renders provider-neutral work item drafts into Linear issue previews
+  through `@tjalve/qube-adapter-linear` with
+  `qube aib work-items render --provider linear --dry-run --json`.
 - AIE resolves Linear through the optional `@tjalve/qube-adapter-linear`
   work-provider package boundary. The adapter maps Linear issues into QUBE work
   items for read flows.
