@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it } from "vitest";
@@ -16,6 +17,9 @@ import {
 } from "../src/index.js";
 
 const execFileAsync = promisify(execFile);
+const githubActionPackageRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+const aiqRoot = path.join(githubActionPackageRoot, "..", "..");
+const repoRoot = path.join(aiqRoot, "..", "..");
 const tempDirs: string[] = [];
 
 afterEach(async () => {
@@ -23,6 +27,36 @@ afterEach(async () => {
 });
 
 describe("github action adapter", () => {
+  it("keeps the GitHub Action HTTP stack on patched undici", async () => {
+    const githubActionPackageJson = JSON.parse(
+      await readFile(path.join(githubActionPackageRoot, "package.json"), "utf8"),
+    ) as { dependencies?: Record<string, string> };
+    const aiqWorkspaceConfig = await readFile(path.join(aiqRoot, "pnpm-workspace.yaml"), "utf8");
+    const rootWorkspaceConfig = await readFile(path.join(repoRoot, "pnpm-workspace.yaml"), "utf8");
+
+    expect(githubActionPackageJson.dependencies).toMatchObject({
+      "@actions/artifact": "6.2.1",
+      "@actions/core": "3.0.1",
+    });
+    expect(rootWorkspaceConfig).toMatch(/^overrides:\n {2}undici: 6\.27\.0$/m);
+    expect(aiqWorkspaceConfig).toMatch(/^overrides:\n {2}undici: 6\.27\.0$/m);
+    expect(rootWorkspaceConfig).toMatch(/^minimumReleaseAgeExclude:\n {2}- undici@6\.27\.0$/m);
+    expect(aiqWorkspaceConfig).toMatch(/^ {2}- undici@6\.27\.0$/m);
+    expect(rootWorkspaceConfig).not.toMatch(/^ {2}- undici$/m);
+    expect(aiqWorkspaceConfig).not.toMatch(/^ {2}- undici$/m);
+
+    for (const lockfilePath of [
+      path.join(repoRoot, "pnpm-lock.yaml"),
+      path.join(aiqRoot, "pnpm-lock.yaml"),
+    ]) {
+      const lockfile = await readFile(lockfilePath, "utf8");
+
+      expect(lockfile).toContain("undici@6.27.0:");
+      expect(lockfile).not.toMatch(/\bundici@(6\.25\.0|6\.26\.0):/);
+      expect(lockfile).not.toMatch(/\bundici:\s*6\.(?:25|26)\.0/);
+    }
+  });
+
   it("runs AIQ on tracked files, emits annotations, and uploads canonical artifacts", async () => {
     const repoDir = await createGitRepo({
       "src/index.ts": "var failing = 1;\nexport { failing };\n",
