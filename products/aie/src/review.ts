@@ -8,6 +8,13 @@ import { readLocalIssueReviewGate, type LocalReviewGate } from './local_review_e
 export type ReviewGateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found';
 export type ReviewGateRecordedStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'stale' | 'missing' | 'unknown';
 export type ReviewGateReviewerSource = 'configured' | 'default-oracle';
+type ReviewGateReviewerKind = 'github' | 'local' | 'oracle';
+
+interface ReviewGateReviewerTarget {
+  name: string;
+  kind: ReviewGateReviewerKind;
+  source: ReviewGateReviewerSource;
+}
 
 export interface ReviewGateReviewer {
   name: string;
@@ -91,9 +98,11 @@ function localReviewerNames(config: Config): string[] {
   return names.length === 0 && config.reviewAdapter === 'local' ? ['local-reviewer'] : names;
 }
 
-function reviewerNames(config: Config): string[] {
-  const names = [...configuredReviewerNames(config), ...localReviewerNames(config)];
-  return names.length === 0 ? [DEFAULT_REVIEWER] : names;
+function reviewerTargets(config: Config): ReviewGateReviewerTarget[] {
+  const configured = configuredReviewerNames(config).map(name => ({ name, kind: 'github' as const, source: 'configured' as const }));
+  const local = localReviewerNames(config).map(name => ({ name, kind: 'local' as const, source: 'configured' as const }));
+  const targets = [...configured, ...local];
+  return targets.length === 0 ? [{ name: DEFAULT_REVIEWER, kind: 'oracle', source: 'default-oracle' }] : targets;
 }
 
 function isOracleReviewer(name: string): boolean {
@@ -107,14 +116,11 @@ function reviewerInvocation(name: string): string {
 }
 
 function buildReviewers(config: Config): ReviewGateReviewer[] {
-  const configured = configuredReviewerNames(config);
-  const local = localReviewerNames(config);
-  const source: ReviewGateReviewerSource = configured.length === 0 && local.length === 0 ? 'default-oracle' : 'configured';
-  return reviewerNames(config).map(name => ({
-    name: redact(name),
-    source,
-    invocation: local.includes(name) ? `local evidence: ${redact(name)}` : redact(reviewerInvocation(name)),
-    externalService: !local.includes(name) && !isOracleReviewer(name),
+  return reviewerTargets(config).map(target => ({
+    name: redact(target.name),
+    source: target.source,
+    invocation: target.kind === 'local' ? `local evidence: ${redact(target.name)}` : redact(reviewerInvocation(target.name)),
+    externalService: target.kind === 'github' && !isOracleReviewer(target.name),
     fallbackAvailable: true,
   }));
 }

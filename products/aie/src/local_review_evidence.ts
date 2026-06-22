@@ -161,13 +161,13 @@ function readLanes(value: unknown): LocalReviewLane[] | null {
 }
 
 function laneStatus(lanes: readonly LocalReviewLane[]): LocalReviewStatus {
-  const byId = new Map(lanes.map(lane => [lane.id, lane]));
   for (const lane of lanes) if (lane.status === 'malformed') return 'malformed';
   for (const lane of lanes) if (lane.status === 'unavailable') return 'unavailable';
   for (const lane of lanes) if (lane.status === 'failed') return 'failed';
   for (const lane of lanes) if (lane.status === 'needs-work') return 'needs-work';
   for (const lane of lanes) if (lane.status === 'stale') return 'stale';
   for (const lane of lanes) if (lane.status === 'pending') return 'pending';
+  const byId = new Map(lanes.map(lane => [lane.id, lane]));
   for (const laneId of REQUIRED_LOCAL_REVIEW_LANES) {
     if (!byId.has(laneId)) return 'missing';
     if (byId.get(laneId)?.status !== 'passed') return 'pending';
@@ -188,6 +188,7 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers);
     if (parsed.schemaVersion !== 1) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence schemaVersion must be 1.', reviewers);
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers);
+    if (typeof parsed.headSha !== 'string' || parsed.headSha.trim() === '') return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence headSha metadata must be a non-empty string for this gate.', reviewers);
     if (parsed.headSha !== headSha) return staleEvidence(issueNumber, prNumber, headSha, path, reviewers);
     const lanes = readLanes(parsed.lanes);
     if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers);
@@ -245,7 +246,10 @@ function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: numb
   const directory = evidenceDirectory(repoRoot, issueNumber, prNumber);
   if (!existsSync(directory)) return null;
   try {
-    const files = readdirSync(directory).filter(name => name.endsWith('.json')).sort();
+    const files = readdirSync(directory, { withFileTypes: true })
+      .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+      .map(entry => entry.name)
+      .sort();
     return files.length === 0 ? null : join(directory, files[files.length - 1]);
   } catch {
     return null;
@@ -261,9 +265,9 @@ function findIssueEvidence(repoRoot: string, issueNumber: number): string[] {
       .map(entry => join(directory, entry.name));
     return prDirectories.flatMap(prDirectory => {
       try {
-        return readdirSync(prDirectory)
-          .filter(name => name.endsWith('.json'))
-          .map(name => join(prDirectory, name));
+        return readdirSync(prDirectory, { withFileTypes: true })
+          .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
+          .map(entry => join(prDirectory, entry.name));
       } catch {
         return [];
       }

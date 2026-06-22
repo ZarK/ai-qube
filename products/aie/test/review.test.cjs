@@ -156,6 +156,24 @@ describe('review gate model', () => {
     assert.match(result.prompt, /Local review evidence must cover code-quality/);
     assert.match(result.nextAction, /Record local review evidence|pr gate/);
   });
+
+  it('keeps mixed same-name local and GitHub reviewer targets distinct', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = ['oracle'];
+    config.localReviewAgents = ['oracle'];
+
+    const result = runReviewGate(config, { issueNumber: 99, repoRoot: repo });
+
+    assert.equal(result.reviewers.length, 2);
+    assert.equal(result.reviewers[0].name, 'oracle');
+    assert.equal(result.reviewers[0].invocation, '@oracle');
+    assert.equal(result.reviewers[1].name, 'oracle');
+    assert.equal(result.reviewers[1].invocation, 'local evidence: oracle');
+    assert.equal(result.reviewers[0].externalService, false);
+    assert.equal(result.reviewers[1].externalService, false);
+  });
 });
 
 describe('review gate CLI', () => {
