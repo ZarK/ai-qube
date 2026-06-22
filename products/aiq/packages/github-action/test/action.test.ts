@@ -27,7 +27,7 @@ afterEach(async () => {
 });
 
 describe("github action adapter", () => {
-  it("keeps the GitHub Action HTTP stack on patched undici", async () => {
+  it("keeps dependency overrides on patched versions", async () => {
     const githubActionPackageJson = JSON.parse(
       await readFile(path.join(githubActionPackageRoot, "package.json"), "utf8"),
     ) as { dependencies?: Record<string, string> };
@@ -38,8 +38,10 @@ describe("github action adapter", () => {
       "@actions/artifact": "6.2.1",
       "@actions/core": "3.0.1",
     });
-    expect(rootWorkspaceConfig).toMatch(/^overrides:\n {2}undici: 6\.27\.0$/m);
-    expect(aiqWorkspaceConfig).toMatch(/^overrides:\n {2}undici: 6\.27\.0$/m);
+    expect(rootWorkspaceConfig).toMatch(/^ {2}js-yaml: 4\.2\.0$/m);
+    expect(rootWorkspaceConfig).toMatch(/^ {2}undici: 6\.27\.0$/m);
+    expect(aiqWorkspaceConfig).toMatch(/^ {2}js-yaml: 4\.2\.0$/m);
+    expect(aiqWorkspaceConfig).toMatch(/^ {2}undici: 6\.27\.0$/m);
     expect(rootWorkspaceConfig).toMatch(/^minimumReleaseAgeExclude:\n {2}- undici@6\.27\.0$/m);
     expect(aiqWorkspaceConfig).toMatch(/^ {2}- undici@6\.27\.0$/m);
     expect(rootWorkspaceConfig).not.toMatch(/^ {2}- undici$/m);

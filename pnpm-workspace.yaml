@@ -27,4 +27,5 @@ registries:
   default: https://registry.npmjs.org/
 
 overrides:
+  js-yaml: 4.2.0
   undici: 6.27.0
