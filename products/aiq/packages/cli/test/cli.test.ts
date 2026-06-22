@@ -160,7 +160,7 @@ describe("CLI foundation", () => {
     }
 
     expect(vitestConfig).not.toMatch(/^\s*browser\s*:/m);
-    expect(vitestConfig).not.toMatch(/^\s*api\s*:\s*{[^}]*\bhost\s*:/ms);
+    expect(vitestConfig).not.toMatch(/^\s*api\s*:\s*{[\s\S]*?\bhost\s*:/m);
     expect(vitestConfig).not.toMatch(/^\s*allow(?:Write|Exec)\s*:\s*true\b/m);
   });
 });
