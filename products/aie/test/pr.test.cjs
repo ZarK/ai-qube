@@ -72,12 +72,12 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
     promptStack: [{ id: 'builtin:review-profile:local-standard', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
     recordedAt: '2026-06-22T00:00:00.000Z',
     lanes: [
-      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: ['issue'], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: [{ id: 'builtin:task-record-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue compliance reviewed', blockers: [], artifacts: ['issue'], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: [{ id: 'builtin:issue-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'code-quality', status: laneStatus, severity: 'none', recommendation: laneStatus === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers, artifacts: ['diff'], commands: ['pnpm test'], surfaces: [], promptStack: [{ id: 'builtin:code-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: ['test output'], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: [{ id: 'builtin:tests-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: ['test output'], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: [{ id: 'builtin:manual-qa', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: ['PR state'], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: [{ id: 'builtin:final-gate', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/task-record-compliance.json', sha256: 'test-hash' }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: [{ id: 'builtin:task-record-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue compliance reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/issue-compliance.json', sha256: 'test-hash' }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: [{ id: 'builtin:issue-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'code-quality', status: laneStatus, severity: 'none', recommendation: laneStatus === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers, artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/code-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: [], promptStack: [{ id: 'builtin:code-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: [{ id: 'builtin:tests-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: [{ id: 'builtin:manual-qa', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: [{ id: 'builtin:final-gate', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
     ],
   };
 }
@@ -86,9 +86,15 @@ function writeLocalEvidence(repo, evidence) {
   const issueNumber = evidence.issueNumber;
   const prNumber = evidence.prNumber;
   const headSha = evidence.headSha;
-  const directory = join(repo, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, `pr-${prNumber}`);
+  const directory = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headSha);
   mkdirSync(directory, { recursive: true });
-  writeFileSync(join(directory, `${headSha}.json`), `${typeof evidence === 'string' ? evidence : JSON.stringify(evidence, null, 2)}\n`);
+  if (typeof evidence === 'string') {
+    writeFileSync(join(directory, 'final-gate.json'), evidence);
+    return;
+  }
+  for (const lane of evidence.lanes) {
+    writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify({ ...lane, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter }, null, 2)}\n`);
+  }
 }
 
 function localReviewConfig() {
@@ -144,7 +150,7 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
     summary: 'comprehensive local review passed',
     blockers: [],
     contextReviewed,
-    promptStack: [{ id: 'builtin:review-profile:local-comprehensive', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+    promptStack: [{ id: 'builtin:review-profile:local-comprehensive', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
     recordedAt: '2026-06-22T00:00:00.000Z',
     lanes: laneIds.map(id => ({
       id,
@@ -153,11 +159,11 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
       recommendation: 'approve',
       summary: `${id} reviewed`,
       blockers: [],
-      artifacts: ['evidence'],
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${id}.json`, sha256: 'test-hash' }],
       commands: ['qube aie pr gate 12 --dry-run'],
       surfaces: ['PR'],
       contextReviewed: id === 'task-record-compliance' ? contextReviewed : [],
-      promptStack: [{ id: `builtin:${id}`, source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+      promptStack: [{ id: `builtin:${id}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
       toolsUsed: ['rg'],
     })),
   };
@@ -661,7 +667,7 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'complete');
     assert.equal(result.localReview.profile, 'local-comprehensive');
     assert.equal(result.localReview.requiredLanes.length, 15);
-    assert.equal(result.localReview.evidence[0].promptStack[0].id, 'builtin:review-profile:local-comprehensive');
+    assert.ok(result.localReview.evidence[0].promptStack.some(item => item.id === 'builtin:final-gate'));
   });
 
   it('keeps comprehensive local gates inconclusive when task context coverage is missing', async () => {
@@ -708,7 +714,8 @@ describe('PR gate service', () => {
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
-    mkdirSync(join(repo, '.qube', 'aie', 'pr-reviews', 'issue-93', 'pr-12', 'oldsha.json'), { recursive: true });
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldsha.json'), '{}\n');
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -764,9 +771,9 @@ describe('PR gate service', () => {
   it('fails local-only PR gates when local evidence is malformed', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
-    const directory = join(repo, '.qube', 'aie', 'pr-reviews', 'issue-93', 'pr-12');
+    const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(directory, { recursive: true });
-    writeFileSync(join(directory, 'abc123.json'), '{not-json');
+    writeFileSync(join(directory, 'task-record-compliance.json'), '{not-json');
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -781,9 +788,9 @@ describe('PR gate service', () => {
     const config = localReviewConfig();
     const evidence = localEvidence();
     delete evidence.headSha;
-    const directory = join(repo, '.qube', 'aie', 'pr-reviews', 'issue-93', 'pr-12');
+    const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(directory, { recursive: true });
-    writeFileSync(join(directory, 'abc123.json'), `${JSON.stringify(evidence, null, 2)}\n`);
+    writeFileSync(join(directory, 'task-record-compliance.json'), `${JSON.stringify({ ...evidence.lanes[0], version: evidence.version, issueNumber: evidence.issueNumber, prNumber: evidence.prNumber, profile: evidence.profile, adapter: evidence.adapter }, null, 2)}\n`);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });

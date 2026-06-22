@@ -146,10 +146,6 @@ function artifactArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   const artifacts: string[] = [];
   for (const item of value) {
-    if (typeof item === 'string' && item.trim() !== '') {
-      artifacts.push(redact(item));
-      continue;
-    }
     if (!isRecord(item)) continue;
     const kind = stringValue(item.kind, 'artifact');
     const path = typeof item.path === 'string' && item.path.trim() !== '' ? redact(item.path.trim()) : '';
@@ -290,6 +286,14 @@ function evidencePath(repoRoot: string, issueNumber: number, prNumber: number, h
 
 function evidenceDirectory(repoRoot: string, issueNumber: number, prNumber: number): string {
   return join(repoRoot, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, `pr-${prNumber}`);
+}
+
+function laneEvidenceDirectory(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeSegment(headSha));
+}
+
+function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
 }
 
 function fallbackReviewer(reviewers: readonly string[]): LocalReviewEvidence['reviewer'] {
@@ -520,6 +524,90 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
   }
 }
 
+function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter'] } | null {
+  const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+  if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
+  const parsedIssueNumber = parsed.issueNumber ?? parsed.issue;
+  const parsedPrNumber = parsed.prNumber ?? parsed.pr;
+  if (parsedIssueNumber !== issueNumber || parsedPrNumber !== prNumber || parsed.headSha !== headSha) return null;
+  const id = readLaneId(parsed.lane ?? parsed.id);
+  if (!id) return null;
+  const status = readStatus(parsed.status);
+  return {
+    adapter: readAdapter(parsed.adapter),
+    lane: {
+      id,
+      status,
+      severity: readSeverity(parsed.severity),
+      recommendation: readRecommendation(parsed.recommendation, status),
+      summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
+      blockers: stringArray(parsed.blockers),
+      artifacts: artifactArray(parsed.artifacts),
+      commands: stringArray(parsed.commands),
+      surfaces: stringArray(parsed.surfaces),
+      contextReviewed: readContextReviewed(parsed.contextReviewed),
+      promptStack: readPromptStack(parsed.promptStack),
+      toolsUsed: stringArray(parsed.toolsUsed),
+    },
+  };
+}
+
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence | null {
+  const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
+  if (!existsSync(directory)) return null;
+  const requiredLanes = requiredLocalReviewLanes(profile);
+  const lanes: LocalReviewLane[] = [];
+  const missing: string[] = [];
+  const adapters: LocalReviewEvidence['adapter'][] = [];
+  try {
+    for (const laneId of requiredLanes) {
+      const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+      if (!existsSync(path)) {
+        missing.push(laneId);
+        continue;
+      }
+      const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} is malformed or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+      lanes.push(parsed.lane);
+      adapters.push(parsed.adapter);
+    }
+  } catch {
+    return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
+  }
+  if (lanes.length === 0) return null;
+  if (missing.length > 0) {
+    const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
+    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
+  }
+  const finalGate = lanes.find(lane => lane.id === 'final-gate');
+  const contextReviewed = lanes.flatMap(lane => lane.contextReviewed);
+  const promptStack = lanes.flatMap(lane => lane.promptStack);
+  const missingContext = missingRequiredContext(lanes, profile);
+  const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
+  const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
+  const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
+  const status = statusWithAdapter(rawStatus, adapter, shadow);
+  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
+  return {
+    issueNumber,
+    prNumber,
+    headSha: redact(headSha),
+    profile,
+    adapter,
+    status,
+    path: redact(directory),
+    reviewer: fallbackReviewer(reviewers),
+    summary: finalGate?.summary ?? 'Local review lane evidence was loaded.',
+    blockers,
+    lanes,
+    contextReviewed,
+    promptStack,
+    recordedAt: null,
+    stale: false,
+  };
+}
+
 function parseIssueEvidence(path: string, issueNumber: number, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
@@ -562,6 +650,19 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
 }
 
 function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number): string | null {
+  const laneRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
+  if (existsSync(laneRoot)) {
+    try {
+      const directories = readdirSync(laneRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory())
+        .map(entry => entry.name)
+        .sort();
+      const newest = directories.at(-1);
+      if (newest) return join(laneRoot, newest);
+    } catch {
+      return null;
+    }
+  }
   const directory = evidenceDirectory(repoRoot, issueNumber, prNumber);
   if (!existsSync(directory)) return null;
   try {
@@ -649,6 +750,8 @@ export function readLocalReviewGate(input: {
   }
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
+    if (laneEvidence) return laneEvidence;
     if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber);
     if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers, profile);
