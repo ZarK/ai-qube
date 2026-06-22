@@ -36,6 +36,9 @@ import { handleSchema } from './runtime_schema.js';
 import { handleRunStart, handleRunStatus, handleRunStop, handleRunWait } from './runtime_run_handlers.js';
 function formatConfigErrors(errors: ValidationError[]): string { return errors.map(error => `${error.path}: ${error.message}`).join('\n'); }
 function lineOutput(lines: string[]): string { return `${lines.join('\n')}\n`; }
+function workDisplayId(issue: { number: number | null; displayId?: string }): string {
+  return issue.displayId ?? (issue.number === null ? 'unknown work item' : `#${issue.number}`);
+}
 function parseIssueNumber(input: string | undefined, command: string, role = 'issue'): number {
   if (!input || isHelpToken(input)) throw new Error(`Missing ${role} number.`);
   const cleaned = input.replace(/^#/, '').trim();
@@ -468,7 +471,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   },
   next: async context => {
     const next = await getNextIssue();
-    return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: #${next.issue.number} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple S-InProgress issues - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} issue(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
+    return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
   pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
@@ -483,7 +486,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
       const list = q.items.filter(item => item.effectiveStatus === status);
       if (list.length === 0) continue;
       lines.push(`${status}:`);
-      for (const item of list) lines.push(`  #${item.issue.number} "${item.issue.title}" (${item.issue.state})${item.drifted ? ' (drift)' : ''}${status === 'Blocked' && item.openBlockers.length > 0 ? ` blocked by: ${item.openBlockers.map(number => `#${number}`).join(', ')}` : ''}`);
+      for (const item of list) lines.push(`  ${workDisplayId(item.issue)} "${item.issue.title}" (${item.issue.state})${item.drifted ? ' (drift)' : ''}${status === 'Blocked' && item.openBlockers.length > 0 ? ` blocked by: ${item.openBlockers.map(number => `#${number}`).join(', ')}` : ''}`);
       lines.push('');
     }
     if (q.driftCount > 0) lines.push('Drift detected - labels disagree with dependency state. Run `aie deps fix --dry-run` then `aie deps fix`.');

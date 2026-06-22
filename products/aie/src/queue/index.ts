@@ -1,13 +1,15 @@
 import { loadConfig, getDefaults, Config } from '../config/index.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { computeWorkQueue, type WorkMilestoneGroup, type WorkQueuePolicy } from '../core/queue_rules.js';
-import { createGitHubWorkProvider } from '../providers/github/github_work_provider.js';
 import { githubIssueNumber } from '../providers/github/github_work_codec.js';
 import { createLifecycleContext } from '../app/lifecycle_services.js';
 import { runNextWorkService } from '../app/next_work.js';
 
 export interface QueueIssueSummary {
-  number: number;
+  providerId: string;
+  id: string;
+  number: number | null;
+  displayId: string;
   title: string;
   body: string;
   state: 'OPEN' | 'CLOSED';
@@ -20,25 +22,25 @@ export interface QueueIssueSummary {
     dueOn: string | null;
   } | null;
   url: string;
-  declaredBlockers: number[];
+  declaredBlockers: Array<number | string>;
 }
 
 export interface QueueItem {
   workItem: WorkItem;
   issue: QueueIssueSummary;
   effectiveStatus: 'InProgress' | 'Ready' | 'Blocked';
-  openBlockers: number[];
+  openBlockers: Array<number | string>;
   drifted: boolean;
 }
 
 export interface QueueDependencyCycle {
-  issues: number[];
+  issues: Array<number | string>;
 }
 
 export interface QueueMilestoneGroup {
   milestone: QueueIssueSummary['milestone'];
   title: string;
-  itemNumbers: number[];
+  itemNumbers: Array<number | string>;
   progress: WorkMilestoneGroup['progress'];
 }
 
@@ -70,6 +72,23 @@ function milestoneNumber(item: WorkItem): number | null {
   return typeof value === 'number' && Number.isInteger(value) ? value : null;
 }
 
+function workItemIssueNumber(item: WorkItem): number | null {
+  if (item.key.providerId === 'github') return githubIssueNumber(item);
+  return maybeWorkItemKeyNumber(item.key);
+}
+
+function workItemNumericOrDisplay(key: WorkItem['key']): number | string {
+  return maybeWorkItemKeyNumber(key) ?? key.id;
+}
+
+function projectNumber(item: WorkItem): number | null {
+  const githubNumber = milestoneNumber(item);
+  if (githubNumber !== null) return githubNumber;
+  if (!item.project) return null;
+  const numeric = Number(item.project.id);
+  return Number.isInteger(numeric) ? numeric : null;
+}
+
 function configToWorkQueuePolicy(config: Config): WorkQueuePolicy {
   return {
     priorityLabels: config.priorityLabels,
@@ -79,21 +98,25 @@ function configToWorkQueuePolicy(config: Config): WorkQueuePolicy {
 }
 
 export function workItemToIssueSummary(item: WorkItem): QueueIssueSummary {
+  const number = workItemIssueNumber(item);
   return {
-    number: githubIssueNumber(item),
+    providerId: item.key.providerId,
+    id: item.key.id,
+    number,
+    displayId: item.displayId,
     title: item.title,
     body: item.body,
     state: item.state === 'open' ? 'OPEN' : 'CLOSED',
     labels: [...item.tags],
     assignees: [...item.assignees],
     milestone: item.project ? {
-      number: milestoneNumber(item) ?? Number(item.project.id),
+      number: projectNumber(item) ?? 0,
       title: item.project.title,
       state: item.project.state.toUpperCase(),
       dueOn: item.project.dueOn,
     } : null,
     url: item.url ?? '',
-    declaredBlockers: item.blockers.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null),
+    declaredBlockers: item.blockers.map(workItemNumericOrDisplay),
   };
 }
 
@@ -135,7 +158,7 @@ export function computeQueueFromWorkItems(openWorkItems: WorkItem[], config: Con
   const items = coreQueue.items.map((item): QueueItem => {
     const workItem = item.workItem;
     const issue = workItemToIssueSummary(workItem);
-    const openBlockers = item.openBlockerKeys.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null);
+    const openBlockers = item.openBlockerKeys.map(workItemNumericOrDisplay);
     return { workItem, issue, effectiveStatus: item.effectiveStatus, openBlockers, drifted: item.drifted };
   });
 
@@ -146,16 +169,16 @@ export function computeQueueFromWorkItems(openWorkItems: WorkItem[], config: Con
     blockedCount: coreQueue.blockedCount,
     driftCount: coreQueue.driftCount,
     multipleInProgress: coreQueue.multipleInProgress,
-    cycles: coreQueue.cycles.map(cycle => ({ issues: cycle.keys.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null) })),
+    cycles: coreQueue.cycles.map(cycle => ({ issues: cycle.keys.map(workItemNumericOrDisplay) })),
     milestoneGroups: coreQueue.milestoneGroups.map(group => ({
       milestone: group.projectId === null ? null : {
-        number: Number(group.projectId),
+        number: Number(group.projectId) || 0,
         title: group.title,
         state: group.state.toUpperCase(),
         dueOn: group.dueOn,
       },
       title: group.title,
-      itemNumbers: group.itemKeys.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null),
+      itemNumbers: group.itemKeys.map(workItemNumericOrDisplay),
       progress: group.progress,
     })),
   };
@@ -167,7 +190,7 @@ export function computeQueueFromIssues(openIssues: IssueLikeQueueInput[], config
 
 export async function computeQueue(): Promise<Queue> {
   const config = (await loadConfig()) || getDefaults();
-  const provider = createGitHubWorkProvider();
+  const { provider } = await createLifecycleContext({ config });
   const openWorkItems = await provider.listOpenWorkItems();
   return computeQueueFromWorkItems(openWorkItems, config);
 }

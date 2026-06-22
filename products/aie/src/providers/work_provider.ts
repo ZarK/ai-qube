@@ -10,8 +10,10 @@ export interface WorkProviderCapabilities {
   applyLifecycleMutations: boolean;
 }
 
+export type WorkProviderId = 'github' | 'linear';
+
 export interface WorkProvider {
-  readonly id: 'github';
+  readonly id: WorkProviderId;
   capabilities(): WorkProviderCapabilities;
   listOpenWorkItems(): Promise<WorkItem[]>;
   getWorkItem(key: WorkItemKey): Promise<WorkItem>;

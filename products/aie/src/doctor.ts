@@ -10,6 +10,7 @@ import { runGh } from './gh.js';
 import { buildMigrationPlan } from './migrate/index.js';
 import { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 import { computeQueue } from './queue/index.js';
+import type { GitHubIssue } from './github.js';
 import {
   findMilestoneWarnings,
   getBaseRefStatus,
@@ -228,20 +229,36 @@ class DoctorDiagnosticsBuilder {
     queueMultipleInProgress: boolean;
     queueError?: string;
     activeIssue: { number: number } | null;
-    openIssuesForMilestones: Parameters<typeof buildLifecycleDiagnostics>[0]['openIssues'];
+    openIssuesForMilestones: GitHubIssue[];
   }> {
     let queueDriftCount = 0;
     let queueMultipleInProgress = false;
     let queueError: string | undefined;
     let activeIssue: { number: number } | null = null;
-    const openIssuesForMilestones: Parameters<typeof buildLifecycleDiagnostics>[0]['openIssues'] = [];
+    const openIssuesForMilestones: GitHubIssue[] = [];
     try {
       const q = await computeQueue();
       queueDriftCount = q.driftCount;
       queueMultipleInProgress = q.multipleInProgress;
-      openIssuesForMilestones.push(...q.items.map(item => item.issue));
+      for (const item of q.items) {
+        const issue = item.issue;
+        if (issue.providerId === 'github' && issue.number !== null) {
+          openIssuesForMilestones.push({
+            number: issue.number,
+            title: issue.title,
+            body: issue.body,
+            state: issue.state,
+            labels: issue.labels,
+            assignees: issue.assignees,
+            milestone: issue.milestone,
+            url: issue.url,
+            declaredBlockers: issue.declaredBlockers.filter((blocker): blocker is number => typeof blocker === 'number'),
+          });
+        }
+      }
       const activeItems = q.items.filter(item => item.effectiveStatus === 'InProgress');
-      activeIssue = activeItems.length === 1 ? activeItems[0].issue : null;
+      const activeSummary = activeItems.length === 1 ? activeItems[0].issue : null;
+      activeIssue = activeSummary?.providerId === 'github' && activeSummary.number !== null ? { number: activeSummary.number } : null;
       if (queueDriftCount > 0 || queueMultipleInProgress) recommendations.push(`Queue drift (${queueDriftCount}) or multiple S-InProgress detected. Run \`aie deps fix --dry-run\` then \`aie deps fix\`.`);
     } catch (err: unknown) {
       queueError = err instanceof Error ? err.message : String(err);
@@ -273,7 +290,7 @@ class DoctorDiagnosticsBuilder {
     if (activeIssue && lifecycle.currentBranchMatchesActiveIssue === false) recommendations.push(`Current branch does not match active issue #${activeIssue.number}. Run \`aie branch check ${activeIssue.number}\` before shipping.`);
   }
 
-  private async readMilestones(config: Config, openIssuesForMilestones: Parameters<typeof buildLifecycleDiagnostics>[0]['openIssues'], recommendations: string[]): Promise<Pick<DoctorDiagnostics, 'milestones' | 'milestoneWarnings' | 'milestoneError'>> {
+  private async readMilestones(config: Config, openIssuesForMilestones: GitHubIssue[], recommendations: string[]): Promise<Pick<DoctorDiagnostics, 'milestones' | 'milestoneWarnings' | 'milestoneError'>> {
     try {
       const repository = await getRepositoryIdentity();
       return { milestones: await listMilestones(repository), milestoneWarnings: findMilestoneWarnings(openIssuesForMilestones, config) };

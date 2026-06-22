@@ -2,12 +2,12 @@
 
 This matrix records host integration ownership by product. It separates real product surfaces from shared adapter contract packages.
 
-| Product | Package | CLI | GitHub | Codex | OpenCode | Claude Code | Ownership decision |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Bootstrap | `@tjalve/aib` | yes | yes | yes | yes | yes | AIB owns planning state and work-item rendering. GitHub output is currently a safe preview/rendering surface; Codex, OpenCode, and Claude Code output is host instruction installation, with OpenCode adding project command assets. |
-| Executor | `@tjalve/aie` | yes | yes | yes | yes | yes | AIE owns GitHub work-item, PR, queue, branch, review, and completion behavior. It also owns Codex/OpenCode/Claude Code host instruction init/migration for agent execution workflows. |
-| Quality | `@tjalve/aiq` | yes | no | no | no | no | AIQ owns quality command behavior and evidence. Its GitHub Action and OpenCode plugin packages are standalone adapters, not QUBE-facing GitHub/OpenCode product surfaces. |
-| Umpire | `@tjalve/aiu` | yes | no | no | yes | yes | AIU owns continuation policy, trusted state, OpenCode plugin composition, Claude Code stop-hook handling, and local continuation state. |
+| Product | Package | CLI | GitHub | Linear | Codex | OpenCode | Claude Code | Ownership decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Bootstrap | `@tjalve/aib` | yes | yes | yes | yes | yes | yes | AIB owns planning state and work-item rendering. GitHub and Linear output are safe preview/rendering surfaces; Codex, OpenCode, and Claude Code output is host instruction installation, with OpenCode adding project command assets. |
+| Executor | `@tjalve/aie` | yes | yes | yes | yes | yes | yes | AIE owns GitHub work-item, PR, queue, branch, review, and completion behavior. It also owns Linear read mapping with explicit lifecycle mutation gaps, plus Codex/OpenCode/Claude Code host instruction init/migration for agent execution workflows. |
+| Quality | `@tjalve/aiq` | yes | no | no | no | no | no | AIQ owns quality command behavior and evidence. Its GitHub Action and OpenCode plugin packages are standalone adapters, not QUBE-facing GitHub/OpenCode product surfaces. |
+| Umpire | `@tjalve/aiu` | yes | no | no | no | yes | yes | AIU owns continuation policy, trusted state, OpenCode plugin composition, Claude Code stop-hook handling, and local continuation state. |
 
 `@tjalve/qube` includes the installed Codex host capability layer. It detects project `AGENTS.md`, reports Codex-local todo, command execution, Browser use, and worktree/handoff capabilities as host-provided, and reports unsupported Codex operations such as OpenCode-style project command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
 
@@ -46,5 +46,16 @@ Product packages still own GitHub-specific side effects:
 - AIE owns GitHub issue queue reads, issue label/state transitions, branch and pull request workflow, configured review-gate requests, pull request review-state reads, unresolved review-thread collection, and CI status diagnostics.
 - QUBE composes and dispatches product commands; it does not hide GitHub side effects behind a separate adapter command.
 - AIQ exposes GitHub behavior only through its standalone GitHub Action package, not as a QUBE-facing GitHub provider surface.
+
+## Linear Provider Surface
+
+`@tjalve/aie` includes a Linear work-provider adapter for read mapping. It maps Linear issue identifiers, workflow states, priorities, labels, assignees, projects, blockers, and source metadata into provider-neutral QUBE work items without inventing GitHub issue numbers or milestone semantics.
+
+Product boundaries:
+
+- AIB renders provider-neutral work item drafts into Linear issue previews through `work-items render --provider linear --dry-run`.
+- AIE reads Linear issues when `providers.work.kind` is `linear` and the documented Linear credentials are present.
+- AIE lifecycle mutations for Linear workflow state, comments, assignees, and completion are explicitly unsupported until a tested Linear mutation adapter exists.
+- Review and CI behavior remain separate provider choices; Linear work does not imply GitHub pull requests or GitHub Actions.
 
 `packages/qube-core` is the checked source of truth for this table. Tests fail if `qubeProductContracts` drifts from the documented ownership decisions.

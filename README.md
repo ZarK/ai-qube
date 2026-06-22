@@ -163,6 +163,7 @@ Useful public docs:
 - `docs/qube-claude-code-host-support.md`
 - `docs/qube-codex-host-support.md`
 - `docs/qube-host-surfaces.md`
+- `docs/qube-linear-provider-support.md`
 - `docs/qube-paths-and-artifacts.md`
 - `docs/release/install-migration.md`
 - `docs/release/version-audit.json`

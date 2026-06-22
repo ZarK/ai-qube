@@ -63,11 +63,12 @@ function startLifecyclePlan(input: { actions: Action[]; results: ApplyResult[]; 
     if (action.kind === 'assign-work') actions.push(actionToLifecycle(action, input.results[index], `assign-issue:${issueNumber}`, 'assign-issue'));
     if (action.kind === 'comment-work') actions.push(actionToLifecycle(action, input.results[index], `add-comment:${issueNumber}`, 'add-comment'));
   });
-  return buildLifecyclePlan({ command: 'start', dryRun: input.dryRun, preStartPolicy: input.preStartPolicy, actions, recoveryCommand: `aie start ${issueNumber} --dry-run` });
+  return buildLifecyclePlan({ command: 'start', dryRun: input.dryRun, preStartPolicy: input.preStartPolicy, actions, recoveryCommand: `qube aie start ${issueNumber} --dry-run` });
 }
 
 function providerStartActions(item: WorkItem, context: LifecycleServiceContext, assign: boolean, comment: boolean, resumed: boolean): Action[] {
   const actions = resumed ? [] : [...context.provider.planStart(item, context.policy).actions];
+  if (context.provider.id !== 'github') return actions;
   const issueNumber = workItemNumber(item);
   if (assign && !resumed) actions.push(createAction({ id: `assign-work:${issueNumber}`, kind: 'assign-work', target: { kind: 'work-item', id: item.key.id }, mutation: 'work-provider', description: `Assign issue #${issueNumber} to the authenticated GitHub user`, expectedResult: 'The authenticated GitHub user is assigned to the issue.', details: { issueNumber } }));
   if (comment && !resumed) actions.push(createAction({ id: `comment-work:${issueNumber}`, kind: 'comment-work', target: { kind: 'work-item', id: item.key.id }, mutation: 'work-provider', description: `Add started-work comment to issue #${issueNumber}`, expectedResult: 'The issue records that work has started.', details: { issueNumber, body: `Started work on #${issueNumber}.` } }));
@@ -78,10 +79,14 @@ function blockedReason(input: { selectedIssueNumber: number; preStartPolicy: Pre
   if (!input.preStartPolicy.ok) {
     const failedChecks = input.preStartPolicy.checks.filter(check => !check.ok && !check.skipped).map(check => check.action.description).join(', ') || 'pre-start repository policy';
     const cause = input.preStartPolicy.blockers.join('; ') || 'repository readiness checks did not pass';
-    return `Pre-start policy blocked issue #${input.selectedIssueNumber}. Operation: verify repository readiness before starting work. Likely cause: ${cause}. Next action: fix ${failedChecks}, then rerun \`aie start ${input.selectedIssueNumber} --dry-run\`.`;
+    return `Pre-start policy blocked issue #${input.selectedIssueNumber}. Operation: verify repository readiness before starting work. Likely cause: ${cause}. Next action: fix ${failedChecks}, then rerun \`qube aie start ${input.selectedIssueNumber} --dry-run\`.`;
   }
   const failedActions = input.plan.summary.failedActions.map(item => item.failure?.cause ?? item.description).join('; ') || 'provider mutation, validation, or configuration failure';
-  return `Lifecycle execution failed for issue #${input.selectedIssueNumber}. Operation: apply start lifecycle actions. Likely cause: ${failedActions}. Next action: inspect the failed action output, fix repository configuration or labels, then rerun \`aie start ${input.selectedIssueNumber} --dry-run\`.`;
+  return `Lifecycle execution failed for issue #${input.selectedIssueNumber}. Operation: apply start lifecycle actions. Likely cause: ${failedActions}. Next action: inspect the failed action output, fix repository configuration or labels, then rerun \`qube aie start ${input.selectedIssueNumber} --dry-run\`.`;
+}
+
+function selectedWorkLabel(item: WorkItem): string {
+  return item.displayId;
 }
 
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
@@ -101,34 +106,45 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
     if (!next.workItem) return blockedStart({ action: 'empty', reason: 'No ready issue is available and no issue is currently in progress.', selectedItem: null, activeIssueState: activeState, dryRun, warnings: queue.blockedCount > 0 ? ['Open issues remain blocked by unresolved blockers.'] : [] });
     selectedItem = next.workItem;
     action = queue.inProgressCount === 1 ? 'resumed' : 'started';
-    reason = action === 'resumed' ? `Resuming the single active S-InProgress issue #${workItemNumber(selectedItem)}.` : `Starting ready issue #${workItemNumber(selectedItem)} selected by queue ordering.`;
+    reason = action === 'resumed' ? `Resuming the single active in-progress work item ${selectedWorkLabel(selectedItem)}.` : `Starting ready work item ${selectedWorkLabel(selectedItem)} selected by queue ordering.`;
   } else {
-    selectedItem = await context.provider.getWorkItem({ providerId: 'github', id: String(selection.issueNumber) });
+    selectedItem = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(selection.issueNumber) });
     const branchName = suggestBranchName(selectedItem, context.policy.branch).branchName;
     if (selectedItem.state === 'closed') return blockedStart({ action: 'blocked', reason: `Issue #${selection.issueNumber} is closed and cannot be started.`, selectedItem, activeIssueState: activeState, dryRun, branchName });
     if (queue.multipleInProgress) return blockedStart({ action: 'blocked', reason: `Multiple S-InProgress issues detected (${queue.inProgressCount}). Fix labels before starting or resuming work.`, selectedItem, activeIssueState: activeState, dryRun, branchName });
     const queueItem = queue.items.find(item => item.workItem.key.id === String(selection.issueNumber));
     if (queueItem?.effectiveStatus === 'InProgress') {
       action = 'resumed';
-      reason = `Resuming the active S-InProgress issue #${selection.issueNumber}.`;
+      reason = `Resuming the active in-progress work item ${selectedWorkLabel(selectedItem)}.`;
     } else if (activeState.activeIssues.length > 0) {
       const active = activeState.activeIssues[0];
-      return blockedStart({ action: 'blocked', reason: `Issue #${workItemNumber(active)} is already S-InProgress. Complete or intentionally switch work before starting #${selection.issueNumber}.`, selectedItem, activeIssueState: activeState, dryRun, branchName });
+      return blockedStart({ action: 'blocked', reason: `Work item ${selectedWorkLabel(active)} is already in progress. Complete or intentionally switch work before starting ${selectedWorkLabel(selectedItem)}.`, selectedItem, activeIssueState: activeState, dryRun, branchName });
     } else {
       const openKeys = new Set(workItems.map(item => item.key.id));
       blockers = selectedItem.blockers.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null && openKeys.has(String(number)));
       if (blockers.length > 0) return blockedStart({ action: 'blocked', reason: `Issue #${selection.issueNumber} has open blockers: ${blockers.map(number => `#${number}`).join(', ')}.`, selectedItem, activeIssueState: activeState, dryRun, branchName, blockers });
-      reason = `Starting requested issue #${selection.issueNumber}.`;
+      reason = `Starting requested work item ${selectedWorkLabel(selectedItem)}.`;
     }
   }
 
   const branchName = suggestBranchName(selectedItem, context.policy.branch).branchName;
+  const capabilities = context.provider.capabilities();
+  if (!capabilities.planLifecycleMutations || !capabilities.applyLifecycleMutations) {
+    return blockedStart({
+      action: 'blocked',
+      reason: `Work provider ${context.provider.id} can read ${selectedWorkLabel(selectedItem)}, but start/resume lifecycle mutations are unsupported. Use \`qube aie queue --json\` and \`qube aie next --json\` for read-only provider inspection, or configure a provider with tested lifecycle mutations before starting work.`,
+      selectedItem,
+      activeIssueState: activeState,
+      dryRun,
+      branchName,
+    });
+  }
   const resumed = action === 'resumed';
   const bypassForResume = resumed && activeState.inProgressCount === 1 && activeState.activeIssues[0].key.id === selectedItem.key.id;
   const selectedIssueNumber = workItemNumber(selectedItem);
   const preStartPolicy = await buildPreStartPolicy({ config: context.config, issueNumber: selectedIssueNumber, bypassForResume, exec: context.exec, cwd: context.cwd });
   const providerActions = providerStartActions(selectedItem, context, assign, comment, resumed);
-  const providerPlan = createActionPlan({ id: `github:start:${selectedItem.key.id}`, purpose: `Start ${selectedItem.displayId}.`, dryRun: true, actions: providerActions });
+  const providerPlan = createActionPlan({ id: `${context.provider.id}:start:${selectedItem.key.id}`, purpose: `Start ${selectedItem.displayId}.`, dryRun: true, actions: providerActions });
   const results = await applyProviderPlan(context.provider, providerPlan, dryRun || !preStartPolicy.ok);
   const plan = startLifecyclePlan({ actions: providerActions, results, item: selectedItem, branchName, preStartPolicy, dryRun });
   const warnings: string[] = [];

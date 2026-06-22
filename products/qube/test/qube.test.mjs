@@ -208,6 +208,36 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /No commands were run\./);
   });
 
+  it("renders Linear work provider install notes without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "linear",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none",
+      "--yes",
+      "--dry-run",
+      "--json"
+    ]);
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.installPlan.selections.workProvider, "linear");
+    assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /LINEAR_API_KEY and LINEAR_TEAM_ID/);
+    assert.match(parsed.installPlan.notes.join("\n"), /workflow-state mutations/);
+  });
+
   it("renders Claude Code install notes without prompting", () => {
     const result = runCli([
       "install",

@@ -49,7 +49,7 @@ export interface StatusWorkSummary {
   url: string | null;
   state: WorkItem['state'];
   effectiveStatus: QueueItem['effectiveStatus'];
-  openBlockers: number[];
+  openBlockers: Array<number | string>;
   priority: WorkItem['priority'];
   checklist: WorkItem['checklist'];
 }
