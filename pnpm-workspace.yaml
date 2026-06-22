@@ -10,6 +10,8 @@ packages:
   - "plugins/*"
 
 minimumReleaseAge: 10080
+minimumReleaseAgeExclude:
+  - undici@6.27.0
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
 trustPolicy: no-downgrade
@@ -23,3 +25,6 @@ savePrefix: ""
 linkWorkspacePackages: true
 registries:
   default: https://registry.npmjs.org/
+
+overrides:
+  undici: 6.27.0
