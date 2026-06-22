@@ -2,10 +2,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
-import { renderGitHubIssueDraft, renderLinearIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type LinearIssueDraft, type MarkdownWorkItem } from "./renderers.js";
+import { renderGitHubIssueDraft, renderGitLabIssueDraft, renderLinearIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type GitLabIssueDraft, type LinearIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
 
-export type WorkItemRenderProvider = "github" | "linear" | "markdown";
+export type WorkItemRenderProvider = "github" | "gitlab" | "linear" | "markdown";
 
 export interface WorkItemDraftResult {
   readonly milestone: MilestoneDraft;
@@ -23,6 +23,10 @@ export interface RenderedLinearWorkItem extends LinearIssueDraft {
   readonly draftId: string;
 }
 
+export interface RenderedGitLabWorkItem extends GitLabIssueDraft {
+  readonly draftId: string;
+}
+
 export interface RenderedMarkdownWorkItem extends MarkdownWorkItem {
   readonly draftId: string;
 }
@@ -31,7 +35,7 @@ export interface WorkItemRenderResult {
   readonly provider: WorkItemRenderProvider;
   readonly drafts: readonly WorkItemDraft[];
   readonly queueOrder: QueueOrderValidation;
-  readonly rendered: readonly (RenderedGitHubWorkItem | RenderedLinearWorkItem | RenderedMarkdownWorkItem)[];
+  readonly rendered: readonly (RenderedGitHubWorkItem | RenderedGitLabWorkItem | RenderedLinearWorkItem | RenderedMarkdownWorkItem)[];
   readonly artifacts: readonly PlanningArtifact[];
 }
 
@@ -121,6 +125,20 @@ export function renderWorkItemDrafts(
     const rendered = drafts.map((draft) => ({
       draftId: draft.draftId,
       ...renderLinearIssueDraft(draft)
+    }));
+    return {
+      provider,
+      drafts,
+      queueOrder,
+      rendered,
+      artifacts: []
+    };
+  }
+
+  if (provider === "gitlab") {
+    const rendered = drafts.map((draft) => ({
+      draftId: draft.draftId,
+      ...renderGitLabIssueDraft(draft)
     }));
     return {
       provider,

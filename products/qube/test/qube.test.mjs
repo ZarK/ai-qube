@@ -238,6 +238,36 @@ describe("qube composer CLI", () => {
     assert.match(parsed.installPlan.notes.join("\n"), /workflow-state mutations/);
   });
 
+  it("renders GitLab work provider install notes without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "gitlab",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none",
+      "--yes",
+      "--dry-run",
+      "--json"
+    ]);
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.installPlan.selections.workProvider, "gitlab");
+    assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /GITLAB_TOKEN, GITLAB_PROJECT_ID/);
+    assert.match(parsed.installPlan.notes.join("\n"), /merge request pipeline status for CI gates stay unsupported/);
+  });
+
   it("renders Claude Code install notes without prompting", () => {
     const result = runCli([
       "install",

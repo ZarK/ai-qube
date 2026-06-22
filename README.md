@@ -162,6 +162,7 @@ Useful public docs:
 - `docs/qube-command-surfaces.md`
 - `docs/qube-claude-code-host-support.md`
 - `docs/qube-codex-host-support.md`
+- `docs/qube-gitlab-provider-support.md`
 - `docs/qube-host-surfaces.md`
 - `docs/qube-linear-provider-support.md`
 - `docs/qube-paths-and-artifacts.md`

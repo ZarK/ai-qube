@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 
 export type AibAgentHost = "codex" | "opencode" | "claude-code" | "gemini" | "other";
 export type AibPrivacyMode = "local-first" | "network-allowed" | "restricted";
-export type AibProviderKind = "github" | "linear" | "local" | "none";
+export type AibProviderKind = "github" | "gitlab" | "linear" | "local" | "none";
 
 export interface AibConfig {
   readonly version: 1;
@@ -134,7 +134,7 @@ function parseProject(value: Readonly<Record<string, unknown>>): NonNullable<Aib
 
 function parseProviders(value: Readonly<Record<string, unknown>>): NonNullable<AibConfig["providers"]> {
   const providers: Record<string, AibProviderKind> = {};
-  if (value.work !== undefined) providers.work = requireOneOf(value.work, "providers.work", ["github", "linear", "local", "none"]);
+  if (value.work !== undefined) providers.work = requireOneOf(value.work, "providers.work", ["github", "gitlab", "linear", "local", "none"]);
   if (value.review !== undefined) providers.review = requireOneOf(value.review, "providers.review", ["github", "local", "none"]);
   return providers;
 }

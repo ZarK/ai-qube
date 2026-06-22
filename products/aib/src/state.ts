@@ -616,7 +616,7 @@ function needsPlanningSurfaceDecision(state: BootstrapState): boolean {
     || state.discovery.inspectDocs
     || state.discovery.inspectSiblingRepos
     || isReusablePackageState(state)
-    || /\b(repo|repository|work item|issue tracker|work tracker|github|linear|jira)\b/.test(haystack);
+    || /\b(repo|repository|work item|issue tracker|work tracker|github|gitlab|linear|jira)\b/.test(haystack);
 }
 
 function parseProject(value: Readonly<Record<string, unknown>>): BootstrapState["project"] {

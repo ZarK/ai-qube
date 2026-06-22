@@ -45,7 +45,7 @@ export async function runSwitchService(options: { targetIssueNumber: number; fro
   const { targetIssueNumber, fromIssueNumber, dryRun, assign, comment, context } = options;
   const { workItems, queue } = await loadQueueState(context);
   const activeState = activeWorkState(queue);
-  const target = await context.provider.getWorkItem({ providerId: 'github', id: String(targetIssueNumber) });
+  const target = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(targetIssueNumber) });
   const branchName = suggestBranchName(target, context.policy.branch).branchName;
   const active = queue.items.filter(item => item.effectiveStatus === 'InProgress');
   let source: WorkItem | null = null;
@@ -55,7 +55,7 @@ export async function runSwitchService(options: { targetIssueNumber: number; fro
     if (active.length > 1) return emptyBlocked({ action: 'invalid', reason: `Multiple S-InProgress issues detected (${active.length}). Use --from to choose the source issue and ensure no unrelated issue remains active.`, sourceItem: null, targetItem: target, activeIssueState: activeState, dryRun, branchName });
     source = active[0].workItem;
   } else {
-    source = await context.provider.getWorkItem({ providerId: 'github', id: String(fromIssueNumber) });
+    source = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(fromIssueNumber) });
     const sourceQueueItem = queue.items.find(item => item.workItem.key.id === String(fromIssueNumber));
     if (!sourceQueueItem || sourceQueueItem.effectiveStatus !== 'InProgress') return emptyBlocked({ action: 'invalid', reason: `Issue #${fromIssueNumber} is not S-InProgress and cannot be used as the switch source.`, sourceItem: source, targetItem: target, activeIssueState: activeState, dryRun, branchName });
   }
@@ -80,9 +80,9 @@ export async function runSwitchService(options: { targetIssueNumber: number; fro
   const pauseActions = context.provider.planPause(source, workItems, context.policy).actions;
   const startActions = targetAlreadyActive ? [] : context.provider.planStart(target, context.policy).actions;
   const actions: Action[] = [...pauseActions, ...startActions];
-  if (assign && !targetAlreadyActive) actions.push(createAction({ id: `assign-work:${targetIssueNumber}`, kind: 'assign-work', target: { kind: 'work-item', id: target.key.id }, mutation: 'work-provider', description: `Assign issue #${targetIssueNumber} to the authenticated GitHub user`, expectedResult: 'The authenticated GitHub user is assigned to the issue.', details: { issueNumber: targetIssueNumber } }));
-  if (comment && !targetAlreadyActive) actions.push(createAction({ id: `comment-work:${targetIssueNumber}`, kind: 'comment-work', target: { kind: 'work-item', id: target.key.id }, mutation: 'work-provider', description: `Add switched-work comment to issue #${targetIssueNumber}`, expectedResult: 'The issue records that work switched to it.', details: { issueNumber: targetIssueNumber, body: `Switched work from #${sourceNumber} to #${targetIssueNumber}.` } }));
-  const providerPlan = createActionPlan({ id: `github:switch:${source.key.id}:${target.key.id}`, purpose: `Switch from ${source.displayId} to ${target.displayId}.`, dryRun: true, actions });
+  if (context.provider.id === 'github' && assign && !targetAlreadyActive) actions.push(createAction({ id: `assign-work:${targetIssueNumber}`, kind: 'assign-work', target: { kind: 'work-item', id: target.key.id }, mutation: 'work-provider', description: `Assign issue #${targetIssueNumber} to the authenticated GitHub user`, expectedResult: 'The authenticated GitHub user is assigned to the issue.', details: { issueNumber: targetIssueNumber } }));
+  if (context.provider.id === 'github' && comment && !targetAlreadyActive) actions.push(createAction({ id: `comment-work:${targetIssueNumber}`, kind: 'comment-work', target: { kind: 'work-item', id: target.key.id }, mutation: 'work-provider', description: `Add switched-work comment to issue #${targetIssueNumber}`, expectedResult: 'The issue records that work switched to it.', details: { issueNumber: targetIssueNumber, body: `Switched work from #${sourceNumber} to #${targetIssueNumber}.` } }));
+  const providerPlan = createActionPlan({ id: `${context.provider.id}:switch:${source.key.id}:${target.key.id}`, purpose: `Switch from ${source.displayId} to ${target.displayId}.`, dryRun: true, actions });
   const results = await applyProviderPlan(context.provider, providerPlan, dryRun || !preStartPolicy.ok);
   const plan = switchPlan({ actions, results, pauseCount: pauseActions.length, source, target, branchName, preStartPolicy, dryRun });
   const warnings: string[] = [];
