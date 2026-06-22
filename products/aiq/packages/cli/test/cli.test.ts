@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   access,
   cliPackageJsonPath,
   createTypeScriptFixtureProject,
   mkdtemp,
-  os,
-  path,
   publishedPackageWorkspaces,
   readFile,
   repoRoot,
@@ -141,5 +141,26 @@ describe("CLI foundation", () => {
       "Do not use metric failures as authorization for feature changes",
     );
     expect(packageReadme).toContain("direct purpose-revealing names");
+  });
+
+  it("CLI package smoke keeps default Vitest usage in non-server run mode", async () => {
+    const aiqRoot = path.join(path.dirname(cliPackageJsonPath), "..", "..");
+    const packageJson = JSON.parse(await readFile(path.join(aiqRoot, "package.json"), "utf8")) as {
+      devDependencies?: Record<string, string>;
+      scripts?: Record<string, string>;
+    };
+    const vitestConfig = await readFile(path.join(aiqRoot, "vitest.config.ts"), "utf8");
+
+    expect(packageJson.devDependencies).not.toHaveProperty("@vitest/browser");
+    expect(packageJson.devDependencies).not.toHaveProperty("@vitest/ui");
+
+    for (const command of Object.values(packageJson.scripts ?? {})) {
+      expect(command).not.toMatch(/\bvitest\b.*\s--(?:browser|ui)\b/);
+      expect(command).not.toMatch(/\bvitest\b.*\s--api\.host\b/);
+    }
+
+    expect(vitestConfig).not.toMatch(/^\s*browser\s*:/m);
+    expect(vitestConfig).not.toMatch(/^\s*api\s*:\s*{[\s\S]*?\bhost\s*:/m);
+    expect(vitestConfig).not.toMatch(/^\s*allow(?:Write|Exec)\s*:\s*true\b/m);
   });
 });
