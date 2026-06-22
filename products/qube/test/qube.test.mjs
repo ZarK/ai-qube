@@ -50,6 +50,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /Commands:/);
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
     assert.match(help.stdout, /install\s+Build a guided, supply-chain-safe QUBE install plan\./);
+    assert.match(help.stdout, /make-it-so\s+Map an intent to the safest real QUBE workflow\./);
     assert.match(help.stdout, /idea\s+Start Bootstrap from a concise idea\./);
     assert.match(help.stdout, /spec draft\s+Draft the Bootstrap spec artifact\./);
     assert.match(help.stdout, /work-items render\s+Render work item drafts for a provider\./);
@@ -75,17 +76,25 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /Dry run: supported/);
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
 
+    const makeItSoHelp = runCli(["make-it-so", "--help"]);
+    assert.equal(makeItSoHelp.status, 0);
+    assert.match(makeItSoHelp.stdout, /Usage:\n  qube make-it-so/);
+    assert.match(makeItSoHelp.stdout, /Map an intent to the safest real QUBE workflow\./);
+    assert.match(makeItSoHelp.stdout, /Dry run: supported/);
+
     const schema = runCli(["schema", "--json"]);
     assert.equal(schema.status, 0);
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
     const commandNames = parsed.commands.map(command => command.name);
-    for (const command of ["install", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+    for (const command of ["install", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
       assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
     }
     const installCommand = parsed.commands.find(command => command.name === "install");
     assert.equal(installCommand?.dryRun.supported, true);
     assert.deepEqual(installCommand?.supplyChain.kinds, ["dependency", "package-manager"]);
+    const makeItSoCommand = parsed.commands.find(command => command.name === "make-it-so");
+    assert.equal(makeItSoCommand?.dryRun.supported, true);
     assert.deepEqual(
       parsed.sections.components.map(component => component.command),
       ["aib", "aie", "aiq", "aiu"]
@@ -202,6 +211,39 @@ describe("qube composer CLI", () => {
     );
   });
 
+  it("renders make-it-so dry-run plans without dispatching", () => {
+    const planned = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--json"]);
+    assert.equal(planned.status, 0);
+    const parsed = JSON.parse(planned.stdout);
+
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, "make-it-so");
+    assert.equal(parsed.makeItSo.flow, "planned");
+    assert.equal(parsed.makeItSo.status, "dispatch");
+    assert.equal(parsed.makeItSo.mappedCommand.component, "aib");
+    assert.deepEqual(parsed.makeItSo.mappedCommand.args, ["init", ".", "--idea", "Ship a local notes CLI", "--json"]);
+    assert.match(parsed.makeItSo.boundaries.join("\n"), /does not create a GitHub issue/);
+
+    const forwarded = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--json", "--", "--acceptance", "fast"]);
+    assert.equal(forwarded.status, 0);
+    assert.deepEqual(
+      JSON.parse(forwarded.stdout).makeItSo.mappedCommand.args,
+      ["init", ".", "--idea", "Ship a local notes CLI", "--acceptance", "fast", "--json"]
+    );
+
+    const forwardedJson = runCli(["make-it-so", "Ship a local notes CLI", "--dry-run", "--", "--json"]);
+    assert.equal(forwardedJson.status, 0);
+    assert.match(forwardedJson.stdout, /QUBE make-it-so plan/);
+    assert.throws(() => JSON.parse(forwardedJson.stdout));
+
+    const directLocal = runCli(["make-it-so", "Ship a local notes CLI", "--flow", "direct-local", "--dry-run", "--json"]);
+    assert.equal(directLocal.status, 0);
+    const directParsed = JSON.parse(directLocal.stdout);
+    assert.equal(directParsed.makeItSo.status, "blocked");
+    assert.equal(directParsed.makeItSo.mappedCommand, null);
+    assert.match(directParsed.makeItSo.nextAction, /oneshot/);
+  });
+
   it("plans dispatch through the selected standalone command", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-path-cwd-"));
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-empty-package-root-"));
@@ -251,6 +293,36 @@ describe("qube composer CLI", () => {
         input: ["idea", "Ship a local notes CLI", "--json"],
         component: "aib",
         args: ["init", ".", "--idea", "Ship a local notes CLI", "--json"]
+      },
+      {
+        input: ["make-it-so", "Ship a local notes CLI", "--json"],
+        component: "aib",
+        args: ["init", ".", "--idea", "Ship a local notes CLI", "--json"]
+      },
+      {
+        input: ["make-it-so", "Ship a local notes CLI", "--target", "./notes"],
+        component: "aib",
+        args: ["init", "./notes", "--idea", "Ship a local notes CLI"]
+      },
+      {
+        input: ["make-it-so", "Ship a local notes CLI", "--resume"],
+        component: "aib",
+        args: ["init", ".", "--idea", "Ship a local notes CLI", "--resume"]
+      },
+      {
+        input: ["make-it-so", "--target", "./notes", "--resume"],
+        component: "aib",
+        args: ["init", "./notes", "--resume"]
+      },
+      {
+        input: ["make-it-so", "--flow", "issue", "next", "--json"],
+        component: "aie",
+        args: ["start", "next", "--json"]
+      },
+      {
+        input: ["makeitso", "--flow=issue", "#99", "--json"],
+        component: "aie",
+        args: ["start", "99", "--json"]
       },
       {
         input: ["idea", "--json"],
@@ -358,6 +430,35 @@ describe("qube composer CLI", () => {
     assert.match(planned.stderr, /Config exists in multiple components/);
     assert.match(planned.stderr, /qube aiq config/);
     assert.match(planned.stderr, /qube aiu config/);
+  });
+
+  it("refuses unsafe make-it-so states with actionable output", () => {
+    const directLocal = planQubeCli(["make-it-so", "Ship a local notes CLI", "--flow", "direct-local", "--json"], {
+      cwd: mkdtempSync(path.join(tmpdir(), "qube-make-it-so-cwd-")),
+      env: { PATH: "" },
+      packageRoot: mkdtempSync(path.join(tmpdir(), "qube-make-it-so-root-"))
+    });
+
+    assert.equal(directLocal.exitCode, 2);
+    const directParsed = JSON.parse(directLocal.stdout);
+    assert.equal(directParsed.ok, false);
+    assert.equal(directParsed.error.kind, "unsupported-flow");
+    assert.match(directParsed.makeItSo.nextAction, /oneshot/);
+
+    const issueIdea = planQubeCli(["make-it-so", "--flow", "issue", "Ship a local notes CLI"], {
+      cwd: mkdtempSync(path.join(tmpdir(), "qube-make-it-so-issue-cwd-")),
+      env: { PATH: "" },
+      packageRoot: mkdtempSync(path.join(tmpdir(), "qube-make-it-so-issue-root-"))
+    });
+
+    assert.equal(issueIdea.exitCode, 2);
+    assert.match(issueIdea.stderr, /Issue flow requires an existing issue number/);
+
+    const parseErrorJson = runCli(["make-it-so", "--flow", "--json"]);
+    assert.equal(parseErrorJson.status, 2);
+    const parseError = JSON.parse(parseErrorJson.stdout);
+    assert.equal(parseError.ok, false);
+    assert.equal(parseError.command, "make-it-so");
   });
 
   it("rejects JSON on helper topics that do not support JSON", () => {
