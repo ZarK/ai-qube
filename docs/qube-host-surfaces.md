@@ -18,6 +18,13 @@ Product packages still own product-specific side effects:
 - AIU owns OpenCode session continuation, prompt delivery, and stop-hook decisions from trusted state.
 - AIQ exposes OpenCode quality tools through its standalone plugin package, not through a QUBE-facing host surface.
 
-`@tjalve/qube-adapter-github` remains a private provider boundary for GitHub issue and review behavior until #91 promotes that adapter to the same explicit capability model.
+`@tjalve/qube-adapter-github` is the private shared GitHub provider adapter. It records the explicit capability model for GitHub issue work items, queue reads, status-label synchronization, pull request reads, review-gate requests, CI status normalization, CI diagnostics, review-thread reads, standalone AIQ GitHub Action behavior, and unsupported GitHub operations such as workflow-run triggering, pull request approval, repository file mutation, and release publishing.
+
+Product packages still own GitHub-specific side effects:
+
+- AIB renders provider-neutral work-item drafts into GitHub issue text without mutating GitHub.
+- AIE owns GitHub issue queue reads, issue label/state transitions, branch and pull request workflow, configured review-gate requests, pull request review-state reads, unresolved review-thread collection, and CI status diagnostics.
+- QUBE composes and dispatches product commands; it does not hide GitHub side effects behind a separate adapter command.
+- AIQ exposes GitHub behavior only through its standalone GitHub Action package, not as a QUBE-facing GitHub provider surface.
 
 `packages/qube-core` is the checked source of truth for this table. Tests fail if `qubeProductContracts` drifts from the documented ownership decisions.

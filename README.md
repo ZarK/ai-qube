@@ -114,7 +114,7 @@ products/
   aiu/            continuation policy CLI
   qube/           composer CLI
 adapters/
-  github/         private workspace adapter
+  github/         GitHub provider capability adapter
   opencode/       OpenCode host capability adapter
 docs/
 ```
