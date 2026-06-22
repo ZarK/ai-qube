@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   findQubeProduct,
+  normalizeWorkItem,
   qubeCommandSurfaceContracts,
   qubePathContracts,
   qubeProductContracts,
@@ -62,6 +63,37 @@ describe("qube core contracts", () => {
     for (const pathContract of qubePathContracts) {
       assert.match(pathsDoc, new RegExp(escapeRegExp(pathContract.pathPattern)));
     }
+  });
+
+  it("normalizes provider source fields when normalizing work items", () => {
+    const item = normalizeWorkItem({
+      key: { providerId: " linear ", id: " ENG-123 " },
+      displayId: " ENG-123 ",
+      title: " Linear adapter ",
+      body: "Issue body",
+      url: null,
+      state: "open",
+      status: "ready",
+      priority: "high",
+      project: null,
+      sequence: null,
+      source: {
+        providerId: " linear ",
+        resourceKind: "work-item",
+        resourceId: " ENG-123 ",
+        url: null,
+        metadata: {}
+      }
+    });
+
+    assert.deepEqual(item.key, { providerId: "linear", id: "ENG-123" });
+    assert.deepEqual(item.source, {
+      providerId: "linear",
+      resourceKind: "work-item",
+      resourceId: "ENG-123",
+      url: null,
+      metadata: {}
+    });
   });
 });
 

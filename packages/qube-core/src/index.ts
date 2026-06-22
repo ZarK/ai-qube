@@ -455,6 +455,7 @@ export function normalizeWorkItem(input: Omit<WorkItem, "blockers" | "blockedBy"
   return {
     ...input,
     key: normalizeWorkItemKey(input.key.providerId, input.key.id),
+    source: normalizeProviderSource(input.source),
     displayId: nonEmpty(input.displayId, "displayId"),
     title: nonEmpty(input.title, "title"),
     tags: [...new Set(input.tags ?? [])],
