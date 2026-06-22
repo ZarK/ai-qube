@@ -115,7 +115,7 @@ products/
   qube/           composer CLI
 adapters/
   github/         private workspace adapter
-  opencode/       private workspace adapter
+  opencode/       OpenCode host capability adapter
 docs/
 ```
 
