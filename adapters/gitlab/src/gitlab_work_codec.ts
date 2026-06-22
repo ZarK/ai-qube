@@ -1,7 +1,4 @@
-import { parseChecklist } from '../../checklist.js';
-import { normalizeProviderSource } from '../../core/provider_source.js';
-import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item.js';
-import { parseWorkSequence } from '../github/github_work_codec.js';
+import { normalizeProviderSource, normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '@tjalve/qube-core';
 
 const PROVIDER_ID = 'gitlab';
 
@@ -109,6 +106,12 @@ function parseGitLabBlockerKeys(description: string | null | undefined): WorkIte
   return [...matches].map(match => gitLabWorkItemKey(match[1]));
 }
 
+function parseWorkSequence(description: string | null | undefined): string | null {
+  if (!description) return null;
+  const match = /^Sequence:\s*(\d+)\s*$/m.exec(description);
+  return match ? match[1] : null;
+}
+
 function parseWorkChecklist(issue: GitLabIssue, description: string): WorkChecklist {
   const taskStatus = issue.task_completion_status;
   if (
@@ -122,8 +125,8 @@ function parseWorkChecklist(issue: GitLabIssue, description: string): WorkCheckl
       completed: Math.min(taskStatus?.completed_count ?? 0, taskStatus?.count ?? 0),
     };
   }
-  const checklist = parseChecklist(description);
-  return { total: checklist.total, completed: checklist.checked };
+  const items = [...description.matchAll(/^\s*-\s+\[(x|X| )\]\s+/gm)];
+  return { total: items.length, completed: items.filter(item => item[1].toLowerCase() === 'x').length };
 }
 
 function isCurrentIssue(issue: GitLabIssue, linked: GitLabLinkedIssue | null | undefined): boolean {

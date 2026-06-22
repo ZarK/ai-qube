@@ -13,15 +13,6 @@ export interface GitHubIssueDraft {
   readonly url?: string;
 }
 
-export interface GitLabIssueDraft {
-  readonly title: string;
-  readonly description: string;
-  readonly labels: readonly string[];
-  readonly blockedBy: readonly number[];
-  readonly milestone?: string;
-  readonly url?: string;
-}
-
 export function renderMarkdownWorkItemDraft(draft: WorkItemDraft, outputDir = "docs/issues"): MarkdownWorkItem {
   return {
     path: `${outputDir}/${safeFileName(draft.draftId)}.md`,
@@ -46,22 +37,6 @@ export function renderGitHubIssueDraft(draft: WorkItemDraft): GitHubIssueDraft {
   };
 }
 
-export function renderGitLabIssueDraft(draft: WorkItemDraft): GitLabIssueDraft {
-  const metadata = readGitLabMetadata(draft.providerMetadata?.gitlab);
-  return {
-    title: draft.title,
-    description: renderDraftBody(draft, metadata.blockedBy),
-    labels: metadata.labels.length > 0 ? metadata.labels : [
-      priorityLabel(draft.priority),
-      statusLabel(draft.status),
-      ...draft.components.map((component) => `C-${component}`)
-    ],
-    blockedBy: metadata.blockedBy,
-    ...(metadata.milestone ? { milestone: metadata.milestone } : {}),
-    ...(metadata.url ? { url: metadata.url } : {})
-  };
-}
-
 function renderDraftBody(draft: WorkItemDraft, providerBlockers: readonly (number | string)[] = []): string {
   const blockers = providerBlockers.length > 0
     ? providerBlockers.map((blocker) => typeof blocker === "number" ? `Blocked by: #${blocker}` : `Blocked by: ${blocker}`)
@@ -81,24 +56,6 @@ function readGithubMetadata(value: unknown): { readonly blockedBy: readonly numb
     : [];
   return {
     blockedBy,
-    ...(typeof value.url === "string" && value.url.length > 0 ? { url: value.url } : {})
-  };
-}
-
-function readGitLabMetadata(value: unknown): { readonly blockedBy: readonly number[]; readonly labels: readonly string[]; readonly milestone?: string; readonly url?: string } {
-  if (!isRecord(value)) {
-    return { blockedBy: [], labels: [] };
-  }
-  const blockedBy = Array.isArray(value.blockedBy)
-    ? value.blockedBy.filter((item): item is number => Number.isSafeInteger(item) && item > 0)
-    : [];
-  const labels = Array.isArray(value.labels)
-    ? value.labels.filter((item): item is string => typeof item === "string" && item.length > 0)
-    : [];
-  return {
-    blockedBy,
-    labels,
-    ...(typeof value.milestone === "string" && value.milestone.length > 0 ? { milestone: value.milestone } : {}),
     ...(typeof value.url === "string" && value.url.length > 0 ? { url: value.url } : {})
   };
 }

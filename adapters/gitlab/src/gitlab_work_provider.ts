@@ -1,7 +1,4 @@
-import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
-import type { ExecutorPolicy } from '../../core/policy.js';
-import type { WorkItem, WorkItemKey } from '../../core/work_item.js';
-import type { WorkProvider, WorkProviderCapabilities } from '../work_provider.js';
+import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult, type ExecutorPolicy, type WorkItem, type WorkItemKey, type WorkProvider, type WorkProviderCapabilities } from '@tjalve/qube-core';
 import { attachGitLabBlockedBy, gitLabIssueToWorkItem, type GitLabIssue, type GitLabIssueLink } from './gitlab_work_codec.js';
 
 export interface GitLabRestClient {

@@ -28,10 +28,12 @@ export type { AibAgentHost, AibConfig, AibPrivacyMode, AibProviderKind, LoadedAi
 export { createInitPlan } from "./init.js";
 export type { InitPlan } from "./init.js";
 export { bootstrapRegistry, initCommand, planningTopic } from "./metadata.js";
+export { renderGitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
+export type { GitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
 export { renderLinearIssueDraft } from "@tjalve/qube-adapter-linear";
 export type { LinearIssueDraft } from "@tjalve/qube-adapter-linear";
-export { renderGitHubIssueDraft, renderGitLabIssueDraft, renderMarkdownWorkItemDraft } from "./renderers.js";
-export type { GitHubIssueDraft, GitLabIssueDraft, MarkdownWorkItem } from "./renderers.js";
+export { renderGitHubIssueDraft, renderMarkdownWorkItemDraft } from "./renderers.js";
+export type { GitHubIssueDraft, MarkdownWorkItem } from "./renderers.js";
 export { getProfileByKind, selectProjectProfile, specChaptersForProject, workItemValidationForProject } from "./project_profiles.js";
 export type { ProjectProfile, ProjectProfileKind } from "./project_profiles.js";
 export { DYNAMIC_SPEC_CHAPTERS, REQUIRED_SPEC_CHAPTERS, selectSpecChapters, specAcceptanceStatus, validateSpecSections } from "./spec_chapters.js";

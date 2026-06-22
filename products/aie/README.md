@@ -12,7 +12,8 @@ GitHub work support is available through the built-in Executor adapter boundary.
 Non-default work providers such as Linear and GitLab are optional adapter
 package boundaries: AIE core keeps provider-neutral lifecycle behavior, while
 adapter packages own provider API clients, credentials, mapping, capability
-flags, and unsupported-operation diagnostics. The Linear adapter lives in
+flags, and unsupported-operation diagnostics. The GitLab adapter lives in
+`@tjalve/qube-adapter-gitlab`, and the Linear adapter lives in
 `@tjalve/qube-adapter-linear`. Selecting an optional provider without its
 adapter installed fails with setup guidance instead of falling back to GitHub
 semantics.
