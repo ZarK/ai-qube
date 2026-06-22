@@ -1,7 +1,7 @@
 {
   "name": "@tjalve/qube-adapter-github",
   "version": "0.1.0",
-  "description": "Private GitHub adapter boundary for QUBE issue and review provider integrations.",
+  "description": "Private GitHub provider capability adapter for QUBE issue, pull request, review, and CI integrations.",
   "private": true,
   "type": "module",
   "license": "MIT",
