@@ -8,6 +8,13 @@ import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  assertClaudeCodeHostCapabilityAvailable,
+  formatClaudeCodeUnsupportedCapabilityMessage,
+  getClaudeCodeHostCapability,
+  inspectClaudeCodeWorkspace,
+  listClaudeCodeHostCapabilities,
+  listClaudeCodeInstallFiles,
+  listClaudeCodeInstallNotes,
   assertCodexHostCapabilityAvailable,
   formatCodexUnsupportedCapabilityMessage,
   findQubeComponent,
@@ -201,6 +208,37 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /No commands were run\./);
   });
 
+  it("renders Claude Code install notes without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "claude-code",
+      "--work-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ]);
+
+    assert.equal(result.status, 0);
+    assert.match(result.stdout, /QUBE guided install plan/);
+    assert.match(result.stdout, /Scope: local/);
+    assert.match(result.stdout, /Host surface: claude-code/);
+    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.1\.1/);
+    assert.match(result.stdout, /CLAUDE\.md policy notes/);
+    assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
+    assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
+    assert.match(result.stdout, /Use TodoWrite and TodoRead/);
+    assert.match(result.stdout, /do not create Claude Code slash command or skill assets/);
+    assert.match(result.stdout, /No commands were run\./);
+  });
+
   it("reports Codex host capabilities without current-session assumptions", () => {
     const capabilities = listCodexHostCapabilities();
     assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
@@ -237,6 +275,55 @@ describe("qube composer CLI", () => {
     const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-codex-host-missing-"));
     const missingInspection = inspectCodexWorkspace(repoWithoutInstructions);
     assert.equal(missingInspection.instructionTarget.present, false);
+  });
+
+  it("reports Claude Code host capabilities without mixing host assumptions", () => {
+    const capabilities = listClaudeCodeHostCapabilities();
+    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
+    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 6);
+    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
+    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
+
+    assert.equal(assertClaudeCodeHostCapabilityAvailable("read-instructions").support, "supported");
+    assert.equal(getClaudeCodeHostCapability("install-slash-command").support, "unsupported");
+    assert.deepEqual(getClaudeCodeHostCapability("use-task-state").tools, ["TodoWrite", "TodoRead"]);
+    assert.deepEqual(listClaudeCodeInstallFiles(), [
+      "CLAUDE.md policy notes: Claude Code project instructions use CLAUDE.md with repository policy precedence.",
+      ".claude/settings.json hook notes: Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop.",
+    ]);
+    assert.equal(listClaudeCodeInstallNotes().length, 5);
+
+    const unknownCapability = getClaudeCodeHostCapability("completely-unknown-id");
+    assert.equal(unknownCapability.support, "unsupported");
+    assert.match(formatClaudeCodeUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
+    assert.throws(() => assertClaudeCodeHostCapabilityAvailable("install-slash-command"), /Unsupported Claude Code capability/);
+
+    const repo = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-"));
+    writeFileSync(path.join(repo, "CLAUDE.md"), "Repository policy\n");
+    mkdirSync(path.join(repo, ".claude", "commands"), { recursive: true });
+    mkdirSync(path.join(repo, ".claude", "skills"), { recursive: true });
+    writeFileSync(path.join(repo, ".claude", "settings.json"), "{}\n");
+    const inspection = inspectClaudeCodeWorkspace(repo);
+
+    assert.equal(inspection.cwd, repo);
+    assert.equal(inspection.instructionTarget.present, true);
+    assert.equal(path.basename(inspection.instructionTarget.path), "CLAUDE.md");
+    assert.equal(inspection.settingsDirectory.present, true);
+    assert.equal(inspection.projectSettings.present, true);
+    assert.equal(inspection.localSettings.present, false);
+    assert.equal(inspection.commandDirectory.present, true);
+    assert.equal(inspection.skillsDirectory.present, true);
+    assert.ok(inspection.capabilities.some(capability => capability.id === "use-task-state"));
+    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
+    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
+    assert.throws(() => {
+      inspection.capabilities[0].summary = "mutated";
+    }, TypeError);
+
+    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-claude-code-host-missing-"));
+    const missingInspection = inspectClaudeCodeWorkspace(repoWithoutInstructions);
+    assert.equal(missingInspection.instructionTarget.present, false);
+    assert.equal(missingInspection.settingsDirectory.present, false);
   });
 
   it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {

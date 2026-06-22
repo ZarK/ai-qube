@@ -12,6 +12,7 @@ Prefer project-local installs for automation:
 qube install
 qube install --yes --dry-run --json
 qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
+qube install --scope local --package-manager pnpm --host claude-code --work-provider github --yes
 ```
 
 `qube install` is a guided installer planner. It asks about project-local versus
@@ -118,6 +119,9 @@ repository paths such as `.qube/aie/config.json`, `.qube/aiq/config.json`, and
 
 Codex host setup and limitations are documented in the repository guide:
 [Codex host support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-codex-host-support.md).
+
+Claude Code host setup and limitations are documented in the repository guide:
+[Claude Code host support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-claude-code-host-support.md).
 
 ## Make-It-So Contract
 

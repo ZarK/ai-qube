@@ -1,4 +1,20 @@
 export {
+  assertClaudeCodeHostCapabilityAvailable,
+  formatClaudeCodeUnsupportedCapabilityMessage,
+  getClaudeCodeHostCapability,
+  inspectClaudeCodeWorkspace,
+  listClaudeCodeHostCapabilities,
+  listClaudeCodeInstallFiles,
+  listClaudeCodeInstallNotes,
+} from "./claude_code_host.js";
+export type {
+  ClaudeCodeHostCapability,
+  ClaudeCodeHostCapabilityId,
+  ClaudeCodeHostSupport,
+  ClaudeCodeWorkspaceInspection,
+  ClaudeCodeWorkspaceTarget,
+} from "./claude_code_host.js";
+export {
   assertCodexHostCapabilityAvailable,
   formatCodexUnsupportedCapabilityMessage,
   getCodexHostCapability,

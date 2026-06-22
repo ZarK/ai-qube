@@ -26,10 +26,10 @@ describe("qube core contracts", () => {
   it("keeps host integration surfaces explicit per product", () => {
     const surfaces = new Map(qubeProductContracts.map((product) => [product.id, product.surfaces]));
 
-    assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "codex", "opencode"]);
-    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "codex", "opencode"]);
+    assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "codex", "opencode", "claude-code"]);
+    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "codex", "opencode", "claude-code"]);
     assert.deepEqual(surfaces.get("quality"), ["cli"]);
-    assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode"]);
+    assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code"]);
   });
 
   it("classifies command, path, and repo artifact surfaces", () => {
