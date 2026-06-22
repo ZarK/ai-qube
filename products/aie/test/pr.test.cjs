@@ -263,6 +263,22 @@ describe('PR gate service', () => {
     assert.match(result.nextAction, /Wait for the current-head CI run/);
   });
 
+  it('reports unknown CI mapping with a distinct reason code', async () => {
+    const repo = makeGitRepo();
+    writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'BLOCKED',
+      statusCheckRollup: [{ name: 'ci-required', status: 'COMPLETED', conclusion: 'SUCCESS' }],
+    });
+    const { exec } = makePrExec({ prViews: [pr], checkRuns: [], workflowRuns: [] });
+
+    const result = await runPrViewService({ prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.ciDiagnostics[0].status, 'unknown');
+    assert.equal(result.ciDiagnostics[0].reasonCode, 'ci-mapping-unknown');
+  });
+
   it('reports failed current-head CI runs and recommends rerunning failed jobs', async () => {
     const repo = makeGitRepo();
     writeWorkflow(repo, 'on:\n  pull_request:\n    branches: [main]\n');

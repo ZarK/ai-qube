@@ -320,6 +320,7 @@ function diagnosticReasonCode(status: GitHubCiDiagnosticStatus, mappedToCurrentH
   if (status === 'failed-current-head-run') return 'current-head-check-run-failed';
   if (status === 'skipped-current-head-run') return 'current-head-check-run-skipped';
   if (status === 'pending-current-head-run') return 'current-head-check-run-pending';
+  if (status === 'unknown') return 'ci-mapping-unknown';
   return mappedToCurrentHeadWorkflowRun ? 'current-head-workflow-run-found' : 'current-head-check-run-found';
 }
 
@@ -739,17 +740,16 @@ export class GitHubReviewProvider implements ReviewProvider {
   }
 
   private async getWorkflowRunsByIds(repoName: string, ids: string[]): Promise<RawWorkflowRun[]> {
-    const runs: RawWorkflowRun[] = [];
-    for (const id of ids) {
+    const results = await Promise.all(ids.map(async id => {
       const result = await runGh(['api', `repos/${repoName}/actions/runs/${id}`, '--method', 'GET'], this.options);
-      if (result.exitCode !== 0) continue;
+      if (result.exitCode !== 0) return null;
       try {
-        runs.push(parseGhJson<RawWorkflowRun>(result.stdout, `gh api workflow run ${id}`, isRawWorkflowRun));
+        return parseGhJson<RawWorkflowRun>(result.stdout, `gh api workflow run ${id}`, isRawWorkflowRun);
       } catch {
-        continue;
+        return null;
       }
-    }
-    return runs;
+    }));
+    return results.filter((run): run is RawWorkflowRun => run !== null);
   }
 
   private workflowDispatchSupported(): boolean | null {

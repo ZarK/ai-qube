@@ -31,7 +31,37 @@ export type GitHubCiDiagnosticReasonCode =
   | 'current-head-check-run-failed'
   | 'current-head-check-run-skipped'
   | 'missing-current-head-ci-run'
-  | 'stale-old-head-ci-run';
+  | 'stale-old-head-ci-run'
+  | 'ci-mapping-unknown';
+
+const githubCiDiagnosticStatuses: readonly GitHubCiDiagnosticStatus[] = [
+  'mapped',
+  'pending-current-head-run',
+  'missing-current-head-run',
+  'failed-current-head-run',
+  'skipped-current-head-run',
+  'stale-old-head-run',
+  'unknown',
+];
+
+const githubCiDiagnosticReasonCodes: readonly GitHubCiDiagnosticReasonCode[] = [
+  'current-head-check-run-found',
+  'current-head-workflow-run-found',
+  'current-head-check-run-pending',
+  'current-head-check-run-failed',
+  'current-head-check-run-skipped',
+  'missing-current-head-ci-run',
+  'stale-old-head-ci-run',
+  'ci-mapping-unknown',
+];
+
+export function isGitHubCiDiagnosticStatus(value: string): value is GitHubCiDiagnosticStatus {
+  return githubCiDiagnosticStatuses.includes(value as GitHubCiDiagnosticStatus);
+}
+
+export function isGitHubCiDiagnosticReasonCode(value: string): value is GitHubCiDiagnosticReasonCode {
+  return githubCiDiagnosticReasonCodes.includes(value as GitHubCiDiagnosticReasonCode);
+}
 
 export interface GitHubCiDiagnostic {
   checkName: string;

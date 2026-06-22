@@ -3,7 +3,8 @@ import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_check
 import { configToExecutorPolicy } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
-import { createGitHubReviewProvider, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
 export interface PrGateExecResult {
   args: string[];
@@ -67,8 +68,8 @@ export interface PrGatePullRequest {
 
 export interface PrGateCheckDiagnostic {
   checkName: string;
-  status: string;
-  reasonCode: string;
+  status: GitHubCiDiagnosticStatus;
+  reasonCode: GitHubCiDiagnosticReasonCode;
   currentHeadSha: string;
   mappedToCurrentHeadCheckRun: boolean;
   mappedToCurrentHeadWorkflowRun: boolean;
@@ -214,6 +215,7 @@ function stringArray(value: unknown): string[] {
 function checkDiagnostic(value: unknown): PrGateCheckDiagnostic | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.checkName !== 'string' || typeof value.status !== 'string' || typeof value.reasonCode !== 'string' || typeof value.currentHeadSha !== 'string' || typeof value.summary !== 'string' || typeof value.nextAction !== 'string') return undefined;
+  if (!isGitHubCiDiagnosticStatus(value.status) || !isGitHubCiDiagnosticReasonCode(value.reasonCode)) return undefined;
   return {
     checkName: value.checkName,
     status: value.status,

@@ -1,6 +1,7 @@
 import type { GateResult } from '../core/gate_evidence.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
-import { createGitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 import { parsePrNumber } from './pr_gate.js';
 
 export interface PrViewExecResult {
@@ -43,8 +44,8 @@ export interface PrViewCheck {
 
 export interface PrViewCheckDiagnostic {
   checkName: string;
-  status: string;
-  reasonCode: string;
+  status: GitHubCiDiagnosticStatus;
+  reasonCode: GitHubCiDiagnosticReasonCode;
   currentHeadSha: string;
   mappedToCurrentHeadCheckRun: boolean;
   mappedToCurrentHeadWorkflowRun: boolean;
@@ -121,6 +122,7 @@ function stringArray(value: unknown): string[] {
 function checkDiagnostic(value: unknown): PrViewCheckDiagnostic | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.checkName !== 'string' || typeof value.status !== 'string' || typeof value.reasonCode !== 'string' || typeof value.currentHeadSha !== 'string' || typeof value.summary !== 'string' || typeof value.nextAction !== 'string') return undefined;
+  if (!isGitHubCiDiagnosticStatus(value.status) || !isGitHubCiDiagnosticReasonCode(value.reasonCode)) return undefined;
   return {
     checkName: value.checkName,
     status: value.status,
