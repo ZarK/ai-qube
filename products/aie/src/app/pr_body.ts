@@ -5,7 +5,7 @@ import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../c
 import { buildGateStatus, type GateStatusEntry, type GateStatusResult } from '../gates/index.js';
 import { runReviewGate, type ReviewGateResult } from '../review.js';
 import { createGitHubReviewProvider } from '../providers/github/github_review_provider.js';
-import { runPrGateService, type PrGateExec, type PrGateResult } from './pr_gate.js';
+import { runPrGateService, type PrGateCheckDiagnostic, type PrGateExec, type PrGateResult } from './pr_gate.js';
 
 function redactText(text: string): string {
   return text
@@ -15,7 +15,7 @@ function redactText(text: string): string {
 
 export type PrBodyReadinessStatus = 'ready' | 'blocked' | 'pending';
 export type PrBodyGateState = 'passed' | 'failed' | 'skipped' | 'pending' | 'unknown' | 'stale' | 'missing';
-export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable';
+export type PrBodyReadinessReasonCode = GateEvidenceReasonCode | 'missing-pr' | 'pr-review-pending' | 'pr-review-blocked' | 'merge-state-not-ready' | 'mergeability-not-ready' | 'pr-review-state-unavailable' | 'pull-request-not-open' | 'pull-request-draft' | 'merge-conflict' | 'review-feedback-blocker' | 'issue-checklist-unchecked' | 'issue-checklist-unavailable' | 'missing-current-head-ci-run' | 'stale-old-head-ci-run' | 'current-head-check-run-pending' | 'current-head-check-run-failed' | 'current-head-check-run-skipped';
 
 export interface PrBodyReadinessItem {
   reasonCode: PrBodyReadinessReasonCode;
@@ -189,6 +189,15 @@ function readinessItem(reasonCode: PrBodyReadinessReasonCode, message: string, s
   return { reasonCode, message, source, trust };
 }
 
+function ciReasonCode(diagnostic: PrGateCheckDiagnostic): PrBodyReadinessReasonCode {
+  if (diagnostic.reasonCode === 'missing-current-head-ci-run') return 'missing-current-head-ci-run';
+  if (diagnostic.reasonCode === 'stale-old-head-ci-run') return 'stale-old-head-ci-run';
+  if (diagnostic.reasonCode === 'current-head-check-run-pending') return 'current-head-check-run-pending';
+  if (diagnostic.reasonCode === 'current-head-check-run-failed') return 'current-head-check-run-failed';
+  if (diagnostic.reasonCode === 'current-head-check-run-skipped') return 'current-head-check-run-skipped';
+  return 'provider-check-pending';
+}
+
 function githubReviewDecisionBlocks(pr: PrBodyPullRequest | null): boolean {
   return pr?.reviewDecision === 'CHANGES_REQUESTED';
 }
@@ -207,6 +216,9 @@ function pendingItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr && !prReview) pending.push(readinessItem('pr-review-state-unavailable', `Run \`aie pr gate ${pr.number}\` to collect PR review-gate state before merge.`, 'pr-review-gate', 'trusted-provider'));
   if (prReview) {
     if (prReview.status === 'pending') pending.push(readinessItem('pr-review-pending', `Rerun \`aie pr gate ${prReview.pr.number}\` after pending PR review requirements complete.`, 'pr-review-gate', 'trusted-provider'));
+    for (const diagnostic of prReview.checkDiagnostics) {
+      if (['missing-current-head-run', 'stale-old-head-run', 'pending-current-head-run', 'skipped-current-head-run'].includes(diagnostic.status)) pending.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
+    }
     for (const reviewer of prReview.reviewers) {
       if (reviewer.staleRequest) pending.push(readinessItem('stale-evidence', `Rerun \`aie pr gate ${prReview.pr.number}\` because ${reviewer.handle} was requested for an older PR head.`, 'pr-review-gate', 'trusted-provider'));
       else if (!reviewer.requestedForHead && !reviewer.pending) pending.push(readinessItem('pr-review-pending', `Request configured PR reviewer ${reviewer.handle} with \`aie pr gate ${prReview.pr.number}\`.`, 'pr-review-gate', 'trusted-provider'));
@@ -228,6 +240,9 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   if (pr?.mergeStateStatus === 'DIRTY') blockers.push(readinessItem('merge-conflict', 'Pull request branch is dirty and cannot merge cleanly.', 'github-pr', 'trusted-provider'));
   if (audit.required && (audit.evidence.state === 'metadata-only' || audit.evidence.state === 'browser-visited' || audit.evidence.state === 'screenshots-captured')) blockers.push(readinessItem(audit.evidence.reasonCode, 'Manual UI audit evidence directory exists but visual evidence is incomplete.', audit.evidence.source, audit.evidence.trust));
   if (prReview?.status === 'failed') blockers.push(readinessItem('review-feedback-blocker', 'PR review gate reports feedback that must be addressed.', 'pr-review-gate', 'trusted-provider'));
+  for (const diagnostic of prReview?.checkDiagnostics ?? []) {
+    if (diagnostic.status === 'failed-current-head-run') blockers.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
+  }
   if (issueChecklist && issueChecklist.checklist.unchecked > 0) blockers.push(readinessItem('issue-checklist-unchecked', `Issue #${issueChecklist.issue.number} has ${issueChecklist.checklist.unchecked} unchecked checklist item(s).`, 'github-pr', 'trusted-provider'));
   return blockers;
 }
@@ -259,6 +274,12 @@ function formatPrReviewers(result: PrBodyResult['prReviewGate'], pullRequest: Pr
   return result.reviewers.map(reviewer => `- PR reviewer ${reviewer.handle}: ${reviewer.trigger}; current=${reviewer.requestedForHead ? 'yes' : 'no'}; pending=${reviewer.pending ? 'yes' : 'no'}; stale=${reviewer.staleRequest ? 'yes' : 'no'}; action=${reviewer.actionStatus} - ${reviewer.actionDescription}`);
 }
 
+function formatCiDiagnostics(result: PrGateResult | null): string[] {
+  if (!result) return ['- unavailable until PR review-gate state is collected.'];
+  if (result.checkDiagnostics.length === 0) return ['- no provider check diagnostics reported.'];
+  return result.checkDiagnostics.map(diagnostic => `- ${diagnostic.checkName}: ${diagnostic.status}; ${diagnostic.summary} Next action: ${diagnostic.nextAction}`);
+}
+
 function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   const lines = ['## Summary', `- Complete Executor issue #${result.issue}.`, '', '## Verification'];
   if (result.gates.lines.length === 0) lines.push('- Configured gates: none configured.');
@@ -273,6 +294,8 @@ function buildBody(result: Omit<PrBodyResult, 'body'>): string {
   }
   lines.push('- PR review agents:');
   lines.push(...formatPrReviewers(result.prReviewGate, result.pullRequest));
+  lines.push('- PR CI diagnostics:');
+  lines.push(...formatCiDiagnostics(result.prReviewGate.result).map(line => `  ${line}`));
   lines.push('', '## Merge readiness');
   lines.push(`- Status: ${result.readiness.status}.`);
   if (result.pullRequest) {

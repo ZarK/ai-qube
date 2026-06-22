@@ -288,6 +288,16 @@ describe("qube composer CLI", () => {
         args: ["pr", "--help"]
       },
       {
+        input: ["pr", "view", "87", "--json"],
+        component: "aie",
+        args: ["pr", "view", "87", "--json"]
+      },
+      {
+        input: ["pr", "body", "102", "--json"],
+        component: "aie",
+        args: ["pr", "body", "102", "--json"]
+      },
+      {
         input: ["pr", "gate", "87", "--json"],
         component: "aie",
         args: ["pr", "gate", "87", "--json"]

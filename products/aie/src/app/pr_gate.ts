@@ -3,7 +3,8 @@ import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_check
 import { configToExecutorPolicy } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
-import { createGitHubReviewProvider, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
 export interface PrGateExecResult {
   args: string[];
@@ -65,6 +66,21 @@ export interface PrGatePullRequest {
   isDraft: boolean;
 }
 
+export interface PrGateCheckDiagnostic {
+  checkName: string;
+  status: GitHubCiDiagnosticStatus;
+  reasonCode: GitHubCiDiagnosticReasonCode;
+  currentHeadSha: string;
+  mappedToCurrentHeadCheckRun: boolean;
+  mappedToCurrentHeadWorkflowRun: boolean;
+  currentHeadSuiteIds: string[];
+  currentHeadRunIds: string[];
+  staleRunIds: string[];
+  workflowDispatchSupported: boolean | null;
+  summary: string;
+  nextAction: string;
+}
+
 export interface PrGateResult {
   ok: true;
   command: 'pr gate';
@@ -76,6 +92,7 @@ export interface PrGateResult {
   reviewers: PrGateReviewer[];
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
+  checkDiagnostics: PrGateCheckDiagnostic[];
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
@@ -187,6 +204,38 @@ function prFeedback(item: ReviewItem): PrGateFeedback[] {
     }));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+}
+
+function checkDiagnostic(value: unknown): PrGateCheckDiagnostic | undefined {
+  if (!isRecord(value)) return undefined;
+  if (typeof value.checkName !== 'string' || typeof value.status !== 'string' || typeof value.reasonCode !== 'string' || typeof value.currentHeadSha !== 'string' || typeof value.summary !== 'string' || typeof value.nextAction !== 'string') return undefined;
+  if (!isGitHubCiDiagnosticStatus(value.status) || !isGitHubCiDiagnosticReasonCode(value.reasonCode)) return undefined;
+  return {
+    checkName: value.checkName,
+    status: value.status,
+    reasonCode: value.reasonCode,
+    currentHeadSha: value.currentHeadSha,
+    mappedToCurrentHeadCheckRun: value.mappedToCurrentHeadCheckRun === true,
+    mappedToCurrentHeadWorkflowRun: value.mappedToCurrentHeadWorkflowRun === true,
+    currentHeadSuiteIds: stringArray(value.currentHeadSuiteIds),
+    currentHeadRunIds: stringArray(value.currentHeadRunIds),
+    staleRunIds: stringArray(value.staleRunIds),
+    workflowDispatchSupported: typeof value.workflowDispatchSupported === 'boolean' ? value.workflowDispatchSupported : null,
+    summary: value.summary,
+    nextAction: value.nextAction,
+  };
+}
+
+function prCheckDiagnostics(item: ReviewItem): PrGateCheckDiagnostic[] {
+  return item.checks.map(check => checkDiagnostic(check.metadata.ciDiagnostic)).filter((diagnostic): diagnostic is PrGateCheckDiagnostic => diagnostic !== undefined);
+}
+
 function hasIncompleteChecks(item: ReviewItem): boolean {
   return item.checks.some(check => check.result !== 'passed' && check.result !== 'skipped');
 }
@@ -210,11 +259,17 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   return 'pending';
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[]): string {
+function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGateCheckDiagnostic | undefined {
+  return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
+}
+
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[]): string {
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Update linked GitHub issue checklist items with `aie checklist update <issue> --index <n>`, rerun affected gates if needed, then rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
   if (status === 'unavailable') return 'Some PR review state was unavailable. Inspect GitHub manually, fix permissions or connectivity, then rerun `aie pr gate`.';
+  const ciDiagnostic = actionableCiDiagnostic(checkDiagnostics);
+  if (ciDiagnostic) return ciDiagnostic.nextAction;
   if (dryRun && reviewers.length > 0) return 'Review the planned PR reviewer requests/comments, then rerun without --dry-run when ready to request reviewers.';
   if (status === 'pending') return reviewers.length === 0 ? 'No PR review agents are configured. Inspect required repository reviews and checks before merge.' : 'Wait for pending reviewers, inspect new feedback, then rerun `aie pr gate` before merge.';
   return 'PR review gate has no detected blockers. Merge remains the acting agent decision after policy, CI, tests, configured gates, and feedback are satisfied.';
@@ -296,6 +351,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);
   const reviewers = reviewersFromPlan(finalPlan);
   const feedback = prFeedback(finalSnapshot.item);
+  const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const linkedChecklistWarnings: string[] = [];
   const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings];
@@ -311,6 +367,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     reviewers,
     actions,
     feedback,
+    checkDiagnostics,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
@@ -323,7 +380,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics),
   };
 }
 
@@ -342,6 +399,10 @@ export function formatPrGate(result: PrGateResult): string {
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);
+  }
+  if (result.checkDiagnostics.length > 0) {
+    lines.push('CI diagnostics:');
+    for (const diagnostic of result.checkDiagnostics) lines.push(`- ${diagnostic.status}: ${diagnostic.summary} Next action: ${diagnostic.nextAction}`);
   }
   if (result.issueChecklists.length > 0) {
     lines.push('Linked issue checklists:');

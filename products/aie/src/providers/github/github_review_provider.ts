@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
 import { normalizeGateEvidence, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../../core/gate_evidence.js';
 import type { JsonObject, JsonValue } from '../../core/json_value.js';
@@ -9,12 +12,19 @@ import { GhExecutionError, GhRunResult, parseGhJson, redact, runGh } from '../..
 import { getRepositoryIdentity } from '../../repo/index.js';
 import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provider.js';
 
-import type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
-export type { CurrentGitHubReview, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
+import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+export type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
 const MARKER_PREFIX = 'aie:pr-gate';
+
+interface RawCheckRun { id?: number; name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string; check_suite?: { id?: number } | null }
+interface RawCheckRunsResponse { check_runs?: RawCheckRun[] }
+interface RawCheckSuite { id?: number; status?: string; conclusion?: string | null; head_sha?: string | null }
+interface RawCheckSuitesResponse { check_suites?: RawCheckSuite[] }
+interface RawWorkflowRun { id?: number; name?: string; head_sha?: string | null; status?: string; conclusion?: string | null; html_url?: string; path?: string | null; workflow_id?: number }
+interface RawWorkflowRunsResponse { workflow_runs?: RawWorkflowRun[] }
 
 function isRecord(value: unknown): value is Record<string, unknown> { return value !== null && typeof value === 'object' && !Array.isArray(value); }
 
@@ -32,6 +42,22 @@ function isRawPrCommentsView(value: unknown): value is { comments?: RawComment[]
 function isRawThreadResponse(value: unknown): value is RawThreadResponse { return isRecord(value); }
 
 function isLoginResponse(value: unknown): value is LoginResponse { return isRecord(value) && typeof value.login === 'string' && value.login !== ''; }
+
+function isRawCheckRunArray(value: unknown): value is RawCheckRunsResponse {
+  return isRecord(value) && (value.check_runs === undefined || Array.isArray(value.check_runs));
+}
+
+function isRawCheckSuiteArray(value: unknown): value is RawCheckSuitesResponse {
+  return isRecord(value) && (value.check_suites === undefined || Array.isArray(value.check_suites));
+}
+
+function isRawWorkflowRunArray(value: unknown): value is RawWorkflowRunsResponse {
+  return isRecord(value) && (value.workflow_runs === undefined || Array.isArray(value.workflow_runs));
+}
+
+function isRawWorkflowRun(value: unknown): value is RawWorkflowRun {
+  return isRecord(value) && typeof value.id === 'number';
+}
 
 function ensureGhSuccess(operation: string, result: GhRunResult): void {
   if (result.exitCode !== 0) throw new GhExecutionError(operation, result.exitCode, result.stderr || result.stdout);
@@ -228,10 +254,140 @@ function latestChecks(raw: RawStatusCheck[] | undefined): RawStatusCheck[] {
   return [...byName.values()];
 }
 
-function checks(raw: RawStatusCheck[] | undefined): GateEvidence[] {
+function normalizeCheckName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function runIdFromUrl(url: string | undefined): string | null {
+  const match = (url ?? '').match(/\/actions\/runs\/(\d+)/);
+  return match ? match[1] : null;
+}
+
+function checkRunId(run: RawCheckRun | RawWorkflowRun): string | null {
+  return typeof run.id === 'number' ? String(run.id) : null;
+}
+
+function explicitCheckName(check: RawStatusCheck): string | null {
+  const name = check.name ?? check.context ?? null;
+  return typeof name === 'string' && name.trim() !== '' ? name : null;
+}
+
+function uniqueStrings(values: Array<string | null>): string[] {
+  return [...new Set(values.filter((value): value is string => typeof value === 'string' && value !== ''))];
+}
+
+function checkMatchesRun(check: RawStatusCheck, run: RawCheckRun): boolean {
+  const name = explicitCheckName(check);
+  return name !== null && normalizeCheckName(run.name ?? '') === normalizeCheckName(name);
+}
+
+function checkMatchesWorkflowRun(check: RawStatusCheck, run: RawWorkflowRun): boolean {
+  const detailRunId = runIdFromUrl(check.detailsUrl ?? check.targetUrl);
+  const runId = checkRunId(run);
+  if (detailRunId !== null && runId === detailRunId) return true;
+  if (check.workflowName && normalizeCheckName(run.name ?? '') === normalizeCheckName(check.workflowName)) return true;
+  const name = explicitCheckName(check);
+  return name !== null && normalizeCheckName(run.name ?? '') === normalizeCheckName(name);
+}
+
+function diagnosticSummary(status: GitHubCiDiagnosticStatus, checkNameValue: string, currentHeadRunIds: string[], staleRunIds: string[]): string {
+  if (status === 'missing-current-head-run') return `${checkNameValue} has no check run or workflow run for the current PR head.`;
+  if (status === 'stale-old-head-run') return `${checkNameValue} points at old-head workflow run(s): ${staleRunIds.join(', ')}.`;
+  if (status === 'failed-current-head-run') return `${checkNameValue} failed on current-head run(s): ${currentHeadRunIds.join(', ') || 'unknown'}.`;
+  if (status === 'skipped-current-head-run') return `${checkNameValue} was skipped on the current PR head.`;
+  if (status === 'pending-current-head-run') return `${checkNameValue} has a current-head run that is still pending.`;
+  if (status === 'mapped') return `${checkNameValue} maps to current-head CI evidence.`;
+  return `${checkNameValue} CI mapping is unknown.`;
+}
+
+function diagnosticNextAction(status: GitHubCiDiagnosticStatus, workflowDispatchSupported: boolean | null): string {
+  if (status === 'missing-current-head-run') {
+    if (workflowDispatchSupported === true) return 'Trigger a workflow_dispatch run for the current PR branch or push a new commit, then rerun `aie pr view <pr> --json`.';
+    if (workflowDispatchSupported === false) return 'Push a new commit to the PR branch to trigger GitHub Actions for the current head; do not rerun old-head workflow runs as current evidence.';
+    return 'Trigger CI for the current PR head, then rerun `aie pr view <pr> --json`; do not treat old-head runs as current evidence.';
+  }
+  if (status === 'stale-old-head-run') return 'Do not rerun the stale old-head workflow run as merge evidence; trigger CI for the current head by pushing a new commit or using workflow_dispatch when available.';
+  if (status === 'failed-current-head-run') return 'Rerun failed jobs for the current-head workflow run or push a fix commit, then rerun `aie pr view <pr> --json`.';
+  if (status === 'skipped-current-head-run') return 'Inspect the workflow skip condition and confirm the check is not required for this PR before merge.';
+  if (status === 'pending-current-head-run') return 'Wait for the current-head CI run to finish, then rerun `aie pr view <pr> --json`.';
+  if (status === 'mapped') return 'No CI retrigger needed for this check.';
+  return 'Inspect GitHub check details and rerun `aie pr view <pr> --json` after the state changes.';
+}
+
+function diagnosticReasonCode(status: GitHubCiDiagnosticStatus, mappedToCurrentHeadWorkflowRun: boolean): GitHubCiDiagnosticReasonCode {
+  if (status === 'missing-current-head-run') return 'missing-current-head-ci-run';
+  if (status === 'stale-old-head-run') return 'stale-old-head-ci-run';
+  if (status === 'failed-current-head-run') return 'current-head-check-run-failed';
+  if (status === 'skipped-current-head-run') return 'current-head-check-run-skipped';
+  if (status === 'pending-current-head-run') return 'current-head-check-run-pending';
+  if (status === 'unknown') return 'ci-mapping-unknown';
+  return mappedToCurrentHeadWorkflowRun ? 'current-head-workflow-run-found' : 'current-head-check-run-found';
+}
+
+function ciDiagnosticMetadata(diagnostic: GitHubCiDiagnostic): JsonObject {
+  return {
+    checkName: diagnostic.checkName,
+    status: diagnostic.status,
+    reasonCode: diagnostic.reasonCode,
+    currentHeadSha: diagnostic.currentHeadSha,
+    mappedToCurrentHeadCheckRun: diagnostic.mappedToCurrentHeadCheckRun,
+    mappedToCurrentHeadWorkflowRun: diagnostic.mappedToCurrentHeadWorkflowRun,
+    currentHeadSuiteIds: diagnostic.currentHeadSuiteIds,
+    currentHeadRunIds: diagnostic.currentHeadRunIds,
+    staleRunIds: diagnostic.staleRunIds,
+    workflowDispatchSupported: diagnostic.workflowDispatchSupported,
+    summary: diagnostic.summary,
+    nextAction: diagnostic.nextAction,
+  };
+}
+
+function buildCiDiagnostics(input: { checks: RawStatusCheck[]; headSha: string; checkRuns: RawCheckRun[]; checkSuites: RawCheckSuite[]; workflowRuns: RawWorkflowRun[]; staleRuns: RawWorkflowRun[]; workflowDispatchSupported: boolean | null }): GitHubCiDiagnostic[] {
+  const currentHeadSuiteIds = uniqueStrings(input.checkSuites.filter(suite => !suite.head_sha || suite.head_sha === input.headSha).map(suite => typeof suite.id === 'number' ? String(suite.id) : null));
+  return input.checks.map((check, index) => {
+    const name = checkName(check, index);
+    const result = checkResult(check);
+    const currentCheckRuns = input.checkRuns.filter(run => checkMatchesRun(check, run));
+    const currentWorkflowRuns = input.workflowRuns.filter(run => checkMatchesWorkflowRun(check, run));
+    const detailRunId = runIdFromUrl(check.detailsUrl ?? check.targetUrl);
+    const staleRuns = input.staleRuns.filter(run => {
+      const runId = checkRunId(run);
+      return run.head_sha !== input.headSha && (runId === detailRunId || checkMatchesWorkflowRun(check, run));
+    });
+    const mappedToCurrentHeadCheckRun = currentCheckRuns.length > 0;
+    const mappedToCurrentHeadWorkflowRun = currentWorkflowRuns.length > 0;
+    const mapped = mappedToCurrentHeadCheckRun || mappedToCurrentHeadWorkflowRun;
+    let status: GitHubCiDiagnosticStatus = 'mapped';
+    if (result === 'failed' && mapped) status = 'failed-current-head-run';
+    else if (result === 'skipped' && mapped) status = 'skipped-current-head-run';
+    else if (result === 'unknown' && mapped) status = 'pending-current-head-run';
+    else if (!mapped && staleRuns.length > 0) status = 'stale-old-head-run';
+    else if (!mapped && result === 'unknown') status = 'missing-current-head-run';
+    else if (!mapped) status = 'unknown';
+    const currentHeadRunIds = uniqueStrings([...currentCheckRuns.map(checkRunId), ...currentWorkflowRuns.map(checkRunId)]);
+    const staleRunIds = uniqueStrings(staleRuns.map(checkRunId));
+    return {
+      checkName: redact(name),
+      status,
+      reasonCode: diagnosticReasonCode(status, mappedToCurrentHeadWorkflowRun),
+      currentHeadSha: input.headSha,
+      mappedToCurrentHeadCheckRun,
+      mappedToCurrentHeadWorkflowRun,
+      currentHeadSuiteIds,
+      currentHeadRunIds,
+      staleRunIds,
+      workflowDispatchSupported: input.workflowDispatchSupported,
+      summary: diagnosticSummary(status, redact(name), currentHeadRunIds, staleRunIds),
+      nextAction: diagnosticNextAction(status, input.workflowDispatchSupported),
+    };
+  });
+}
+
+function checks(raw: RawStatusCheck[] | undefined, ciDiagnostics: GitHubCiDiagnostic[] = []): GateEvidence[] {
+  const diagnosticsByName = new Map(ciDiagnostics.map(diagnostic => [diagnostic.checkName, diagnostic]));
   return latestChecks(raw).map((check, index) => {
     const result = checkResult(check);
     const name = checkName(check, index);
+    const diagnostic = diagnosticsByName.get(redact(name));
     return normalizeGateEvidence({
       key: `github-check:${name}`,
       name: redact(name),
@@ -246,7 +402,7 @@ function checks(raw: RawStatusCheck[] | undefined): GateEvidence[] {
       recordedAt: check.completedAt ?? check.startedAt ?? check.createdAt ?? null,
       reasonCode: checkReasonCode(result),
       stale: result === 'stale',
-      metadata: { status: check.status ?? null, state: check.state ?? null, conclusion: check.conclusion ?? null },
+      metadata: { status: check.status ?? null, state: check.state ?? null, conclusion: check.conclusion ?? null, workflowName: check.workflowName ?? null, ciDiagnostic: diagnostic ? ciDiagnosticMetadata(diagnostic) : null },
     });
   });
 }
@@ -387,7 +543,7 @@ export class GitHubReviewProvider implements ReviewProvider {
     try {
       const raw = parseGhJson<RawPrView>(result.stdout, 'gh pr view current branch', isRawPrView);
       const pr = normalizePr(raw);
-      return { item: this.reviewItem(raw, [], [], [], [], [], [], null), pr, warning: null };
+      return { item: this.reviewItem(raw, [], [], [], [], [], [], null, []), pr, warning: null };
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error);
       return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${redact(detail)}` };
@@ -397,10 +553,12 @@ export class GitHubReviewProvider implements ReviewProvider {
   async loadPullRequestReview(prNumber: number): Promise<GitHubReviewSnapshot> {
     const rawPr = await this.getPullRequest(prNumber);
     const unavailable: string[] = [];
+    let ciDiagnostics: GitHubCiDiagnostic[] = [];
     let reviewComments: RawReviewComment[] = [];
     let unresolvedThreads: RawThreadNode[] = [];
     try {
       const repository = await getRepositoryIdentity(this.options);
+      ciDiagnostics = await this.loadCiDiagnostics(repository.nameWithOwner, rawPr);
       try {
         rawPr.comments = await this.getIssueComments(repository.nameWithOwner, prNumber);
       } catch (error: unknown) {
@@ -425,8 +583,9 @@ export class GitHubReviewProvider implements ReviewProvider {
     const latestReviews = rawPr.latestReviews ?? [];
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     return {
-      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor),
+      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics),
       pr: normalizePr(rawPr),
+      ciDiagnostics,
       closingIssueNumbers: closingIssueNumbers(rawPr),
       reviewRequests,
       commentsCount: comments.length,
@@ -537,7 +696,76 @@ export class GitHubReviewProvider implements ReviewProvider {
     return parseGhJson<LoginResponse>(result.stdout, 'gh api user', isLoginResponse).login;
   }
 
-  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null): ReviewItem {
+  private async loadCiDiagnostics(repoName: string, rawPr: RawPrView): Promise<GitHubCiDiagnostic[]> {
+    const headSha = rawPr.headRefOid;
+    const statusChecks = latestChecks(rawPr.statusCheckRollup);
+    if (!headSha || statusChecks.length === 0) return [];
+    try {
+      const [checkRuns, checkSuites, workflowRuns, staleRuns] = await Promise.all([
+        this.getCurrentHeadCheckRuns(repoName, headSha),
+        this.getCurrentHeadCheckSuites(repoName, headSha),
+        this.getCurrentHeadWorkflowRuns(repoName, headSha),
+        this.getWorkflowRunsByIds(repoName, uniqueStrings(statusChecks.map(check => runIdFromUrl(check.detailsUrl ?? check.targetUrl)))),
+      ]);
+      return buildCiDiagnostics({
+        checks: statusChecks,
+        headSha: redact(headSha),
+        checkRuns,
+        checkSuites,
+        workflowRuns,
+        staleRuns,
+        workflowDispatchSupported: this.workflowDispatchSupported(),
+      });
+    } catch {
+      return [];
+    }
+  }
+
+  private async getCurrentHeadCheckRuns(repoName: string, headSha: string): Promise<RawCheckRun[]> {
+    const result = await runGh(['api', `repos/${repoName}/commits/${headSha}/check-runs`, '--method', 'GET', '-F', 'per_page=100'], this.options);
+    ensureGhSuccess(`gh api check runs for ${headSha}`, result);
+    return parseGhJson<RawCheckRunsResponse>(result.stdout, `gh api check runs for ${headSha}`, isRawCheckRunArray).check_runs ?? [];
+  }
+
+  private async getCurrentHeadCheckSuites(repoName: string, headSha: string): Promise<RawCheckSuite[]> {
+    const result = await runGh(['api', `repos/${repoName}/commits/${headSha}/check-suites`, '--method', 'GET', '-F', 'per_page=100'], this.options);
+    ensureGhSuccess(`gh api check suites for ${headSha}`, result);
+    return parseGhJson<RawCheckSuitesResponse>(result.stdout, `gh api check suites for ${headSha}`, isRawCheckSuiteArray).check_suites ?? [];
+  }
+
+  private async getCurrentHeadWorkflowRuns(repoName: string, headSha: string): Promise<RawWorkflowRun[]> {
+    const result = await runGh(['api', `repos/${repoName}/actions/runs`, '--method', 'GET', '-F', `head_sha=${headSha}`, '-F', 'per_page=100'], this.options);
+    ensureGhSuccess(`gh api workflow runs for ${headSha}`, result);
+    return parseGhJson<RawWorkflowRunsResponse>(result.stdout, `gh api workflow runs for ${headSha}`, isRawWorkflowRunArray).workflow_runs ?? [];
+  }
+
+  private async getWorkflowRunsByIds(repoName: string, ids: string[]): Promise<RawWorkflowRun[]> {
+    const results = await Promise.all(ids.map(async id => {
+      const result = await runGh(['api', `repos/${repoName}/actions/runs/${id}`, '--method', 'GET'], this.options);
+      if (result.exitCode !== 0) return null;
+      try {
+        return parseGhJson<RawWorkflowRun>(result.stdout, `gh api workflow run ${id}`, isRawWorkflowRun);
+      } catch {
+        return null;
+      }
+    }));
+    return results.filter((run): run is RawWorkflowRun => run !== null);
+  }
+
+  private workflowDispatchSupported(): boolean | null {
+    if (!this.options.cwd) return null;
+    const workflowRoot = join(this.options.cwd, '.github', 'workflows');
+    if (!existsSync(workflowRoot)) return null;
+    try {
+      return readdirSync(workflowRoot)
+        .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
+        .some(name => /\bworkflow_dispatch\b/.test(readFileSync(join(workflowRoot, name), 'utf8')));
+    } catch {
+      return null;
+    }
+  }
+
+  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[]): ReviewItem {
     const pr = normalizePr(rawPr);
     const source = normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(rawPr.number), url: pr.url });
     return normalizeReviewItem({
@@ -551,8 +779,8 @@ export class GitHubReviewProvider implements ReviewProvider {
       reviewDecision: mapReviewDecision(rawPr.reviewDecision),
       mergeability: mapMergeability(rawPr),
       feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid }),
-      checks: checks(rawPr.statusCheckRollup),
-      trustedMetadata: metadata({ pr, reviewRequests, comments, latestReviews, unavailable, trustedMarkerAuthor }),
+      checks: checks(rawPr.statusCheckRollup, ciDiagnostics),
+      trustedMetadata: { ...metadata({ pr, reviewRequests, comments, latestReviews, unavailable, trustedMarkerAuthor }), ciDiagnostics: ciDiagnostics.map(ciDiagnosticMetadata) },
       source,
     });
   }
