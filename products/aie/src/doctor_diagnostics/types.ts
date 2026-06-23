@@ -159,6 +159,18 @@ export interface GateReadinessDiagnostics {
   reviewAgent: {
     required: boolean;
     readiness: DoctorReadinessStatus;
+    descriptorSupport: {
+      available: boolean;
+      runnerAvailable: boolean;
+      categories: string[];
+      agents: string[];
+      promptFragments: Array<{
+        id: string;
+        path: string;
+        trust: string;
+        sourceCategory: string;
+      }>;
+    };
     adapter: string;
     profile: string;
     severityThreshold: string;

@@ -3,6 +3,7 @@ import { renderSchema, renderSchemaJson } from '@tjalve/qube-cli/schema';
 import { createRequire } from 'node:module';
 import { EXECUTOR_COMMAND_REGISTRY } from './command_registry.js';
 import { AIE_CONFIG_FILENAME, configToFileShape, getDefaults } from './config/index.js';
+import { buildDescriptorSummary } from './agent_descriptors.js';
 import { commandResult } from './runtime_result.js';
 
 const requirePackage = createRequire(import.meta.url);
@@ -32,6 +33,7 @@ function schemaOptions() {
           comprehensiveLanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'security', 'performance', 'data-database', 'concurrency-resource', 'error-observability', 'tests-quality', 'api-contract-compatibility', 'docs-instructions', 'ui-ux-accessibility', 'release-ci-supply-chain', 'manual-qa', 'final-gate'],
           runner: 'unavailable',
         },
+        agentDescriptors: buildDescriptorSummary(),
         defaultConfig: configToFileShape(getDefaults()),
       },
     },

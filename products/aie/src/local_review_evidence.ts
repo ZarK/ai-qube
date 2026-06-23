@@ -37,6 +37,7 @@ export interface LocalReviewContextReviewed {
 export interface LocalReviewPromptStackItem {
   id: string;
   source: 'builtin' | 'repo-configured' | 'command-supplied' | 'evidence';
+  sourceCategory?: string;
   path: string | null;
   sha256: string | null;
   trust: LocalReviewTrust;
@@ -256,6 +257,7 @@ function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
     stack.push({
       id: stringValue(entry.id, 'unknown-prompt-fragment'),
       source,
+      sourceCategory: typeof entry.sourceCategory === 'string' && entry.sourceCategory.trim() !== '' ? redact(entry.sourceCategory.trim()) : undefined,
       path: typeof entry.path === 'string' && entry.path.trim() !== '' ? redact(entry.path.trim()) : null,
       sha256: typeof entry.sha256 === 'string' && entry.sha256.trim() !== '' ? redact(entry.sha256.trim()) : null,
       trust: readTrust(entry.trust),
