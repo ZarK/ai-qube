@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { basename, join } = require('node:path');
 
@@ -103,6 +103,51 @@ function localReviewConfig() {
   config.reviewAgents = ['coderabbitai'];
   config.localReviewAgents = ['oracle'];
   config.reviewWaitMinutes = 10;
+  return config;
+}
+
+function localCommandConfig(command = 'aie:fixture-local-review') {
+  const config = localReviewConfig();
+  config.reviewLanes = [
+    'task-record-compliance',
+    'issue-compliance',
+    'code-quality',
+    'tests-quality',
+    'manual-qa',
+    'final-gate',
+  ].map(id => ({
+    id,
+    required: 'always',
+    match: [],
+    severityThreshold: 'high',
+    prompt: [],
+    tools: [],
+    runner: 'local-command',
+    command,
+  }));
+  return config;
+}
+
+function localHostConfig(command = 'aie:fixture-local-review') {
+  const config = localReviewConfig();
+  config.localReviewAgents = ['codex'];
+  config.reviewLanes = [
+    'task-record-compliance',
+    'issue-compliance',
+    'code-quality',
+    'tests-quality',
+    'manual-qa',
+    'final-gate',
+  ].map(id => ({
+    id,
+    required: 'always',
+    match: [],
+    severityThreshold: 'high',
+    prompt: [],
+    tools: [],
+    runner: 'local-host',
+    command,
+  }));
   return config;
 }
 
@@ -264,6 +309,9 @@ function makePrExec(options = {}) {
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
+    }
+    if (options.localCommand && args[0] === 'review-fixture') {
+      return options.localCommand(args);
     }
     if (args[0] === 'pr' && args[1] === 'edit') {
       return { args, exitCode: 0, stdout: '', stderr: '' };
@@ -653,6 +701,126 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'missing');
     assert.match(result.nextAction, /Record local review evidence/);
+  });
+
+  it('plans local-command lane execution during PR gate dry-run without writing evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.localReviewRunner.status, 'planned');
+    assert.equal(result.localReviewRunner.lanes.length, 6);
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned' || lane.lane === 'final-gate'));
+    assert.equal(result.localReview.status, 'missing');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json')), false);
+  });
+
+  it('runs local-command fixture lanes and writes valid current-head evidence before PR gate validation', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json');
+    const lane = JSON.parse(readFileSync(lanePath, 'utf8'));
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReviewRunner.written.length, 6);
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.status, 'complete');
+    assert.equal(lane.issueNumber, 93);
+    assert.equal(lane.prNumber, 12);
+    assert.equal(lane.headSha, 'abc123');
+    assert.equal(lane.adapter, 'local-command');
+    assert.equal(lane.lane, 'issue-compliance');
+    assert.ok(Array.isArray(lane.promptStack) && lane.promptStack.length > 0);
+  });
+
+  it('records Codex local-host evidence when an independent local-host runner is configured', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json');
+    const lane = JSON.parse(readFileSync(lanePath, 'utf8'));
+
+    assert.equal(result.localReviewRunner.codex.independentReviewer, true);
+    assert.deepEqual(result.localReviewRunner.codex.missingCapabilities, []);
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReview.evidence[0].adapter, 'local-host');
+    assert.equal(result.status, 'complete');
+    assert.equal(lane.adapter, 'local-host');
+    assert.equal(lane.reviewer.id, 'codex');
+    assert.ok(lane.toolsUsed.includes('codex'));
+  });
+
+  it('fails PR gate when local-command fixture findings exceed the severity threshold', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig('aie:fixture-local-review:fail-code-quality');
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'failed');
+    assert.equal(result.status, 'failed');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('high severity') || blocker.includes('Fix fixture code-quality finding')));
+  });
+
+  it('does not let malformed local-command JSON satisfy required local review evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig('review-fixture');
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr()],
+      localCommand: args => ({ args, exitCode: 0, stdout: JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: 'wrong-lane', status: 'passed' }), stderr: '' }),
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.localReviewRunner.status, 'failed');
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'failed'));
+    assert.equal(result.localReview.status, 'missing');
+    assert.equal(result.status, 'pending');
+  });
+
+  it('does not let local-command output without artifacts satisfy required lane evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig('review-fixture');
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr()],
+      localCommand: args => {
+        const lane = args[args.indexOf('--lane') + 1];
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            version: 1,
+            issueNumber: 93,
+            prNumber: 12,
+            headSha: 'abc123',
+            lane,
+            status: 'passed',
+            severity: 'none',
+            recommendation: 'approve',
+            summary: `${lane} passed without artifacts`,
+            artifacts: [],
+            contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
+            promptStack: [{ id: `builtin:${lane}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
+          }),
+          stderr: '',
+        };
+      },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.localReview.status, 'failed');
+    assert.equal(result.status, 'failed');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('passed without artifact references')));
   });
 
   it('completes comprehensive local gates only when required task context was reviewed', async () => {

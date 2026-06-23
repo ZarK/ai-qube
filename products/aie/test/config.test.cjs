@@ -178,7 +178,8 @@ describe('config validation', () => {
         severityThreshold: 'medium',
         prompt: ['builtin:security-review', '.qube/aie/review-prompts/security.md'],
         tools: ['rg', 'ast-grep'],
-        runner: 'local-host',
+        runner: 'local-command',
+        command: 'aie:fixture-local-review',
       }],
     };
 
@@ -196,7 +197,8 @@ describe('config validation', () => {
     assert.equal(result.config.reviewContextSources.linkedIssues, 'github');
     assert.equal(result.config.reviewContextSources.prComments, 'github');
     assert.equal(result.config.reviewContextSources.reviewThreads, 'github');
-    assert.equal(result.config.reviewLanes[0].runner, 'local-host');
+    assert.equal(result.config.reviewLanes[0].runner, 'local-command');
+    assert.equal(result.config.reviewLanes[0].command, 'aie:fixture-local-review');
   });
 
   it('rejects unknown fields and unsupported provider kinds with actionable paths', () => {

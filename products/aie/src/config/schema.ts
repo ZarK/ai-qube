@@ -253,7 +253,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
@@ -267,6 +267,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       prompt: readStringArray(entry, 'prompt', [], lanePath, errors),
       tools: readStringArray(entry, 'tools', [], lanePath, errors),
       runner: readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors),
+      command: readString(entry, 'command', '', lanePath, errors, { allowEmpty: false }) || undefined,
     });
   });
   return lanes;
