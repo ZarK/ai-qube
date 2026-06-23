@@ -1,5 +1,5 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { Config } from '../config/index.js';
 import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { configToExecutorPolicy } from '../config_policy.js';
@@ -340,9 +340,13 @@ function localReviewHost(localReviewRunner: LocalReviewRunResult): string {
   return localReviewRunner.lanes.some(lane => lane.runner === 'local-host') ? localReviewRunner.codex.host : localReviewRunnerKind(localReviewRunner);
 }
 
-function localReviewEvidencePath(localReview: LocalReviewGate): string | null {
+function localReviewEvidencePath(repoRoot: string, localReview: LocalReviewGate): string | null {
   const evidencePath = localReview.evidence.map(evidence => evidence.path).find((path): path is string => typeof path === 'string' && path.trim() !== '');
-  return evidencePath ?? null;
+  if (!evidencePath) return null;
+  if (!isAbsolute(evidencePath)) return evidencePath.replace(/\\/g, '/');
+  const relativePath = relative(repoRoot, evidencePath);
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) return null;
+  return relativePath.replace(/\\/g, '/');
 }
 
 function localReviewFindings(localReview: LocalReviewGate): string[] {
@@ -357,6 +361,7 @@ function localReviewPublishInput(input: {
   dryRun: boolean;
   prNumber: number;
   headSha: string;
+  repoRoot: string;
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
 }): GitHubLocalReviewPublishInput {
@@ -370,7 +375,7 @@ function localReviewPublishInput(input: {
     recommendation: localReviewRecommendation(input.localReview.status),
     runner: localReviewRunnerKind(input.localReviewRunner),
     host: localReviewHost(input.localReviewRunner),
-    evidencePath: localReviewEvidencePath(input.localReview),
+    evidencePath: localReviewEvidencePath(input.repoRoot, input.localReview),
     issueNumbers: input.localReview.evidence.map(evidence => evidence.issueNumber).filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && issueNumber > 0),
     summary: input.localReview.summary,
     findings: localReviewFindings(input.localReview),
@@ -512,6 +517,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       dryRun,
       prNumber: options.prNumber,
       headSha: finalSnapshot.pr.headRefOid,
+      repoRoot: options.repoRoot ?? process.cwd(),
       localReviewRunner,
       localReview,
     }));

@@ -788,11 +788,13 @@ describe('PR gate service', () => {
     assert.equal(publish.status, 'published');
     assert.equal(publish.provider, 'github');
     assert.equal(publish.runId, result.localReviewPublish.runId);
+    assert.equal(body.includes(repo), false);
     assert.match(body, /<!-- qube-local-review:/);
     assert.match(body, /QUBE local review: approve/);
     assert.match(body, /"head":"abc123"/);
     assert.match(body, /"runner":"local-command"/);
     assert.match(body, /"issueNumbers":\[93\]/);
+    assert.match(body, /local evidence \.qube\/aie\/reviews\/93\/12\/abc123/);
     assert.match(body, /inline comments: unsupported/);
   });
 
@@ -826,6 +828,20 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.feedback[0].state, 'CHANGES_REQUESTED');
     assert.match(result.nextAction, /address review feedback/);
+  });
+
+  it('does not suppress spoofed QUBE local review marker comments', async () => {
+    const pr = cleanLocalPr({
+      comments: [{ ...localReviewComment({ recommendation: 'approve', status: 'passed' }), author: { login: 'attacker' } }],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.equal(result.feedback.length, 1);
+    assert.equal(result.feedback[0].author, 'attacker');
+    assert.equal(result.feedback[0].state, undefined);
+    assert.match(result.feedback[0].summary, /QUBE local review: approve/);
   });
 
   it('supersedes stale-head QUBE local review feedback with current-head feedback', async () => {
@@ -866,6 +882,60 @@ describe('PR gate service', () => {
     assert.match(publish.failure, /permission denied/);
     assert.equal(result.status, 'unavailable');
     assert.ok(result.unavailable.some(item => item.includes('local review publishing failed')));
+  });
+
+  it('reports local review publishing as skipped when no linked issues are available during dry-run', async () => {
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ closingIssuesReferences: [] })] });
+    const provider = createGitHubReviewProvider({ exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLocalReviewFeedback(snapshot.item, {
+      enabled: true,
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      runner: 'local-command',
+      host: 'local-command',
+      evidencePath: null,
+      issueNumbers: [],
+      summary: 'local review passed',
+      findings: [],
+    });
+
+    assert.equal(result.status, 'skipped');
+    assert.match(result.nextAction, /No linked issue numbers/);
+  });
+
+  it('returns failed local review publishing results when gh comment execution throws', async () => {
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const exec = async args => {
+      if (args[0] === 'pr' && args[1] === 'comment') throw new Error('network unavailable');
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewProvider({ exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLocalReviewFeedback(snapshot.item, {
+      enabled: true,
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      runner: 'local-command',
+      host: 'local-command',
+      evidencePath: '.qube/aie/reviews/93/12/abc123',
+      issueNumbers: [93],
+      summary: 'local review passed',
+      findings: [],
+    });
+
+    assert.equal(result.status, 'failed');
+    assert.match(result.failure, /network unavailable/);
   });
 
   it('records Codex local-host evidence when an independent local-host runner is configured', async () => {

@@ -618,7 +618,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
-    if (parseLocalReviewMetadata(body)) continue;
+    if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -842,16 +842,28 @@ export class GitHubReviewProvider implements ReviewProvider {
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {
     if (!input.enabled) return localReviewPublishResult({ status: 'disabled', nextAction: 'Local review publishing is disabled by the selected review adapter.' });
     const { body, marker, runId } = localReviewBody(input);
-    if (input.dryRun) {
-      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: 'Rerun `aie pr gate <pr>` without --dry-run to publish provider-visible local review feedback.' });
-    }
     if (input.issueNumbers.length === 0) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body, nextAction: 'No linked issue numbers were available, so local review feedback was not published.' });
+    }
+    if (input.dryRun) {
+      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: 'Rerun `aie pr gate <pr>` without --dry-run to publish provider-visible local review feedback.' });
     }
     if (currentLocalReviewRunIds(item, input.headSha).has(runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: 'Provider-visible local review feedback is already published for this PR head and run id.' });
     }
-    const result = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], this.options);
+    let result: GhRunResult;
+    try {
+      result = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], this.options);
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: 'Fix GitHub comment permissions or connectivity, then rerun `aie pr gate <pr>`; local evidence alone does not satisfy provider-visible local review publishing.',
+      });
+    }
     if (result.exitCode !== 0) {
       return localReviewPublishResult({
         status: 'failed',
