@@ -1062,7 +1062,7 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.issueChecklists[0].issue.number, 93);
     assert.equal(result.issueChecklists[0].checklist.unchecked, 1);
-    assert.match(result.nextAction, /aie checklist update/);
+    assert.match(result.nextAction, /aie checklist verify/);
   });
 
   it('uses a comments-only fallback when issue comment fetch fails', async () => {

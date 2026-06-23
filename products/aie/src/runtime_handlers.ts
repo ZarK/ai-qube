@@ -1,5 +1,6 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
 import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/pr_body.js';
+import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
@@ -177,6 +178,48 @@ async function handleChecklistUpdate(context: Parameters<RuntimeCommandHandler>[
     const cause = err instanceof Error ? err.message : String(err);
     const message = `Failed to update checklist for issue #${issueNumber}. Likely cause: ${cause}. Next action: run \`aie view ${issueNumber}\`, choose an unambiguous checklist selector, then rerun with --dry-run.`;
     return commandFailure(context, { ok: false, command: 'checklist update', issue: issueNumber, error: message }, message);
+  }
+}
+
+async function handleChecklistVerify(context: Parameters<RuntimeCommandHandler>[0]) {
+  const issue = stringArg(context, 'issue');
+  if (isHelpToken(issue)) return usageResult(context, 'checklist verify', 'aie checklist verify <issue> --index <n> [--prompt|--dry-run|--evidence <path>] [--state checked] [--json]', [
+    'Usage: aie checklist verify <issue> --index <n> [--prompt|--dry-run|--evidence <path>] [--state checked] [--json]',
+    commandDescription('checklist verify'),
+    '',
+    'Behavior:',
+    '  Renders or validates evidence for exactly one acceptance checklist criterion.',
+    '  --prompt prints a criterion-specific verifier prompt without mutating GitHub.',
+    '  --evidence validates a JSON evidence file before checking the selected criterion.',
+    '  --dry-run validates and plans the single checkbox mutation without editing the issue.',
+    '',
+    'Examples:',
+    ...commandExamples('checklist verify').map(example => `  ${example}`),
+  ]);
+  let issueNumber: number;
+  try {
+    issueNumber = parseIssueNumber(issue, 'checklist verify');
+    const state = stringFlag(context, 'state');
+    if (state !== undefined && state !== 'checked') throw new Error('checklist verify only supports --state checked.');
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to parse checklist verification. Likely cause: ${cause}. Next action: run \`aie checklist verify 93 --index 1 --prompt\` or \`aie checklist verify --help\`.`;
+    return commandFailure(context, { ok: false, command: 'checklist verify', error: message }, message);
+  }
+  try {
+    const result = await verifyIssueChecklist({
+      issueNumber,
+      index: numberFlag(context, 'index'),
+      state: 'checked',
+      evidencePath: stringFlag(context, 'evidence'),
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      promptOnly: readBooleanFlag(context, 'prompt'),
+    });
+    return commandResult(context, result, formatChecklistVerify(result), result.ok ? 0 : 1);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to verify checklist criterion for issue #${issueNumber}. Likely cause: ${cause}. Next action: run \`aie checklist verify ${issueNumber} --index <n> --prompt\`, collect evidence, then rerun with --evidence.`;
+    return commandFailure(context, { ok: false, command: 'checklist verify', issue: issueNumber, error: message }, message);
   }
 }
 
@@ -427,8 +470,9 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'branch suggest': context => handleBranch(context, 'branch suggest'),
   'branch check': context => handleBranch(context, 'branch check'),
   'branch create': context => handleBranch(context, 'branch create'),
-  checklist: topic(['Use `aie checklist update <issue> --item <text> --dry-run` or `aie checklist update <issue> --index <n> --state checked`.', 'Issue checklists are durable GitHub workflow state and can block `aie complete` until all items are checked.']),
+  checklist: topic(['Use `aie checklist verify <issue> --index <n> --prompt` to verify acceptance criteria, then rerun with criterion evidence and `--state checked`.', 'Use `aie checklist update <issue> --index <n> --state unchecked` only for direct checklist maintenance.']),
   'checklist update': handleChecklistUpdate,
+  'checklist verify': handleChecklistVerify,
   complete: handleComplete,
   deps: topic(['Use `aie deps blockers <issue>`, `aie deps blocking <issue>`, `aie deps chain <issue>`, `aie deps ready`, `aie deps blocked`, `aie deps graph --json`, or `aie deps fix --dry-run`.', 'Read-only commands explain the dependency state from "Blocked by: #N" lines in issue bodies. `aie deps fix` plans and applies S-Ready/S-Blocked/S-Blocking label changes (S-InProgress issues are never changed).']),
   doctor: async context => {

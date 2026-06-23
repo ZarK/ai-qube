@@ -115,11 +115,12 @@ export async function runCompleteService(options: { issueNumber: number; dryRun:
     const reason = `Issue #${issueNumber} is open but not S-InProgress. Complete only the active issue, or let already-closed issues refresh dependents.`;
     return blocked(item, completion, list, milestone, dependentRefresh, blockedPlan(providerPlan.actions, item, dryRun, checkOnly, reason), reason, warnings);
   }
-  if (list.unchecked > 0 && !force) {
-    const reason = `Issue #${issueNumber} has ${list.unchecked} unchecked checklist item(s).`;
+  if (list.unchecked > 0) {
+    const reason = force
+      ? `Issue #${issueNumber} has ${list.unchecked} unchecked checklist item(s); --force cannot bypass acceptance criteria in autonomous mode.`
+      : `Issue #${issueNumber} has ${list.unchecked} unchecked checklist item(s).`;
     return blocked(item, completion, list, milestone, dependentRefresh, blockedPlan(providerPlan.actions, item, dryRun, checkOnly, reason), reason, warnings);
   }
-  if (list.unchecked > 0) warnings.push(`Force enabled: ${list.unchecked} unchecked checklist item(s) will not block completion.`);
 
   const results = await applyProviderPlan(context.provider, providerPlan, dryRun, checkOnly);
   const plan = completePlan(providerPlan.actions, results, item, dryRun, checkOnly);

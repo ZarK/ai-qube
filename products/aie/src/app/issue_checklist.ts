@@ -56,6 +56,9 @@ export async function inspectIssueChecklist(issueNumber: number, options: { cwd?
 }
 
 export async function updateIssueChecklist(options: ChecklistUpdateOptions): Promise<ChecklistUpdateResult> {
+  if (options.state === 'checked') {
+    throw new Error('direct checklist checking is restricted. Likely cause: acceptance criteria require evidence-backed verification. Next action: run `aie checklist verify <issue> --index <n> --prompt`, then rerun with --evidence <path> --state checked.');
+  }
   const issue = await getIssue(options.issueNumber, { cwd: options.cwd, exec: options.exec });
   const plan = planChecklistUpdate(issue.body, options.selector, options.state);
   const description = plan.changed ? `Set ${plan.matchedItems.map(item => `#${item.index}`).join(', ')} on issue #${issue.number} to ${options.state}.` : `Issue #${issue.number} checklist already matches ${options.state}.`;

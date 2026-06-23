@@ -171,3 +171,13 @@ export const CHECKLIST_UPDATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--state', type: 'string', description: 'Target checklist state', options: ['checked', 'unchecked'], default: 'checked' },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
+
+export const CHECKLIST_VERIFY_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable acceptance verification output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Validate evidence and plan the single checkbox mutation without editing GitHub', default: false },
+  { name: '--prompt', type: 'boolean', description: 'Print only the criterion-specific acceptance verification prompt', default: false },
+  { name: '--index', type: 'integer', description: '1-based checklist item index to verify' },
+  { name: '--evidence', type: 'string', description: 'Path to criterion-specific acceptance verification evidence JSON' },
+  { name: '--state', type: 'string', description: 'Target checklist state after evidence validation', options: ['checked'], default: 'checked' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
