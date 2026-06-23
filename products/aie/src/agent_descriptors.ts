@@ -259,6 +259,7 @@ const BUILTIN_PROMPT_FRAGMENTS: readonly PromptFragmentDefinition[] = [
   { id: 'descriptors/plan-reviewer', relativePath: 'descriptors/plan-reviewer.md', trust: 'policy', sourceCategory: 'descriptor' },
   { id: 'descriptors/oracle', relativePath: 'descriptors/oracle.md', trust: 'policy', sourceCategory: 'descriptor' },
   { id: 'descriptors/explorer', relativePath: 'descriptors/explorer.md', trust: 'policy', sourceCategory: 'descriptor' },
+  { id: 'review-lanes/task-record-compliance', relativePath: 'review-lanes/task-record-compliance.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/issue-compliance', relativePath: 'review-lanes/issue-compliance.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/code-quality', relativePath: 'review-lanes/code-quality.md', trust: 'policy', sourceCategory: 'lane' },
   { id: 'review-lanes/tests-quality', relativePath: 'review-lanes/tests-quality.md', trust: 'policy', sourceCategory: 'lane' },

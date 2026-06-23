@@ -337,7 +337,7 @@ function localReviewRecommendation(status: LocalReviewStatus): GitHubLocalReview
 
 function localReviewRunnerKind(localReviewRunner: LocalReviewRunResult): string {
   const completed = localReviewRunner.lanes.find(lane => lane.status === 'completed');
-  return completed?.runner ?? (localReviewRunner.codex.independentReviewer ? 'local-host' : 'local-command');
+  return completed?.runner ?? localReviewRunner.lanes.find(lane => lane.runner === 'local-host')?.runner ?? 'local-command';
 }
 
 function localReviewHost(localReviewRunner: LocalReviewRunResult): string {
@@ -426,6 +426,13 @@ function writeLocalReviewPublishEvidence(input: {
   return written;
 }
 
+function hasCurrentLocalReviewRun(item: ReviewItem, headSha: string, runId: string | null): boolean {
+  if (!runId) return false;
+  const value = item.trustedMetadata.localReviews;
+  if (!Array.isArray(value)) return false;
+  return value.some(review => isRecord(review) && review.stale !== true && review.head === headSha && review.runId === runId);
+}
+
 function githubOnlyPolicy(config: Config): ReturnType<typeof configToExecutorPolicy> {
   const policy = configToExecutorPolicy(config);
   if (!githubReviewEnabled(config)) return { ...policy, reviews: { ...policy.reviews, reviewers: [] } };
@@ -487,7 +494,7 @@ async function changedReviewPaths(config: Config, repoRoot: string): Promise<str
 async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: { item: ReviewItem; pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const paths = await changedReviewPaths(config, repoRoot);
   const sources = config.reviewContextSources;
-  const prThreadSourceKey = ('review' + 'Threads') as keyof typeof sources;
+  const reviewThreadMode = sources[('review' + 'Threads') as keyof typeof sources];
   const requirementSources = sources.requirements.length > 0 ? sources.requirements.join(', ') : 'none configured';
   const changedPaths = paths.length > 0 ? paths.join(', ') : 'no changed paths were available from local git diff commands';
   return [
@@ -495,7 +502,7 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
     `Repository instructions: ${sources.instructions.join(', ')}.`,
     `Requirement documents and functional requirement sources: ${requirementSources}.`,
     `GitHub issue context modes: issues=${sources.issues}, issueComments=${sources.issueComments}, linkedIssues=${sources.linkedIssues}, milestones=${sources.milestones}.`,
-    `GitHub PR context modes: pullRequests=${sources.pullRequests}, prComments=${sources.prComments}, review thread mode=${sources[prThreadSourceKey]}.`,
+    `GitHub PR context modes: pullRequests=${sources.pullRequests}, prComments=${sources.prComments}, review thread mode=${reviewThreadMode}.`,
     'Concrete sources to inspect before producing findings:',
     `Read repository instructions from ${sources.instructions.join(', ')} and treat them as policy.`,
     `Inspect configured requirement documents and functional requirement sources: ${requirementSources}.`,
@@ -586,15 +593,25 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     }));
     if (localReviewPublish.status === 'failed') publishUnavailable.push(`QUBE local review publishing failed: ${localReviewPublish.failure ?? 'unknown failure'}`);
     if (!dryRun) {
-      writeLocalReviewPublishEvidence({
-        repoRoot: options.repoRoot ?? process.cwd(),
-        issueNumbers: finalSnapshot.closingIssueNumbers,
-        prNumber: options.prNumber,
-        headSha: finalSnapshot.pr.headRefOid,
-        result: localReviewPublish,
-      });
+      try {
+        writeLocalReviewPublishEvidence({
+          repoRoot: options.repoRoot ?? process.cwd(),
+          issueNumbers: finalSnapshot.closingIssueNumbers,
+          prNumber: options.prNumber,
+          headSha: finalSnapshot.pr.headRefOid,
+          result: localReviewPublish,
+        });
+      } catch (error: unknown) {
+        const message = error instanceof Error ? error.message : String(error);
+        publishUnavailable.push(`QUBE local review publish evidence could not be recorded: ${message}`);
+      }
     }
-    if (localReviewPublish.status === 'published') finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+    if (localReviewPublish.status === 'published') {
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+      if (!hasCurrentLocalReviewRun(finalSnapshot.item, finalSnapshot.pr.headRefOid, localReviewPublish.runId)) {
+        publishUnavailable.push('QUBE local review publishing was not visible in provider state after reload for the current PR head.');
+      }
+    }
   }
   const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);
   const reviewers = reviewersFromPlan(finalPlan);

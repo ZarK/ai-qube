@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { redact } from './gh.js';
@@ -502,9 +503,20 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
     if (provenance.promptOnly) blockers.push(`${laneId} was prompt-only output and cannot satisfy a required local review gate.`);
     if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
     if (!provenance.taskId && !provenance.sessionId && !provenance.threadId) blockers.push(`${laneId} runner provenance did not record a separate task, session, or thread id.`);
-    if (!provenance.promptStackHash) blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
+    if (!provenance.promptStackHash) {
+      blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
+    } else {
+      const expectedPromptStackHash = hash(JSON.stringify(lane.promptStack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source }))));
+      if (provenance.promptStackHash !== expectedPromptStackHash) {
+        blockers.push(`${laneId} runner provenance prompt stack hash does not match the recorded prompt stack.`);
+      }
+    }
   }
   return blockers;
+}
+
+function hash(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
 }
 
 function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity): LocalReviewStatus {

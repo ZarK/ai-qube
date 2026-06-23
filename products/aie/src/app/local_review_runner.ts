@@ -27,11 +27,13 @@ export interface CodexReviewCapability {
 
 export interface LocalReviewLaneRun {
   issueNumber: number;
+  issueNumbers: number[];
   lane: LocalReviewLaneId;
   runner: ReviewLanePolicy['runner'];
   command: string | null;
   status: LocalReviewLaneRunStatus;
   evidencePath: string;
+  evidencePaths: string[];
   promptFragmentIds: string[];
   promptText: string;
   promptOutputContract: string;
@@ -112,15 +114,15 @@ export function probeCodexReviewCapability(independentReviewerCommand?: string |
   const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
   return {
     host: 'codex',
-    independentReviewer: true,
-    freshContext: true,
-    promptOnly: false,
-    hooks: true,
+    independentReviewer: commandConfigured,
+    freshContext: commandConfigured,
+    promptOnly: !commandConfigured,
+    hooks: false,
     evidenceWriting: true,
-    missingCapabilities: [],
+    missingCapabilities: commandConfigured ? [] : ['host-subagent-execution'],
     nextAction: commandConfigured
       ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : 'Spawn independent Codex subagents for the pending local-host review lanes, in parallel when the host supports it, then record current-head local-host evidence at the reported evidence paths before rerunning the PR gate.',
+      : 'QUBE rendered promptText for host-run Codex subagents, but the CLI cannot prove fresh-context execution until the active host records local-host evidence with a task, session, or thread id. Spawn independent Codex subagents for the pending lanes and rerun the PR gate after evidence is written.',
   };
 }
 
@@ -142,13 +144,15 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
   return command && command !== '' ? command : null;
 }
 
-function laneContextLines(lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, evidencePath: string, extraContext: readonly string[]): string[] {
+function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[]): string[] {
+  const primaryIssue = issueNumbers[0] ?? 0;
   return [
     `Run local review lane ${lane}.`,
-    `Issue: #${issueNumber}.`,
+    `Issue: #${primaryIssue}.`,
+    `Linked issues for this PR-level lane: ${issueNumbers.map(issueNumber => `#${issueNumber}`).join(', ')}.`,
     `Pull request: #${prNumber}.`,
     `PR head SHA: ${headSha}.`,
-    `Record the resulting local-host evidence JSON at: ${evidencePath}.`,
+    `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePaths.join(', ')}.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     ...extraContext,
@@ -269,6 +273,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
   const id = readLaneId(value.lane ?? value.id);
   if (id !== lane) return null;
   if (value.issueNumber !== issueNumber || value.prNumber !== prNumber || value.headSha !== headSha) return null;
+  if (!isRecord(value.runnerProvenance)) return null;
   const status = readStatus(value.status);
   return {
     id,
@@ -295,7 +300,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       trust: typeof item.trust === 'string' ? item.trust : 'local-evidence',
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
-    runnerProvenance: isRecord(value.runnerProvenance) ? {
+    runnerProvenance: {
       runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',
       host: typeof value.runnerProvenance.host === 'string' ? value.runnerProvenance.host : 'unknown-host',
       freshContext: value.runnerProvenance.freshContext === true,
@@ -306,7 +311,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' ? value.runnerProvenance.promptStackHash : null,
       headSha: typeof value.runnerProvenance.headSha === 'string' ? value.runnerProvenance.headSha : headSha,
       providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? value.runnerProvenance.providerPublishStatus : null,
-    } : null,
+    },
   };
 }
 
@@ -360,45 +365,11 @@ function writeLane(repoRoot: string, issueNumber: number, prNumber: number, head
       : { id: 'local-command', name: 'local-command', adapterKind: 'local' },
     lane: lane.id,
     ...lane,
-    runnerProvenance: lane.runnerProvenance ?? runnerProvenance(adapter, adapter === 'local-host' ? 'codex' : 'local-command', lane.id, headSha, lane.promptStack, `write:${path}`),
+    runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
   return path;
-}
-
-function missingRequiredLanes(previous: readonly LaneEvidence[], requiredLanes: readonly LocalReviewLaneId[]): LocalReviewLaneId[] {
-  const previousIds = new Set(previous.map(lane => lane.id));
-  return requiredLanes.filter(lane => lane !== 'final-gate' && !previousIds.has(lane));
-}
-
-function synthesizeFinalGate(previous: readonly LaneEvidence[], requiredLanes: readonly LocalReviewLaneId[], issueNumber: number, prNumber: number, repoRoot: string, headSha: string, adapter: 'local-command' | 'local-host'): LaneEvidence {
-  const missing = missingRequiredLanes(previous, requiredLanes);
-  const nonPassing = previous.filter(lane => lane.id !== 'final-gate' && lane.status !== 'passed');
-  const blockers = [
-    ...previous.flatMap(lane => lane.blockers),
-    ...nonPassing.map(lane => `${lane.id} recorded ${lane.status} and cannot satisfy final-gate approval.`),
-    ...missing.map(lane => `${lane} did not produce required lane evidence before final-gate synthesis.`),
-  ];
-  const failed = previous.find(lane => lane.status === 'failed' || lane.status === 'needs-work' || lane.status === 'malformed' || lane.status === 'unavailable' || lane.recommendation === 'request-changes' || lane.blockers.length > 0);
-  const pending = missing.length > 0 || previous.find(lane => lane.status !== 'passed');
-  const status: LocalReviewStatus = failed ? 'failed' : pending ? 'inconclusive' : 'passed';
-  const evidencePath = relativePath(repoRoot, laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, 'final-gate'));
-  return {
-    id: 'final-gate',
-    status,
-    severity: failed ? failed.severity : 'none',
-    recommendation: status === 'passed' ? 'approve' : status === 'failed' ? 'request-changes' : 'inconclusive',
-    summary: status === 'passed' ? 'Final gate approved all completed local review lanes.' : 'Final gate blocked on local review lane findings or missing results.',
-    blockers,
-    artifacts: [{ kind: 'json', path: evidencePath, sha256: hash(`final-gate:${headSha}:${status}`) }],
-    commands: ['aie pr gate --local-review-synthesis'],
-    surfaces: ['PR'],
-    contextReviewed: previous.flatMap(lane => lane.contextReviewed),
-    promptStack: promptStackEvidence('final-gate'),
-    toolsUsed: adapter === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
-    runnerProvenance: runnerProvenance(adapter, adapter === 'local-host' ? 'codex' : 'local-command', 'final-gate', headSha, promptStackEvidence('final-gate'), 'final-gate-synthesis'),
-  };
 }
 
 function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary: string, blocker: string, command: string | null, issueNumber: number, prNumber: number, repoRoot: string, headSha: string, runner: 'local-command' | 'local-host'): LaneEvidence {
@@ -419,13 +390,13 @@ function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary
   };
 }
 
-function laneRun(issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[]): LocalReviewLaneRun {
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumber, prNumber, headSha, evidencePath, contextLines));
-  return { issueNumber, lane, runner, command, status, evidencePath, promptFragmentIds: rendered.orderedFragmentIds, promptText: rendered.text, promptOutputContract: rendered.outputContract, summary, blocker };
+function laneRun(issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[], issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines));
+  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptText: rendered.text, promptOutputContract: rendered.outputContract, summary, blocker };
 }
 
-function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, evidencePath: string): string {
-  return `Spawn an independent Codex subagent with this lane promptText to review lane ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Run pending lane subagents in parallel when the host supports it. Record JSON local-host evidence at ${evidencePath}.`;
+function codexSubagentSummary(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[]): string {
+  return `Spawn one independent Codex subagent with this lane promptText to review lane ${lane} for PR #${prNumber} at head ${headSha} across linked issues ${issueNumbers.map(issueNumber => `#${issueNumber}`).join(', ')}. Run pending lane subagents in parallel when the host supports it. Record JSON local-host evidence at ${evidencePaths.join(', ')}.`;
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
@@ -445,28 +416,25 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const written: string[] = [];
   const unavailable: string[] = [];
   let failed = false;
+  const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
+
+  for (const lane of commandlessHostLanes) {
+    const issueNumbers = [...input.issueNumbers];
+    const evidencePaths = issueNumbers.map(issueNumber => laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane));
+    const path = evidencePaths[0];
+    const summary = codexSubagentSummary(lane, issueNumbers, input.prNumber, input.headSha, evidencePaths);
+    lanes.push(laneRun(issueNumbers[0], input.prNumber, input.headSha, lane, 'local-host', null, 'pending', path, summary, 'codex-subagent-review-required', contextLines, issueNumbers, evidencePaths));
+  }
 
   for (const issueNumber of input.issueNumbers) {
     const produced: LaneEvidence[] = [];
     for (const lane of requiredLanes) {
+      if (commandlessHostLanes.has(lane)) continue;
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
-      if (lane === 'final-gate' && produced.length > 0 && !input.dryRun) {
-        const finalAdapter = produced.some(item => item.toolsUsed.includes('local-host')) ? 'local-host' : 'local-command';
-        const finalGate = synthesizeFinalGate(produced, requiredLanes, issueNumber, input.prNumber, input.repoRoot, input.headSha, finalAdapter);
-        const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, finalGate, finalAdapter);
-        written.push(writtenPath);
-        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, finalAdapter, null, 'completed', path, finalGate.summary, null, contextLines));
-        produced.push(finalGate);
-        continue;
-      }
       if (runner === 'local-host') {
-        if (!command) {
-          const summary = codexSubagentSummary(lane, issueNumber, input.prNumber, input.headSha, path);
-          lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, null, 'pending', path, summary, 'codex-subagent-review-required', contextLines));
-          continue;
-        }
+        if (!command) continue;
         if (input.dryRun) {
           lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, 'Codex local-host lane would run and write current-head evidence.', null, contextLines));
           continue;
