@@ -29,6 +29,10 @@ function success(args, stdout = '') {
   return { args, exitCode: 0, stdout, stderr: '' };
 }
 
+function noCurrentPr() {
+  return { args: [], exitCode: 1, stdout: '', stderr: 'no pull requests found for branch "issue/example"' };
+}
+
 function makeExec(responses, calls = []) {
   return async args => {
     calls.push(args);
@@ -93,6 +97,7 @@ describe('issue checklist mutation', () => {
   it('renders a criterion-specific acceptance verification prompt', async () => {
     const exec = makeExec({
       [issueViewKey(93)]: success([], JSON.stringify(issue(93, 'Issue body\n- [ ] Acceptance A'))),
+      'pr view --json number,title,url,headRefOid': noCurrentPr(),
     });
 
     const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', dryRun: true, promptOnly: true, exec });
@@ -152,6 +157,7 @@ describe('issue checklist mutation', () => {
     }));
     const exec = makeExec({
       [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
+      'pr view --json number,title,url,headRefOid': noCurrentPr(),
     });
 
     const result = await verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec });
@@ -159,6 +165,32 @@ describe('issue checklist mutation', () => {
     assert.equal(result.ok, true);
     assert.equal(result.mutation.status, 'planned');
     assert.match(result.nextAction, /aie complete 93 --check-only/);
+  });
+
+  it('fails closed when current PR detection fails unexpectedly', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
+    const evidence = join(repo, 'evidence.json');
+    writeFileSync(evidence, JSON.stringify({
+      version: 1,
+      issueNumber: 93,
+      criterionIndex: 1,
+      criterionText: 'Acceptance A',
+      reviewer: { id: 'codex' },
+      reviewedSources: ['issue:93'],
+      artifacts: ['terminal-log'],
+      recommendation: 'approve',
+      recordedAt: '2026-06-23T00:00:00.000Z',
+      promptStack: [{ id: 'acceptance/verify-criterion' }],
+    }));
+    const exec = makeExec({
+      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
+      'pr view --json number,title,url,headRefOid': { args: [], exitCode: 1, stdout: '', stderr: 'api timeout' },
+    });
+
+    await assert.rejects(
+      () => verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec }),
+      /Failed to execute gh pr view --json number,title,url,headRefOid/,
+    );
   });
 
   it('rejects stale or incomplete acceptance verification evidence', async () => {

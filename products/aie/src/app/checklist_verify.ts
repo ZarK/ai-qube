@@ -76,20 +76,30 @@ function selectCriterion(summary: ChecklistSummary, index: number | undefined): 
   return match;
 }
 
+function isNoPrForBranch(message: string): boolean {
+  return /no pull requests? found for branch/i.test(message);
+}
+
 async function currentPrContext(cwd?: string, exec?: GhExec): Promise<ChecklistVerifyPrContext | null> {
   let result: Awaited<ReturnType<typeof runGh>>;
   try {
     result = await runGh(['pr', 'view', '--json', 'number,title,url,headRefOid'], { cwd, exec });
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    if (err instanceof GhExecutionError && isNoPrForBranch(`${err.stderr} ${err.message}`)) return null;
+    throw err;
   }
-  if (result.exitCode !== 0) return null;
+  if (result.exitCode !== 0) {
+    const details = result.stderr || result.stdout;
+    if (isNoPrForBranch(details)) return null;
+    throw new GhExecutionError('gh pr view --json number,title,url,headRefOid', result.exitCode, details);
+  }
   try {
     const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
     if (typeof parsed.number !== 'number' || typeof parsed.title !== 'string' || typeof parsed.url !== 'string' || typeof parsed.headRefOid !== 'string') return null;
     return { number: parsed.number, title: parsed.title, url: parsed.url, headSha: parsed.headRefOid };
-  } catch {
-    return null;
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to parse current PR context. Likely cause: gh pr view returned malformed JSON. ${message}`);
   }
 }
 
