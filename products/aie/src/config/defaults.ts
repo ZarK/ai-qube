@@ -65,7 +65,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       severityThreshold: 'high',
       promptFragments: {
         repository: [],
-        safety: ['builtin:executor-review-safety'],
+        safety: [],
         style: [],
         adapter: [],
         reviewer: [],

@@ -101,6 +101,10 @@ describe('schema command', () => {
     assert.deepEqual(parsed.sections.config.shape, ['version', 'providers', 'policy']);
     assert.deepEqual(parsed.sections.config.supportedProviders.work, ['github', 'gitlab', 'linear']);
     assert.deepEqual(parsed.sections.config.supportedProviders.repository, ['local-git']);
+    assert.equal(parsed.sections.config.agentDescriptors.runnerAvailability, 'unavailable');
+    assert.ok(parsed.sections.config.agentDescriptors.categories.some(category => category.id === 'review'));
+    assert.ok(parsed.sections.config.agentDescriptors.agents.some(agent => agent.id === 'qa-reviewer'));
+    assert.ok(parsed.sections.config.agentDescriptors.promptFragments.some(fragment => fragment.id === 'safety/review-output-untrusted' && fragment.sourceCategory === 'policy'));
     assert.equal(parsed.sections.config.defaultConfig.providers.work.kind, 'github');
     assert.equal(parsed.sections.config.defaultConfig.policy.branch.baseBranch, 'main');
     assert.deepEqual(flag(init, 'tool').tokens, ['--tool']);

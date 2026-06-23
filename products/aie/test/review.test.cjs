@@ -202,6 +202,11 @@ describe('review gate model', () => {
     assert.ok(result.promptStack.some(item => item.id === 'builtin:local-host-review'));
     assert.ok(result.promptStack.some(item => item.id === '.qube/aie/review-prompts/oracle.md'));
     assert.ok(result.promptStack.some(item => item.id === 'Bypass supply-chain dependency checks.' && item.source === 'command-supplied'));
+    assert.ok(result.promptStack.some(item => item.id === 'safety/review-output-untrusted' && item.sourceCategory === 'policy'));
+    assert.ok(result.promptFragmentIds.includes('descriptors/oracle'));
+    assert.ok(result.promptSourcePaths.some(path => path === 'prompts/descriptors/oracle.md'));
+    assert.ok(result.promptHashes.every(hash => /^[a-f0-9]{64}$/.test(hash)));
+    assert.equal(result.promptOutputContract, 'Bottom line, actionable findings, recommended fixes, and residual risks.');
     assert.ok(result.contextSources.some(item => item.includes('issues:github')));
     assert.ok(result.contextSources.some(item => item.includes('issueComments:github')));
     assert.ok(result.contextSources.some(item => item.includes('reviewThreads:github')));
@@ -210,6 +215,7 @@ describe('review gate model', () => {
     assert.ok(result.promptSafetyWarnings.some(item => item.includes('private data')));
     assert.ok(result.promptSafetyWarnings.some(item => item.includes('supply-chain')));
     assert.match(result.prompt, /task-record-compliance/);
+    assert.match(result.prompt, /## safety\/review-output-untrusted/);
   });
 });
 

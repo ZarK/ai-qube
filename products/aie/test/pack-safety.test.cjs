@@ -21,7 +21,7 @@ describe('package publish surface safety', () => {
   });
 
   it('declares the intended package surface and dry-run pack check', () => {
-    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'docs/migration.md', 'README.md']);
+    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'docs/migration.md', 'prompts/', 'README.md']);
     assert.equal(pkg.bin.aie, 'bin/run');
     assert.equal(pkg.main, './dist/index.js');
     assert.equal(pkg.types, './dist/index.d.ts');

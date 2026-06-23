@@ -160,7 +160,7 @@ function nonNegativeNumber(value: number, field: string): number {
 export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
   const packageAgeDays = nonNegativeNumber(input.supplyChain.packageAgeDays, 'supplyChain.packageAgeDays');
   const highRiskPackageAgeDays = nonNegativeNumber(input.supplyChain.highRiskPackageAgeDays, 'supplyChain.highRiskPackageAgeDays');
-  const promptFragments = input.reviews.promptFragments ?? { repository: [], safety: ['builtin:executor-review-safety'], style: [], adapter: [], reviewer: [], commandAddendum: [] };
+  const promptFragments = input.reviews.promptFragments ?? { repository: [], safety: [], style: [], adapter: [], reviewer: [], commandAddendum: [] };
   const contextSources = input.reviews.contextSources ?? { instructions: ['AGENTS.md', '**/AGENTS.md'], requirements: [], issues: 'github', issueComments: 'github', linkedIssues: 'github', milestones: 'github', pullRequests: 'github', prComments: 'github', reviewThreads: 'github' };
   const lanes = input.reviews.lanes ?? [];
   if (highRiskPackageAgeDays < packageAgeDays) {

@@ -11,6 +11,7 @@ import { redact } from '../gh.js';
 import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
+import { buildDescriptorSummary } from '../agent_descriptors.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 
@@ -207,6 +208,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const configuredReviewers = config.reviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
   const configuredLocalReviewers = config.localReviewAgents.map(name => redact(name.trim())).filter(name => name !== '');
   const reviewerServices = unique(config.reviewAgents.map(reviewerExternalService).filter((service): service is string => service !== null));
+  const descriptorSummary = buildDescriptorSummary();
   const defaultOracle = configuredReviewers.length === 0 && config.reviewAdapter !== 'local';
   const localReviewEnabled = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
   const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
@@ -286,6 +288,13 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     reviewAgent: {
       required: true,
       readiness: 'ready',
+      descriptorSupport: {
+        available: true,
+        runnerAvailable: false,
+        categories: descriptorSummary.categories.map(category => category.id),
+        agents: descriptorSummary.agents.map(agent => agent.id),
+        promptFragments: descriptorSummary.promptFragments,
+      },
       adapter: config.reviewAdapter,
       profile: effectiveReviewProfile,
       severityThreshold: config.reviewSeverityThreshold,

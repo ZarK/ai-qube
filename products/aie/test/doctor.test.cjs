@@ -139,6 +139,11 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.prReview.localRunnerReadiness, 'unavailable');
     assert.equal(diagnostics.prReview.reviewWaitMinutes, 3);
     assert.equal(diagnostics.reviewAgent.adapter, 'mixed');
+    assert.equal(diagnostics.reviewAgent.descriptorSupport.available, true);
+    assert.equal(diagnostics.reviewAgent.descriptorSupport.runnerAvailable, false);
+    assert.ok(diagnostics.reviewAgent.descriptorSupport.categories.includes('review'));
+    assert.ok(diagnostics.reviewAgent.descriptorSupport.agents.includes('oracle'));
+    assert.ok(diagnostics.reviewAgent.descriptorSupport.promptFragments.some(fragment => fragment.id === 'safety/review-output-untrusted'));
     assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
     assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/pr-reviews');
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'unavailable');
