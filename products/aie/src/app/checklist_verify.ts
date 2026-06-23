@@ -93,14 +93,17 @@ async function currentPrContext(cwd?: string, exec?: GhExec): Promise<ChecklistV
     if (isNoPrForBranch(details)) return null;
     throw new GhExecutionError('gh pr view --json number,title,url,headRefOid', result.exitCode, details);
   }
+  let parsed: unknown;
   try {
-    const parsed = JSON.parse(result.stdout) as Record<string, unknown>;
-    if (typeof parsed.number !== 'number' || typeof parsed.title !== 'string' || typeof parsed.url !== 'string' || typeof parsed.headRefOid !== 'string') return null;
-    return { number: parsed.number, title: parsed.title, url: parsed.url, headSha: parsed.headRefOid };
+    parsed = JSON.parse(result.stdout) as Record<string, unknown>;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to parse current PR context. Likely cause: gh pr view returned malformed JSON. ${message}`);
   }
+  if (!isRecord(parsed) || typeof parsed.number !== 'number' || typeof parsed.title !== 'string' || typeof parsed.url !== 'string' || typeof parsed.headRefOid !== 'string' || parsed.headRefOid.trim() === '') {
+    throw new Error('Failed to validate current PR context from gh pr view. Likely cause: gh pr view returned missing or malformed number, title, url, or headRefOid fields. Next action: inspect `gh pr view --json number,title,url,headRefOid`, verify the PR state, then rerun checklist verification.');
+  }
+  return { number: parsed.number, title: parsed.title, url: parsed.url, headSha: parsed.headRefOid };
 }
 
 function buildPrompt(issue: GitHubIssue, criterion: ChecklistItem, pr: ChecklistVerifyPrContext | null): RenderedAgentPrompt {
