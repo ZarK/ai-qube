@@ -35,6 +35,56 @@ describe('agent descriptors and prompt registry', () => {
     assert.match(first.text, /## safety\/repository-policy/);
   });
 
+  it('does not expose mutable registry objects to callers', async () => {
+    const {
+      buildDescriptorSummary,
+      getAgentDescriptor,
+      getCategoryDescriptor,
+      listPromptFragmentDefinitions,
+      renderAgentPrompt,
+    } = await import('../dist/agent_descriptors.js');
+
+    const agent = getAgentDescriptor('qa-reviewer');
+    agent.categoryIds.push('research');
+    agent.modelPreferences.effort = 'low';
+
+    const category = getCategoryDescriptor('review');
+    category.promptFragmentIds.push('acceptance/verify-criterion');
+
+    const fragments = listPromptFragmentDefinitions();
+    fragments[0].id = 'changed';
+
+    const summary = buildDescriptorSummary();
+    summary.agents.find(item => item.id === 'qa-reviewer').requiredTools.push('mutated-tool');
+
+    const rendered = renderAgentPrompt({
+      hostId: 'fallback-single-agent',
+      descriptorId: 'qa-reviewer',
+      categoryId: 'review',
+    });
+
+    assert.deepEqual(getAgentDescriptor('qa-reviewer').categoryIds, ['review', 'qa', 'acceptance-verification']);
+    assert.equal(getAgentDescriptor('qa-reviewer').modelPreferences.effort, 'high');
+    assert.ok(!getCategoryDescriptor('review').promptFragmentIds.includes('acceptance/verify-criterion'));
+    assert.equal(listPromptFragmentDefinitions()[0].id, 'safety/review-output-untrusted');
+    assert.ok(!rendered.descriptor.requiredTools.includes('mutated-tool'));
+  });
+
+  it('uses short command fragment ids', async () => {
+    const { renderAgentPrompt } = await import('../dist/agent_descriptors.js');
+
+    const rendered = renderAgentPrompt({
+      hostId: 'fallback-single-agent',
+      descriptorId: 'qa-reviewer',
+      categoryId: 'review',
+      commandFragments: ['Use the configured repository review request.'],
+    });
+    const command = rendered.promptStack.find(fragment => fragment.source === 'command-supplied');
+
+    assert.match(command.id, /^command-supplied:[a-f0-9]{12}$/);
+    assert.equal(command.text, 'Use the configured repository review request.');
+  });
+
   it('detects missing prompt assets without claiming runner availability', async () => {
     const { buildDescriptorSummary, validatePromptAssets } = await import('../dist/agent_descriptors.js');
     const root = mkdtempSync(join(tmpdir(), 'aie-prompts-'));

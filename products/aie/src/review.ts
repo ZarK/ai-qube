@@ -356,22 +356,10 @@ function promptSafetyWarnings(config: Config): string[] {
   return warnings;
 }
 
-function buildPrompt(config: Config, issueNumber: number, reviewers: ReviewGateReviewer[]): string {
-  const rendered = renderReviewPrompt(config, issueNumber, reviewers);
-  const profile = effectiveProfile(config);
-  const lanes = requiredLocalReviewLanes(profile);
-  const localLine = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed' || config.reviewAdapter === 'shadow' || profile === 'local-shadow'
-    ? `Local review evidence profile: ${profile}. Required lanes: ${lanes.join(', ')}. Evidence must record promptStack and contextReviewed for AGENTS, issue body/comments, milestones, functional requirements, linked issues, PR body/comments, review threads, diff, CI, and manual QA where configured.`
-    : '';
+function buildPrompt(config: Config, rendered: RenderedAgentPrompt): string {
   const promptLine = `Prompt stack: ${promptStack(config, rendered).map(fragment => fragment.id).join(', ')}.`;
-  const contextLine = `Context sources: ${contextSources(config).join(', ')}.`;
   return [
-    `Review issue #${issueNumber} before shipping.`,
-    `Reviewer target: ${formatReviewers(reviewers)}.`,
-    customRequest(config) === '' ? '' : `Repository review request: ${redact(customRequest(config))}`,
-    localLine,
     promptLine,
-    contextLine,
     rendered.text,
     'Scope: inspect issue compliance, test integrity, code quality, maintainability, security, performance, UI quality when applicable, and missed edge cases.',
     'Output needed: bottom line, actionable findings, recommended fixes, and any residual risks.',
@@ -446,7 +434,7 @@ export function runReviewGate(config: Config, options: ReviewGateOptions): Revie
     contextSources: contextSources(config),
     contextBundle: configuredContextBundle(config, root),
     promptSafetyWarnings: promptSafetyWarnings(config),
-    prompt: buildPrompt(config, options.issueNumber, reviewers),
+    prompt: buildPrompt(config, renderedPrompt),
     fallbackPrompt: buildFallbackPrompt(options.issueNumber),
     evidence,
     localReview,

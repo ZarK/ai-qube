@@ -78,10 +78,12 @@ export interface PromptFragmentDefinition {
   sourceCategory: 'policy' | 'descriptor' | 'lane' | 'host' | 'acceptance';
 }
 
+export type PromptSourceCategory = PromptFragmentDefinition['sourceCategory'] | 'command';
+
 export interface RenderedPromptFragment {
   id: string;
   source: AgentPromptSource;
-  sourceCategory: string;
+  sourceCategory: PromptSourceCategory;
   path: string | null;
   sha256: string;
   trust: LocalReviewTrust;
@@ -280,6 +282,32 @@ function fragmentDefinition(id: string): PromptFragmentDefinition | null {
   return BUILTIN_PROMPT_FRAGMENTS.find(fragment => fragment.id === id) ?? null;
 }
 
+function cloneCategoryDescriptor(category: CategoryDescriptor): CategoryDescriptor {
+  return {
+    ...category,
+    promptFragmentIds: [...category.promptFragmentIds],
+  };
+}
+
+function cloneAgentDescriptor(agent: AgentDescriptor): AgentDescriptor {
+  return {
+    ...agent,
+    categoryIds: [...agent.categoryIds],
+    writeScopeHints: [...agent.writeScopeHints],
+    requiredTools: [...agent.requiredTools],
+    requiredSkills: [...agent.requiredSkills],
+    modelPreferences: { ...agent.modelPreferences },
+  };
+}
+
+function cloneAgentToolHost(host: AgentToolHost): AgentToolHost {
+  return { ...host };
+}
+
+function clonePromptFragmentDefinition(fragment: PromptFragmentDefinition): PromptFragmentDefinition {
+  return { ...fragment };
+}
+
 function readBuiltinFragment(definition: PromptFragmentDefinition): RenderedPromptFragment {
   const absolutePath = join(PROMPT_ROOT, definition.relativePath);
   if (!existsSync(absolutePath)) {
@@ -299,37 +327,38 @@ function readBuiltinFragment(definition: PromptFragmentDefinition): RenderedProm
 
 function commandFragment(text: string): RenderedPromptFragment {
   const redacted = redact(text);
+  const sha256 = hash(redacted);
   return {
-    id: redacted,
+    id: `command-supplied:${sha256.slice(0, 12)}`,
     source: 'command-supplied',
     sourceCategory: 'command',
     path: null,
-    sha256: hash(redacted),
+    sha256,
     trust: 'untrusted-task-input',
     text: redacted,
   };
 }
 
 export function listPromptFragmentDefinitions(): readonly PromptFragmentDefinition[] {
-  return BUILTIN_PROMPT_FRAGMENTS;
+  return BUILTIN_PROMPT_FRAGMENTS.map(clonePromptFragmentDefinition);
 }
 
 export function getAgentDescriptor(id: string): AgentDescriptor {
   const descriptor = DEFAULT_AGENT_DESCRIPTORS.find(item => item.id === id);
   if (!descriptor) throw new Error(`Unknown agent descriptor ${id}`);
-  return descriptor;
+  return cloneAgentDescriptor(descriptor);
 }
 
 export function getCategoryDescriptor(id: AgentCategoryId): CategoryDescriptor {
   const category = DEFAULT_CATEGORY_DESCRIPTORS.find(item => item.id === id);
   if (!category) throw new Error(`Unknown agent category ${id}`);
-  return category;
+  return cloneCategoryDescriptor(category);
 }
 
 export function getAgentToolHost(id: string): AgentToolHost {
   const host = DEFAULT_AGENT_TOOL_HOSTS.find(item => item.id === id);
   if (!host) throw new Error(`Unknown agent host ${id}`);
-  return host;
+  return cloneAgentToolHost(host);
 }
 
 export function renderAgentPrompt(input: PromptRenderInput): RenderedAgentPrompt {
@@ -378,9 +407,9 @@ export function renderAgentPrompt(input: PromptRenderInput): RenderedAgentPrompt
 
 export function buildDescriptorSummary() {
   return {
-    categories: DEFAULT_CATEGORY_DESCRIPTORS.map(category => ({ ...category })),
-    agents: DEFAULT_AGENT_DESCRIPTORS.map(agent => ({ ...agent })),
-    hosts: DEFAULT_AGENT_TOOL_HOSTS.map(host => ({ ...host })),
+    categories: DEFAULT_CATEGORY_DESCRIPTORS.map(cloneCategoryDescriptor),
+    agents: DEFAULT_AGENT_DESCRIPTORS.map(cloneAgentDescriptor),
+    hosts: DEFAULT_AGENT_TOOL_HOSTS.map(cloneAgentToolHost),
     promptFragments: BUILTIN_PROMPT_FRAGMENTS.map(fragment => ({
       id: fragment.id,
       path: join('prompts', fragment.relativePath).replace(/\\/g, '/'),
