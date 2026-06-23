@@ -909,6 +909,36 @@ describe('PR gate service', () => {
     assert.match(result.nextAction, /No linked issue numbers/);
   });
 
+  it('reports local review publishing as skipped during dry-run when the run is already published', async () => {
+    const input = {
+      enabled: true,
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      runner: 'local-command',
+      host: 'local-command',
+      evidencePath: '.qube/aie/reviews/93/12/abc123',
+      issueNumbers: [93],
+      summary: 'local review passed',
+      findings: [],
+    };
+    const firstProvider = createGitHubReviewProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const firstSnapshot = await firstProvider.loadPullRequestReview(12);
+    const planned = await firstProvider.publishLocalReviewFeedback(firstSnapshot.item, input);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ comments: [localReviewComment({ runId: planned.runId })] })] });
+    const provider = createGitHubReviewProvider({ exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLocalReviewFeedback(snapshot.item, input);
+
+    assert.equal(planned.status, 'planned');
+    assert.equal(result.status, 'skipped');
+    assert.match(result.nextAction, /already published/);
+  });
+
   it('returns failed local review publishing results when gh comment execution throws', async () => {
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
     const exec = async args => {

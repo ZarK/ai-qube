@@ -845,11 +845,11 @@ export class GitHubReviewProvider implements ReviewProvider {
     if (input.issueNumbers.length === 0) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body, nextAction: 'No linked issue numbers were available, so local review feedback was not published.' });
     }
-    if (input.dryRun) {
-      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: 'Rerun `aie pr gate <pr>` without --dry-run to publish provider-visible local review feedback.' });
-    }
     if (currentLocalReviewRunIds(item, input.headSha).has(runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: 'Provider-visible local review feedback is already published for this PR head and run id.' });
+    }
+    if (input.dryRun) {
+      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: 'Rerun `aie pr gate <pr>` without --dry-run to publish provider-visible local review feedback.' });
     }
     let result: GhRunResult;
     try {
