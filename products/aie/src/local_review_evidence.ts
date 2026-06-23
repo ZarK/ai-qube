@@ -43,6 +43,19 @@ export interface LocalReviewPromptStackItem {
   trust: LocalReviewTrust;
 }
 
+export interface LocalReviewRunnerProvenance {
+  runnerKind: 'local-command' | 'local-host' | 'manual-evidence' | 'prompt-only';
+  host: string;
+  freshContext: boolean;
+  promptOnly: boolean;
+  taskId: string | null;
+  sessionId: string | null;
+  threadId: string | null;
+  promptStackHash: string | null;
+  headSha: string;
+  providerPublishStatus: string | null;
+}
+
 export interface LocalReviewLane {
   id: LocalReviewLaneId;
   status: LocalReviewStatus;
@@ -56,6 +69,7 @@ export interface LocalReviewLane {
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: LocalReviewPromptStackItem[];
   toolsUsed: string[];
+  runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
 export interface LocalReviewEvidence {
@@ -76,6 +90,7 @@ export interface LocalReviewEvidence {
   lanes: LocalReviewLane[];
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: LocalReviewPromptStackItem[];
+  runnerProvenance: LocalReviewRunnerProvenance | null;
   recordedAt: string | null;
   stale: boolean;
 }
@@ -266,6 +281,31 @@ function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
   return stack;
 }
 
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? redact(value.trim()) : null;
+}
+
+function readRunnerKind(value: unknown): LocalReviewRunnerProvenance['runnerKind'] {
+  if (value === 'local-command' || value === 'local-host' || value === 'manual-evidence' || value === 'prompt-only') return value;
+  return 'manual-evidence';
+}
+
+function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | null {
+  if (!isRecord(value)) return null;
+  return {
+    runnerKind: readRunnerKind(value.runnerKind),
+    host: stringValue(value.host, 'unknown-host'),
+    freshContext: value.freshContext === true,
+    promptOnly: value.promptOnly === true,
+    taskId: readNullableString(value.taskId),
+    sessionId: readNullableString(value.sessionId),
+    threadId: readNullableString(value.threadId),
+    promptStackHash: readNullableString(value.promptStackHash),
+    headSha: stringValue(value.headSha, 'unknown-head'),
+    providerPublishStatus: readNullableString(value.providerPublishStatus),
+  };
+}
+
 export function requiredLocalReviewLanes(profile: LocalReviewProfile): readonly LocalReviewLaneId[] {
   if (profile === 'local-comprehensive' || profile === 'local-shadow') return COMPREHENSIVE_LOCAL_REVIEW_LANES;
   if (profile === 'local-standard') return REQUIRED_LOCAL_REVIEW_LANES;
@@ -318,6 +358,7 @@ function malformedEvidence(issueNumber: number | null, prNumber: number, headSha
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
@@ -340,6 +381,7 @@ function missingEvidence(issueNumber: number | null, prNumber: number, headSha: 
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
@@ -360,12 +402,13 @@ function staleEvidence(issueNumber: number, prNumber: number, headSha: string, p
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: true,
   };
 }
 
-function readLanes(value: unknown): LocalReviewLane[] | null {
+function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenance | null = null): LocalReviewLane[] | null {
   if (!Array.isArray(value)) return null;
   const lanes: LocalReviewLane[] = [];
   for (const entry of value) {
@@ -386,6 +429,7 @@ function readLanes(value: unknown): LocalReviewLane[] | null {
       contextReviewed: readContextReviewed(entry.contextReviewed),
       promptStack: readPromptStack(entry.promptStack),
       toolsUsed: stringArray(entry.toolsUsed),
+      runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
   return lanes;
@@ -436,6 +480,29 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
     if (finalGate.status !== 'passed' || finalGate.recommendation !== 'approve') {
       blockers.push('final-gate must pass with recommendation approve before local review evidence can satisfy the gate.');
     }
+  }
+  return blockers;
+}
+
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapter: LocalReviewEvidence['adapter'], shadow: boolean, headSha: string): string[] {
+  if (shadow || requiredLocalReviewLanes(profile).length === 0) return [];
+  if (adapter === 'manual-evidence') return [];
+  const blockers: string[] = [];
+  const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
+  for (const laneId of requiredLocalReviewLanes(profile)) {
+    const lane = lanesById.get(laneId);
+    if (!lane || lane.status !== 'passed') continue;
+    const provenance = lane.runnerProvenance;
+    if (!provenance) {
+      blockers.push(`${laneId} passed without independent reviewer runner provenance.`);
+      continue;
+    }
+    if (provenance.runnerKind !== adapter) blockers.push(`${laneId} runner provenance kind ${provenance.runnerKind} does not match evidence adapter ${adapter}.`);
+    if (!provenance.freshContext) blockers.push(`${laneId} did not record fresh independent reviewer context.`);
+    if (provenance.promptOnly) blockers.push(`${laneId} was prompt-only output and cannot satisfy a required local review gate.`);
+    if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
+    if (!provenance.taskId && !provenance.sessionId && !provenance.threadId) blockers.push(`${laneId} runner provenance did not record a separate task, session, or thread id.`);
+    if (!provenance.promptStackHash) blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
   }
   return blockers;
 }
@@ -493,17 +560,20 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers, profile);
     if (typeof parsed.headSha !== 'string' || parsed.headSha.trim() === '') return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence headSha metadata must be a non-empty string for this gate.', reviewers, profile);
     if (parsed.headSha !== headSha) return staleEvidence(issueNumber, prNumber, headSha, path, reviewers, profile);
-    const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const adapter = readAdapter(parsed.adapter);
+    const runnerProvenance = readRunnerProvenance(parsed.runnerProvenance);
+    const lanes = readLanes(parsed.lanes, runnerProvenance);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const contextReviewed = readContextReviewed(parsed.contextReviewed);
     const promptStack = readPromptStack(parsed.promptStack);
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+    const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+    const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
@@ -518,6 +588,7 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
       lanes,
       contextReviewed,
       promptStack,
+      runnerProvenance,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };
@@ -551,6 +622,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         contextReviewed: readContextReviewed(parsed.contextReviewed),
         promptStack: readPromptStack(parsed.promptStack),
         toolsUsed: stringArray(parsed.toolsUsed),
+        runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };
   } catch {
@@ -591,10 +663,12 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const missingContext = missingRequiredContext(lanes, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
   const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-  const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
+  const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+  const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+  const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
-  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
+  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
   return {
     issueNumber,
     prNumber,
@@ -609,6 +683,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     lanes,
     contextReviewed,
     promptStack,
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
@@ -622,17 +697,20 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
     if (parsed.issueNumber !== issueNumber) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence issue metadata does not match this gate.', reviewers, profile);
     const prNumber = typeof parsed.prNumber === 'number' && Number.isSafeInteger(parsed.prNumber) && parsed.prNumber > 0 ? parsed.prNumber : 0;
     const headSha = typeof parsed.headSha === 'string' && parsed.headSha.trim() !== '' ? parsed.headSha : 'unknown';
-    const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const adapter = readAdapter(parsed.adapter);
+    const runnerProvenance = readRunnerProvenance(parsed.runnerProvenance);
+    const lanes = readLanes(parsed.lanes, runnerProvenance);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const contextReviewed = readContextReviewed(parsed.contextReviewed);
     const promptStack = readPromptStack(parsed.promptStack);
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+    const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+    const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
@@ -647,6 +725,7 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
       lanes,
       contextReviewed,
       promptStack,
+      runnerProvenance,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };

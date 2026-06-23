@@ -6,17 +6,18 @@ import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
 import { renderAgentPrompt } from '../agent_descriptors.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 
 const execFileAsync = promisify(execFile);
 
 export type LocalReviewRunStatus = 'disabled' | 'planned' | 'completed' | 'pending' | 'unavailable' | 'failed';
-export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'unavailable' | 'failed';
+export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'pending' | 'unavailable' | 'failed';
 
 export interface CodexReviewCapability {
   host: 'codex';
   independentReviewer: boolean;
+  freshContext: boolean;
   promptOnly: boolean;
   hooks: boolean;
   evidenceWriting: boolean;
@@ -32,6 +33,7 @@ export interface LocalReviewLaneRun {
   status: LocalReviewLaneRunStatus;
   evidencePath: string;
   promptFragmentIds: string[];
+  promptText: string;
   promptOutputContract: string;
   summary: string;
   blocker: string | null;
@@ -61,6 +63,7 @@ interface LocalReviewRunnerInput {
   shadow: boolean;
   dryRun: boolean;
   exec?: PrGateExec;
+  contextLines?: readonly string[];
 }
 
 interface LaneEvidence {
@@ -76,6 +79,7 @@ interface LaneEvidence {
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: Array<{ id: string; source: string; sourceCategory?: string; path: string | null; sha256: string | null; trust: string }>;
   toolsUsed: string[];
+  runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
 function safeSegment(value: string): string {
@@ -105,17 +109,18 @@ function effectiveProfile(config: Config, required: boolean, shadow: boolean): L
 }
 
 export function probeCodexReviewCapability(independentReviewerCommand?: string | null): CodexReviewCapability {
-  const independentReviewer = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
+  const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
   return {
     host: 'codex',
-    independentReviewer,
-    promptOnly: true,
+    independentReviewer: true,
+    freshContext: true,
+    promptOnly: false,
     hooks: true,
     evidenceWriting: true,
-    missingCapabilities: independentReviewer ? [] : ['independent-reviewer-execution'],
-    nextAction: independentReviewer
+    missingCapabilities: [],
+    nextAction: commandConfigured
       ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : 'Codex prompt compilation is available, but this host does not expose an independent reviewer runner to AIE; record prompt-only or unavailable evidence without claiming local-host review success.',
+      : 'Spawn independent Codex subagents for the pending local-host review lanes, in parallel when the host supports it, then record current-head local-host evidence at the reported evidence paths before rerunning the PR gate.',
   };
 }
 
@@ -137,14 +142,27 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
   return command && command !== '' ? command : null;
 }
 
-function promptStack(lane: LocalReviewLaneId) {
+function laneContextLines(lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, evidencePath: string, extraContext: readonly string[]): string[] {
+  return [
+    `Run local review lane ${lane}.`,
+    `Issue: #${issueNumber}.`,
+    `Pull request: #${prNumber}.`,
+    `PR head SHA: ${headSha}.`,
+    `Record the resulting local-host evidence JSON at: ${evidencePath}.`,
+    'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
+    'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
+    ...extraContext,
+  ];
+}
+
+function promptStack(lane: LocalReviewLaneId, contextLines: readonly string[] = [`Run local review lane ${lane}.`]) {
   return renderAgentPrompt({
-    hostId: 'fallback-single-agent',
+    hostId: 'codex',
     descriptorId: 'qa-reviewer',
     categoryId: 'review',
     laneIds: [lane],
-    contextLines: [`Run local review lane ${lane}.`],
-    outputContract: 'Return JSON local review lane evidence for the requested lane.',
+    contextLines,
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context.',
   });
 }
 
@@ -157,6 +175,25 @@ function promptStackEvidence(lane: LocalReviewLaneId): LaneEvidence['promptStack
     sha256: fragment.sha256,
     trust: fragment.trust,
   }));
+}
+
+function promptStackHash(stack: LaneEvidence['promptStack']): string {
+  return hash(JSON.stringify(stack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source }))));
+}
+
+function runnerProvenance(runnerKind: 'local-command' | 'local-host', host: string, lane: LocalReviewLaneId, headSha: string, promptStack: LaneEvidence['promptStack'], idSeed: string): LocalReviewRunnerProvenance {
+  return {
+    runnerKind,
+    host,
+    freshContext: true,
+    promptOnly: false,
+    taskId: hash(`${idSeed}:${lane}:${headSha}`).slice(0, 16),
+    sessionId: null,
+    threadId: null,
+    promptStackHash: promptStackHash(promptStack),
+    headSha,
+    providerPublishStatus: null,
+  };
 }
 
 function defaultContext(issueNumber: number, prNumber: number): LocalReviewContextReviewed[] {
@@ -172,6 +209,7 @@ function fixtureLane(lane: LocalReviewLaneId, command: string, issueNumber: numb
   const failing = command.includes('fail-code-quality') && lane === 'code-quality';
   const status: LocalReviewStatus = failing ? 'failed' : 'passed';
   const evidencePath = relativePath(repoRoot, laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane));
+  const stack = promptStackEvidence(lane);
   return {
     id: lane,
     status,
@@ -183,8 +221,9 @@ function fixtureLane(lane: LocalReviewLaneId, command: string, issueNumber: numb
     commands: [command],
     surfaces: ['PR'],
     contextReviewed: defaultContext(issueNumber, prNumber),
-    promptStack: promptStackEvidence(lane),
+    promptStack: stack,
     toolsUsed: runner === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
+    runnerProvenance: runnerProvenance(runner, runner === 'local-host' ? 'codex' : 'local-command', lane, headSha, stack, command),
   };
 }
 
@@ -256,6 +295,18 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       trust: typeof item.trust === 'string' ? item.trust : 'local-evidence',
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
+    runnerProvenance: isRecord(value.runnerProvenance) ? {
+      runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',
+      host: typeof value.runnerProvenance.host === 'string' ? value.runnerProvenance.host : 'unknown-host',
+      freshContext: value.runnerProvenance.freshContext === true,
+      promptOnly: value.runnerProvenance.promptOnly === true,
+      taskId: typeof value.runnerProvenance.taskId === 'string' ? value.runnerProvenance.taskId : null,
+      sessionId: typeof value.runnerProvenance.sessionId === 'string' ? value.runnerProvenance.sessionId : null,
+      threadId: typeof value.runnerProvenance.threadId === 'string' ? value.runnerProvenance.threadId : null,
+      promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' ? value.runnerProvenance.promptStackHash : null,
+      headSha: typeof value.runnerProvenance.headSha === 'string' ? value.runnerProvenance.headSha : headSha,
+      providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? value.runnerProvenance.providerPublishStatus : null,
+    } : null,
   };
 }
 
@@ -309,6 +360,7 @@ function writeLane(repoRoot: string, issueNumber: number, prNumber: number, head
       : { id: 'local-command', name: 'local-command', adapterKind: 'local' },
     lane: lane.id,
     ...lane,
+    runnerProvenance: lane.runnerProvenance ?? runnerProvenance(adapter, adapter === 'local-host' ? 'codex' : 'local-command', lane.id, headSha, lane.promptStack, `write:${path}`),
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
@@ -345,6 +397,7 @@ function synthesizeFinalGate(previous: readonly LaneEvidence[], requiredLanes: r
     contextReviewed: previous.flatMap(lane => lane.contextReviewed),
     promptStack: promptStackEvidence('final-gate'),
     toolsUsed: adapter === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
+    runnerProvenance: runnerProvenance(adapter, adapter === 'local-host' ? 'codex' : 'local-command', 'final-gate', headSha, promptStackEvidence('final-gate'), 'final-gate-synthesis'),
   };
 }
 
@@ -362,12 +415,17 @@ function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary
     contextReviewed: defaultContext(issueNumber, prNumber),
     promptStack: promptStackEvidence(lane),
     toolsUsed: runner === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
+    runnerProvenance: null,
   };
 }
 
-function laneRun(issueNumber: number, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null): LocalReviewLaneRun {
-  const rendered = promptStack(lane);
-  return { issueNumber, lane, runner, command, status, evidencePath, promptFragmentIds: rendered.orderedFragmentIds, promptOutputContract: rendered.outputContract, summary, blocker };
+function laneRun(issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[]): LocalReviewLaneRun {
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumber, prNumber, headSha, evidencePath, contextLines));
+  return { issueNumber, lane, runner, command, status, evidencePath, promptFragmentIds: rendered.orderedFragmentIds, promptText: rendered.text, promptOutputContract: rendered.outputContract, summary, blocker };
+}
+
+function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, evidencePath: string): string {
+  return `Spawn an independent Codex subagent with this lane promptText to review lane ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Run pending lane subagents in parallel when the host supports it. Record JSON local-host evidence at ${evidencePath}.`;
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
@@ -375,6 +433,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...requiredLocalReviewLanes(profile)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
+  const contextLines = input.contextLines ?? [];
   if (!input.required && !input.shadow) {
     return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
@@ -398,19 +457,18 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         const finalGate = synthesizeFinalGate(produced, requiredLanes, issueNumber, input.prNumber, input.repoRoot, input.headSha, finalAdapter);
         const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, finalGate, finalAdapter);
         written.push(writtenPath);
-        lanes.push(laneRun(issueNumber, lane, finalAdapter, null, 'completed', path, finalGate.summary, null));
+        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, finalAdapter, null, 'completed', path, finalGate.summary, null, contextLines));
         produced.push(finalGate);
         continue;
       }
       if (runner === 'local-host') {
-        if (!codex.independentReviewer || !command) {
-          unavailable.push(`${lane}: Codex local-host runner is prompt-only; independent reviewer execution is unavailable.`);
-          produced.push(blockedLane(lane, 'unavailable', codex.nextAction, 'independent-reviewer-execution unavailable', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
-          lanes.push(laneRun(issueNumber, lane, runner, command, 'unavailable', path, codex.nextAction, 'independent-reviewer-execution unavailable'));
+        if (!command) {
+          const summary = codexSubagentSummary(lane, issueNumber, input.prNumber, input.headSha, path);
+          lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, null, 'pending', path, summary, 'codex-subagent-review-required', contextLines));
           continue;
         }
         if (input.dryRun) {
-          lanes.push(laneRun(issueNumber, lane, runner, command, 'planned', path, 'Codex local-host lane would run and write current-head evidence.', null));
+          lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, 'Codex local-host lane would run and write current-head evidence.', null, contextLines));
           continue;
         }
         const evidence = command.startsWith('aie:fixture-local-review')
@@ -419,23 +477,23 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         if (!evidence) {
           failed = true;
           produced.push(blockedLane(lane, 'malformed', 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
-          lanes.push(laneRun(issueNumber, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output'));
+          lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', contextLines));
           continue;
         }
         const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, evidence, 'local-host');
         written.push(writtenPath);
-        lanes.push(laneRun(issueNumber, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null));
+        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, contextLines));
         produced.push(evidence);
         continue;
       }
       if (runner !== 'local-command' || !command) {
         unavailable.push(`${lane}: no local-command runner command is configured.`);
         produced.push(blockedLane(lane, 'unavailable', 'No runnable local-command is configured for this lane.', 'missing local-command', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
-        lanes.push(laneRun(issueNumber, lane, runner, command, 'unavailable', path, 'No runnable local-command is configured for this lane.', 'missing local-command'));
+        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, 'No runnable local-command is configured for this lane.', 'missing local-command', contextLines));
         continue;
       }
       if (input.dryRun) {
-        lanes.push(laneRun(issueNumber, lane, runner, command, 'planned', path, 'Local-command lane would run and write current-head evidence.', null));
+        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, 'Local-command lane would run and write current-head evidence.', null, contextLines));
         continue;
       }
       const evidence = command.startsWith('aie:fixture-local-review')
@@ -444,19 +502,21 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       if (!evidence) {
         failed = true;
         produced.push(blockedLane(lane, 'malformed', 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
-        lanes.push(laneRun(issueNumber, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output'));
+        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', contextLines));
         continue;
       }
       const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, evidence, 'local-command');
       written.push(writtenPath);
-      lanes.push(laneRun(issueNumber, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null));
+      lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, contextLines));
       produced.push(evidence);
     }
   }
 
   const status: LocalReviewRunStatus = failed
     ? 'failed'
-    : unavailable.length > 0
+    : lanes.some(lane => lane.status === 'pending')
+      ? 'pending'
+      : unavailable.length > 0
       ? 'unavailable'
       : input.dryRun
         ? 'planned'
@@ -475,6 +535,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     unavailable,
     summary: status === 'completed'
       ? `Local review runner wrote ${written.length} lane evidence file(s).`
+      : status === 'pending'
+        ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
       : status === 'planned'
         ? `Local review runner planned ${lanes.length} lane execution(s).`
         : `Local review runner could not complete all required lanes: ${unavailable.join('; ')}`,

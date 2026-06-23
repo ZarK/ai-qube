@@ -235,20 +235,21 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
   const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
   const codexReviewCapability = probeCodexReviewCapability(localHostCommand);
+  const localHostNeedsAgent = localHostLanes.length > 0 && !localHostCommand;
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
   const localRunnerReadiness: DoctorReadinessStatus = !(localReviewEnabled || localReviewShadow)
     ? 'disabled'
     : localCommandLanes.length > 0 || localHostCommand
       ? 'ready'
-      : localHostLanes.length > 0
-        ? 'unavailable'
+      : localHostNeedsAgent
+        ? 'needs-action'
         : 'missing';
   const localRunner = {
     configured: localRunnerConfigured,
     readiness: localRunnerReadiness,
     command: localCommandLanes[0]?.command ?? localHostCommand,
     capabilities: {
-      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand),
+      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand) || localHostNeedsAgent,
       canComment: false,
       canInline: false,
       canUseTools: false,
@@ -259,11 +260,12 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       canWriteEvidence: true,
       supportsJson: true,
       supportsPromptStack: true,
-      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand),
+      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand) || localHostNeedsAgent,
     },
-    missingTools: localRunnerReadiness === 'missing' ? ['local-command review lane command'] : localRunnerReadiness === 'unavailable' ? ['independent-reviewer-execution'] : [],
-    codex: {
+    missingTools: localRunnerReadiness === 'missing' ? ['local-command review lane command'] : [],
+      codex: {
       independentReviewer: codexReviewCapability.independentReviewer,
+      freshContext: codexReviewCapability.freshContext,
       promptOnly: codexReviewCapability.promptOnly,
       hooks: codexReviewCapability.hooks,
       evidenceWriting: codexReviewCapability.evidenceWriting,
@@ -271,7 +273,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     },
     nextAction: localRunnerReadiness === 'ready'
       ? 'Local review lanes are configured; run `aie pr gate <pr> --dry-run --json` to inspect planned lane execution.'
-      : localRunnerReadiness === 'unavailable'
+      : localRunnerReadiness === 'needs-action'
         ? codexReviewCapability.nextAction
         : localRunnerReadiness === 'missing'
           ? 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'

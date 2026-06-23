@@ -304,11 +304,13 @@ describe("qube composer CLI", () => {
   it("reports Codex host capabilities without current-session assumptions", () => {
     const capabilities = listCodexHostCapabilities();
     assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
-    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 4);
+    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 5);
     assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 4);
     assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
 
     assert.equal(assertCodexHostCapabilityAvailable("read-instructions").support, "supported");
+    assert.equal(assertCodexHostCapabilityAvailable("spawn-fresh-reviewer").support, "host-provided");
+    assert.match(getCodexHostCapability("spawn-fresh-reviewer").summary, /fresh-context reviewer subagents/);
     assert.equal(getCodexHostCapability("install-project-command").support, "unsupported");
     assert.deepEqual(listCodexInstallFiles(), [
       "AGENTS.md policy notes: Codex project instructions use AGENTS.md with repository policy precedence.",
@@ -328,6 +330,7 @@ describe("qube composer CLI", () => {
     assert.equal(inspection.instructionTarget.present, true);
     assert.equal(path.basename(inspection.instructionTarget.path), "AGENTS.md");
     assert.ok(inspection.capabilities.some(capability => capability.id === "use-local-todos"));
+    assert.ok(inspection.capabilities.some(capability => capability.id === "spawn-fresh-reviewer"));
     assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
     assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
     assert.throws(() => {
