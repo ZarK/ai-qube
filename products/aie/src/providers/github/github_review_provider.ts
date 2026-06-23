@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -18,6 +19,58 @@ export type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonC
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
 const MARKER_PREFIX = 'aie:pr-gate';
+const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
+
+export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
+export type GitHubLocalReviewPublishStatus = 'disabled' | 'planned' | 'published' | 'skipped' | 'failed';
+
+export interface GitHubLocalReviewPublishInput {
+  enabled: boolean;
+  dryRun: boolean;
+  prNumber: number;
+  headSha: string;
+  profile: string;
+  status: string;
+  recommendation: GitHubLocalReviewRecommendation;
+  runner: string;
+  host: string;
+  evidencePath: string | null;
+  issueNumbers: number[];
+  summary: string;
+  findings: string[];
+}
+
+export interface GitHubLocalReviewPublishResult {
+  status: GitHubLocalReviewPublishStatus;
+  runId: string | null;
+  marker: string | null;
+  body: string | null;
+  url: string | null;
+  failure: string | null;
+  nextAction: string;
+}
+
+interface LocalReviewMetadata {
+  version: number;
+  head: string;
+  runner: string;
+  host: string;
+  profile: string;
+  runId: string;
+  evidence: string | null;
+  recommendation: GitHubLocalReviewRecommendation;
+  status: string;
+  issueNumbers: number[];
+  inline: 'unsupported';
+}
+
+interface LocalReviewComment {
+  metadata: LocalReviewMetadata;
+  author: RawAuthor | null | undefined;
+  body: string;
+  url: string | null;
+  stale: boolean;
+}
 
 interface RawCheckRun { id?: number; name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string; check_suite?: { id?: number } | null }
 interface RawCheckRunsResponse { check_runs?: RawCheckRun[] }
@@ -184,6 +237,139 @@ function commentBodyFor(name: string, policy: ExecutorPolicy, headSha: string): 
 function reviewerMarkerBodyFor(name: string, headSha: string): { body: string; marker: string } {
   const marker = markerFor(name, headSha);
   return { body: `${marker}\nExecutor recorded a configured PR reviewer request for this PR head.`, marker };
+}
+
+function stableRunId(input: GitHubLocalReviewPublishInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      head: input.headSha,
+      profile: input.profile,
+      status: input.status,
+      recommendation: input.recommendation,
+      evidencePath: input.evidencePath,
+      issueNumbers: input.issueNumbers,
+      summary: input.summary,
+      findings: input.findings,
+    }))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function localReviewMarker(metadata: LocalReviewMetadata): string {
+  return `<!-- ${LOCAL_REVIEW_MARKER_PREFIX}:${JSON.stringify(metadata)} -->`;
+}
+
+function parseLocalReviewMetadata(body: string | undefined): LocalReviewMetadata | null {
+  const match = (body ?? '').match(/<!--\s*qube-local-review:(\{[\s\S]*?\})\s*-->/);
+  if (!match) return null;
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed)) return null;
+    if (parsed.version !== 1) return null;
+    if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
+    if (typeof parsed.runner !== 'string' || parsed.runner.trim() === '') return null;
+    if (typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
+    if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
+    if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
+    if (parsed.recommendation !== 'approve' && parsed.recommendation !== 'request-changes' && parsed.recommendation !== 'pending' && parsed.recommendation !== 'inconclusive') return null;
+    if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
+    if (!Array.isArray(parsed.issueNumbers) || !parsed.issueNumbers.every(issue => Number.isSafeInteger(issue) && issue > 0)) return null;
+    return {
+      version: 1,
+      head: redact(parsed.head),
+      runner: redact(parsed.runner),
+      host: redact(parsed.host),
+      profile: redact(parsed.profile),
+      runId: redact(parsed.runId),
+      evidence: typeof parsed.evidence === 'string' && parsed.evidence.trim() !== '' ? redact(parsed.evidence) : null,
+      recommendation: parsed.recommendation,
+      status: redact(parsed.status),
+      issueNumbers: parsed.issueNumbers,
+      inline: 'unsupported',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | null): LocalReviewMetadata | null {
+  if (trustedAuthor === null || !authorMatches(comment.author?.login ?? '', trustedAuthor)) return null;
+  return parseLocalReviewMetadata(comment.body);
+}
+
+function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
+  return comments.flatMap(comment => {
+    const metadata = trustedLocalReviewComment(comment, trustedAuthor);
+    if (!metadata) return [];
+    return [{ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha }];
+  });
+}
+
+function localReviewState(recommendation: GitHubLocalReviewRecommendation): string {
+  if (recommendation === 'approve') return 'APPROVED';
+  if (recommendation === 'request-changes') return 'CHANGES_REQUESTED';
+  return 'PENDING';
+}
+
+function localReviewSummary(comment: LocalReviewComment): string {
+  const summary = summarize(comment.body);
+  return `QUBE local review ${comment.metadata.recommendation} for ${comment.metadata.profile}: ${summary}`;
+}
+
+function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
+  const runId = stableRunId(input);
+  const metadata: LocalReviewMetadata = {
+    version: 1,
+    head: input.headSha,
+    runner: input.runner,
+    host: input.host,
+    profile: input.profile,
+    runId,
+    evidence: input.evidencePath,
+    recommendation: input.recommendation,
+    status: input.status,
+    issueNumbers: input.issueNumbers,
+    inline: 'unsupported',
+  };
+  const marker = localReviewMarker(metadata);
+  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${redact(item)}`);
+  const issues = input.issueNumbers.length === 0 ? ['- No linked issue metadata was available.'] : input.issueNumbers.map(issue => `- issue #${issue}`);
+  const body = [
+    marker,
+    '',
+    `QUBE local review: ${input.recommendation}`,
+    '',
+    'Summary:',
+    redact(input.summary),
+    '',
+    'Findings:',
+    ...findings,
+    '',
+    'Evidence reviewed:',
+    ...issues,
+    `- PR diff head ${redact(input.headSha)}`,
+    input.evidencePath ? `- local evidence ${redact(input.evidencePath)}` : '- local evidence not recorded',
+    '',
+    'Metadata:',
+    `- runner: ${redact(input.runner)}`,
+    `- host: ${redact(input.host)}`,
+    `- profile: ${redact(input.profile)}`,
+    `- run id: ${runId}`,
+    '- inline comments: unsupported by this provider publisher; summary comment used',
+  ].join('\n');
+  return { body, marker, runId };
+}
+
+function localReviewPublishResult(input: Partial<GitHubLocalReviewPublishResult> & { status: GitHubLocalReviewPublishStatus; nextAction: string }): GitHubLocalReviewPublishResult {
+  return {
+    runId: input.runId ?? null,
+    marker: input.marker ?? null,
+    body: input.body ?? null,
+    url: input.url ?? null,
+    failure: input.failure ?? null,
+    status: input.status,
+    nextAction: input.nextAction,
+  };
 }
 
 function rawReviewDecision(value: string | null | undefined): string { return value && value.trim() !== '' ? value : 'UNKNOWN'; }
@@ -413,6 +599,17 @@ function isStaleChangeRequest(review: RawReview, headRefOid: string, unresolvedT
 
 function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
+  for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
+    if (localReview.stale) continue;
+    items.push({
+      source: 'comment',
+      author: actorName(localReview.author),
+      state: localReviewState(localReview.metadata.recommendation),
+      summary: localReviewSummary(localReview),
+      url: localReview.url,
+      trust: 'untrusted',
+    });
+  }
   for (const review of raw.latestReviews) {
     const state = review.state ?? 'UNKNOWN';
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
@@ -421,6 +618,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
+    if (parseLocalReviewMetadata(body)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -431,6 +629,21 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
 }
 
 function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
+  const localReviews = localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.pr.headRefOid).map(comment => ({
+    head: comment.metadata.head,
+    runner: comment.metadata.runner,
+    host: comment.metadata.host,
+    profile: comment.metadata.profile,
+    runId: comment.metadata.runId,
+    evidence: comment.metadata.evidence,
+    recommendation: comment.metadata.recommendation,
+    status: comment.metadata.status,
+    issueNumbers: comment.metadata.issueNumbers,
+    inline: comment.metadata.inline,
+    stale: comment.stale,
+    author: comment.author?.login ?? null,
+    url: comment.url,
+  }));
   return {
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
@@ -440,6 +653,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     reviewRequests: raw.reviewRequests,
     comments: raw.comments.map(comment => ({ author: comment.author?.login ?? null, body: comment.body ?? null })),
     latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null })),
+    localReviews,
     unavailable: raw.unavailable,
     trustedMarkerAuthor: raw.trustedMarkerAuthor,
   };
@@ -468,6 +682,18 @@ function latestReviewsFromMetadata(item: ReviewItem): RawReview[] {
     const oid = typeof review.commitOid === 'string' ? review.commitOid : undefined;
     return { author, commit: oid ? { oid } : null };
   });
+}
+
+function currentLocalReviewRunIds(item: ReviewItem, headSha: string): Set<string> {
+  const value = item.trustedMetadata.localReviews;
+  if (!Array.isArray(value)) return new Set();
+  const runIds = value.flatMap(review => {
+    if (!isRecord(review)) return [];
+    if (review.stale === true) return [];
+    if (review.head !== headSha) return [];
+    return typeof review.runId === 'string' && review.runId.trim() !== '' ? [review.runId] : [];
+  });
+  return new Set(runIds);
 }
 
 function actionResult(action: Action, status: ActionResult['status'], failure: ActionResult['failure'] = null): ActionResult {
@@ -611,6 +837,38 @@ export class GitHubReviewProvider implements ReviewProvider {
       return makeRequestAction({ item, name, requestedForHead, staleRequest, pending, policy });
     });
     return createActionPlan({ id: `github:review-request:${item.key.id}`, purpose: `Request configured PR reviewers for ${item.displayId}.`, dryRun: true, actions });
+  }
+
+  async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {
+    if (!input.enabled) return localReviewPublishResult({ status: 'disabled', nextAction: 'Local review publishing is disabled by the selected review adapter.' });
+    const { body, marker, runId } = localReviewBody(input);
+    if (input.dryRun) {
+      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: 'Rerun `aie pr gate <pr>` without --dry-run to publish provider-visible local review feedback.' });
+    }
+    if (input.issueNumbers.length === 0) {
+      return localReviewPublishResult({ status: 'skipped', runId, marker, body, nextAction: 'No linked issue numbers were available, so local review feedback was not published.' });
+    }
+    if (currentLocalReviewRunIds(item, input.headSha).has(runId)) {
+      return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: 'Provider-visible local review feedback is already published for this PR head and run id.' });
+    }
+    const result = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], this.options);
+    if (result.exitCode !== 0) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(result.stderr || result.stdout || 'gh pr comment failed'),
+        nextAction: 'Fix GitHub comment permissions or connectivity, then rerun `aie pr gate <pr>`; local evidence alone does not satisfy provider-visible local review publishing.',
+      });
+    }
+    return localReviewPublishResult({
+      status: 'published',
+      runId,
+      marker,
+      body,
+      nextAction: 'Provider-visible local review feedback was published; rerun PR view/gate to inspect provider state if needed.',
+    });
   }
 
   async apply(plan: ActionPlan): Promise<ActionResult[]> {

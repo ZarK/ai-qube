@@ -1,3 +1,5 @@
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { configToExecutorPolicy } from '../config_policy.js';
@@ -5,7 +7,7 @@ import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
 import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubLocalReviewPublishInput, type GitHubLocalReviewPublishResult, type GitHubLocalReviewRecommendation, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
 import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
 export interface PrGateExecResult {
@@ -97,6 +99,7 @@ export interface PrGateResult {
   checkDiagnostics: PrGateCheckDiagnostic[];
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
+  localReviewPublish: GitHubLocalReviewPublishResult;
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
@@ -268,7 +271,7 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   }
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
-  if (feedback.some(entry => entry.source === 'thread' || (entry.source === 'review' && entry.state === 'CHANGES_REQUESTED'))) return 'failed';
+  if (feedback.some(entry => entry.source === 'thread' || entry.state === 'CHANGES_REQUESTED')) return 'failed';
   if (unavailable.length > 0) return 'unavailable';
   if ((!localOnly && item.reviewDecision === 'review-required') || reviewers.some(reviewer => reviewer.pending)) return 'pending';
   if (item.reviewDecision === 'approved') return 'complete';
@@ -319,6 +322,99 @@ function localReviewRequired(config: Config): boolean {
 
 function localReviewShadow(config: Config): boolean {
   return config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
+}
+
+function localReviewRecommendation(status: LocalReviewStatus): GitHubLocalReviewRecommendation {
+  if (status === 'passed') return 'approve';
+  if (status === 'failed' || status === 'needs-work' || status === 'malformed') return 'request-changes';
+  if (status === 'inconclusive') return 'inconclusive';
+  return 'pending';
+}
+
+function localReviewRunnerKind(localReviewRunner: LocalReviewRunResult): string {
+  const completed = localReviewRunner.lanes.find(lane => lane.status === 'completed');
+  return completed?.runner ?? (localReviewRunner.codex.independentReviewer ? 'local-host' : 'local-command');
+}
+
+function localReviewHost(localReviewRunner: LocalReviewRunResult): string {
+  return localReviewRunner.lanes.some(lane => lane.runner === 'local-host') ? localReviewRunner.codex.host : localReviewRunnerKind(localReviewRunner);
+}
+
+function localReviewEvidencePath(localReview: LocalReviewGate): string | null {
+  const evidencePath = localReview.evidence.map(evidence => evidence.path).find((path): path is string => typeof path === 'string' && path.trim() !== '');
+  return evidencePath ?? null;
+}
+
+function localReviewFindings(localReview: LocalReviewGate): string[] {
+  return localReview.evidence.flatMap(evidence => [
+    ...evidence.blockers,
+    ...evidence.lanes.filter(lane => lane.recommendation === 'request-changes' || lane.blockers.length > 0).flatMap(lane => lane.blockers.length > 0 ? lane.blockers : [`${lane.id}: ${lane.summary}`]),
+  ]).filter((value, index, values) => values.indexOf(value) === index);
+}
+
+function localReviewPublishInput(input: {
+  enabled: boolean;
+  dryRun: boolean;
+  prNumber: number;
+  headSha: string;
+  localReviewRunner: LocalReviewRunResult;
+  localReview: LocalReviewGate;
+}): GitHubLocalReviewPublishInput {
+  return {
+    enabled: input.enabled && input.localReview.mode !== 'disabled' && input.localReview.evidence.length > 0 && input.localReview.status !== 'missing' && input.localReview.status !== 'stale',
+    dryRun: input.dryRun,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    profile: input.localReview.profile,
+    status: input.localReview.status,
+    recommendation: localReviewRecommendation(input.localReview.status),
+    runner: localReviewRunnerKind(input.localReviewRunner),
+    host: localReviewHost(input.localReviewRunner),
+    evidencePath: localReviewEvidencePath(input.localReview),
+    issueNumbers: input.localReview.evidence.map(evidence => evidence.issueNumber).filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && issueNumber > 0),
+    summary: input.localReview.summary,
+    findings: localReviewFindings(input.localReview),
+  };
+}
+
+function skippedLocalReviewPublish(nextAction: string): GitHubLocalReviewPublishResult {
+  return { status: 'disabled', runId: null, marker: null, body: null, url: null, failure: null, nextAction };
+}
+
+function safeSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+function writeLocalReviewPublishEvidence(input: {
+  repoRoot: string;
+  issueNumbers: readonly number[];
+  prNumber: number;
+  headSha: string;
+  result: GitHubLocalReviewPublishResult;
+}): string[] {
+  if (input.result.status === 'disabled') return [];
+  const written: string[] = [];
+  for (const issueNumber of input.issueNumbers) {
+    const directory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(input.prNumber), safeSegment(input.headSha));
+    mkdirSync(directory, { recursive: true });
+    const path = join(directory, 'publish.json');
+    writeFileSync(path, `${JSON.stringify({
+      version: 1,
+      issueNumber,
+      prNumber: input.prNumber,
+      headSha: input.headSha,
+      provider: 'github',
+      status: input.result.status,
+      runId: input.result.runId,
+      marker: input.result.marker,
+      url: input.result.url,
+      failure: input.result.failure,
+      nextAction: input.result.nextAction,
+      recordedAt: new Date().toISOString(),
+    }, null, 2)}\n`);
+    written.push(path);
+  }
+  return written;
 }
 
 function githubOnlyPolicy(config: Config): ReturnType<typeof configToExecutorPolicy> {
@@ -385,13 +481,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     actions.push(waitAction(policy.reviews.waitMinutes, policy.reviews.waitMinutes > 0 && hasReviewerRequest(actions, 'planned') ? 'planned' : 'skipped'));
   }
 
-  const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);
-  const reviewers = reviewersFromPlan(finalPlan);
-  const feedback = prFeedback(finalSnapshot.item);
-  const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
-  const linkedChecklistWarnings: string[] = [];
-  const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
-  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings];
   const localRequired = localReviewRequired(config);
   const localShadow = localReviewShadow(config);
   const localReviewRunner = await runLocalReviewRunner(config, {
@@ -415,6 +504,36 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     severityThreshold: config.reviewSeverityThreshold,
     shadow: localShadow,
   });
+  let localReviewPublish = skippedLocalReviewPublish('No local review provider publishing was required.');
+  const publishUnavailable: string[] = [];
+  if (localRequired || localShadow) {
+    localReviewPublish = await provider.publishLocalReviewFeedback(finalSnapshot.item, localReviewPublishInput({
+      enabled: true,
+      dryRun,
+      prNumber: options.prNumber,
+      headSha: finalSnapshot.pr.headRefOid,
+      localReviewRunner,
+      localReview,
+    }));
+    if (localReviewPublish.status === 'failed') publishUnavailable.push(`QUBE local review publishing failed: ${localReviewPublish.failure ?? 'unknown failure'}`);
+    if (!dryRun) {
+      writeLocalReviewPublishEvidence({
+        repoRoot: options.repoRoot ?? process.cwd(),
+        issueNumbers: finalSnapshot.closingIssueNumbers,
+        prNumber: options.prNumber,
+        headSha: finalSnapshot.pr.headRefOid,
+        result: localReviewPublish,
+      });
+    }
+    if (localReviewPublish.status === 'published') finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+  }
+  const finalPlan = provider.planReviewRequest(finalSnapshot.item, policy);
+  const reviewers = reviewersFromPlan(finalPlan);
+  const feedback = prFeedback(finalSnapshot.item);
+  const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
+  const linkedChecklistWarnings: string[] = [];
+  const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
+  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...publishUnavailable];
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow');
   return {
     ok: true,
@@ -430,6 +549,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     checkDiagnostics,
     localReviewRunner,
     localReview,
+    localReviewPublish,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
@@ -466,6 +586,8 @@ export function formatPrGate(result: PrGateResult): string {
   if (result.localReview.required || result.localReview.mode === 'shadow') {
     for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
   }
+  lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
+  if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);

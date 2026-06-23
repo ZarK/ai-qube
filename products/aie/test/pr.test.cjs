@@ -58,6 +58,40 @@ function basePr(overrides = {}) {
   };
 }
 
+function localReviewComment({ head = 'abc123', recommendation = 'approve', status = 'passed', runId = 'run-1', summary = 'local review summary', findings = '- None recorded.' } = {}) {
+  const metadata = {
+    version: 1,
+    head,
+    runner: 'local-command',
+    host: 'local-command',
+    profile: 'local-standard',
+    runId,
+    evidence: '.qube/aie/reviews/93/12/abc123',
+    recommendation,
+    status,
+    issueNumbers: [93],
+    inline: 'unsupported',
+  };
+  return {
+    author: { login: 'executor' },
+    body: [
+      `<!-- qube-local-review:${JSON.stringify(metadata)} -->`,
+      '',
+      `QUBE local review: ${recommendation}`,
+      '',
+      'Summary:',
+      summary,
+      '',
+      'Findings:',
+      findings,
+      '',
+      'Metadata:',
+      '- inline comments: unsupported by this provider publisher; summary comment used',
+    ].join('\n'),
+    url: `https://github.com/example/repo/pull/12#issuecomment-${runId}`,
+  };
+}
+
 function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', laneStatus = 'passed', summary = 'local review passed', blockers = [], adapter = 'local-host' } = {}) {
   return {
     version: 1,
@@ -736,6 +770,102 @@ describe('PR gate service', () => {
     assert.equal(lane.adapter, 'local-command');
     assert.equal(lane.lane, 'issue-compliance');
     assert.ok(Array.isArray(lane.promptStack) && lane.promptStack.length > 0);
+  });
+
+  it('publishes local-command review results as provider-visible PR feedback', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr(), cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const commentCall = calls.find(args => args[0] === 'pr' && args[1] === 'comment');
+    const body = commentCall?.[4] ?? '';
+    const publish = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'publish.json'), 'utf8'));
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.equal(publish.status, 'published');
+    assert.equal(publish.provider, 'github');
+    assert.equal(publish.runId, result.localReviewPublish.runId);
+    assert.match(body, /<!-- qube-local-review:/);
+    assert.match(body, /QUBE local review: approve/);
+    assert.match(body, /"head":"abc123"/);
+    assert.match(body, /"runner":"local-command"/);
+    assert.match(body, /"issueNumbers":\[93\]/);
+    assert.match(body, /inline comments: unsupported/);
+  });
+
+  it('surfaces current-head QUBE local review comments in PR view feedback', async () => {
+    const pr = cleanLocalPr({
+      reviewDecision: 'APPROVED',
+      comments: [localReviewComment({ recommendation: 'approve', status: 'passed', summary: 'all local lanes passed' })],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.equal(result.feedback.length, 1);
+    assert.equal(result.feedback[0].source, 'comment');
+    assert.equal(result.feedback[0].author, 'executor');
+    assert.equal(result.feedback[0].state, 'APPROVED');
+    assert.match(result.feedback[0].summary, /QUBE local review approve/);
+  });
+
+  it('blocks PR gates on provider-visible QUBE local review requested changes', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = cleanLocalPr({
+      reviewDecision: 'APPROVED',
+      comments: [localReviewComment({ recommendation: 'request-changes', status: 'failed', summary: 'local review found blockers', findings: '- Fix unsafe parser' })],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'failed');
+    assert.equal(result.feedback[0].state, 'CHANGES_REQUESTED');
+    assert.match(result.nextAction, /address review feedback/);
+  });
+
+  it('supersedes stale-head QUBE local review feedback with current-head feedback', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const pr = cleanLocalPr({
+      reviewDecision: 'APPROVED',
+      comments: [
+        localReviewComment({ head: 'oldsha', recommendation: 'request-changes', status: 'failed', runId: 'old-run', summary: 'old head failed' }),
+        localReviewComment({ head: 'abc123', recommendation: 'approve', status: 'passed', runId: 'new-run', summary: 'current head passed' }),
+      ],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.feedback.length, 1);
+    assert.equal(result.feedback[0].state, 'APPROVED');
+    assert.equal(result.feedback.some(item => item.state === 'CHANGES_REQUESTED'), false);
+  });
+
+  it('keeps PR gates unavailable when provider publishing fails', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const exec = async args => {
+      if (args[0] === 'pr' && args[1] === 'comment') return { args, exitCode: 1, stdout: '', stderr: 'permission denied' };
+      return fixture.exec(args);
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const publish = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'publish.json'), 'utf8'));
+
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'failed');
+    assert.equal(publish.status, 'failed');
+    assert.match(publish.failure, /permission denied/);
+    assert.equal(result.status, 'unavailable');
+    assert.ok(result.unavailable.some(item => item.includes('local review publishing failed')));
   });
 
   it('records Codex local-host evidence when an independent local-host runner is configured', async () => {
