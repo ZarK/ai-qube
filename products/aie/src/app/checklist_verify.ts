@@ -98,7 +98,7 @@ async function currentPrContext(cwd?: string, exec?: GhExec): Promise<ChecklistV
     parsed = JSON.parse(result.stdout) as Record<string, unknown>;
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Failed to parse current PR context. Likely cause: gh pr view returned malformed JSON. ${message}`);
+    throw new Error(`Failed to parse current PR context. Likely cause: gh pr view returned malformed JSON (${message}). Next action: inspect \`gh pr view --json number,title,url,headRefOid\`, verify the PR state, then rerun checklist verification.`);
   }
   if (!isRecord(parsed) || typeof parsed.number !== 'number' || typeof parsed.title !== 'string' || typeof parsed.url !== 'string' || typeof parsed.headRefOid !== 'string' || parsed.headRefOid.trim() === '') {
     throw new Error('Failed to validate current PR context from gh pr view. Likely cause: gh pr view returned missing or malformed number, title, url, or headRefOid fields. Next action: inspect `gh pr view --json number,title,url,headRefOid`, verify the PR state, then rerun checklist verification.');

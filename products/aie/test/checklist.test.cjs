@@ -219,6 +219,32 @@ describe('issue checklist mutation', () => {
     );
   });
 
+  it('reports a next action when current PR context JSON is malformed', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
+    const evidence = join(repo, 'evidence.json');
+    writeFileSync(evidence, JSON.stringify({
+      version: 1,
+      issueNumber: 93,
+      criterionIndex: 1,
+      criterionText: 'Acceptance A',
+      reviewer: { id: 'codex' },
+      reviewedSources: ['issue:93'],
+      artifacts: ['terminal-log'],
+      recommendation: 'approve',
+      recordedAt: '2026-06-23T00:00:00.000Z',
+      promptStack: [{ id: 'acceptance/verify-criterion' }],
+    }));
+    const exec = makeExec({
+      [issueViewKey(93)]: success([], JSON.stringify(issue(93, '- [ ] Acceptance A'))),
+      'pr view --json number,title,url,headRefOid': success([], '{'),
+    });
+
+    await assert.rejects(
+      () => verifyIssueChecklist({ issueNumber: 93, index: 1, state: 'checked', evidencePath: evidence, dryRun: true, promptOnly: false, exec }),
+      /Next action: inspect `gh pr view --json number,title,url,headRefOid`/,
+    );
+  });
+
   it('rejects stale or incomplete acceptance verification evidence', async () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-checklist-verify-'));
     const evidence = join(repo, 'bad-evidence.json');
