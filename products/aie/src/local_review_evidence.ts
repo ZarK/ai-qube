@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { renderAgentPrompt } from './agent_descriptors.js';
 import { redact } from './gh.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
@@ -506,13 +507,25 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
     if (!provenance.promptStackHash) {
       blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
     } else {
-      const expectedPromptStackHash = hash(JSON.stringify(lane.promptStack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source }))));
+      const expectedPromptStackHash = expectedLanePromptStackHash(laneId);
       if (provenance.promptStackHash !== expectedPromptStackHash) {
-        blockers.push(`${laneId} runner provenance prompt stack hash does not match the recorded prompt stack.`);
+        blockers.push(`${laneId} runner provenance prompt stack hash does not match the current QUBE prompt stack.`);
       }
     }
   }
   return blockers;
+}
+
+function expectedLanePromptStackHash(laneId: LocalReviewLaneId): string {
+  const rendered = renderAgentPrompt({
+    hostId: 'codex',
+    descriptorId: 'qa-reviewer',
+    categoryId: 'review',
+    laneIds: [laneId],
+    contextLines: [`Run local review lane ${laneId}.`],
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context.',
+  });
+  return hash(JSON.stringify(rendered.promptStack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source }))));
 }
 
 function hash(text: string): string {

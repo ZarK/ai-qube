@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
@@ -9,7 +9,7 @@ import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
 import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubLocalReviewPublishInput, type GitHubLocalReviewPublishResult, type GitHubLocalReviewRecommendation, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
+import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubLocalReviewPublishInput, type GitHubLocalReviewPublishResult, type GitHubLocalReviewPublishStatus, type GitHubLocalReviewRecommendation, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
 import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
 const execFileAsync = promisify(execFile);
@@ -122,6 +122,7 @@ export interface PrGateResult {
 export interface PrGateOptions {
   prNumber: number;
   dryRun?: boolean;
+  includeLocalReviewPrompts?: boolean;
   repoRoot?: string;
   exec?: PrGateExec;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -381,6 +382,7 @@ function localReviewPublishInput(input: {
     host: localReviewHost(input.localReviewRunner),
     evidencePath: localReviewEvidencePath(input.repoRoot, input.localReview),
     issueNumbers: input.localReview.evidence.map(evidence => evidence.issueNumber).filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && issueNumber > 0),
+    lanes: [...new Set(input.localReview.evidence.flatMap(evidence => evidence.lanes.map(lane => lane.id)))],
     summary: input.localReview.summary,
     findings: localReviewFindings(input.localReview),
   };
@@ -422,6 +424,37 @@ function writeLocalReviewPublishEvidence(input: {
       recordedAt: new Date().toISOString(),
     }, null, 2)}\n`);
     written.push(path);
+  }
+  return written;
+}
+
+function writeLocalReviewPublishStatus(input: {
+  repoRoot: string;
+  issueNumbers: readonly number[];
+  prNumber: number;
+  headSha: string;
+  status: GitHubLocalReviewPublishStatus;
+}): string[] {
+  if (input.status === 'disabled' || input.status === 'planned') return [];
+  const written: string[] = [];
+  for (const issueNumber of input.issueNumbers) {
+    const directory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(input.prNumber), safeSegment(input.headSha));
+    if (!existsSync(directory)) continue;
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !entry.name.endsWith('.json') || entry.name === 'publish.json') continue;
+      const path = join(directory, entry.name);
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isRecord(parsed)) continue;
+      const body = { ...parsed };
+      if (isRecord(body.runnerProvenance)) body.runnerProvenance = { ...body.runnerProvenance, providerPublishStatus: input.status };
+      if (Array.isArray(body.lanes)) {
+        body.lanes = body.lanes.map(lane => isRecord(lane) && isRecord(lane.runnerProvenance)
+          ? { ...lane, runnerProvenance: { ...lane.runnerProvenance, providerPublishStatus: input.status } }
+          : lane);
+      }
+      writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+      written.push(path);
+    }
   }
   return written;
 }
@@ -567,6 +600,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     dryRun,
     exec: options.exec,
     contextLines: localReviewContextLines,
+    includePrompts: options.includeLocalReviewPrompts === true,
   });
   const localReview = readLocalReviewGate({
     repoRoot: options.repoRoot ?? process.cwd(),
@@ -600,6 +634,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           prNumber: options.prNumber,
           headSha: finalSnapshot.pr.headRefOid,
           result: localReviewPublish,
+        });
+        writeLocalReviewPublishStatus({
+          repoRoot: options.repoRoot ?? process.cwd(),
+          issueNumbers: finalSnapshot.closingIssueNumbers,
+          prNumber: options.prNumber,
+          headSha: finalSnapshot.pr.headRefOid,
+          status: localReviewPublish.status,
         });
       } catch (error: unknown) {
         const message = error instanceof Error ? error.message : String(error);

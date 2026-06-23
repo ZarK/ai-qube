@@ -36,6 +36,7 @@ export interface GitHubLocalReviewPublishInput {
   host: string;
   evidencePath: string | null;
   issueNumbers: number[];
+  lanes: string[];
   summary: string;
   findings: string[];
 }
@@ -61,6 +62,7 @@ interface LocalReviewMetadata {
   recommendation: GitHubLocalReviewRecommendation;
   status: string;
   issueNumbers: number[];
+  lanes: string[];
   inline: 'unsupported';
 }
 
@@ -244,6 +246,7 @@ function stableRunId(input: GitHubLocalReviewPublishInput): string {
     .update(JSON.stringify({
       head: input.headSha,
       profile: input.profile,
+      lanes: input.lanes,
       status: input.status,
       recommendation: input.recommendation,
       evidencePath: input.evidencePath,
@@ -274,6 +277,7 @@ function parseLocalReviewMetadata(body: string | undefined): LocalReviewMetadata
     if (parsed.recommendation !== 'approve' && parsed.recommendation !== 'request-changes' && parsed.recommendation !== 'pending' && parsed.recommendation !== 'inconclusive') return null;
     if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
     if (!Array.isArray(parsed.issueNumbers) || !parsed.issueNumbers.every(issue => Number.isSafeInteger(issue) && issue > 0)) return null;
+    const lanes = Array.isArray(parsed.lanes) ? parsed.lanes.filter((lane): lane is string => typeof lane === 'string' && lane.trim() !== '').map(redact) : [];
     return {
       version: 1,
       head: redact(parsed.head),
@@ -285,6 +289,7 @@ function parseLocalReviewMetadata(body: string | undefined): LocalReviewMetadata
       recommendation: parsed.recommendation,
       status: redact(parsed.status),
       issueNumbers: parsed.issueNumbers,
+      lanes,
       inline: 'unsupported',
     };
   } catch {
@@ -297,9 +302,9 @@ function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | 
   return parseLocalReviewMetadata(comment.body);
 }
 
-function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
+function localReviewComments(comments: RawComment[], headSha: string): LocalReviewComment[] {
   return comments.flatMap(comment => {
-    const metadata = trustedLocalReviewComment(comment, trustedAuthor);
+    const metadata = parseLocalReviewMetadata(comment.body);
     if (!metadata) return [];
     return [{ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha }];
   });
@@ -329,6 +334,7 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     recommendation: input.recommendation,
     status: input.status,
     issueNumbers: input.issueNumbers,
+    lanes: input.lanes,
     inline: 'unsupported',
   };
   const marker = localReviewMarker(metadata);
@@ -354,6 +360,7 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     `- runner: ${redact(input.runner)}`,
     `- host: ${redact(input.host)}`,
     `- profile: ${redact(input.profile)}`,
+    `- lanes: ${input.lanes.length === 0 ? 'none' : input.lanes.map(redact).join(', ')}`,
     `- run id: ${runId}`,
     '- inline comments: unsupported by this provider publisher; summary comment used',
   ].join('\n');
@@ -599,7 +606,7 @@ function isStaleChangeRequest(review: RawReview, headRefOid: string, unresolvedT
 
 function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
-  for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
+  for (const localReview of localReviewComments(raw.comments, raw.headRefOid)) {
     if (localReview.stale) continue;
     items.push({
       source: 'comment',
@@ -618,7 +625,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
-    if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
+    if (parseLocalReviewMetadata(comment.body)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -629,7 +636,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
 }
 
 function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
-  const localReviews = localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.pr.headRefOid).map(comment => ({
+  const localReviews = localReviewComments(raw.comments, raw.pr.headRefOid).map(comment => ({
     head: comment.metadata.head,
     runner: comment.metadata.runner,
     host: comment.metadata.host,
@@ -639,11 +646,32 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     recommendation: comment.metadata.recommendation,
     status: comment.metadata.status,
     issueNumbers: comment.metadata.issueNumbers,
+    lanes: comment.metadata.lanes,
     inline: comment.metadata.inline,
     stale: comment.stale,
     author: comment.author?.login ?? null,
     url: comment.url,
   }));
+  const trustedLocalReviews = raw.comments.flatMap(comment => {
+    const metadata = trustedLocalReviewComment(comment, raw.trustedMarkerAuthor);
+    if (!metadata) return [];
+    return [{
+      head: metadata.head,
+      runner: metadata.runner,
+      host: metadata.host,
+      profile: metadata.profile,
+      runId: metadata.runId,
+      evidence: metadata.evidence,
+      recommendation: metadata.recommendation,
+      status: metadata.status,
+      issueNumbers: metadata.issueNumbers,
+      lanes: metadata.lanes,
+      inline: metadata.inline,
+      stale: metadata.head !== raw.pr.headRefOid,
+      author: comment.author?.login ?? null,
+      url: comment.url ? redact(comment.url) : null,
+    }];
+  });
   return {
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
@@ -654,6 +682,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     comments: raw.comments.map(comment => ({ author: comment.author?.login ?? null, body: comment.body ?? null })),
     latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null })),
     localReviews,
+    trustedLocalReviews,
     unavailable: raw.unavailable,
     trustedMarkerAuthor: raw.trustedMarkerAuthor,
   };
@@ -685,7 +714,7 @@ function latestReviewsFromMetadata(item: ReviewItem): RawReview[] {
 }
 
 function currentLocalReviewRunIds(item: ReviewItem, headSha: string): Set<string> {
-  const value = item.trustedMetadata.localReviews;
+  const value = item.trustedMetadata.trustedLocalReviews;
   if (!Array.isArray(value)) return new Set();
   const runIds = value.flatMap(review => {
     if (!isRecord(review)) return [];
