@@ -57,7 +57,7 @@ describe('complete service', () => {
     assert.equal(calls.some(args => args[0] === 'issue' && (args[1] === 'edit' || args[1] === 'close')), false);
   });
 
-  it('blocks unchecked checklist items unless force is supplied', async () => {
+  it('blocks unchecked checklist items even when force is supplied', async () => {
     const calls = [];
     const target = issue(93, 'Active work', ['S-InProgress'], '- [ ] acceptance item');
     const exec = makeExec({
@@ -75,10 +75,10 @@ describe('complete service', () => {
     assert.equal(calls.some(args => args[0] === 'issue' && (args[1] === 'edit' || args[1] === 'close')), false);
 
     const forced = await completeIssue({ issueNumber: 93, dryRun: true, checkOnly: false, force: true, exec, config: getDefaults() });
-    assert.equal(forced.ok, true);
-    assert.equal(forced.action, 'planned');
+    assert.equal(forced.ok, false);
+    assert.equal(forced.action, 'blocked');
     assert.equal(forced.forced, true);
-    assert.match(forced.warnings.join('\n'), /Force enabled/);
+    assert.match(forced.reason, /--force cannot bypass acceptance criteria/);
   });
 
   it('rejects open issues that are not active completion targets', async () => {

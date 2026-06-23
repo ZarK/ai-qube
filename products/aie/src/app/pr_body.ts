@@ -251,7 +251,7 @@ function blockerItems(gates: PrBodyGateLine[], audit: UiAuditResult, review: Rev
   for (const diagnostic of prReview?.checkDiagnostics ?? []) {
     if (diagnostic.status === 'failed-current-head-run') blockers.push(readinessItem(ciReasonCode(diagnostic), diagnostic.nextAction, 'github-pr', 'trusted-provider'));
   }
-  if (issueChecklist && issueChecklist.checklist.unchecked > 0) blockers.push(readinessItem('issue-checklist-unchecked', `Issue #${issueChecklist.issue.number} has ${issueChecklist.checklist.unchecked} unchecked checklist item(s).`, 'github-pr', 'trusted-provider'));
+  if (issueChecklist && issueChecklist.checklist.unchecked > 0) blockers.push(readinessItem('issue-checklist-unchecked', `Issue #${issueChecklist.issue.number} has ${issueChecklist.checklist.unchecked} unchecked checklist item(s); verify them one at a time with \`aie checklist verify ${issueChecklist.issue.number} --index <n>\`.`, 'github-pr', 'trusted-provider'));
   return blockers;
 }
 

@@ -284,7 +284,7 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   if (localReview.required && localReview.status !== 'passed') return localReview.nextAction;
   if (status === 'inconclusive') return localReview.nextAction;
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
-  if (hasUncheckedIssueChecklist(issueChecklists)) return 'Update linked GitHub issue checklist items with `aie checklist update <issue> --index <n>`, rerun affected gates if needed, then rerun `aie pr gate`.';
+  if (hasUncheckedIssueChecklist(issueChecklists)) return 'Verify each unchecked linked GitHub issue criterion with `aie checklist verify <issue> --index <n> --prompt`, then rerun with criterion evidence and rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
   if (status === 'unavailable') return 'Some PR review state was unavailable. Inspect GitHub manually, fix permissions or connectivity, then rerun `aie pr gate`.';
   const ciDiagnostic = actionableCiDiagnostic(checkDiagnostics);
