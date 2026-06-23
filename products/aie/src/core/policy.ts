@@ -75,6 +75,7 @@ export interface ReviewLanePolicy {
   prompt: string[];
   tools: string[];
   runner: 'github-comment' | 'github-reviewer' | 'local-command' | 'local-host' | 'manual-evidence';
+  command?: string;
 }
 
 export interface ReviewPolicy {
@@ -216,6 +217,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
         match: uniqueStrings(lane.match, 'reviews.lanes.match'),
         prompt: uniqueStrings(lane.prompt, 'reviews.lanes.prompt'),
         tools: uniqueStrings(lane.tools, 'reviews.lanes.tools'),
+        command: lane.command?.trim() ? lane.command.trim() : undefined,
       })),
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),

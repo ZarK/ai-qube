@@ -136,7 +136,7 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.prReview.readiness, 'ready');
     assert.equal(diagnostics.prReview.adapter, 'mixed');
     assert.deepEqual(diagnostics.prReview.localReviewers, ['local-oracle']);
-    assert.equal(diagnostics.prReview.localRunnerReadiness, 'unavailable');
+    assert.equal(diagnostics.prReview.localRunnerReadiness, 'missing');
     assert.equal(diagnostics.prReview.reviewWaitMinutes, 3);
     assert.equal(diagnostics.reviewAgent.adapter, 'mixed');
     assert.equal(diagnostics.reviewAgent.descriptorSupport.available, true);
@@ -146,7 +146,9 @@ describe('doctor diagnostics', () => {
     assert.ok(diagnostics.reviewAgent.descriptorSupport.promptFragments.some(fragment => fragment.id === 'safety/review-output-untrusted'));
     assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
     assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/pr-reviews');
-    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'unavailable');
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
     assert.equal(diagnostics.aiq.enabled, true);
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
@@ -157,6 +159,54 @@ describe('doctor diagnostics', () => {
     assert.ok(!diagnostics.externalServices.includes('local-oracle'));
     assert.equal(diagnostics.supplyChain.readiness, 'ready');
     assert.ok(diagnostics.supplyChain.supplyChainSensitiveGates.includes('build'));
+  });
+
+  it('reports configured local-command runner readiness separately from Codex prompt-only support', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-command',
+      command: 'aie:fixture-local-review',
+    }];
+
+    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+
+    assert.equal(diagnostics.reviewAgent.descriptorSupport.runnerAvailable, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
+    assert.ok(diagnostics.reviewAgent.localRunner.codex.missingCapabilities.includes('independent-reviewer-execution'));
+    assert.equal(diagnostics.prReview.localRunnerReadiness, 'ready');
+  });
+
+  it('reports configured local-host command as Codex independent review capability', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+      command: 'aie:fixture-local-review',
+    }];
+
+    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+
+    assert.equal(diagnostics.reviewAgent.descriptorSupport.runnerAvailable, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
+    assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
   });
 
   it('redacts token-like values from gate readiness diagnostics', () => {

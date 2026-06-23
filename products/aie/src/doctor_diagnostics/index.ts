@@ -12,6 +12,7 @@ import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
+import { probeCodexReviewCapability } from '../app/local_review_runner.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 
@@ -230,28 +231,51 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       ? 'ready'
       : 'needs-action';
   const prReviewReadiness: DoctorReadinessStatus = options.ghAuthenticated ? 'ready' : 'missing';
+  const localCommandLanes = config.reviewLanes.filter(lane => lane.runner === 'local-command' && lane.command?.trim());
+  const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
+  const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
+  const codexReviewCapability = probeCodexReviewCapability(localHostCommand);
+  const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
+  const localRunnerReadiness: DoctorReadinessStatus = !(localReviewEnabled || localReviewShadow)
+    ? 'disabled'
+    : localCommandLanes.length > 0 || localHostCommand
+      ? 'ready'
+      : localHostLanes.length > 0
+        ? 'unavailable'
+        : 'missing';
   const localRunner = {
-    configured: false,
-    readiness: localReviewEnabled || localReviewShadow ? 'unavailable' as const : 'disabled' as const,
-    command: null,
+    configured: localRunnerConfigured,
+    readiness: localRunnerReadiness,
+    command: localCommandLanes[0]?.command ?? localHostCommand,
     capabilities: {
-      canRun: false,
+      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand),
       canComment: false,
       canInline: false,
       canUseTools: false,
-      canRunShell: false,
+      canRunShell: localCommandLanes.length > 0 || Boolean(localHostCommand),
       canUseBrowser: false,
       canReadMcp: false,
       canAccessNetwork: false,
       canWriteEvidence: true,
       supportsJson: true,
       supportsPromptStack: true,
-      supportsIncrementalReview: false,
+      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand),
     },
-    missingTools: localReviewEnabled || localReviewShadow ? ['local-review-runner'] : [],
-    nextAction: localReviewEnabled || localReviewShadow
-      ? 'No local review runner is configured. Record local review evidence manually in the repository-scoped evidence path, or configure a real runner before relying on runner automation.'
-      : 'Local review evidence is disabled by the selected review adapter.',
+    missingTools: localRunnerReadiness === 'missing' ? ['local-command review lane command'] : localRunnerReadiness === 'unavailable' ? ['independent-reviewer-execution'] : [],
+    codex: {
+      independentReviewer: codexReviewCapability.independentReviewer,
+      promptOnly: codexReviewCapability.promptOnly,
+      hooks: codexReviewCapability.hooks,
+      evidenceWriting: codexReviewCapability.evidenceWriting,
+      missingCapabilities: codexReviewCapability.missingCapabilities,
+    },
+    nextAction: localRunnerReadiness === 'ready'
+      ? 'Local review lanes are configured; run `aie pr gate <pr> --dry-run --json` to inspect planned lane execution.'
+      : localRunnerReadiness === 'unavailable'
+        ? codexReviewCapability.nextAction
+        : localRunnerReadiness === 'missing'
+          ? 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
+          : 'Local review evidence is disabled by the selected review adapter.',
   };
   const policy = config.supplyChain;
   const supplyChainReady = policy.packageAgeDays <= policy.highRiskPackageAgeDays && policy.disableLifecycleScripts && policy.intentionalLockfileChanges;
@@ -290,7 +314,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       readiness: 'ready',
       descriptorSupport: {
         available: true,
-        runnerAvailable: false,
+        runnerAvailable: localRunner.readiness === 'ready',
         categories: descriptorSummary.categories.map(category => category.id),
         agents: descriptorSummary.agents.map(agent => agent.id),
         promptFragments: descriptorSummary.promptFragments,

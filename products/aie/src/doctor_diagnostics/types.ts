@@ -220,6 +220,13 @@ export interface GateReadinessDiagnostics {
         supportsIncrementalReview: boolean;
       };
       missingTools: string[];
+      codex: {
+        independentReviewer: boolean;
+        promptOnly: boolean;
+        hooks: boolean;
+        evidenceWriting: boolean;
+        missingCapabilities: string[];
+      };
       nextAction: string;
     };
     externalServices: string[];

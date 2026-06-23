@@ -4,6 +4,7 @@ import { configToExecutorPolicy } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
 import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewProvider, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
 import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
 
@@ -94,6 +95,7 @@ export interface PrGateResult {
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
   checkDiagnostics: PrGateCheckDiagnostic[];
+  localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
@@ -390,16 +392,28 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const linkedChecklistWarnings: string[] = [];
   const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings];
+  const localRequired = localReviewRequired(config);
+  const localShadow = localReviewShadow(config);
+  const localReviewRunner = await runLocalReviewRunner(config, {
+    repoRoot: options.repoRoot ?? process.cwd(),
+    issueNumbers: finalSnapshot.closingIssueNumbers,
+    prNumber: options.prNumber,
+    headSha: finalSnapshot.pr.headRefOid,
+    required: localRequired,
+    shadow: localShadow,
+    dryRun,
+    exec: options.exec,
+  });
   const localReview = readLocalReviewGate({
     repoRoot: options.repoRoot ?? process.cwd(),
     issueNumbers: finalSnapshot.closingIssueNumbers,
     prNumber: options.prNumber,
     headSha: finalSnapshot.pr.headRefOid,
     reviewers: config.localReviewAgents,
-    required: localReviewRequired(config),
+    required: localRequired,
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
-    shadow: localReviewShadow(config),
+    shadow: localShadow,
   });
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow');
   return {
@@ -414,6 +428,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     actions,
     feedback,
     checkDiagnostics,
+    localReviewRunner,
     localReview,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
@@ -443,6 +458,10 @@ export function formatPrGate(result: PrGateResult): string {
   lines.push('Actions:');
   for (const action of result.actions) lines.push(`- ${action.status}: ${action.description}`);
   lines.push(`Feedback counts: comments=${result.counts.comments}, reviews=${result.counts.reviews}, reviewComments=${result.counts.reviewComments}, unresolvedThreads=${result.counts.unresolvedThreads}.`);
+  lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
+  for (const lane of result.localReviewRunner.lanes) {
+    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; evidence=${lane.evidencePath}`);
+  }
   lines.push(`Local review evidence: ${result.localReview.mode}; profile=${result.localReview.profile}; status=${result.localReview.required || result.localReview.mode === 'shadow' ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
   if (result.localReview.required || result.localReview.mode === 'shadow') {
     for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
