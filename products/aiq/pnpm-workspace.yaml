@@ -29,6 +29,7 @@ registries:
   default: https://registry.npmjs.org/
 
 overrides:
+  "@babel/core": 7.29.7
   vite@7.3.5>esbuild: 0.28.1
   js-yaml: 4.2.0
   undici: 6.27.0
