@@ -780,9 +780,13 @@ describe('PR gate service', () => {
     });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const finalGate = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'final-gate.json'), 'utf8'));
 
     assert.equal(result.localReviewRunner.status, 'failed');
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'failed'));
+    assert.equal(finalGate.status, 'failed');
+    assert.equal(finalGate.recommendation, 'request-changes');
+    assert.ok(finalGate.blockers.some(blocker => blocker.includes('recorded malformed') || blocker.includes('required lane evidence')));
     assert.equal(result.localReview.status, 'missing');
     assert.equal(result.status, 'pending');
   });

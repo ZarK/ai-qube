@@ -269,7 +269,12 @@ function splitCommand(command: string): string[] {
 async function defaultExec(args: string[], cwd?: string): Promise<PrGateExecResult> {
   const [file, ...rest] = args;
   try {
-    const result = await execFileAsync(file, rest, { cwd, encoding: 'utf8' });
+    const result = await execFileAsync(file, rest, {
+      cwd,
+      encoding: 'utf8',
+      timeout: 600_000,
+      maxBuffer: 16 * 1024 * 1024,
+    });
     return { args, exitCode: 0, stdout: result.stdout, stderr: result.stderr };
   } catch (error: unknown) {
     const err = error as { code?: number; stdout?: string; stderr?: string; message?: string };
@@ -310,10 +315,21 @@ function writeLane(repoRoot: string, issueNumber: number, prNumber: number, head
   return path;
 }
 
-function synthesizeFinalGate(previous: readonly LaneEvidence[], issueNumber: number, prNumber: number, repoRoot: string, headSha: string, adapter: 'local-command' | 'local-host'): LaneEvidence {
-  const blockers = previous.flatMap(lane => lane.blockers);
-  const failed = previous.find(lane => lane.status === 'failed' || lane.status === 'needs-work' || lane.recommendation === 'request-changes' || lane.blockers.length > 0);
-  const pending = previous.find(lane => lane.status !== 'passed');
+function missingRequiredLanes(previous: readonly LaneEvidence[], requiredLanes: readonly LocalReviewLaneId[]): LocalReviewLaneId[] {
+  const previousIds = new Set(previous.map(lane => lane.id));
+  return requiredLanes.filter(lane => lane !== 'final-gate' && !previousIds.has(lane));
+}
+
+function synthesizeFinalGate(previous: readonly LaneEvidence[], requiredLanes: readonly LocalReviewLaneId[], issueNumber: number, prNumber: number, repoRoot: string, headSha: string, adapter: 'local-command' | 'local-host'): LaneEvidence {
+  const missing = missingRequiredLanes(previous, requiredLanes);
+  const nonPassing = previous.filter(lane => lane.id !== 'final-gate' && lane.status !== 'passed');
+  const blockers = [
+    ...previous.flatMap(lane => lane.blockers),
+    ...nonPassing.map(lane => `${lane.id} recorded ${lane.status} and cannot satisfy final-gate approval.`),
+    ...missing.map(lane => `${lane} did not produce required lane evidence before final-gate synthesis.`),
+  ];
+  const failed = previous.find(lane => lane.status === 'failed' || lane.status === 'needs-work' || lane.status === 'malformed' || lane.status === 'unavailable' || lane.recommendation === 'request-changes' || lane.blockers.length > 0);
+  const pending = missing.length > 0 || previous.find(lane => lane.status !== 'passed');
   const status: LocalReviewStatus = failed ? 'failed' : pending ? 'inconclusive' : 'passed';
   const evidencePath = relativePath(repoRoot, laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, 'final-gate'));
   return {
@@ -329,6 +345,23 @@ function synthesizeFinalGate(previous: readonly LaneEvidence[], issueNumber: num
     contextReviewed: previous.flatMap(lane => lane.contextReviewed),
     promptStack: promptStackEvidence('final-gate'),
     toolsUsed: adapter === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
+  };
+}
+
+function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary: string, blocker: string, command: string | null, issueNumber: number, prNumber: number, repoRoot: string, headSha: string, runner: 'local-command' | 'local-host'): LaneEvidence {
+  return {
+    id: lane,
+    status,
+    severity: status === 'failed' || status === 'malformed' ? 'high' : 'none',
+    recommendation: status === 'pending' || status === 'missing' || status === 'stale' ? 'pending' : 'request-changes',
+    summary,
+    blockers: [blocker],
+    artifacts: [],
+    commands: command ? [command] : [],
+    surfaces: ['PR'],
+    contextReviewed: defaultContext(issueNumber, prNumber),
+    promptStack: promptStackEvidence(lane),
+    toolsUsed: runner === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
   };
 }
 
@@ -362,7 +395,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const command = laneCommand(config, lane);
       if (lane === 'final-gate' && produced.length > 0 && !input.dryRun) {
         const finalAdapter = produced.some(item => item.toolsUsed.includes('local-host')) ? 'local-host' : 'local-command';
-        const finalGate = synthesizeFinalGate(produced, issueNumber, input.prNumber, input.repoRoot, input.headSha, finalAdapter);
+        const finalGate = synthesizeFinalGate(produced, requiredLanes, issueNumber, input.prNumber, input.repoRoot, input.headSha, finalAdapter);
         const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, finalGate, finalAdapter);
         written.push(writtenPath);
         lanes.push(laneRun(issueNumber, lane, finalAdapter, null, 'completed', path, finalGate.summary, null));
@@ -372,6 +405,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       if (runner === 'local-host') {
         if (!codex.independentReviewer || !command) {
           unavailable.push(`${lane}: Codex local-host runner is prompt-only; independent reviewer execution is unavailable.`);
+          produced.push(blockedLane(lane, 'unavailable', codex.nextAction, 'independent-reviewer-execution unavailable', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
           lanes.push(laneRun(issueNumber, lane, runner, command, 'unavailable', path, codex.nextAction, 'independent-reviewer-execution unavailable'));
           continue;
         }
@@ -384,6 +418,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           : await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, input.repoRoot, input.exec);
         if (!evidence) {
           failed = true;
+          produced.push(blockedLane(lane, 'malformed', 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
           lanes.push(laneRun(issueNumber, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output'));
           continue;
         }
@@ -395,6 +430,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
       if (runner !== 'local-command' || !command) {
         unavailable.push(`${lane}: no local-command runner command is configured.`);
+        produced.push(blockedLane(lane, 'unavailable', 'No runnable local-command is configured for this lane.', 'missing local-command', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
         lanes.push(laneRun(issueNumber, lane, runner, command, 'unavailable', path, 'No runnable local-command is configured for this lane.', 'missing local-command'));
         continue;
       }
@@ -407,6 +443,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         : await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, input.repoRoot, input.exec);
       if (!evidence) {
         failed = true;
+        produced.push(blockedLane(lane, 'malformed', 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
         lanes.push(laneRun(issueNumber, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output'));
         continue;
       }
