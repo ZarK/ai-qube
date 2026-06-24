@@ -8,7 +8,7 @@ const { basename, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { renderAgentPrompt } = require('../dist/agent_descriptors.js');
-const { writeTrustedLocalHostProvenance } = require('../dist/local_review_evidence.js');
+const { localReviewEvidenceSha256, writeTrustedLocalHostProvenance } = require('../dist/local_review_evidence.js');
 const { createGitHubReviewProvider } = require('../dist/providers/github/github_review_provider.js');
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
@@ -223,9 +223,10 @@ function writeLocalEvidence(repo, evidence, options = {}) {
     const runnerProvenance = lane.runnerProvenance
       ? { ...lane.runnerProvenance, promptStackHash }
       : lane.runnerProvenance;
-    writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify({ ...lane, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter }, null, 2)}\n`);
+    const body = { ...lane, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter };
+    writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify(body, null, 2)}\n`);
     if (evidence.adapter === 'local-host' && options.writeTrustedHostProvenance !== false && runnerProvenance) {
-      writeTrustedLocalHostProvenance({ repoRoot: repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance });
+      writeTrustedLocalHostProvenance({ repoRoot: repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance, evidenceSha256: localReviewEvidenceSha256(body) });
     }
   }
 }
@@ -1027,6 +1028,8 @@ describe('PR gate service', () => {
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.blocker === null));
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.runner === 'local-host'));
     assert.equal(result.localReview.status, 'missing');
+    assert.match(result.localReview.evidence[0].path, /\.qube[\\/]aie[\\/]reviews[\\/]93[\\/]12[\\/]abc123/);
+    assert.equal(result.localReviewPublish.status, 'planned');
     assert.equal(result.status, 'pending');
   });
 
@@ -1044,6 +1047,7 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'missing');
+    assert.equal(result.localReviewPublish.status, 'skipped');
     assert.ok(result.feedback.some(item => item.source === 'thread' || item.state === 'CHANGES_REQUESTED'));
     assert.match(result.nextAction, /Record local review evidence/);
     assert.match(result.nextAction, /address provider review feedback/);
@@ -1115,8 +1119,8 @@ describe('PR gate service', () => {
         const result = fixtureLocalCommand(args);
         const body = JSON.parse(result.stdout);
         if (body.lane === 'code-quality') {
-          body.summary = 'Reviewed C:\\Users\\executor\\secret\\repo\\src\\parser.ts and /home/executor/repo/src/parser.ts';
-          body.blockers = ['Inspect C:\\Users\\executor\\secret\\repo\\.env and /tmp/private-token.txt before publish'];
+          body.summary = 'Reviewed C:\\Users\\executor\\secret repo\\src\\parser.ts, \\\\server\\share\\private file.txt, and /home/executor/repo/src/parser.ts';
+          body.blockers = ['Inspect C:\\Users\\executor\\secret repo\\.env and /tmp/private-token.txt before publish'];
         }
         return { ...result, stdout: JSON.stringify(body) };
       },
@@ -1135,7 +1139,7 @@ describe('PR gate service', () => {
     assert.equal(publish.provider, 'github');
     assert.equal(publish.runId, result.localReviewPublish.runId);
     assert.equal(body.includes(repo), false);
-    assert.doesNotMatch(body, /C:\\Users\\executor|\/home\/executor|\/tmp\/private-token/);
+    assert.doesNotMatch(body, /C:\\Users\\executor|\\\\server\\share|\/home\/executor|\/tmp\/private-token|secret repo/);
     assert.match(body, /\[local-path\]/);
     assert.match(body, /<!-- qube-local-review:/);
     assert.match(body, /QUBE local review: approve/);
@@ -1359,7 +1363,7 @@ describe('PR gate service', () => {
     assert.match(result.failure, /network unavailable/);
   });
 
-  it('records Codex local-host evidence when an independent local-host runner is configured', async () => {
+  it('records Codex local-host command evidence without trusting command self-attestation', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig();
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
@@ -1371,9 +1375,10 @@ describe('PR gate service', () => {
     assert.equal(result.localReviewRunner.codex.independentReviewer, true);
     assert.deepEqual(result.localReviewRunner.codex.missingCapabilities, []);
     assert.equal(result.localReviewRunner.status, 'completed');
-    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReview.status, 'inconclusive');
     assert.equal(result.localReview.evidence[0].adapter, 'local-host');
-    assert.equal(result.status, 'complete');
+    assert.equal(result.status, 'inconclusive');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('trusted host provenance record')));
     assert.equal(lane.adapter, 'local-host');
     assert.equal(lane.reviewer.id, 'codex');
     assert.ok(lane.toolsUsed.includes('codex'));
@@ -1559,6 +1564,22 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'inconclusive');
     assert.equal(result.localReview.status, 'inconclusive');
     assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('trusted host provenance record')));
+  });
+
+  it('rejects local-host evidence tampered after trusted host provenance is recorded', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence());
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json');
+    const lane = JSON.parse(readFileSync(lanePath, 'utf8'));
+    writeFileSync(lanePath, `${JSON.stringify({ ...lane, summary: 'tampered summary after host provenance was recorded' }, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'inconclusive');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('evidence digest does not match')));
   });
 
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {

@@ -323,8 +323,9 @@ function localReviewSummary(comment: LocalReviewComment): string {
 
 function sanitizePublishedText(value: string): string {
   return redact(value)
-    .replace(/\b[A-Za-z]:[\\/][^\s)]+/g, '[local-path]')
-    .replace(/(^|[\s(:])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\s)]+/g, '$1[local-path]');
+    .replace(/\\\\[A-Za-z0-9._$-]+\\[^\r\n)<>]+/g, '[local-path]')
+    .replace(/\b[A-Za-z]:[\\/][^\r\n)<>]+/g, '[local-path]')
+    .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, '$1[local-path]');
 }
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {

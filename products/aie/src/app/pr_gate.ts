@@ -378,7 +378,7 @@ function localReviewPublishInput(input: {
   localReview: LocalReviewGate;
 }): GitHubLocalReviewPublishInput {
   return {
-    enabled: input.enabled && input.localReview.mode !== 'disabled' && input.localReview.evidence.length > 0 && input.localReview.status !== 'missing' && input.localReview.status !== 'stale',
+    enabled: input.enabled && input.localReview.mode !== 'disabled' && input.localReview.evidence.length > 0,
     dryRun: input.dryRun,
     prNumber: input.prNumber,
     headSha: input.headSha,

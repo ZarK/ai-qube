@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
 import { renderAgentPrompt } from '../agent_descriptors.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, writeTrustedLocalHostProvenance, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 
 const execFileAsync = promisify(execFile);
@@ -335,9 +335,6 @@ function writeLane(repoRoot: string, issueNumber: number, prNumber: number, head
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
-  if (adapter === 'local-host' && lane.runnerProvenance) {
-    writeTrustedLocalHostProvenance({ repoRoot, issueNumber, prNumber, headSha, lane: lane.id, provenance: lane.runnerProvenance });
-  }
   return path;
 }
 
