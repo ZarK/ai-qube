@@ -147,9 +147,9 @@ describe('doctor diagnostics', () => {
     assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
     assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/reviews');
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
     assert.equal(diagnostics.aiq.enabled, true);
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
@@ -182,8 +182,8 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
     assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['host-subagent-execution']);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
     assert.equal(diagnostics.prReview.localRunnerReadiness, 'ready');
   });
 
@@ -206,11 +206,11 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'needs-action');
     assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRun, true);
     assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRunShell, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, false);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['host-subagent-execution']);
-    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /host records local-host evidence/);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /Spawn independent Codex subagents/);
   });
 
   it('reports configured local-host command as Codex independent review capability', () => {

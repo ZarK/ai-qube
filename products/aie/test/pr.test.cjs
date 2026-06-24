@@ -1045,9 +1045,9 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
 
-    assert.equal(result.localReviewRunner.codex.independentReviewer, false);
-    assert.equal(result.localReviewRunner.codex.promptOnly, true);
-    assert.deepEqual(result.localReviewRunner.codex.missingCapabilities, ['host-subagent-execution']);
+    assert.equal(result.localReviewRunner.codex.independentReviewer, true);
+    assert.equal(result.localReviewRunner.codex.promptOnly, false);
+    assert.deepEqual(result.localReviewRunner.codex.missingCapabilities, []);
     assert.equal(result.localReviewRunner.status, 'pending');
     assert.equal(result.localReviewRunner.unavailable.length, 0);
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'pending' && lane.runner === 'local-host'));

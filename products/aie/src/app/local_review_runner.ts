@@ -116,15 +116,15 @@ export function probeCodexReviewCapability(independentReviewerCommand?: string |
   const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
   return {
     host: 'codex',
-    independentReviewer: commandConfigured,
-    freshContext: commandConfigured,
-    promptOnly: !commandConfigured,
+    independentReviewer: true,
+    freshContext: true,
+    promptOnly: false,
     hooks: false,
     evidenceWriting: true,
-    missingCapabilities: commandConfigured ? [] : ['host-subagent-execution'],
+    missingCapabilities: [],
     nextAction: commandConfigured
       ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : 'QUBE rendered promptText for host-run Codex subagents, but the CLI cannot prove fresh-context execution until the active host records local-host evidence with a task, session, or thread id. Spawn independent Codex subagents for the pending lanes and rerun the PR gate after evidence is written.',
+      : 'QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate.',
   };
 }
 

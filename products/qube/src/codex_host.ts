@@ -82,6 +82,13 @@ const SUPPORTED_CAPABILITIES = Object.freeze([
     nextAction: "Use qube aie audit ui <issue> for evidence guidance, start the app, then inspect the real page with the Codex browser.",
   }),
   freezeCapability({
+    id: "spawn-fresh-reviewer",
+    support: "host-provided",
+    owner: "Codex app",
+    summary: "Codex can delegate bounded read-only review work to fresh subagents; QUBE renders explicit prompt bundles and requires recorded local-host provenance before gates pass.",
+    nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts, spawn Codex subagents from the active host, and record local-host evidence with task/session/thread provenance.",
+  }),
+  freezeCapability({
     id: "handoff-worktree",
     support: "host-provided",
     owner: "Codex app",
@@ -104,13 +111,6 @@ const UNSUPPORTED_CAPABILITIES = Object.freeze([
     owner: "@tjalve/aie",
     summary: "Codex host support does not directly invoke configured external PR reviewers.",
     nextAction: "Use qube aie review gate <issue> --prompt and qube aie pr gate <pr> for review workflow.",
-  }),
-  freezeCapability({
-    id: "spawn-fresh-reviewer",
-    support: "unsupported",
-    owner: "@tjalve/qube CLI",
-    summary: "The standalone QUBE CLI cannot itself spawn a fresh Codex reviewer context; it can only render explicit prompt bundles for the active Codex host to execute.",
-    nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts, then have the active Codex host spawn subagents and record local-host evidence with task/session/thread provenance.",
   }),
   freezeCapability({
     id: "create-git-branch",

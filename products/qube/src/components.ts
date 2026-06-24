@@ -33,13 +33,13 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     capabilities: {
       localReview: {
-        freshContextReviewerSupport: "prompt-only",
+        freshContextReviewerSupport: "host-provided",
         promptOnlyFallback: true,
         manualEvidenceSatisfiesRequiredGate: false,
         provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "taskId/sessionId/threadId", "promptStackHash", "headSha", "providerPublishStatus"],
         evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
         hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
-        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active host, not the standalone QUBE CLI, must spawn independent subagents and record matching local-host provenance before required gates can pass."
+        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."
       }
     }
   },
