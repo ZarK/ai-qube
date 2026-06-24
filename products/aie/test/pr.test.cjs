@@ -1010,6 +1010,40 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
   });
 
+  it('plans commandless Codex local-host lanes during dry-run', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.localReviewRunner.status, 'planned');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.blocker === null));
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.runner === 'local-host'));
+    assert.equal(result.localReview.status, 'missing');
+    assert.equal(result.status, 'pending');
+  });
+
+  it('surfaces provider feedback when local review evidence is still missing', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const pr = basePr({
+      reviewDecision: 'CHANGES_REQUESTED',
+      latestReviews: [{ author: { login: 'reviewer' }, state: 'CHANGES_REQUESTED', body: 'Please fix this.' }],
+    });
+    const threads = [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Unresolved thread.', url: 'https://github.com/example/repo/pull/12#discussion_r1' }] } }];
+    const { exec } = makePrExec({ prViews: [pr], threads: [threads] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'missing');
+    assert.ok(result.feedback.some(item => item.source === 'thread' || item.state === 'CHANGES_REQUESTED'));
+    assert.match(result.nextAction, /Record local review evidence/);
+    assert.match(result.nextAction, /address provider review feedback/);
+  });
+
   it('includes commandless Codex prompt bodies only when explicitly requested', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

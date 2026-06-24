@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
-import { configToExecutorPolicy } from '../config_policy.js';
+import { configToExecutorPolicy, prThreadContextMode } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
 import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
@@ -260,6 +260,10 @@ function configuredReviewersSatisfied(reviewers: PrGateReviewer[]): boolean {
   return reviewers.every(reviewer => reviewer.requestedForHead && !reviewer.pending && !reviewer.staleRequest);
 }
 
+function hasActionableFeedback(feedback: PrGateFeedback[]): boolean {
+  return feedback.some(entry => entry.source === 'thread' || entry.state === 'CHANGES_REQUESTED');
+}
+
 function localStatus(status: LocalReviewStatus): PrGateStatus | null {
   if (status === 'passed') return null;
   if (status === 'stale') return 'rerun-required';
@@ -276,7 +280,7 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   }
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
-  if (feedback.some(entry => entry.source === 'thread' || entry.state === 'CHANGES_REQUESTED')) return 'failed';
+  if (hasActionableFeedback(feedback)) return 'failed';
   if (unavailable.length > 0) return 'unavailable';
   if ((!localOnly && item.reviewDecision === 'review-required') || reviewers.some(reviewer => reviewer.pending)) return 'pending';
   if (item.reviewDecision === 'approved') return 'complete';
@@ -288,8 +292,11 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
   return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate): string {
-  if (localReview.required && localReview.status !== 'passed') return localReview.nextAction;
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[]): string {
+  if (localReview.required && localReview.status !== 'passed') {
+    const feedbackAction = hasActionableFeedback(feedback) ? ' Also inspect and address provider review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
+    return `${localReview.nextAction}${feedbackAction}`;
+  }
   if (status === 'inconclusive') return localReview.nextAction;
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Verify each unchecked linked GitHub issue criterion with `aie checklist verify <issue> --index <n> --prompt`, then rerun with criterion evidence and rerun `aie pr gate`.';
@@ -536,7 +543,7 @@ async function changedReviewPaths(config: Config, repoRoot: string): Promise<str
 async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: { item: ReviewItem; pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const paths = await changedReviewPaths(config, repoRoot);
   const sources = config.reviewContextSources;
-  const reviewThreadMode = sources[('review' + 'Threads') as keyof typeof sources];
+  const reviewThreadMode = prThreadContextMode(sources);
   const requirementSources = sources.requirements.length > 0 ? sources.requirements.join(', ') : 'none configured';
   const changedPaths = paths.length > 0 ? paths.join(', ') : 'no changed paths were available from local git diff commands';
   return [
@@ -697,7 +704,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback),
   };
 }
 

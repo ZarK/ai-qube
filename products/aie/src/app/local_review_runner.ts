@@ -389,7 +389,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     const evidencePaths = issueNumbers.map(issueNumber => laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane));
     const path = evidencePaths[0];
     const summary = codexSubagentSummary(lane, issueNumbers, input.prNumber, input.headSha, evidencePaths);
-    lanes.push(laneRun(issueNumbers[0], input.prNumber, input.headSha, lane, 'local-host', null, 'pending', path, summary, 'codex-subagent-review-required', contextLines, includePrompt, issueNumbers, evidencePaths));
+    const status = input.dryRun ? 'planned' : 'pending';
+    const blocker = input.dryRun ? null : 'codex-subagent-review-required';
+    lanes.push(laneRun(issueNumbers[0], input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, contextLines, includePrompt, issueNumbers, evidencePaths));
   }
 
   for (const issueNumber of input.issueNumbers) {

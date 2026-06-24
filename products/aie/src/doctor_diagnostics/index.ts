@@ -214,7 +214,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localReviewEnabled = config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed';
   const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
   const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
-  const localEvidenceRoot = '.qube/aie/pr-reviews';
+  const localEvidenceRoot = '.qube/aie/reviews';
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit);
   const fallbackBrowserAutomation = toolAvailability('playwright', false);
   const aiqTool = toolAvailability('aiq', config.qualityControl);

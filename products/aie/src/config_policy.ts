@@ -1,7 +1,11 @@
 import type { Config } from './config/index.js';
-import { normalizeExecutorPolicy, type ExecutorPolicy } from './core/policy.js';
+import { normalizeExecutorPolicy, type ExecutorPolicy, type ReviewContextSources } from './core/policy.js';
 import { expandGateConfigs } from './gate_config.js';
 import { isSupplyChainSensitive } from './gate_sensitivity.js';
+
+export function prThreadContextMode(sources: ReviewContextSources): ReviewContextSources['reviewThreads'] {
+  return sources.reviewThreads;
+}
 
 export function configToExecutorPolicy(config: Config): ExecutorPolicy {
   const gates = expandGateConfigs(config.gates, config.qualityGates, config.qualityControl);

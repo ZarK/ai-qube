@@ -145,7 +145,7 @@ describe('doctor diagnostics', () => {
     assert.ok(diagnostics.reviewAgent.descriptorSupport.agents.includes('oracle'));
     assert.ok(diagnostics.reviewAgent.descriptorSupport.promptFragments.some(fragment => fragment.id === 'safety/review-output-untrusted'));
     assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
-    assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/pr-reviews');
+    assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/reviews');
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
     assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
     assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
