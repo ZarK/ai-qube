@@ -1132,13 +1132,15 @@ describe('PR gate service', () => {
     const pr = cleanLocalPr({ closingIssuesReferences: [{ number: 93 }, { number: 94 }] });
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
     assert.equal(result.localReviewRunner.lanes.length, 12);
     assert.equal(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 93).length, 6);
     assert.equal(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 94).length, 6);
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.issueNumbers.join(',') === String(lane.issueNumber)));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.issueNumbers[0] === lane.issueNumber));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.issueNumbers.includes(93) && lane.issueNumbers.includes(94)));
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.evidencePaths.length === 1));
+    assert.match(result.localReviewRunner.lanes[0].promptText, /Linked issues for this PR-level lane: #93, #94/);
     assert.ok(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 93).every(lane => lane.evidencePath.includes('\\93\\12\\abc123') || lane.evidencePath.includes('/93/12/abc123')));
     assert.ok(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 94).every(lane => lane.evidencePath.includes('\\94\\12\\abc123') || lane.evidencePath.includes('/94/12/abc123')));
   });
@@ -1174,6 +1176,21 @@ describe('PR gate service', () => {
     assert.match(bundle.outputContract, /Return JSON local review lane evidence/);
     assert.equal(bundle.promptStackHash, lane.runnerProvenance.promptStackHash);
     assert.equal(bundle.evidencePath, lanePath);
+  });
+
+  it('blocks executable local review commands when the trusted base cannot be verified', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.ok(['pending', 'unavailable'].includes(result.localReviewRunner.status));
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'unavailable'));
+    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
+    assert.ok(['pending', 'unavailable'].includes(result.status));
   });
 
   it('publishes local-command review results as provider-visible PR feedback', async () => {

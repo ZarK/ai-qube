@@ -328,6 +328,34 @@ describe('review gate CLI', () => {
     assert.throws(() => readFileSync(marker, 'utf8'));
   });
 
+  it('emits Codex fresh-context reviewer capability in review gate JSON', () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.lanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+    writeConfig(repo, config);
+
+    const result = binRun(['review', 'gate', '93', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.localReviewRunner.codex.host, 'codex');
+    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
+    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
+    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
+    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
+    assert.match(parsed.localReviewRunner.codex.nextAction, /Spawn independent Codex subagents/);
+  });
+
   it('fails review gate commands on malformed trusted config', () => {
     const repo = makeGitRepo();
     const config = cleanConfig();

@@ -36,7 +36,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
         freshContextReviewerSupport: "host-provided",
         promptOnlyFallback: true,
         manualEvidenceSatisfiesRequiredGate: false,
-        provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "taskId/sessionId/threadId", "promptStackHash", "headSha", "providerPublishStatus"],
+        provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "taskId/sessionId/threadId", "promptStackHash", "headSha"],
         evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
         hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
         nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
@@ -319,10 +319,11 @@ async function executableReviewCommandsTrusted(repoRoot: string): Promise<boolea
   } catch {
     return true;
   }
+  if (!existsSync(join(repoRoot, '.qube', 'aie', 'config.json'))) return true;
   try {
     await execFileAsync('git', ['rev-parse', '--verify', 'origin/main'], { cwd: repoRoot });
   } catch {
-    return true;
+    return false;
   }
   try {
     await execFileAsync('git', ['diff', '--quiet', '--', '.qube/aie/config.json'], { cwd: repoRoot });
@@ -502,10 +503,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   for (const lane of commandlessHostLanes) {
     for (const issueNumber of input.issueNumbers) {
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
+      const linkedIssueNumbers = [issueNumber, ...input.issueNumbers.filter(linkedIssueNumber => linkedIssueNumber !== issueNumber)];
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, contextLines, includePrompt, [issueNumber], [path]));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, contextLines, includePrompt, linkedIssueNumbers, [path]));
     }
   }
 
