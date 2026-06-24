@@ -32,6 +32,12 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
+function commitTrustedBase(repo) {
+  execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'trusted base'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: repo, stdio: 'ignore' });
+}
+
 function writeWorkflow(repo, body) {
   mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
   writeFileSync(join(repo, '.github', 'workflows', 'ci.yml'), body);
@@ -1193,6 +1199,54 @@ describe('PR gate service', () => {
     assert.ok(['pending', 'unavailable'].includes(result.status));
   });
 
+  it('blocks executable local review commands when trusted config has worktree drift', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+    commitTrustedBase(repo);
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'mixed' } } });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'unavailable'));
+    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
+  });
+
+  it('blocks executable local review commands when trusted config has staged drift', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+    commitTrustedBase(repo);
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'mixed' } } });
+    execFileSync('git', ['add', '.qube/aie/config.json'], { cwd: repo, stdio: 'ignore' });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'unavailable'));
+    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
+  });
+
+  it('blocks executable local review commands when trusted config differs from origin main', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+    commitTrustedBase(repo);
+    writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'mixed' } } });
+    execFileSync('git', ['add', '.qube/aie/config.json'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'change review config'], { cwd: repo, stdio: 'ignore' });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'unavailable'));
+    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
+  });
+
   it('publishes local-command review results as provider-visible PR feedback', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
@@ -1235,6 +1289,23 @@ describe('PR gate service', () => {
     assert.match(body, /"issueNumbers":\[93\]/);
     assert.match(body, /local evidence \.qube\/aie\/reviews\/93\/12\/abc123/);
     assert.match(body, /inline comments: unsupported/);
+  });
+
+  it('keeps mixed dry-run pending when provider-visible local review publishing is only planned', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    writeLocalEvidence(repo, localEvidence(), { reviewDecision: 'APPROVED' });
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ reviewDecision: 'APPROVED' })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'planned');
+    assert.equal(result.status, 'pending');
+    assert.match(result.nextAction, /without --dry-run to publish/);
   });
 
   it('does not mutate digest-bound local-host evidence when publishing provider feedback', async () => {
@@ -1454,6 +1525,37 @@ describe('PR gate service', () => {
     assert.equal(planned.status, 'planned');
     assert.equal(result.status, 'skipped');
     assert.match(result.nextAction, /already published/);
+  });
+
+  it('uses runner and host in local review publish run ids', async () => {
+    const input = {
+      enabled: true,
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      runner: 'local-command',
+      host: 'local-command',
+      evidencePath: '.qube/aie/reviews/93/12/abc123',
+      issueNumbers: [93],
+      lanes: ['task-record-compliance', 'issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'],
+      summary: 'local review passed',
+      findings: [],
+    };
+    const provider = createGitHubReviewProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const localCommand = await provider.publishLocalReviewFeedback(snapshot.item, input);
+    const localHost = await provider.publishLocalReviewFeedback(snapshot.item, { ...input, runner: 'local-host', host: 'codex' });
+
+    assert.equal(localCommand.status, 'planned');
+    assert.equal(localHost.status, 'planned');
+    assert.notEqual(localCommand.runId, localHost.runId);
+    assert.match(localCommand.marker ?? '', /"runner":"local-command"/);
+    assert.match(localHost.marker ?? '', /"runner":"local-host"/);
+    assert.match(localHost.marker ?? '', /"host":"codex"/);
   });
 
   it('returns failed local review publishing results when gh comment execution throws', async () => {
@@ -1851,10 +1953,12 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
 
-    assert.equal(result.status, 'complete');
+    assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'planned');
     assert.equal(result.reviewers.length, 1);
     assert.equal(result.reviewers[0].requestedForHead, true);
+    assert.match(result.nextAction, /without --dry-run to publish/);
   });
 
   it('surfaces current-head CI diagnostics in PR gate output', async () => {
@@ -1938,6 +2042,22 @@ describe('PR gate service', () => {
     assert.equal(result.unavailable.length, 0);
     assert.equal(result.reviewers[0].requestedForHead, true);
     assert.ok(calls.some(args => args.join(' ') === 'pr view 12 --json comments'));
+  });
+
+  it('blocks PR gate completion when provider review comments are unavailable', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ reviewDecision: 'APPROVED' })] });
+    const exec = async args => {
+      if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/comments') return { args, exitCode: 1, stdout: '', stderr: 'review comment outage' };
+      return fixture.exec(args);
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'unavailable');
+    assert.ok(result.unavailable.some(item => item.includes('Review comments unavailable')));
+    assert.match(result.nextAction, /unavailable/);
   });
 
   it('sanitizes hidden bot state from actionable feedback summaries', async () => {

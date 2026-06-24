@@ -277,12 +277,13 @@ function localStatus(status: LocalReviewStatus): PrGateStatus | null {
   return 'pending';
 }
 
-function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[], localReview: LocalReviewGate, localOnly: boolean, blockingUnavailable: boolean): PrGateStatus {
+function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], issueChecklists: IssueChecklistSummary[], localReview: LocalReviewGate, localOnly: boolean, blockingUnavailable: boolean, publishPending: boolean): PrGateStatus {
   if (blockingUnavailable) return 'unavailable';
   if (localReview.required) {
     const local = localStatus(localReview.status);
     if (local) return local;
   }
+  if (publishPending) return 'pending';
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
   if (hasActionableFeedback(feedback)) return 'failed';
@@ -296,12 +297,13 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
   return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[]): string {
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[], localReviewPublish: GitHubLocalReviewPublishResult): string {
   if (status === 'unavailable') return 'Some PR review state or local review runner availability state was unavailable. Inspect the unavailable list, fix permissions, connectivity, or runner output, then rerun `aie pr gate`.';
   if (localReview.required && localReview.status !== 'passed') {
     const feedbackAction = hasActionableFeedback(feedback) ? ' Also inspect and address provider review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
     return `${localReview.nextAction}${feedbackAction}`;
   }
+  if (localReviewPublish.status === 'planned' || localReviewPublish.status === 'pending') return localReviewPublish.nextAction;
   if (status === 'inconclusive') return localReview.nextAction;
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Verify each unchecked linked GitHub issue criterion with `aie checklist verify <issue> --index <n> --prompt`, then rerun with criterion evidence and rerun `aie pr gate`.';
@@ -356,6 +358,21 @@ function localReviewHost(localReviewRunner: LocalReviewRunResult): string {
   return localReviewRunner.lanes.some(lane => lane.runner === 'local-host') ? localReviewRunner.codex.host : localReviewRunnerKind(localReviewRunner);
 }
 
+function localReviewEvidenceRunner(input: { localReviewRunner: LocalReviewRunResult; localReview: LocalReviewGate }): { runner: string; host: string } {
+  const provenances = input.localReview.evidence
+    .flatMap(evidence => [
+      evidence.runnerProvenance,
+      ...evidence.lanes.map(lane => lane.runnerProvenance),
+    ])
+    .filter((provenance): provenance is NonNullable<typeof provenance> => provenance !== null);
+  const runners = [...new Set(provenances.map(provenance => provenance.runnerKind))];
+  const hosts = [...new Set(provenances.map(provenance => provenance.host).filter(host => host.trim() !== ''))];
+  return {
+    runner: runners.length === 1 ? runners[0] : localReviewRunnerKind(input.localReviewRunner),
+    host: hosts.length === 1 ? hosts[0] : localReviewHost(input.localReviewRunner),
+  };
+}
+
 function localReviewEvidencePath(repoRoot: string, localReview: LocalReviewGate): string | null {
   const evidencePath = localReview.evidence.map(evidence => evidence.path).find((path): path is string => typeof path === 'string' && path.trim() !== '');
   if (!evidencePath) return null;
@@ -386,6 +403,7 @@ function localReviewPublishInput(input: {
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
 }): GitHubLocalReviewPublishInput {
+  const evidenceRunner = localReviewEvidenceRunner(input);
   return {
     enabled: input.enabled && input.localReview.mode !== 'disabled' && hasPublishableLocalReviewEvidence(input.localReview),
     dryRun: input.dryRun,
@@ -394,8 +412,8 @@ function localReviewPublishInput(input: {
     profile: input.localReview.profile,
     status: input.localReview.status,
     recommendation: localReviewRecommendation(input.localReview.status),
-    runner: localReviewRunnerKind(input.localReviewRunner),
-    host: localReviewHost(input.localReviewRunner),
+    runner: evidenceRunner.runner,
+    host: evidenceRunner.host,
     evidencePath: localReviewEvidencePath(input.repoRoot, input.localReview),
     issueNumbers: input.localReview.evidence.map(evidence => evidence.issueNumber).filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && issueNumber > 0),
     lanes: [...new Set(input.localReview.evidence.flatMap(evidence => evidence.lanes.map(lane => lane.id)))],
@@ -516,7 +534,7 @@ function uniqueStrings(values: readonly string[]): string[] {
 
 async function gitPathLines(repoRoot: string, args: readonly string[]): Promise<string[]> {
   try {
-    const result = await execFileAsync('git', [...args], { cwd: repoRoot, maxBuffer: 1024 * 1024 });
+    const result = await execFileAsync('git', [...args], { cwd: repoRoot, maxBuffer: 1024 * 1024, timeout: 10_000 });
     return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
   } catch {
     return [];
@@ -525,7 +543,7 @@ async function gitPathLines(repoRoot: string, args: readonly string[]): Promise<
 
 async function gitText(repoRoot: string, args: readonly string[], maxCharacters = 6000): Promise<string> {
   try {
-    const result = await execFileAsync('git', [...args], { cwd: repoRoot, maxBuffer: 1024 * 1024 });
+    const result = await execFileAsync('git', [...args], { cwd: repoRoot, maxBuffer: 1024 * 1024, timeout: 10_000 });
     return result.stdout.trim().slice(0, maxCharacters);
   } catch {
     return '';
@@ -689,7 +707,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', (localReviewRunner.status === 'failed' && localReview.status === 'missing') || publishUnavailable.length > 0);
+  const publishPending = localReviewPublish.status === 'planned' || localReviewPublish.status === 'pending';
+  const providerStateUnavailable = githubReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', (localReviewRunner.status === 'failed' && localReview.status === 'missing') || publishUnavailable.length > 0 || providerStateUnavailable, publishPending);
   return {
     ok: true,
     command: 'pr gate',
@@ -717,7 +737,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, localReviewPublish),
   };
 }
 

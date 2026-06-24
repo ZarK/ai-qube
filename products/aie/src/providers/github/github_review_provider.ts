@@ -245,6 +245,8 @@ function stableRunId(input: GitHubLocalReviewPublishInput): string {
   return createHash('sha256')
     .update(JSON.stringify({
       head: input.headSha,
+      runner: input.runner,
+      host: input.host,
       profile: input.profile,
       lanes: input.lanes,
       status: input.status,

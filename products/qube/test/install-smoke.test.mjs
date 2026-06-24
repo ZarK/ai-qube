@@ -79,8 +79,9 @@ describe("packed QUBE install smoke", () => {
     await runPnpm(["install", "--ignore-scripts"], target);
 
     const components = await runPnpm(["exec", "qube", "components", "--json"], target);
+    const parsedComponents = JSON.parse(components.stdout).components;
     assert.deepEqual(
-      JSON.parse(components.stdout).components.map(component => [
+      parsedComponents.map(component => [
         component.id,
         component.command,
         component.packageName,
@@ -93,6 +94,9 @@ describe("packed QUBE install smoke", () => {
         ["umpire", "aiu", "@tjalve/aiu", "0.0.4"]
       ]
     );
+    const executor = parsedComponents.find(component => component.id === "executor");
+    assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
+    assert.equal(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"), false);
 
     const dispatched = await runPnpm(["exec", "qube", "run", "aib", "--", "status", "--json"], target);
     assert.equal(dispatched.stdout.trim(), "aib 0.1.1 status --json");
