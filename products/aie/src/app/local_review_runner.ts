@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
@@ -197,6 +197,11 @@ function promptTextHash(text: string): string {
   return hash(text);
 }
 
+function lanePromptStackHash(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], repoRoot: string): string {
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot));
+  return promptTextHash(rendered.text);
+}
+
 function defaultContext(issueNumber: number, prNumber: number): LocalReviewContextReviewed[] {
   return [
     { kind: 'issue-body', source: `issue:${issueNumber}`, trust: 'untrusted-task-input', freshness: 'current' },
@@ -313,8 +318,61 @@ async function defaultExec(args: string[], cwd?: string): Promise<PrGateExecResu
   }
 }
 
-async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
-  const args = [...splitCommand(command), '--lane', lane, '--issue', String(issueNumber), '--pr', String(prNumber), '--head', headSha, '--profile', profile, '--runner-kind', runnerKind, '--prompt-stack-hash', expectedPromptStackHash];
+function reviewBundlePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(repoRoot, '.git', 'qube', 'aie', 'review-inputs', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+}
+
+function writeReviewBundle(input: {
+  repoRoot: string;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  lane: LocalReviewLaneId;
+  profile: LocalReviewProfile;
+  runnerKind: 'local-command' | 'local-host';
+  promptText: string;
+  outputContract: string;
+  promptFragmentIds: readonly string[];
+  promptStackHash: string;
+  evidencePath: string;
+}): string {
+  const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({
+    version: 1,
+    issueNumber: input.issueNumber,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    lane: input.lane,
+    profile: input.profile,
+    runnerKind: input.runnerKind,
+    promptStackHash: input.promptStackHash,
+    promptFragmentIds: input.promptFragmentIds,
+    evidencePath: input.evidencePath,
+    promptText: input.promptText,
+    outputContract: input.outputContract,
+    recordedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
+  return path;
+}
+
+async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], exec?: PrGateExec): Promise<LaneEvidence | null> {
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot));
+  const bundlePath = writeReviewBundle({
+    repoRoot,
+    issueNumber,
+    prNumber,
+    headSha,
+    lane,
+    profile,
+    runnerKind,
+    promptText: rendered.text,
+    outputContract: rendered.outputContract,
+    promptFragmentIds: rendered.orderedFragmentIds,
+    promptStackHash: expectedPromptStackHash,
+    evidencePath,
+  });
+  const args = [...splitCommand(command), '--lane', lane, '--issue', String(issueNumber), '--pr', String(prNumber), '--head', headSha, '--profile', profile, '--runner-kind', runnerKind, '--prompt-stack-hash', expectedPromptStackHash, '--review-bundle', bundlePath];
   const result = await (exec ?? defaultExec)(args, repoRoot);
   if (result.exitCode !== 0) return null;
   try {
@@ -367,7 +425,7 @@ function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary
 
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot));
-  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: promptTextHash(rendered.text), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
+  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: lanePromptStackHash(lane, issueNumbers, prNumber, headSha, evidencePaths, repoRoot), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string): string {
@@ -418,7 +476,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           lanes.push(plannedRun);
           continue;
         }
-        const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, input.exec);
+        const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, path, contextLines, input.exec);
         if (!evidence) {
           failed = true;
           produced.push(blockedLane(lane, 'malformed', 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
@@ -441,7 +499,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(plannedRun);
         continue;
       }
-      const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, input.exec);
+      const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, path, contextLines, input.exec);
       if (!evidence) {
         failed = true;
         produced.push(blockedLane(lane, 'malformed', 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));

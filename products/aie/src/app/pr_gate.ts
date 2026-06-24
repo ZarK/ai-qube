@@ -277,7 +277,8 @@ function localStatus(status: LocalReviewStatus): PrGateStatus | null {
   return 'pending';
 }
 
-function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[], localReview: LocalReviewGate, localOnly: boolean): PrGateStatus {
+function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrGateFeedback[], unavailable: string[], issueChecklists: IssueChecklistSummary[], localReview: LocalReviewGate, localOnly: boolean, blockingUnavailable: boolean): PrGateStatus {
+  if (blockingUnavailable) return 'unavailable';
   if (localReview.required) {
     const local = localStatus(localReview.status);
     if (local) return local;
@@ -285,7 +286,6 @@ function gateStatus(item: ReviewItem, reviewers: PrGateReviewer[], feedback: PrG
   if (reviewers.some(reviewer => reviewer.staleRequest)) return 'rerun-required';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'failed';
   if (hasActionableFeedback(feedback)) return 'failed';
-  if (unavailable.length > 0) return 'unavailable';
   if ((!localOnly && item.reviewDecision === 'review-required') || reviewers.some(reviewer => reviewer.pending)) return 'pending';
   if (item.reviewDecision === 'approved') return 'complete';
   if (configuredReviewersSatisfied(reviewers) && item.mergeability === 'mergeable' && !hasIncompleteChecks(item)) return 'complete';
@@ -297,6 +297,7 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
 }
 
 function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[]): string {
+  if (status === 'unavailable') return 'Some PR review state or local review runner availability state was unavailable. Inspect the unavailable list, fix permissions, connectivity, or runner output, then rerun `aie pr gate`.';
   if (localReview.required && localReview.status !== 'passed') {
     const feedbackAction = hasActionableFeedback(feedback) ? ' Also inspect and address provider review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
     return `${localReview.nextAction}${feedbackAction}`;
@@ -305,7 +306,6 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Verify each unchecked linked GitHub issue criterion with `aie checklist verify <issue> --index <n> --prompt`, then rerun with criterion evidence and rerun `aie pr gate`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
-  if (status === 'unavailable') return 'Some PR review state was unavailable. Inspect GitHub manually, fix permissions or connectivity, then rerun `aie pr gate`.';
   const ciDiagnostic = actionableCiDiagnostic(checkDiagnostics);
   if (ciDiagnostic) return ciDiagnostic.nextAction;
   if (dryRun && reviewers.length > 0) return 'Review the planned PR reviewer requests/comments, then rerun without --dry-run when ready to request reviewers.';
@@ -372,6 +372,11 @@ function localReviewFindings(localReview: LocalReviewGate): string[] {
   ]).filter((value, index, values) => values.indexOf(value) === index);
 }
 
+function hasPublishableLocalReviewEvidence(localReview: LocalReviewGate): boolean {
+  if (localReview.status === 'missing' || localReview.evidence.length === 0) return false;
+  return localReview.evidence.some(evidence => evidence.lanes.length > 0);
+}
+
 function localReviewPublishInput(input: {
   enabled: boolean;
   dryRun: boolean;
@@ -382,7 +387,7 @@ function localReviewPublishInput(input: {
   localReview: LocalReviewGate;
 }): GitHubLocalReviewPublishInput {
   return {
-    enabled: input.enabled && input.localReview.mode !== 'disabled' && input.localReview.evidence.length > 0,
+    enabled: input.enabled && input.localReview.mode !== 'disabled' && hasPublishableLocalReviewEvidence(input.localReview),
     dryRun: input.dryRun,
     prNumber: input.prNumber,
     headSha: input.headSha,
@@ -397,6 +402,16 @@ function localReviewPublishInput(input: {
     summary: input.localReview.summary,
     findings: localReviewFindings(input.localReview),
   };
+}
+
+function localReviewRunnerUnavailable(localReviewRunner: LocalReviewRunResult): string[] {
+  if (localReviewRunner.status !== 'failed' && localReviewRunner.status !== 'unavailable') return [];
+  const blockers = localReviewRunner.lanes
+    .filter(lane => lane.status === 'failed' || lane.status === 'unavailable')
+    .map(lane => `${lane.lane}: ${lane.blocker ?? lane.summary}`);
+  return blockers.length > 0
+    ? blockers.map(blocker => `Local review runner ${localReviewRunner.status}: ${blocker}`)
+    : [`Local review runner ${localReviewRunner.status}: ${localReviewRunner.summary}`];
 }
 
 function skippedLocalReviewPublish(nextAction: string): GitHubLocalReviewPublishResult {
@@ -641,8 +656,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewers = reviewersFromPlan(finalPlan);
   const feedback = prFeedback(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
-  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...publishUnavailable];
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow');
+  const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
+  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, unavailable, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', (localReviewRunner.status === 'failed' && localReview.status === 'missing') || publishUnavailable.length > 0);
   return {
     ok: true,
     command: 'pr gate',
