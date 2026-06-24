@@ -461,9 +461,18 @@ function writeLocalReviewPublishStatus(input: {
 
 function hasCurrentLocalReviewRun(item: ReviewItem, headSha: string, runId: string | null): boolean {
   if (!runId) return false;
-  const value = item.trustedMetadata.localReviews;
+  const value = item.trustedMetadata.trustedLocalReviews;
   if (!Array.isArray(value)) return false;
   return value.some(review => isRecord(review) && review.stale !== true && review.head === headSha && review.runId === runId);
+}
+
+function expectedPromptStackHashes(localReviewRunner: LocalReviewRunResult): Record<string, string> {
+  const hashes: Record<string, string> = {};
+  for (const lane of localReviewRunner.lanes) {
+    for (const issueNumber of lane.issueNumbers) hashes[`${issueNumber}:${lane.lane}`] = lane.promptStackHash;
+    hashes[lane.lane] = lane.promptStackHash;
+  }
+  return hashes;
 }
 
 function githubOnlyPolicy(config: Config): ReturnType<typeof configToExecutorPolicy> {
@@ -612,6 +621,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
     shadow: localShadow,
+    expectedPromptStackHashes: expectedPromptStackHashes(localReviewRunner),
   });
   let localReviewPublish = skippedLocalReviewPublish('No local review provider publishing was required.');
   const publishUnavailable: string[] = [];

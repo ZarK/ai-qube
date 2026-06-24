@@ -302,9 +302,9 @@ function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | 
   return parseLocalReviewMetadata(comment.body);
 }
 
-function localReviewComments(comments: RawComment[], headSha: string): LocalReviewComment[] {
+function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
   return comments.flatMap(comment => {
-    const metadata = parseLocalReviewMetadata(comment.body);
+    const metadata = trustedLocalReviewComment(comment, trustedAuthor);
     if (!metadata) return [];
     return [{ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha }];
   });
@@ -606,7 +606,7 @@ function isStaleChangeRequest(review: RawReview, headRefOid: string, unresolvedT
 
 function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
-  for (const localReview of localReviewComments(raw.comments, raw.headRefOid)) {
+  for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
     if (localReview.stale) continue;
     items.push({
       source: 'comment',
@@ -625,7 +625,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
-    if (parseLocalReviewMetadata(comment.body)) continue;
+    if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -636,7 +636,17 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
 }
 
 function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
-  const localReviews = localReviewComments(raw.comments, raw.pr.headRefOid).map(comment => ({
+  const localReviews = raw.comments.flatMap(comment => {
+    const metadata = parseLocalReviewMetadata(comment.body);
+    if (!metadata) return [];
+    return [{
+      metadata,
+      author: comment.author,
+      body: comment.body ?? '',
+      url: comment.url ? redact(comment.url) : null,
+      stale: metadata.head !== raw.pr.headRefOid,
+    }];
+  }).map(comment => ({
     head: comment.metadata.head,
     runner: comment.metadata.runner,
     host: comment.metadata.host,

@@ -486,7 +486,17 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
   return blockers;
 }
 
-function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapter: LocalReviewEvidence['adapter'], shadow: boolean, headSha: string): string[] {
+function promptHashKey(issueNumber: number, laneId: LocalReviewLaneId): string {
+  return `${issueNumber}:${laneId}`;
+}
+
+function expectedPromptHash(input: { issueNumber: number; laneId: LocalReviewLaneId; expectedPromptStackHashes?: Readonly<Record<string, string>> }): string {
+  return input.expectedPromptStackHashes?.[promptHashKey(input.issueNumber, input.laneId)]
+    ?? input.expectedPromptStackHashes?.[input.laneId]
+    ?? expectedLanePromptStackHash(input.laneId);
+}
+
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapter: LocalReviewEvidence['adapter'], shadow: boolean, headSha: string, issueNumber: number, expectedPromptStackHashes?: Readonly<Record<string, string>>): string[] {
   if (shadow || requiredLocalReviewLanes(profile).length === 0) return [];
   if (adapter === 'manual-evidence') return [];
   const blockers: string[] = [];
@@ -507,7 +517,7 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
     if (!provenance.promptStackHash) {
       blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
     } else {
-      const expectedPromptStackHash = expectedLanePromptStackHash(laneId);
+      const expectedPromptStackHash = expectedPromptHash({ issueNumber, laneId, expectedPromptStackHashes });
       if (provenance.promptStackHash !== expectedPromptStackHash) {
         blockers.push(`${laneId} runner provenance prompt stack hash does not match the current QUBE prompt stack.`);
       }
@@ -577,7 +587,7 @@ function evidenceSchemaVersion(parsed: Record<string, unknown>): unknown {
   return parsed.version ?? parsed.schemaVersion;
 }
 
-function parseEvidence(path: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
+function parseEvidence(path: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers, profile);
@@ -594,7 +604,7 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber, expectedPromptStackHashes);
     const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
     const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -655,7 +665,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
   }
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence | null {
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   if (!existsSync(directory)) return null;
   const requiredLanes = requiredLocalReviewLanes(profile);
@@ -689,7 +699,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
   const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+  const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber, expectedPromptStackHashes);
   const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -731,7 +741,7 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber);
     const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
     const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -847,6 +857,7 @@ export function readLocalReviewGate(input: {
   profile?: LocalReviewProfile;
   severityThreshold?: LocalReviewSeverity;
   shadow?: boolean;
+  expectedPromptStackHashes?: Readonly<Record<string, string>>;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
@@ -860,9 +871,9 @@ export function readLocalReviewGate(input: {
   }
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     if (laneEvidence) return laneEvidence;
-    if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
+    if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber);
     if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers, profile);
     return missingEvidence(issueNumber, input.prNumber, input.headSha, currentPath, input.reviewers, profile);

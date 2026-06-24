@@ -35,6 +35,7 @@ export interface LocalReviewLaneRun {
   evidencePath: string;
   evidencePaths: string[];
   promptFragmentIds: string[];
+  promptStackHash: string;
   promptText: string;
   promptOutputContract: string;
   summary: string;
@@ -182,23 +183,8 @@ function promptStackEvidence(lane: LocalReviewLaneId): LaneEvidence['promptStack
   }));
 }
 
-function promptStackHash(stack: LaneEvidence['promptStack']): string {
-  return hash(JSON.stringify(stack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source }))));
-}
-
-function runnerProvenance(runnerKind: 'local-command' | 'local-host', host: string, lane: LocalReviewLaneId, headSha: string, promptStack: LaneEvidence['promptStack'], idSeed: string): LocalReviewRunnerProvenance {
-  return {
-    runnerKind,
-    host,
-    freshContext: true,
-    promptOnly: false,
-    taskId: hash(`${idSeed}:${lane}:${headSha}`).slice(0, 16),
-    sessionId: null,
-    threadId: null,
-    promptStackHash: promptStackHash(promptStack),
-    headSha,
-    providerPublishStatus: null,
-  };
+function promptTextHash(text: string): string {
+  return hash(text);
 }
 
 function defaultContext(issueNumber: number, prNumber: number): LocalReviewContextReviewed[] {
@@ -208,28 +194,6 @@ function defaultContext(issueNumber: number, prNumber: number): LocalReviewConte
     { kind: 'diff', source: `pr:${prNumber}:diff`, trust: 'untrusted-task-input', freshness: 'current' },
     { kind: 'ci', source: `pr:${prNumber}:checks`, trust: 'trusted-provider', freshness: 'current' },
   ];
-}
-
-function fixtureLane(lane: LocalReviewLaneId, command: string, issueNumber: number, prNumber: number, repoRoot: string, headSha: string, runner: 'local-command' | 'local-host'): LaneEvidence {
-  const failing = command.includes('fail-code-quality') && lane === 'code-quality';
-  const status: LocalReviewStatus = failing ? 'failed' : 'passed';
-  const evidencePath = relativePath(repoRoot, laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane));
-  const stack = promptStackEvidence(lane);
-  return {
-    id: lane,
-    status,
-    severity: failing ? 'high' : 'none',
-    recommendation: failing ? 'request-changes' : 'approve',
-    summary: failing ? 'Fixture local review found code-quality blockers.' : `Fixture local review passed ${lane}.`,
-    blockers: failing ? ['Fix fixture code-quality finding.'] : [],
-    artifacts: [{ kind: 'json', path: evidencePath, sha256: hash(`${lane}:${headSha}`) }],
-    commands: [command],
-    surfaces: ['PR'],
-    contextReviewed: defaultContext(issueNumber, prNumber),
-    promptStack: stack,
-    toolsUsed: runner === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
-    runnerProvenance: runnerProvenance(runner, runner === 'local-host' ? 'codex' : 'local-command', lane, headSha, stack, command),
-  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -339,8 +303,8 @@ async function defaultExec(args: string[], cwd?: string): Promise<PrGateExecResu
   }
 }
 
-async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, repoRoot: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
-  const args = [...splitCommand(command), '--lane', lane, '--issue', String(issueNumber), '--pr', String(prNumber), '--head', headSha, '--profile', profile];
+async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
+  const args = [...splitCommand(command), '--lane', lane, '--issue', String(issueNumber), '--pr', String(prNumber), '--head', headSha, '--profile', profile, '--runner-kind', runnerKind, '--prompt-stack-hash', expectedPromptStackHash];
   const result = await (exec ?? defaultExec)(args, repoRoot);
   if (result.exitCode !== 0) return null;
   try {
@@ -393,7 +357,7 @@ function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary
 
 function laneRun(issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines));
-  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
+  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: promptTextHash(rendered.text), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[]): string {
@@ -435,15 +399,14 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
+      const plannedRun = laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, contextLines, includePrompt);
       if (runner === 'local-host') {
         if (!command) continue;
         if (input.dryRun) {
-          lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, 'Codex local-host lane would run and write current-head evidence.', null, contextLines, includePrompt));
+          lanes.push(plannedRun);
           continue;
         }
-        const evidence = command.startsWith('aie:fixture-local-review')
-          ? fixtureLane(lane, command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host')
-          : await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, input.repoRoot, input.exec);
+        const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, input.exec);
         if (!evidence) {
           failed = true;
           produced.push(blockedLane(lane, 'malformed', 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
@@ -463,12 +426,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         continue;
       }
       if (input.dryRun) {
-        lanes.push(laneRun(issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, 'Local-command lane would run and write current-head evidence.', null, contextLines, includePrompt));
+        lanes.push(plannedRun);
         continue;
       }
-      const evidence = command.startsWith('aie:fixture-local-review')
-        ? fixtureLane(lane, command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command')
-        : await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, input.repoRoot, input.exec);
+      const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, input.exec);
       if (!evidence) {
         failed = true;
         produced.push(blockedLane(lane, 'malformed', 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
