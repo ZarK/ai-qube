@@ -156,7 +156,7 @@ function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePaths.join(', ')}.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
-    'Bind local-host evidence to host provenance outside the worktree so worktree scripts cannot satisfy the required gate by self-attesting JSON evidence alone.',
+    'Bind local-host evidence to same-user host provenance outside the worktree; this is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     ...extraContext,
   ];

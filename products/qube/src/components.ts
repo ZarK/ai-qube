@@ -6,12 +6,12 @@ export interface QubeComponent {
   readonly summary: string;
   readonly capabilities?: {
     readonly localReview?: {
-      readonly freshContextReviewerSupport: "host-provided" | "configured-command" | "unsupported";
+      readonly freshContextReviewerSupport: "host-provided" | "configured-command" | "prompt-only" | "unsupported";
       readonly promptOnlyFallback: boolean;
       readonly manualEvidenceSatisfiesRequiredGate: boolean;
       readonly provenanceRequired: readonly string[];
       readonly evidencePathPattern: string;
-      readonly trustedHostProvenancePathPattern: string;
+      readonly hostProvenancePathPattern: string;
       readonly nextAction: string;
     };
   };
@@ -33,13 +33,13 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     capabilities: {
       localReview: {
-        freshContextReviewerSupport: "host-provided",
+        freshContextReviewerSupport: "prompt-only",
         promptOnlyFallback: true,
         manualEvidenceSatisfiesRequiredGate: false,
         provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "taskId/sessionId/threadId", "promptStackHash", "headSha", "providerPublishStatus"],
         evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
-        trustedHostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
-        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles, then spawn independent host subagents and record matching local-host provenance before required gates can pass."
+        hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
+        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active host, not the standalone QUBE CLI, must spawn independent subagents and record matching local-host provenance before required gates can pass."
       }
     }
   },

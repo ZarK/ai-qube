@@ -172,7 +172,7 @@ function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, he
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePath}.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
-    'Bind local-host evidence to host provenance outside the worktree so worktree scripts cannot satisfy the required gate by self-attesting JSON evidence alone.',
+    'Bind local-host evidence to same-user host provenance outside the worktree; this is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     'Review context source policy:',
     'Repository instructions: AGENTS.md, **/AGENTS.md.',
@@ -1198,6 +1198,8 @@ describe('PR gate service', () => {
     assert.equal(localReviewEvidenceSha256(laneAfterPublish), originalHash);
     assert.equal(laneAfterPublish.runnerProvenance.providerPublishStatus, null);
     assert.equal(secondGate.localReview.status, 'passed');
+    assert.equal(secondGate.localReview.evidence[0].lanes.find(lane => lane.id === 'code-quality').runnerProvenance.providerPublishStatus, 'published');
+    assert.match(secondGate.localReview.evidence[0].summary, /same-user host evidence/);
     assert.equal(secondGate.status, 'complete');
   });
 
@@ -1429,7 +1431,7 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'inconclusive');
     assert.equal(result.localReview.evidence[0].adapter, 'local-host');
     assert.equal(result.status, 'inconclusive');
-    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('trusted host provenance record')));
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('host provenance record')));
     assert.equal(lane.adapter, 'local-host');
     assert.equal(lane.reviewer.id, 'codex');
     assert.ok(lane.toolsUsed.includes('codex'));
@@ -1604,7 +1606,7 @@ describe('PR gate service', () => {
     assert.match(result.nextAction, /current PR head/);
   });
 
-  it('rejects self-attested local-host evidence without trusted host provenance', async () => {
+  it('rejects self-attested local-host evidence without host provenance', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
     writeLocalEvidence(repo, localEvidence(), { writeTrustedHostProvenance: false });
@@ -1614,10 +1616,10 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'inconclusive');
     assert.equal(result.localReview.status, 'inconclusive');
-    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('trusted host provenance record')));
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('host provenance record')));
   });
 
-  it('rejects local-host evidence tampered after trusted host provenance is recorded', async () => {
+  it('rejects local-host evidence tampered after host provenance is recorded', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
     writeLocalEvidence(repo, localEvidence());
@@ -1644,6 +1646,29 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'missing');
+  });
+
+  it('does not treat current-head publish metadata as stale local evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'publish.json'), `${JSON.stringify({
+      version: 1,
+      issueNumber: 93,
+      prNumber: 12,
+      headSha: 'abc123',
+      provider: 'github',
+      status: 'planned',
+      recordedAt: '2026-06-22T00:00:00.000Z',
+    }, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'missing');
+    assert.doesNotMatch(result.localReview.summary, /stale/i);
   });
 
   it('fails local-only PR gates when local evidence records blocking findings', async () => {

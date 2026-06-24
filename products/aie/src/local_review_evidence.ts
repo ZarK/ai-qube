@@ -126,6 +126,15 @@ interface TrustedLocalHostProvenance {
   recordedAt: string;
 }
 
+interface LocalReviewPublishEvidence {
+  version: 1;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  provider: string;
+  status: string;
+}
+
 export const REQUIRED_LOCAL_REVIEW_LANES: readonly LocalReviewLaneId[] = [
   'task-record-compliance',
   'issue-compliance',
@@ -572,14 +581,14 @@ function trustedLocalHostBlockers(input: {
 }): string[] {
   if (input.provenance.runnerKind !== 'local-host') return [];
   const trusted = readTrustedLocalHostProvenance(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.laneId);
-  if (!trusted) return [`${input.laneId} local-host evidence was not bound to a trusted host provenance record.`];
+  if (!trusted) return [`${input.laneId} local-host evidence was not bound to a host provenance record.`];
   const blockers: string[] = [];
   if (!input.evidenceSha256) blockers.push(`${input.laneId} local-host evidence could not be bound to a canonical evidence digest.`);
-  if (input.evidenceSha256 && trusted.evidenceSha256 !== input.evidenceSha256) blockers.push(`${input.laneId} local-host evidence digest does not match the trusted host provenance record.`);
-  if (trusted.host !== input.provenance.host) blockers.push(`${input.laneId} local-host provenance host does not match the trusted host record.`);
-  if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the trusted host record.`);
-  if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the trusted host record.`);
-  if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} trusted host provenance did not record a separate task, session, or thread id.`);
+  if (input.evidenceSha256 && trusted.evidenceSha256 !== input.evidenceSha256) blockers.push(`${input.laneId} local-host evidence digest does not match the host provenance record.`);
+  if (trusted.host !== input.provenance.host) blockers.push(`${input.laneId} local-host provenance host does not match the host record.`);
+  if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the host record.`);
+  if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the host record.`);
+  if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
   return blockers;
 }
 
@@ -744,6 +753,39 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
   }
 }
 
+function readLocalReviewPublishEvidence(directory: string, issueNumber: number, prNumber: number, headSha: string): LocalReviewPublishEvidence | null {
+  const path = join(directory, 'publish.json');
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || parsed.version !== 1) return null;
+    if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha) return null;
+    if (typeof parsed.provider !== 'string' || parsed.provider.trim() === '') return null;
+    if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
+    return {
+      version: 1,
+      issueNumber,
+      prNumber,
+      headSha,
+      provider: parsed.provider,
+      status: parsed.status,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function withProviderPublishStatus(lane: LocalReviewLane, status: string | null): LocalReviewLane {
+  if (!status || !lane.runnerProvenance) return lane;
+  return {
+    ...lane,
+    runnerProvenance: {
+      ...lane.runnerProvenance,
+      providerPublishStatus: status,
+    },
+  };
+}
+
 function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   if (!existsSync(directory)) return null;
@@ -769,22 +811,24 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
   }
   if (lanes.length === 0) return null;
+  const publishStatus = readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null;
+  const lanesWithPublishStatus = lanes.map(lane => withProviderPublishStatus(lane, publishStatus));
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
     return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
   }
-  const finalGate = lanes.find(lane => lane.id === 'final-gate');
-  const contextReviewed = lanes.flatMap(lane => lane.contextReviewed);
-  const promptStack = lanes.flatMap(lane => lane.promptStack);
-  const missingContext = missingRequiredContext(lanes, profile);
+  const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
+  const contextReviewed = lanesWithPublishStatus.flatMap(lane => lane.contextReviewed);
+  const promptStack = lanesWithPublishStatus.flatMap(lane => lane.promptStack);
+  const missingContext = missingRequiredContext(lanesWithPublishStatus, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
-  const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
+  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
-  const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, adapter, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
+  const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
-  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
+  const blockers = [...lanesWithPublishStatus.flatMap(lane => lane.blockers), ...thresholdBlockers(lanesWithPublishStatus, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
   return {
     issueNumber,
     prNumber,
@@ -794,9 +838,9 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     status,
     path: redact(directory),
     reviewer: fallbackReviewer(reviewers),
-    summary: finalGate?.summary ?? 'Local review lane evidence was loaded.',
+    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}`,
     blockers,
-    lanes,
+    lanes: lanesWithPublishStatus,
     contextReviewed,
     promptStack,
     runnerProvenance: null,
@@ -852,13 +896,23 @@ function parseIssueEvidence(path: string, repoRoot: string, issueNumber: number,
   }
 }
 
-function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number): string | null {
+function directoryHasLaneEvidence(path: string): boolean {
+  try {
+    return readdirSync(path, { withFileTypes: true })
+      .some(entry => entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'publish.json');
+  } catch {
+    return false;
+  }
+}
+
+function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string | null {
   const laneRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
   if (existsSync(laneRoot)) {
     try {
       const directories = readdirSync(laneRoot, { withFileTypes: true })
         .filter(entry => entry.isDirectory())
         .map(entry => entry.name)
+        .filter(name => name !== safeSegment(headSha) && directoryHasLaneEvidence(join(laneRoot, name)))
         .sort();
       const newest = directories.at(-1);
       if (newest) return join(laneRoot, newest);
@@ -984,7 +1038,7 @@ export function readLocalReviewGate(input: {
     const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     if (laneEvidence) return laneEvidence;
     if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
-    const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber);
+    const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers, profile);
     return missingEvidence(issueNumber, input.prNumber, input.headSha, currentPath, input.reviewers, profile);
   });
