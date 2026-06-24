@@ -112,19 +112,22 @@ function effectiveProfile(config: Config, required: boolean, shadow: boolean): L
   return config.reviewProfile;
 }
 
-export function probeCodexReviewCapability(independentReviewerCommand?: string | null): CodexReviewCapability {
+export function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
   const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
+  const canSpawnFreshReviewer = commandConfigured || hostProvided;
   return {
     host: 'codex',
-    independentReviewer: true,
-    freshContext: true,
-    promptOnly: false,
+    independentReviewer: canSpawnFreshReviewer,
+    freshContext: canSpawnFreshReviewer,
+    promptOnly: !canSpawnFreshReviewer,
     hooks: false,
-    evidenceWriting: true,
-    missingCapabilities: [],
+    evidenceWriting: canSpawnFreshReviewer,
+    missingCapabilities: canSpawnFreshReviewer ? [] : ['codex-local-reviewer-not-configured'],
     nextAction: commandConfigured
       ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : 'QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate.',
+      : hostProvided
+        ? 'QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate.'
+        : 'Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.',
   };
 }
 
@@ -313,26 +316,22 @@ async function defaultExec(args: string[], cwd?: string): Promise<PrGateExecResu
   }
 }
 
-async function executableReviewCommandsTrusted(repoRoot: string): Promise<boolean> {
+async function gitQuiet(repoRoot: string, args: readonly string[]): Promise<boolean> {
   try {
-    await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: repoRoot });
-  } catch {
-    return true;
-  }
-  if (!existsSync(join(repoRoot, '.qube', 'aie', 'config.json'))) return true;
-  try {
-    await execFileAsync('git', ['rev-parse', '--verify', 'origin/main'], { cwd: repoRoot });
-  } catch {
-    return false;
-  }
-  try {
-    await execFileAsync('git', ['diff', '--quiet', '--', '.qube/aie/config.json'], { cwd: repoRoot });
-    await execFileAsync('git', ['diff', '--quiet', '--cached', '--', '.qube/aie/config.json'], { cwd: repoRoot });
-    await execFileAsync('git', ['diff', '--quiet', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repoRoot });
+    await execFileAsync('git', [...args], { cwd: repoRoot, timeout: 30_000 });
     return true;
   } catch {
     return false;
   }
+}
+
+async function executableReviewCommandsTrusted(repoRoot: string, baseRef: string): Promise<boolean> {
+  if (!await gitQuiet(repoRoot, ['rev-parse', '--is-inside-work-tree'])) return false;
+  if (!existsSync(join(repoRoot, '.qube', 'aie', 'config.json'))) return false;
+  if (!await gitQuiet(repoRoot, ['rev-parse', '--verify', baseRef])) return false;
+  if (!await gitQuiet(repoRoot, ['diff', '--quiet', '--', '.qube/aie/config.json'])) return false;
+  if (!await gitQuiet(repoRoot, ['diff', '--quiet', '--cached', '--', '.qube/aie/config.json'])) return false;
+  return gitQuiet(repoRoot, ['diff', '--quiet', `${baseRef}...HEAD`, '--', '.qube/aie/config.json']);
 }
 
 function reviewBundlePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
@@ -480,7 +479,7 @@ function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, link
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
-  const codex = probeCodexReviewCapability(codexCommand(config));
+  const codex = probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...requiredLocalReviewLanes(profile)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
@@ -497,7 +496,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const written: string[] = [];
   const unavailable: string[] = [];
   let failed = false;
-  const commandTrust = await executableReviewCommandsTrusted(input.repoRoot);
+  const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
 
   for (const lane of commandlessHostLanes) {

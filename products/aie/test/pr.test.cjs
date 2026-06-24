@@ -32,10 +32,15 @@ function writeConfig(repo, config) {
   writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify(config, null, 2)}\n`);
 }
 
-function commitTrustedBase(repo) {
+function commitTrustedBase(repo, remote = 'origin', branch = 'main') {
   execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'trusted base'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['update-ref', `refs/remotes/${remote}/${branch}`, 'HEAD'], { cwd: repo, stdio: 'ignore' });
+}
+
+function trustReviewCommands(repo, remote = 'origin', branch = 'main') {
+  writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
+  commitTrustedBase(repo, remote, branch);
 }
 
 function writeWorkflow(repo, body) {
@@ -1020,7 +1025,7 @@ describe('PR gate service', () => {
 
   it('keeps local-only PR gates pending when local evidence is missing', async () => {
     const repo = makeGitRepo();
-    const config = localReviewConfig();
+    const config = localHostConfig(null);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -1033,6 +1038,7 @@ describe('PR gate service', () => {
   it('plans local-command lane execution during PR gate dry-run without writing evidence', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
@@ -1154,6 +1160,7 @@ describe('PR gate service', () => {
   it('runs local-command fixture lanes and writes valid current-head evidence before PR gate validation', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
@@ -1193,10 +1200,37 @@ describe('PR gate service', () => {
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
 
     assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
-    assert.ok(['pending', 'unavailable'].includes(result.localReviewRunner.status));
+    assert.equal(result.localReviewRunner.status, 'unavailable');
     assert.ok(result.localReviewRunner.lanes.some(lane => lane.status === 'unavailable'));
     assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
-    assert.ok(['pending', 'unavailable'].includes(result.status));
+    assert.equal(result.status, 'unavailable');
+  });
+
+  it('blocks executable local review commands when the repo is not a git worktree', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-pr-gate-no-git-'));
+    const config = localCommandConfig();
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.equal(result.localReviewRunner.status, 'unavailable');
+    assert.equal(result.status, 'unavailable');
+    assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
+  });
+
+  it('blocks executable local review commands when QUBE config is missing from the trusted base', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    execFileSync('git', ['commit', '--allow-empty', '-m', 'trusted empty base'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', 'HEAD'], { cwd: repo, stdio: 'ignore' });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), false);
+    assert.equal(result.localReviewRunner.status, 'unavailable');
+    assert.equal(result.status, 'unavailable');
   });
 
   it('blocks executable local review commands when trusted config has worktree drift', async () => {
@@ -1247,9 +1281,25 @@ describe('PR gate service', () => {
     assert.ok(result.localReviewRunner.unavailable.some(item => item.includes('review runner configuration changed outside the trusted base')));
   });
 
+  it('trusts executable local review commands against the configured base ref', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    config.baseRemote = 'upstream';
+    config.baseBranch = 'trunk';
+    trustReviewCommands(repo, 'upstream', 'trunk');
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(calls.some(args => args[0] === 'review-fixture'), true);
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+  });
+
   it('publishes local-command review results as provider-visible PR feedback', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1338,6 +1388,7 @@ describe('PR gate service', () => {
   it('does not complete when published local review feedback is not visible after provider reload', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1353,6 +1404,7 @@ describe('PR gate service', () => {
   it('does not accept matching local review metadata from another author as publish visibility', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1450,6 +1502,7 @@ describe('PR gate service', () => {
   it('keeps PR gates unavailable when provider publishing fails', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
+    trustReviewCommands(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1591,6 +1644,7 @@ describe('PR gate service', () => {
   it('records Codex local-host command evidence without trusting command self-attestation', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig();
+    trustReviewCommands(repo);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
@@ -1612,6 +1666,7 @@ describe('PR gate service', () => {
   it('fails PR gate when local-command fixture findings exceed the severity threshold', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig('review-fixture --fail-code-quality');
+    trustReviewCommands(repo);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
@@ -1625,6 +1680,7 @@ describe('PR gate service', () => {
   it('does not let malformed local-command JSON satisfy required local review evidence', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig('review-fixture');
+    trustReviewCommands(repo);
     const { exec } = makePrExec({
       prViews: [cleanLocalPr()],
       localCommand: args => ({ args, exitCode: 0, stdout: JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: 'wrong-lane', status: 'passed' }), stderr: '' }),
@@ -1641,6 +1697,7 @@ describe('PR gate service', () => {
   it('does not let local-command output without runner provenance satisfy required lane evidence', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig('review-fixture');
+    trustReviewCommands(repo);
     const { exec } = makePrExec({
       prViews: [cleanLocalPr()],
       localCommand: args => {
@@ -1678,6 +1735,7 @@ describe('PR gate service', () => {
   it('adds retained raw output when local-command output omits artifacts', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig('review-fixture');
+    trustReviewCommands(repo);
     const { exec } = makePrExec({
       prViews: [cleanLocalPr()],
       localCommand: args => {
@@ -1759,7 +1817,7 @@ describe('PR gate service', () => {
 
   it('records shadow local evidence without blocking merge readiness', async () => {
     const repo = makeGitRepo();
-    const config = localReviewConfig();
+    const config = localHostConfig(null);
     config.reviewAdapter = 'shadow';
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
@@ -1815,7 +1873,7 @@ describe('PR gate service', () => {
 
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {
     const repo = makeGitRepo();
-    const config = localReviewConfig();
+    const config = localHostConfig(null);
     mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
     writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldsha.json'), '{}\n');
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
@@ -1828,7 +1886,7 @@ describe('PR gate service', () => {
 
   it('does not treat current-head publish metadata as stale local evidence', async () => {
     const repo = makeGitRepo();
-    const config = localReviewConfig();
+    const config = localHostConfig(null);
     const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(directory, { recursive: true });
     writeFileSync(join(directory, 'publish.json'), `${JSON.stringify({
@@ -1847,6 +1905,48 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'missing');
     assert.doesNotMatch(result.localReview.summary, /stale/i);
+  });
+
+  it('does not treat old raw local-command output as stale local evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const directory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldsha');
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, 'issue-compliance.raw-output.json'), '{"stdout":"old run"}\n');
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'missing');
+    assert.doesNotMatch(result.localReview.summary, /stale/i);
+  });
+
+  it('validates mixed local-host and local-command lane evidence per lane adapter', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence());
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json');
+    const lane = JSON.parse(readFileSync(lanePath, 'utf8'));
+    const mixedLane = {
+      ...lane,
+      adapter: 'local-command',
+      runnerProvenance: {
+        ...lane.runnerProvenance,
+        runnerKind: 'local-command',
+        host: 'local-command',
+      },
+    };
+    writeFileSync(lanePath, `${JSON.stringify(mixedLane, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.status, 'complete');
+    assert.equal(result.localReview.evidence[0].adapter, 'local-command');
+    assert.ok(result.localReview.evidence[0].lanes.some(item => item.id === 'issue-compliance' && item.runnerProvenance.runnerKind === 'local-command'));
+    assert.equal(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('does not match evidence adapter')), false);
   });
 
   it('fails local-only PR gates when local evidence records blocking findings', async () => {

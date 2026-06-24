@@ -234,14 +234,15 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localCommandLanes = config.reviewLanes.filter(lane => lane.runner === 'local-command' && lane.command?.trim());
   const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
   const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
-  const codexReviewCapability = probeCodexReviewCapability(localHostCommand);
+  const codexReviewCapability = probeCodexReviewCapability(localHostCommand, config.localReviewAgents.includes('codex'));
   const localHostNeedsAgent = localHostLanes.length > 0 && !localHostCommand;
+  const commandlessCodexHostReady = localHostNeedsAgent && codexReviewCapability.independentReviewer;
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
   const localRunnerReadiness: DoctorReadinessStatus = !(localReviewEnabled || localReviewShadow)
     ? 'disabled'
     : localCommandLanes.length > 0 || localHostCommand
       ? 'ready'
-      : localHostNeedsAgent
+      : commandlessCodexHostReady
         ? 'needs-action'
         : 'missing';
   const localRunner = {
@@ -249,7 +250,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     readiness: localRunnerReadiness,
     command: localCommandLanes[0]?.command ?? localHostCommand,
     capabilities: {
-      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand) || localHostNeedsAgent,
+      canRun: localCommandLanes.length > 0 || Boolean(localHostCommand) || commandlessCodexHostReady,
       canComment: false,
       canInline: false,
       canUseTools: false,
@@ -260,10 +261,14 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       canWriteEvidence: true,
       supportsJson: true,
       supportsPromptStack: true,
-      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand) || localHostNeedsAgent,
+      supportsIncrementalReview: localCommandLanes.length > 0 || Boolean(localHostCommand) || commandlessCodexHostReady,
     },
-    missingTools: localRunnerReadiness === 'missing' ? ['local-command review lane command'] : [],
-      codex: {
+    missingTools: localRunnerReadiness === 'missing'
+      ? localHostNeedsAgent
+        ? ['codex local review agent']
+        : ['local-command review lane command']
+      : [],
+    codex: {
       independentReviewer: codexReviewCapability.independentReviewer,
       freshContext: codexReviewCapability.freshContext,
       promptOnly: codexReviewCapability.promptOnly,

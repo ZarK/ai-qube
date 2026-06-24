@@ -709,7 +709,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
   const publishPending = localReviewPublish.status === 'planned' || localReviewPublish.status === 'pending';
   const providerStateUnavailable = githubReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', (localReviewRunner.status === 'failed' && localReview.status === 'missing') || publishUnavailable.length > 0 || providerStateUnavailable, publishPending);
+  const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
+  const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, publishPending);
   return {
     ok: true,
     command: 'pr gate',

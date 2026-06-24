@@ -446,7 +446,8 @@ describe("qube composer CLI", () => {
     assert.equal(executor.capabilities.localReview.promptOnlyFallback, true);
     assert.equal(executor.capabilities.localReview.manualEvidenceSatisfiesRequiredGate, false);
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("promptStackHash"));
-    assert.equal(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"), false);
+    assert.ok(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"));
+    assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
     assert.match(executor.capabilities.localReview.evidencePathPattern, /<lane>\.json/);
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
   });

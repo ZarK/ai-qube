@@ -592,14 +592,21 @@ function trustedLocalHostBlockers(input: {
   return blockers;
 }
 
-function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapter: LocalReviewEvidence['adapter'], shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>): string[] {
+type LaneAdapterMap = ReadonlyMap<LocalReviewLaneId, LocalReviewEvidence['adapter']>;
+
+function adapterMap(lanes: readonly LocalReviewLane[], adapter: LocalReviewEvidence['adapter']): LaneAdapterMap {
+  return new Map(lanes.map(lane => [lane.id, adapter]));
+}
+
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>): string[] {
   if (shadow || requiredLocalReviewLanes(profile).length === 0) return [];
-  if (adapter === 'manual-evidence') return [];
   const blockers: string[] = [];
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
   for (const laneId of requiredLocalReviewLanes(profile)) {
     const lane = lanesById.get(laneId);
     if (!lane) continue;
+    const adapter = adapters.get(laneId) ?? 'manual-evidence';
+    if (adapter === 'manual-evidence') continue;
     const provenance = lane.runnerProvenance;
     if (!provenance) {
       if (lane.status === 'passed') blockers.push(`${laneId} passed without independent reviewer runner provenance.`);
@@ -691,7 +698,7 @@ function parseEvidence(path: string, repoRoot: string, issueNumber: number, prNu
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapterMap(lanes, adapter), shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
     const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
     const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -793,6 +800,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const lanes: LocalReviewLane[] = [];
   const missing: string[] = [];
   const adapters: LocalReviewEvidence['adapter'][] = [];
+  const laneAdapters = new Map<LocalReviewLaneId, LocalReviewEvidence['adapter']>();
   const evidenceHashes = new Map<LocalReviewLaneId, string>();
   try {
     for (const laneId of requiredLanes) {
@@ -805,6 +813,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
       if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
       lanes.push(parsed.lane);
       adapters.push(parsed.adapter);
+      laneAdapters.set(laneId, parsed.adapter);
       evidenceHashes.set(laneId, parsed.evidenceSha256);
     }
   } catch {
@@ -824,7 +833,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
   const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, adapter, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
+  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
   const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -868,7 +877,7 @@ function parseIssueEvidence(path: string, repoRoot: string, issueNumber: number,
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const runnerBlockers = provenanceBlockers(lanes, profile, adapter, shadow, headSha, issueNumber, prNumber, repoRoot, undefined, evidenceHashes);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapterMap(lanes, adapter), shadow, headSha, issueNumber, prNumber, repoRoot, undefined, evidenceHashes);
     const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
     const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -898,8 +907,9 @@ function parseIssueEvidence(path: string, repoRoot: string, issueNumber: number,
 
 function directoryHasLaneEvidence(path: string): boolean {
   try {
+    const laneFiles = new Set(COMPREHENSIVE_LOCAL_REVIEW_LANES.map(lane => `${lane}.json`));
     return readdirSync(path, { withFileTypes: true })
-      .some(entry => entry.isFile() && entry.name.endsWith('.json') && entry.name !== 'publish.json');
+      .some(entry => entry.isFile() && laneFiles.has(entry.name));
   } catch {
     return false;
   }

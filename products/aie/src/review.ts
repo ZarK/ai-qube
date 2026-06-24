@@ -447,7 +447,7 @@ export function runReviewGate(config: Config, options: ReviewGateOptions): Revie
     fallbackPrompt: buildFallbackPrompt(options.issueNumber),
     evidence,
     localReviewRunner: {
-      codex: probeCodexReviewCapability(codexCommand(config)),
+      codex: probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex')),
     },
     localReview,
     evidenceNeeded: [...EVIDENCE_NEEDED],

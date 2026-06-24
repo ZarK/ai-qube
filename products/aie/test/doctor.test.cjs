@@ -147,9 +147,9 @@ describe('doctor diagnostics', () => {
     assert.deepEqual(diagnostics.reviewAgent.localReviewers, ['local-oracle']);
     assert.equal(diagnostics.reviewAgent.localEvidenceRoot, '.qube/aie/reviews');
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, true);
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, false);
     assert.equal(diagnostics.aiq.enabled, true);
     assert.equal(diagnostics.aiq.configured, true);
     assert.ok(['ready', 'missing'].includes(diagnostics.aiq.readiness));
@@ -182,14 +182,15 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
     assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'ready');
     assert.equal(diagnostics.reviewAgent.localRunner.command, 'aie:fixture-local-review');
-    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
-    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
     assert.equal(diagnostics.prReview.localRunnerReadiness, 'ready');
   });
 
   it('reports commandless local-host lanes as Codex subagent host action', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';
+    config.localReviewAgents = ['codex'];
     config.reviewLanes = [{
       id: 'issue-compliance',
       required: 'always',
@@ -211,6 +212,31 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
     assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
     assert.match(diagnostics.reviewAgent.localRunner.nextAction, /Spawn independent Codex subagents/);
+  });
+
+  it('does not claim commandless local-host review support without configured Codex agent', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.localReviewAgents = [];
+    config.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+
+    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+
+    assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
+    assert.equal(diagnostics.reviewAgent.localRunner.capabilities.canRun, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, ['codex-local-reviewer-not-configured']);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, ['codex local review agent']);
   });
 
   it('reports configured local-host command as Codex independent review capability', () => {
