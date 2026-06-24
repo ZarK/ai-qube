@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
 import { renderAgentPrompt } from '../agent_descriptors.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, requiredLocalReviewLanes, writeTrustedLocalHostProvenance, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 
 const execFileAsync = promisify(execFile);
@@ -156,6 +156,7 @@ function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePaths.join(', ')}.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
+    'Bind local-host evidence to host provenance outside the worktree so worktree scripts cannot satisfy the required gate by self-attesting JSON evidence alone.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     ...extraContext,
   ];
@@ -334,6 +335,9 @@ function writeLane(repoRoot: string, issueNumber: number, prNumber: number, head
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  if (adapter === 'local-host' && lane.runnerProvenance) {
+    writeTrustedLocalHostProvenance({ repoRoot, issueNumber, prNumber, headSha, lane: lane.id, provenance: lane.runnerProvenance });
+  }
   return path;
 }
 

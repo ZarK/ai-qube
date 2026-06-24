@@ -8,6 +8,7 @@ const { basename, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { renderAgentPrompt } = require('../dist/agent_descriptors.js');
+const { writeTrustedLocalHostProvenance } = require('../dist/local_review_evidence.js');
 const { createGitHubReviewProvider } = require('../dist/providers/github/github_review_provider.js');
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
@@ -141,6 +142,7 @@ function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, he
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePath}.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
+    'Bind local-host evidence to host provenance outside the worktree so worktree scripts cannot satisfy the required gate by self-attesting JSON evidence alone.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     'Review context source policy:',
     'Repository instructions: AGENTS.md, **/AGENTS.md.',
@@ -222,6 +224,9 @@ function writeLocalEvidence(repo, evidence, options = {}) {
       ? { ...lane.runnerProvenance, promptStackHash }
       : lane.runnerProvenance;
     writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify({ ...lane, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter }, null, 2)}\n`);
+    if (evidence.adapter === 'local-host' && options.writeTrustedHostProvenance !== false && runnerProvenance) {
+      writeTrustedLocalHostProvenance({ repoRoot: repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance });
+    }
   }
 }
 
@@ -1541,6 +1546,19 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'rerun-required');
     assert.equal(result.localReview.status, 'stale');
     assert.match(result.nextAction, /current PR head/);
+  });
+
+  it('rejects self-attested local-host evidence without trusted host provenance', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence(), { writeTrustedHostProvenance: false });
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'inconclusive');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('trusted host provenance record')));
   });
 
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {

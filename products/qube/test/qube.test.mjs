@@ -441,6 +441,12 @@ describe("qube composer CLI", () => {
         ["umpire", "aiu", "@tjalve/aiu"]
       ]
     );
+    const executor = parsed.components.find(component => component.id === "executor");
+    assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
+    assert.equal(executor.capabilities.localReview.promptOnlyFallback, true);
+    assert.equal(executor.capabilities.localReview.manualEvidenceSatisfiesRequiredGate, false);
+    assert.match(executor.capabilities.localReview.evidencePathPattern, /<lane>\.json/);
+    assert.match(executor.capabilities.localReview.trustedHostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
   });
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {

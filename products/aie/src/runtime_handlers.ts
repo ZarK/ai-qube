@@ -429,7 +429,15 @@ async function handlePrBody(context: Parameters<RuntimeCommandHandler>[0]) {
 
 async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
-  if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', ['Usage: aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', '', 'Request configured PR reviewers idempotently, wait the configured duration, and inspect review state before merge.', 'Examples:', ...commandExamples('pr gate').map(example => `  ${example}`)]);
+  if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', [
+    'Usage: aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]',
+    '',
+    'Request configured PR reviewers idempotently, wait the configured duration, and inspect review state before merge.',
+    'Required local review quality depends on independent fresh-context reviewer execution; prompt rendering alone is fallback guidance and cannot satisfy required local review gates.',
+    'Use --local-review-prompts to include explicit lane prompt bodies for a host subagent/task/session, then record local-host evidence with matching provenance.',
+    'Examples:',
+    ...commandExamples('pr gate').map(example => `  ${example}`),
+  ]);
   let prNumber: number | null;
   try {
     prNumber = parsePrNumber(pr);
