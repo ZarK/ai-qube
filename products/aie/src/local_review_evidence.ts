@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { redact } from './gh.js';
 
@@ -371,41 +371,6 @@ export function localReviewEvidenceSha256(value: unknown): string {
 
 export function trustedLocalHostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
   return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
-}
-
-export function writeTrustedLocalHostProvenance(input: {
-  repoRoot: string;
-  issueNumber: number;
-  prNumber: number;
-  headSha: string;
-  lane: LocalReviewLaneId;
-  provenance: LocalReviewRunnerProvenance;
-  evidenceSha256: string;
-  recordedAt?: string;
-}): string | null {
-  const provenance = input.provenance;
-  if (provenance.runnerKind !== 'local-host' || !provenance.promptStackHash || input.evidenceSha256.trim() === '') return null;
-  const path = trustedLocalHostProvenancePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-  mkdirSync(join(input.repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(input.issueNumber), String(input.prNumber), safeSegment(input.headSha)), { recursive: true });
-  const record: TrustedLocalHostProvenance = {
-    version: 1,
-    issueNumber: input.issueNumber,
-    prNumber: input.prNumber,
-    headSha: input.headSha,
-    lane: input.lane,
-    evidenceSha256: input.evidenceSha256,
-    runnerKind: 'local-host',
-    host: provenance.host,
-    freshContext: provenance.freshContext,
-    promptOnly: provenance.promptOnly,
-    taskId: provenance.taskId,
-    sessionId: provenance.sessionId,
-    threadId: provenance.threadId,
-    promptStackHash: provenance.promptStackHash,
-    recordedAt: input.recordedAt ?? new Date().toISOString(),
-  };
-  writeFileSync(path, `${JSON.stringify(record, null, 2)}\n`);
-  return path;
 }
 
 function fallbackReviewer(reviewers: readonly string[]): LocalReviewEvidence['reviewer'] {

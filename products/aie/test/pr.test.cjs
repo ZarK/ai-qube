@@ -8,7 +8,7 @@ const { basename, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { renderAgentPrompt } = require('../dist/agent_descriptors.js');
-const { localReviewEvidenceSha256, writeTrustedLocalHostProvenance } = require('../dist/local_review_evidence.js');
+const { localReviewEvidenceSha256 } = require('../dist/local_review_evidence.js');
 const { createGitHubReviewProvider } = require('../dist/providers/github/github_review_provider.js');
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
@@ -130,6 +130,36 @@ function withPromptStackProvenance(provenance, promptStack) {
   return { ...provenance, promptStackHash: promptStackHash(promptStack) };
 }
 
+function safeEvidenceSegment(value) {
+  return String(value).toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+function trustedLocalHostProvenancePath(repo, issueNumber, prNumber, headSha, lane) {
+  return join(repo, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeEvidenceSegment(headSha), `${lane}.json`);
+}
+
+function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, headSha, lane, provenance, evidenceSha256 }) {
+  const directory = join(repo, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeEvidenceSegment(headSha));
+  mkdirSync(directory, { recursive: true });
+  writeFileSync(trustedLocalHostProvenancePath(repo, issueNumber, prNumber, headSha, lane), `${JSON.stringify({
+    version: 1,
+    issueNumber,
+    prNumber,
+    headSha,
+    lane,
+    evidenceSha256,
+    runnerKind: 'local-host',
+    host: provenance.host,
+    freshContext: provenance.freshContext,
+    promptOnly: provenance.promptOnly,
+    taskId: provenance.taskId,
+    sessionId: provenance.sessionId,
+    threadId: provenance.threadId,
+    promptStackHash: provenance.promptStackHash,
+    recordedAt: '2026-06-22T00:00:00.000Z',
+  }, null, 2)}\n`);
+}
+
 function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, headSha = 'abc123', options = {}) {
   const prTitle = options.prTitle ?? 'Review me';
   const reviewDecision = options.reviewDecision ?? 'REVIEW_REQUIRED';
@@ -226,7 +256,7 @@ function writeLocalEvidence(repo, evidence, options = {}) {
     const body = { ...lane, runnerProvenance, version: evidence.version, issueNumber, prNumber, headSha, profile: evidence.profile, adapter: evidence.adapter };
     writeFileSync(join(directory, `${lane.id}.json`), `${JSON.stringify(body, null, 2)}\n`);
     if (evidence.adapter === 'local-host' && options.writeTrustedHostProvenance !== false && runnerProvenance) {
-      writeTrustedLocalHostProvenance({ repoRoot: repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance, evidenceSha256: localReviewEvidenceSha256(body) });
+      writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, headSha, lane: lane.id, provenance: runnerProvenance, evidenceSha256: localReviewEvidenceSha256(body) });
     }
   }
 }
@@ -1148,6 +1178,27 @@ describe('PR gate service', () => {
     assert.match(body, /"issueNumbers":\[93\]/);
     assert.match(body, /local evidence \.qube\/aie\/reviews\/93\/12\/abc123/);
     assert.match(body, /inline comments: unsupported/);
+  });
+
+  it('does not mutate digest-bound local-host evidence when publishing provider feedback', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence());
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json');
+    const originalLane = JSON.parse(readFileSync(lanePath, 'utf8'));
+    const originalHash = localReviewEvidenceSha256(originalLane);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr(), cleanLocalPr(), cleanLocalPr()] });
+
+    const published = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+    const laneAfterPublish = JSON.parse(readFileSync(lanePath, 'utf8'));
+    const secondGate = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(published.localReview.status, 'passed');
+    assert.equal(published.localReviewPublish.status, 'published');
+    assert.equal(localReviewEvidenceSha256(laneAfterPublish), originalHash);
+    assert.equal(laneAfterPublish.runnerProvenance.providerPublishStatus, null);
+    assert.equal(secondGate.localReview.status, 'passed');
+    assert.equal(secondGate.status, 'complete');
   });
 
   it('does not complete when published local review feedback is not visible after provider reload', async () => {
