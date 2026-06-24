@@ -197,11 +197,6 @@ function promptTextHash(text: string): string {
   return hash(text);
 }
 
-function lanePromptStackHash(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], repoRoot: string): string {
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot));
-  return promptTextHash(rendered.text);
-}
-
 function defaultContext(issueNumber: number, prNumber: number): LocalReviewContextReviewed[] {
   return [
     { kind: 'issue-body', source: `issue:${issueNumber}`, trust: 'untrusted-task-input', freshness: 'current' },
@@ -318,8 +313,33 @@ async function defaultExec(args: string[], cwd?: string): Promise<PrGateExecResu
   }
 }
 
+async function executableReviewCommandsTrusted(repoRoot: string): Promise<boolean> {
+  try {
+    await execFileAsync('git', ['rev-parse', '--is-inside-work-tree'], { cwd: repoRoot });
+  } catch {
+    return true;
+  }
+  try {
+    await execFileAsync('git', ['rev-parse', '--verify', 'origin/main'], { cwd: repoRoot });
+  } catch {
+    return true;
+  }
+  try {
+    await execFileAsync('git', ['diff', '--quiet', '--', '.qube/aie/config.json'], { cwd: repoRoot });
+    await execFileAsync('git', ['diff', '--quiet', '--cached', '--', '.qube/aie/config.json'], { cwd: repoRoot });
+    await execFileAsync('git', ['diff', '--quiet', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repoRoot });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function reviewBundlePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
   return join(repoRoot, '.git', 'qube', 'aie', 'review-inputs', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+}
+
+function rawOutputPath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.raw-output.json`);
 }
 
 function writeReviewBundle(input: {
@@ -374,9 +394,35 @@ async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNu
   });
   const args = [...splitCommand(command), '--lane', lane, '--issue', String(issueNumber), '--pr', String(prNumber), '--head', headSha, '--profile', profile, '--runner-kind', runnerKind, '--prompt-stack-hash', expectedPromptStackHash, '--review-bundle', bundlePath];
   const result = await (exec ?? defaultExec)(args, repoRoot);
+  const rawBody = {
+    version: 1,
+    issueNumber,
+    prNumber,
+    headSha,
+    lane,
+    runnerKind,
+    args,
+    exitCode: result.exitCode,
+    stdout: result.stdout,
+    stderr: result.stderr,
+    recordedAt: new Date().toISOString(),
+  };
+  const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
+  const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
+  mkdirSync(dirname(rawPath), { recursive: true });
+  writeFileSync(rawPath, rawBodyText);
   if (result.exitCode !== 0) return null;
   try {
-    return normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
+    const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
+    if (!evidence) return null;
+    const rawRelativePath = relative(repoRoot, rawPath).replace(/\\/g, '/');
+    return {
+      ...evidence,
+      artifacts: [
+        ...evidence.artifacts,
+        { kind: 'json', path: rawRelativePath, sha256: hash(rawBodyText) },
+      ],
+    };
   } catch {
     return null;
   }
@@ -425,7 +471,7 @@ function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, summary
 
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot));
-  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: lanePromptStackHash(lane, issueNumbers, prNumber, headSha, evidencePaths, repoRoot), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
+  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: promptTextHash(rendered.text), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string): string {
@@ -450,6 +496,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const written: string[] = [];
   const unavailable: string[] = [];
   let failed = false;
+  const commandTrust = await executableReviewCommandsTrusted(input.repoRoot);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
 
   for (const lane of commandlessHostLanes) {
@@ -470,6 +517,14 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
       const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, contextLines, includePrompt);
+      if (command && !commandTrust) {
+        const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
+        const blocker = 'review runner command is not trusted for current PR head';
+        unavailable.push(`${lane}: ${summary}`);
+        produced.push(blockedLane(lane, 'unavailable', summary, blocker, command, issueNumber, input.prNumber, input.repoRoot, input.headSha, runner === 'local-host' ? 'local-host' : 'local-command'));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, contextLines, includePrompt));
+        continue;
+      }
       if (runner === 'local-host') {
         if (!command) continue;
         if (input.dryRun) {

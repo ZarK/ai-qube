@@ -599,10 +599,10 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
   for (const laneId of requiredLocalReviewLanes(profile)) {
     const lane = lanesById.get(laneId);
-    if (!lane || lane.status !== 'passed') continue;
+    if (!lane) continue;
     const provenance = lane.runnerProvenance;
     if (!provenance) {
-      blockers.push(`${laneId} passed without independent reviewer runner provenance.`);
+      if (lane.status === 'passed') blockers.push(`${laneId} passed without independent reviewer runner provenance.`);
       continue;
     }
     if (provenance.runnerKind !== adapter) blockers.push(`${laneId} runner provenance kind ${provenance.runnerKind} does not match evidence adapter ${adapter}.`);
