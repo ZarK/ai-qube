@@ -242,17 +242,19 @@ function reviewerMarkerBodyFor(name: string, headSha: string): { body: string; m
 }
 
 function stableRunId(input: GitHubLocalReviewPublishInput): string {
+  const issueNumbers = [...new Set(input.issueNumbers)].sort((left, right) => left - right);
+  const lanes = [...new Set(input.lanes)].sort();
   return createHash('sha256')
     .update(JSON.stringify({
       head: input.headSha,
       runner: input.runner,
       host: input.host,
       profile: input.profile,
-      lanes: input.lanes,
+      lanes,
       status: input.status,
       recommendation: input.recommendation,
       evidencePath: input.evidencePath,
-      issueNumbers: input.issueNumbers,
+      issueNumbers,
       summary: input.summary,
       findings: input.findings,
     }))
@@ -332,6 +334,8 @@ function sanitizePublishedText(value: string): string {
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
   const runId = stableRunId(input);
+  const issueNumbers = [...new Set(input.issueNumbers)].sort((left, right) => left - right);
+  const lanes = [...new Set(input.lanes)].sort();
   const metadata: LocalReviewMetadata = {
     version: 1,
     head: input.headSha,
@@ -342,13 +346,13 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     evidence: input.evidencePath,
     recommendation: input.recommendation,
     status: input.status,
-    issueNumbers: input.issueNumbers,
-    lanes: input.lanes,
+    issueNumbers,
+    lanes,
     inline: 'unsupported',
   };
   const marker = localReviewMarker(metadata);
   const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
-  const issues = input.issueNumbers.length === 0 ? ['- No linked issue metadata was available.'] : input.issueNumbers.map(issue => `- issue #${issue}`);
+  const issues = issueNumbers.length === 0 ? ['- No linked issue metadata was available.'] : issueNumbers.map(issue => `- issue #${issue}`);
   const body = [
     marker,
     '',
@@ -369,11 +373,16 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     `- runner: ${redact(input.runner)}`,
     `- host: ${redact(input.host)}`,
     `- profile: ${redact(input.profile)}`,
-    `- lanes: ${input.lanes.length === 0 ? 'none' : input.lanes.map(redact).join(', ')}`,
+    `- lanes: ${lanes.length === 0 ? 'none' : lanes.map(redact).join(', ')}`,
     `- run id: ${runId}`,
     '- inline comments: unsupported by this provider publisher; summary comment used',
   ].join('\n');
   return { body, marker, runId };
+}
+
+function publishedCommentUrl(result: GhRunResult): string | null {
+  const match = `${result.stdout}\n${result.stderr}`.match(/https:\/\/[^\s<>"')]+/);
+  return match ? redact(match[0]) : null;
 }
 
 function localReviewPublishResult(input: Partial<GitHubLocalReviewPublishResult> & { status: GitHubLocalReviewPublishStatus; nextAction: string }): GitHubLocalReviewPublishResult {
@@ -927,6 +936,7 @@ export class GitHubReviewProvider implements ReviewProvider {
       runId,
       marker,
       body,
+      url: publishedCommentUrl(result),
       nextAction: 'Provider-visible local review feedback was published; rerun PR view/gate to inspect provider state if needed.',
     });
   }

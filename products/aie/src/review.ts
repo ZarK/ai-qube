@@ -239,7 +239,7 @@ function effectiveProfile(config: Config): LocalReviewProfile {
 }
 
 function codexCommand(config: Config): string | null {
-  const command = config.reviewLanes.find(lane => lane.runner === 'local-host')?.command?.trim();
+  const command = config.reviewLanes.find(lane => lane.runner === 'local-host' && lane.command?.trim())?.command?.trim();
   return command && command !== '' ? command : null;
 }
 

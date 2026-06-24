@@ -356,6 +356,45 @@ describe('review gate CLI', () => {
     assert.match(parsed.localReviewRunner.codex.nextAction, /Spawn independent Codex subagents/);
   });
 
+  it('detects a configured local-host command after commandless local-host lanes', () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.localAgents = [];
+    config.policy.reviews.lanes = [
+      {
+        id: 'issue-compliance',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+      },
+      {
+        id: 'code-quality',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+        command: 'review-fixture',
+      },
+    ];
+    writeConfig(repo, config);
+
+    const result = binRun(['review', 'gate', '93', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
+    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
+    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
+    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
+    assert.match(parsed.localReviewRunner.codex.nextAction, /configured/);
+  });
+
   it('fails review gate commands on malformed trusted config', () => {
     const repo = makeGitRepo();
     const config = cleanConfig();

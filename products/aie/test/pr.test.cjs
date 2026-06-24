@@ -523,18 +523,19 @@ function makePrExec(options = {}) {
       return { args, exitCode: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'pr' && args[1] === 'comment') {
+      const url = 'https://github.com/example/repo/pull/12#issuecomment-local-review';
       if (options.commentVisible !== false) {
         const body = args[4] ?? '';
         currentPr = {
           ...currentPr,
           comments: [
             ...(currentPr.comments || []),
-            { author: { login: options.commentAuthor ?? 'executor' }, body, url: 'https://github.com/example/repo/pull/12#issuecomment-local-review' },
+            { author: { login: options.commentAuthor ?? 'executor' }, body, url },
           ],
         };
         if (prViews.length > 0) prViews[0] = currentPr;
       }
-      return { args, exitCode: 0, stdout: '', stderr: '' };
+      return { args, exitCode: 0, stdout: url, stderr: '' };
     }
     return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
   };
@@ -1325,10 +1326,12 @@ describe('PR gate service', () => {
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.localReviewPublish.status, 'published');
+    assert.equal(result.localReviewPublish.url, 'https://github.com/example/repo/pull/12#issuecomment-local-review');
     assert.equal(result.status, 'complete');
     assert.equal(publish.status, 'published');
     assert.equal(publish.provider, 'github');
     assert.equal(publish.runId, result.localReviewPublish.runId);
+    assert.equal(publish.url, 'https://github.com/example/repo/pull/12#issuecomment-local-review');
     assert.equal(body.includes(repo), false);
     assert.doesNotMatch(body, /C:\\Users\\executor|\\\\server\\share|\/home\/executor|\/tmp\/private-token|secret repo/);
     assert.match(body, /\[local-path\]/);
@@ -1609,6 +1612,42 @@ describe('PR gate service', () => {
     assert.match(localCommand.marker ?? '', /"runner":"local-command"/);
     assert.match(localHost.marker ?? '', /"runner":"local-host"/);
     assert.match(localHost.marker ?? '', /"host":"codex"/);
+  });
+
+  it('canonicalizes set-like local review publish metadata in run ids', async () => {
+    const baseInput = {
+      enabled: true,
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      runner: 'local-command',
+      host: 'local-command',
+      evidencePath: '.qube/aie/reviews/93/12/abc123',
+      issueNumbers: [94, 93, 93],
+      lanes: ['final-gate', 'code-quality', 'issue-compliance', 'task-record-compliance', 'manual-qa', 'tests-quality', 'code-quality'],
+      summary: 'local review passed',
+      findings: [],
+    };
+    const provider = createGitHubReviewProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const unordered = await provider.publishLocalReviewFeedback(snapshot.item, baseInput);
+    const ordered = await provider.publishLocalReviewFeedback(snapshot.item, {
+      ...baseInput,
+      issueNumbers: [93, 94],
+      lanes: ['code-quality', 'final-gate', 'issue-compliance', 'manual-qa', 'task-record-compliance', 'tests-quality'],
+    });
+
+    assert.equal(unordered.status, 'planned');
+    assert.equal(ordered.status, 'planned');
+    assert.equal(unordered.runId, ordered.runId);
+    assert.match(unordered.marker ?? '', /"issueNumbers":\[93,94\]/);
+    assert.match(unordered.marker ?? '', /"lanes":\["code-quality","final-gate","issue-compliance","manual-qa","task-record-compliance","tests-quality"\]/);
+    assert.match(unordered.body ?? '', /- issue #93\n- issue #94/);
+    assert.match(unordered.body ?? '', /- lanes: code-quality, final-gate, issue-compliance, manual-qa, task-record-compliance, tests-quality/);
   });
 
   it('returns failed local review publishing results when gh comment execution throws', async () => {
