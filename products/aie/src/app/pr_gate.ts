@@ -418,6 +418,10 @@ function skippedLocalReviewPublish(nextAction: string): GitHubLocalReviewPublish
   return { status: 'disabled', runId: null, marker: null, body: null, url: null, failure: null, nextAction };
 }
 
+function pendingLocalReviewPublish(nextAction: string): GitHubLocalReviewPublishResult {
+  return { status: 'pending', runId: null, marker: null, body: null, url: null, failure: null, nextAction };
+}
+
 function safeSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
 }
@@ -519,6 +523,20 @@ async function gitPathLines(repoRoot: string, args: readonly string[]): Promise<
   }
 }
 
+async function gitText(repoRoot: string, args: readonly string[], maxCharacters = 6000): Promise<string> {
+  try {
+    const result = await execFileAsync('git', [...args], { cwd: repoRoot, maxBuffer: 1024 * 1024 });
+    return result.stdout.trim().slice(0, maxCharacters);
+  } catch {
+    return '';
+  }
+}
+
+function bounded(value: string, maxCharacters = 600): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > maxCharacters ? `${normalized.slice(0, maxCharacters)}...` : normalized;
+}
+
 async function changedReviewPaths(config: Config, repoRoot: string): Promise<string[]> {
   const baseRef = `${config.baseRemote}/${config.baseBranch}`;
   return uniqueStrings([
@@ -530,6 +548,7 @@ async function changedReviewPaths(config: Config, repoRoot: string): Promise<str
 
 async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: { item: ReviewItem; pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const paths = await changedReviewPaths(config, repoRoot);
+  const diffStat = await gitText(repoRoot, ['diff', '--stat', `${config.baseRemote}/${config.baseBranch}...HEAD`], 4000);
   const sources = config.reviewContextSources;
   const reviewThreadMode = prThreadContextMode(sources);
   const requirementSources = sources.requirements.length > 0 ? sources.requirements.join(', ') : 'none configured';
@@ -549,6 +568,14 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
     `PR head SHA: ${snapshot.pr.headRefOid}.`,
     `Review decision: ${snapshot.pr.reviewDecision}; merge state: ${snapshot.pr.mergeStateStatus}; mergeability: ${snapshot.pr.mergeable}.`,
     `Changed and relevant local paths: ${changedPaths}.`,
+    'Bounded review bundle:',
+    `Bundle PR: #${snapshot.pr.number} ${snapshot.pr.title}; url=${snapshot.pr.url}; head=${snapshot.pr.headRefOid}; state=${snapshot.pr.state}; draft=${snapshot.pr.isDraft}; reviewDecision=${snapshot.pr.reviewDecision}; mergeState=${snapshot.pr.mergeStateStatus}; mergeable=${snapshot.pr.mergeable}.`,
+    `Bundle issues: ${issueChecklists.map(summary => `#${summary.issue.number} ${summary.issue.title} (${summary.issue.state}) ${summary.issue.url}`).join(' | ') || 'none loaded'}.`,
+    `Bundle acceptance checklists: ${issueChecklists.map(summary => `#${summary.issue.number} checked=${summary.checklist.checked}/${summary.checklist.total}; unchecked=${summary.checklist.items.filter(item => !item.checked).map(item => `#${item.index} ${bounded(item.text, 160)}`).join('; ') || 'none'}`).join(' | ') || 'none loaded'}.`,
+    `Bundle changed files: ${changedPaths}.`,
+    `Bundle diff stat: ${diffStat === '' ? 'unavailable' : bounded(diffStat, 4000)}.`,
+    `Bundle checks: ${checkDiagnostics.map(diagnostic => `${diagnostic.checkName}=${diagnostic.status}; ${bounded(diagnostic.summary, 220)}`).join(' | ') || 'none loaded'}.`,
+    `Bundle provider feedback summaries: ${feedback.filter(item => !isQubeLocalReviewFeedback(item)).slice(0, 10).map(item => `${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${bounded(item.summary, 240)}`).join(' | ') || 'none'}.`,
     `Suggested diff commands: git diff --stat ${config.baseRemote}/${config.baseBranch}...HEAD; git diff ${config.baseRemote}/${config.baseBranch}...HEAD -- <relevant paths>; git diff -- <uncommitted paths>.`,
     `QUBE context commands: qube aie view ${snapshot.closingIssueNumbers[0] ?? '<issue>'}; qube aie pr view ${snapshot.pr.number} --json; qube aie pr gate ${snapshot.pr.number} --dry-run --json.`,
     ...issueChecklists.map(summary => `Issue #${summary.issue.number} checklist: ${summary.checklist.checked}/${summary.checklist.total} checked; unchecked=${summary.checklist.unchecked}.`),
@@ -620,8 +647,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   });
   let localReviewPublish = skippedLocalReviewPublish('No local review provider publishing was required.');
   const publishUnavailable: string[] = [];
-  if (localRequired || localShadow) {
-    localReviewPublish = await provider.publishLocalReviewFeedback(finalSnapshot.item, localReviewPublishInput({
+  const providerLocalReviewPublishing = githubReviewEnabled(config) && (localRequired || localShadow);
+  if (providerLocalReviewPublishing) {
+    const publishInput = localReviewPublishInput({
       enabled: true,
       dryRun,
       prNumber: options.prNumber,
@@ -629,7 +657,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       repoRoot: options.repoRoot ?? process.cwd(),
       localReviewRunner,
       localReview,
-    }));
+    });
+    localReviewPublish = publishInput.enabled
+      ? await provider.publishLocalReviewFeedback(finalSnapshot.item, publishInput)
+      : pendingLocalReviewPublish('Provider-visible local review publishing is pending until current-head local review evidence exists.');
     if (localReviewPublish.status === 'failed') publishUnavailable.push(`QUBE local review publishing failed: ${localReviewPublish.failure ?? 'unknown failure'}`);
     if (!dryRun) {
       try {

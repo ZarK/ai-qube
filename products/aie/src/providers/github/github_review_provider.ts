@@ -22,7 +22,7 @@ const MARKER_PREFIX = 'aie:pr-gate';
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 
 export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
-export type GitHubLocalReviewPublishStatus = 'disabled' | 'planned' | 'published' | 'skipped' | 'failed';
+export type GitHubLocalReviewPublishStatus = 'disabled' | 'pending' | 'planned' | 'published' | 'skipped' | 'failed';
 
 export interface GitHubLocalReviewPublishInput {
   enabled: boolean;
