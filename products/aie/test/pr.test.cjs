@@ -164,15 +164,20 @@ function expectedPromptHashForLane(repo, id, issueNumber = 93, prNumber = 12, he
   const prTitle = options.prTitle ?? 'Review me';
   const reviewDecision = options.reviewDecision ?? 'REVIEW_REQUIRED';
   const evidencePath = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headSha, `${id}.json`);
+  const provenancePath = join(repo, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), headSha, `${id}.json`);
   const contextLines = [
     `Run local review lane ${id}.`,
     `Issue: #${issueNumber}.`,
     `Linked issues for this PR-level lane: #${issueNumber}.`,
     `Pull request: #${prNumber}.`,
     `PR head SHA: ${headSha}.`,
-    `Record the resulting local-host evidence JSON at every required issue evidence path: ${evidencePath}.`,
+    `Record the resulting local-host evidence JSON at this exact issue evidence path: ${evidencePath}.`,
+    `The evidence JSON must include issueNumber ${issueNumber}, prNumber ${prNumber}, headSha ${headSha}, lane ${id}, profile, adapter local-host, status, severity, recommendation, summary, blockers, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, runnerProvenance, and recordedAt.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
-    'Bind local-host evidence to same-user host provenance outside the worktree; this is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
+    `Bind local-host evidence to same-user host provenance at this exact path: ${provenancePath}.`,
+    'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
+    'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
+    'Writing the requested evidence and host-provenance files is allowed; do not edit source, tests, docs, config, package metadata, PR body, or issue content from inside the reviewer lane.',
     'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
     'Review context source policy:',
     'Repository instructions: AGENTS.md, **/AGENTS.md.',
@@ -1098,13 +1103,16 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].promptText, /Inspect linked issue\(s\): #93/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Pull request: #12/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /PR head SHA: abc123/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /\.git[\\/]qube[\\/]aie[\\/]host-provenance[\\/]93[\\/]12[\\/]abc123/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /evidenceSha256 is the canonical SHA-256 digest/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /Writing the requested evidence and host-provenance files is allowed/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /QUBE context commands/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Issue #93 checklist:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Check ci:/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
-  it('deduplicates commandless Codex local-host lanes across linked issues', async () => {
+  it('plans commandless Codex local-host lanes per linked issue', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     const pr = cleanLocalPr({ closingIssuesReferences: [{ number: 93 }, { number: 94 }] });
@@ -1112,11 +1120,13 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
 
-    assert.equal(result.localReviewRunner.lanes.length, 6);
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.issueNumbers.join(',') === '93,94'));
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.evidencePaths.length === 2));
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.evidencePaths.some(path => path.includes('\\93\\12\\abc123') || path.includes('/93/12/abc123'))));
-    assert.ok(result.localReviewRunner.lanes.every(lane => lane.evidencePaths.some(path => path.includes('\\94\\12\\abc123') || path.includes('/94/12/abc123'))));
+    assert.equal(result.localReviewRunner.lanes.length, 12);
+    assert.equal(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 93).length, 6);
+    assert.equal(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 94).length, 6);
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.issueNumbers.join(',') === String(lane.issueNumber)));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.evidencePaths.length === 1));
+    assert.ok(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 93).every(lane => lane.evidencePath.includes('\\93\\12\\abc123') || lane.evidencePath.includes('/93/12/abc123')));
+    assert.ok(result.localReviewRunner.lanes.filter(lane => lane.issueNumber === 94).every(lane => lane.evidencePath.includes('\\94\\12\\abc123') || lane.evidencePath.includes('/94/12/abc123')));
   });
 
   it('runs local-command fixture lanes and writes valid current-head evidence before PR gate validation', async () => {
