@@ -1070,7 +1070,18 @@ describe('PR gate service', () => {
   it('publishes local-command review results as provider-visible PR feedback', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();
-    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr(), cleanLocalPr()] });
+    const { exec, calls } = makePrExec({
+      prViews: [cleanLocalPr(), cleanLocalPr()],
+      localCommand: args => {
+        const result = fixtureLocalCommand(args);
+        const body = JSON.parse(result.stdout);
+        if (body.lane === 'code-quality') {
+          body.summary = 'Reviewed C:\\Users\\executor\\secret\\repo\\src\\parser.ts and /home/executor/repo/src/parser.ts';
+          body.blockers = ['Inspect C:\\Users\\executor\\secret\\repo\\.env and /tmp/private-token.txt before publish'];
+        }
+        return { ...result, stdout: JSON.stringify(body) };
+      },
+    });
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
     const commentCall = calls.find(args => args[0] === 'pr' && args[1] === 'comment');
@@ -1085,6 +1096,8 @@ describe('PR gate service', () => {
     assert.equal(publish.provider, 'github');
     assert.equal(publish.runId, result.localReviewPublish.runId);
     assert.equal(body.includes(repo), false);
+    assert.doesNotMatch(body, /C:\\Users\\executor|\/home\/executor|\/tmp\/private-token/);
+    assert.match(body, /\[local-path\]/);
     assert.match(body, /<!-- qube-local-review:/);
     assert.match(body, /QUBE local review: approve/);
     assert.match(body, /"head":"abc123"/);

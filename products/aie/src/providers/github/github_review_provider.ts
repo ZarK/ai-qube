@@ -321,6 +321,12 @@ function localReviewSummary(comment: LocalReviewComment): string {
   return `QUBE local review ${comment.metadata.recommendation} for ${comment.metadata.profile}: ${summary}`;
 }
 
+function sanitizePublishedText(value: string): string {
+  return redact(value)
+    .replace(/\b[A-Za-z]:[\\/][^\s)]+/g, '[local-path]')
+    .replace(/(^|[\s(:])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\s)]+/g, '$1[local-path]');
+}
+
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
   const runId = stableRunId(input);
   const metadata: LocalReviewMetadata = {
@@ -338,7 +344,7 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     inline: 'unsupported',
   };
   const marker = localReviewMarker(metadata);
-  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${redact(item)}`);
+  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
   const issues = input.issueNumbers.length === 0 ? ['- No linked issue metadata was available.'] : input.issueNumbers.map(issue => `- issue #${issue}`);
   const body = [
     marker,
@@ -346,7 +352,7 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     `QUBE local review: ${input.recommendation}`,
     '',
     'Summary:',
-    redact(input.summary),
+    sanitizePublishedText(input.summary),
     '',
     'Findings:',
     ...findings,
