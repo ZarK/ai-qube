@@ -134,8 +134,8 @@ function readReviewAdapter(value: unknown, defaultValue: ReviewAdapterKind, path
 
 function readReviewProfile(value: unknown, defaultValue: ReviewProfileKind, path: string, errors: ValidationError[]): ReviewProfileKind {
   if (value === undefined) return defaultValue;
-  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-comprehensive' || value === 'local-shadow') return value;
-  errors.push({ kind: 'invalid', path, message: `${path} must be remote-compatible, local-standard, local-comprehensive, or local-shadow` });
+  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-focused' || value === 'local-comprehensive' || value === 'local-shadow') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be remote-compatible, local-standard, local-focused, local-comprehensive, or local-shadow` });
   return defaultValue;
 }
 

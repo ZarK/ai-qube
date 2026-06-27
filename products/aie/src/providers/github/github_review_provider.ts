@@ -204,7 +204,13 @@ function triggerFor(name: string): GitHubReviewRequestTrigger { return reviewerI
 function configuredReviewerNames(policy: ExecutorPolicy): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  for (const rawName of policy.reviews.reviewers) {
+  const adapter = policy.reviews.adapter;
+  const sources = adapter === 'local'
+    ? policy.reviews.localReviewers
+    : adapter === 'mixed'
+      ? [...policy.reviews.reviewers, ...policy.reviews.localReviewers]
+      : policy.reviews.reviewers;
+  for (const rawName of sources) {
     const name = rawName.trim();
     if (name === '') continue;
     const id = reviewerId(name);

@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { redact } from './gh.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
-export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-comprehensive' | 'local-shadow';
+export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
 export type LocalReviewSeverity = 'none' | 'low' | 'medium' | 'high' | 'critical';
 export type LocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
 export type LocalReviewContextKind = 'agents' | 'issue-body' | 'issue-comment' | 'milestone' | 'functional-requirement' | 'linked-issue' | 'pr-body' | 'pr-comment' | 'review-thread' | 'doc' | 'diff' | 'ci' | 'manual-qa';
@@ -135,6 +135,12 @@ interface LocalReviewPublishEvidence {
   status: string;
 }
 
+export const CORE_REVIEW_FOCUSES: readonly LocalReviewLaneId[] = [
+  'issue-compliance',
+  'code-quality',
+  'performance',
+];
+
 export const REQUIRED_LOCAL_REVIEW_LANES: readonly LocalReviewLaneId[] = [
   'task-record-compliance',
   'issue-compliance',
@@ -241,7 +247,7 @@ function readLaneId(value: unknown): LocalReviewLaneId | null {
 }
 
 function readProfile(value: unknown, fallback: LocalReviewProfile): LocalReviewProfile {
-  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-comprehensive' || value === 'local-shadow') return value;
+  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-focused' || value === 'local-comprehensive' || value === 'local-shadow') return value;
   return fallback;
 }
 
@@ -336,6 +342,7 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
 
 export function requiredLocalReviewLanes(profile: LocalReviewProfile): readonly LocalReviewLaneId[] {
   if (profile === 'local-comprehensive' || profile === 'local-shadow') return COMPREHENSIVE_LOCAL_REVIEW_LANES;
+  if (profile === 'local-focused') return CORE_REVIEW_FOCUSES;
   if (profile === 'local-standard') return REQUIRED_LOCAL_REVIEW_LANES;
   return [];
 }
@@ -793,10 +800,10 @@ function withProviderPublishStatus(lane: LocalReviewLane, status: string | null)
   };
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence | null {
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[]): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   if (!existsSync(directory)) return null;
-  const requiredLanes = requiredLocalReviewLanes(profile);
+  const requiredLanes = requiredLanesInput ?? requiredLocalReviewLanes(profile);
   const lanes: LocalReviewLane[] = [];
   const missing: string[] = [];
   const adapters: LocalReviewEvidence['adapter'][] = [];
@@ -1008,16 +1015,19 @@ function gateStatus(evidence: readonly LocalReviewEvidence[]): LocalReviewStatus
   return evidence.reduce<LocalReviewStatus>((current, item) => statusPriority(item.status) > statusPriority(current) ? item.status : current, 'passed');
 }
 
-function gateNextAction(status: LocalReviewStatus, prNumber: number): string {
+function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFirst = false): string {
   const rerunCommand = prNumber > 0 ? `\`aie pr gate ${prNumber}\`` : '`aie pr gate <pr>`';
   if (status === 'passed') return prNumber > 0
-    ? `Local review evidence is current for PR #${prNumber}; inspect PR state, checks, issue checklist, and any feedback before merge.`
-    : 'Local review evidence is recorded; inspect PR state, checks, issue checklist, and any feedback before merge.';
-  if (status === 'stale') return `Rerun local review lanes for the current PR head, refresh local evidence, then rerun ${rerunCommand}.`;
-  if (status === 'failed' || status === 'needs-work') return 'Address local review blockers, rerun affected checks, refresh local evidence, and rerun the PR gate.';
-  if (status === 'inconclusive') return 'Refresh local review evidence with required AGENTS, issue, issue comments, milestone, functional requirement, linked issue, PR, and review-thread context before merge.';
-  if (status === 'unavailable' || status === 'malformed') return 'Fix local review evidence format or runner availability, then rerun the PR gate.';
-  return `Record local review evidence for all required lanes, then rerun ${rerunCommand}.`;
+    ? `Local review is current for PR #${prNumber}; inspect PR comments, reviews, checks, issue checklist, and any feedback before merge.`
+    : 'Local review is recorded; inspect PR comments, reviews, checks, issue checklist, and any feedback before merge.';
+  if (providerFirst && (status === 'missing' || status === 'pending')) {
+    return `Run fresh-context review subagents for each active focus, publish provider-visible feedback on the pull request, then rerun ${rerunCommand}. Inspect PR comments and reviews on GitHub; local audit files are optional.`;
+  }
+  if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
+  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback on the pull request, rerun affected checks, and rerun the PR gate.';
+  if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
+  if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
+  return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;
 }
 
 export function readLocalReviewGate(input: {
@@ -1031,11 +1041,13 @@ export function readLocalReviewGate(input: {
   severityThreshold?: LocalReviewSeverity;
   shadow?: boolean;
   expectedPromptStackHashes?: Readonly<Record<string, string>>;
+  activeFocuses?: readonly LocalReviewLaneId[];
+  providerFirst?: boolean;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
   const severityThreshold = input.severityThreshold ?? 'high';
-  const requiredLanes = [...requiredLocalReviewLanes(profile)];
+  const requiredLanes = [...(input.activeFocuses ?? requiredLocalReviewLanes(profile))];
   const mode = input.shadow ? 'shadow' : input.required ? 'required' : 'disabled';
   if (!input.required && !input.shadow) return { required: false, mode, profile, reviewers, requiredLanes, evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
   if (input.issueNumbers.length === 0) {
@@ -1045,7 +1057,7 @@ export function readLocalReviewGate(input: {
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = laneEvidenceDirectory(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     const legacyPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes);
     if (laneEvidence) return laneEvidence;
     if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);
@@ -1062,7 +1074,7 @@ export function readLocalReviewGate(input: {
     evidence,
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
-    nextAction: gateNextAction(status, input.prNumber),
+    nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false),
   };
 }
 

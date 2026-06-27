@@ -331,7 +331,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       severityThreshold: config.reviewSeverityThreshold,
       reviewers: defaultOracle ? ['oracle'] : configuredReviewers,
       localReviewers: configuredLocalReviewers,
-      configuredProfiles: ['remote-compatible', 'local-standard', 'local-comprehensive', 'local-shadow'],
+      configuredProfiles: ['remote-compatible', 'local-standard', 'local-focused', 'local-comprehensive', 'local-shadow'],
       requiredLanes: [...requiredLocalReviewLanes(effectiveReviewProfile)],
       configuredLanes: config.reviewLanes.map(lane => lane.id),
       promptFragments: {

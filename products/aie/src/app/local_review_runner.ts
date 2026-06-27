@@ -1,7 +1,8 @@
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
-import { requiredLocalReviewLanes, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
+import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
+import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import type { PrGateExec } from './pr_gate.js';
 import { blockedLane, executableReviewCommandsTrusted, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeLane, type LaneEvidence } from './local_review_runner_support.js';
 
@@ -62,6 +63,7 @@ interface LocalReviewRunnerInput {
   includePrompts?: boolean;
   exec?: PrGateExec;
   contextLines?: readonly string[];
+  changedPaths?: readonly string[];
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -113,13 +115,13 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string): string {
-  return `Spawn one independent Codex subagent with this lane promptText to review lane ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending lane subagents in parallel when the host supports it. Record JSON local-host evidence at ${evidencePath}.`;
+  return `Spawn one independent Codex subagent with this focus promptText to review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Publish provider-visible feedback on the pull request; local audit JSON at ${evidencePath} is optional.`;
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
   const codex = probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const profile = effectiveProfile(config, input.required, input.shadow);
-  const requiredLanes = [...requiredLocalReviewLanes(profile)];
+  const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const contextLines = input.contextLines ?? [];
   const includePrompt = input.includePrompts === true;
