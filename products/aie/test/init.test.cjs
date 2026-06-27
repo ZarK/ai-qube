@@ -244,7 +244,7 @@ describe('init service', () => {
       opencodeCommandPath('make-it-so.md'),
       opencodeCommandPath('makeitso.md'),
     ]);
-    assert.match(planned.warnings.join('\n'), /Codex project command files are not installed; Codex uses the managed AGENTS\.md always-loaded instructions\./);
+    assert.match(planned.warnings.join('\n'), /Codex project command files are configured but none are enabled for the current review policy\./);
     assert.match(planned.warnings.join('\n'), /Claude Code project command files are not installed; Claude Code uses the managed CLAUDE\.md always-loaded instructions\./);
 
     const applied = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo, policy: { opencodeCommandAlias: true } });
@@ -252,6 +252,34 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'make-it-so.md')), true);
     assert.equal(existsSync(join(repo, '.opencode', 'commands', 'makeitso.md')), true);
     assert.equal(readFileSync(join(repo, '.opencode', 'commands', 'makeitso.md'), 'utf8'), readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8'));
+  });
+
+  it('installs Codex local review agent and cycle prompt when local codex review is configured', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const planned = await buildInitPlan({ target: '.', tool: 'codex', dryRun: true, force: false, cwd: repo });
+    assert.equal(planned.ok, true);
+    assert.deepEqual(planned.actions.map(action => action.path), [
+      join('.qube', 'aie', 'config.json'),
+      'AGENTS.md',
+      pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
+    ]);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /Configured review adapter: local/);
+    assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
+    assert.match(agents, /spawn one independent Codex subagent per lane/);
+    const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(agent, /name = "qube-review-focus"/);
+    assert.match(agent, /read-only PR reviewer/);
   });
 
   it('renders full always-loaded workflow instructions with host projections', async () => {
@@ -277,8 +305,8 @@ describe('init service', () => {
     assert.match(agents, /For Codex, use `update_plan` or the host plan\/todo tool directly/);
     assert.match(claude, /For Claude Code, use `TodoWrite` and `TodoRead`/);
     assert.match(agents, /Host capability profile:/);
-    assert.match(agents, /OpenCode: instructions target `AGENTS\.md`, project commands are installed when configured/);
-    assert.match(agents, /Codex: instructions target `AGENTS\.md`, project command files are not installed by Executor for this host/);
+    assert.match(agents, /OpenCode: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
+    assert.match(agents, /Codex: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
     assert.match(claude, /Claude Code: instructions target `CLAUDE\.md`, project command files are not installed by Executor for this host/);
     assert.match(agents, /Protected workflow todo ids are `branch-check`, `ship`, `pr-review-wait`, `next`/);
     assert.match(agents, /BOOTSTRAP NEXT ISSUE - DO NOT COMPLETE UNTIL NEW TODOS EXIST/);
@@ -609,7 +637,8 @@ describe('init service', () => {
     assert.ok(claude);
     assert.equal(opencode.supportsProjectCommands, true);
     assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md')]);
-    assert.equal(codex.supportsProjectCommands, false);
+    assert.equal(codex.supportsProjectCommands, true);
+    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
     const agentsHosts = hostIdsForInstructionPath('AGENTS.md');

@@ -50,6 +50,14 @@ function readString(input: Record<string, unknown>, field: string, defaultValue:
   return defaultValue;
 }
 
+function readOptionalNonEmptyString(input: Record<string, unknown>, field: string, path: string, errors: ValidationError[]): string | undefined {
+  if (!(field in input) || input[field] === undefined || input[field] === null) return undefined;
+  const value = input[field];
+  if (typeof value === 'string' && value.trim() !== '') return value.trim();
+  errors.push({ kind: 'invalid', path, message: `${path} must be a non-empty string when provided` });
+  return undefined;
+}
+
 function readStringArray(input: Record<string, unknown>, field: string, defaultValue: string[], path: string, errors: ValidationError[]): string[] {
   if (!(field in input)) return [...defaultValue];
   const value = input[field];
@@ -267,7 +275,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       prompt: readStringArray(entry, 'prompt', [], lanePath, errors),
       tools: readStringArray(entry, 'tools', [], lanePath, errors),
       runner: readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors),
-      command: readString(entry, 'command', '', lanePath, errors, { allowEmpty: false }) || undefined,
+      command: readOptionalNonEmptyString(entry, 'command', `${lanePath}.command`, errors),
     });
   });
   return lanes;

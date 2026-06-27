@@ -9,13 +9,15 @@ export interface InstructionTarget {
   description: string;
 }
 
+export type CommandRenderer = 'make-it-so' | 'codex-review-focus-agent';
+
 export interface CommandTarget {
   id: string;
   path: string;
   description: string;
   optional: boolean;
-  enabledBy: 'always' | 'opencodeCommandAlias';
-  renderer: 'make-it-so';
+  enabledBy: 'always' | 'opencodeCommandAlias' | 'codexLocalReview';
+  renderer: CommandRenderer;
 }
 
 export interface TodoCapability {
@@ -33,6 +35,11 @@ export interface HookCapability {
   description: string;
 }
 
+export interface SubagentCapability {
+  supported: boolean;
+  instruction: string;
+}
+
 export interface AgentHostProfile {
   id: AgentHostId;
   displayName: string;
@@ -40,6 +47,7 @@ export interface AgentHostProfile {
   commandTargets: CommandTarget[];
   todo: TodoCapability;
   dialogue: DialogueCapability;
+  subagents: SubagentCapability;
   hooks: HookCapability;
   supportsProjectCommands: boolean;
 }
@@ -74,6 +82,15 @@ const OPENCODE_COMMAND_ALIAS: CommandTarget = {
   renderer: 'make-it-so',
 };
 
+const CODEX_REVIEW_FOCUS_AGENT: CommandTarget = {
+  id: 'codex-review-focus-agent',
+  path: pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
+  description: 'Codex read-only subagent for one focused local PR review lane.',
+  optional: false,
+  enabledBy: 'codexLocalReview',
+  renderer: 'codex-review-focus-agent',
+};
+
 const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
 
 const HOST_PROFILES: Record<AgentHostId, AgentHostProfile> = {
@@ -90,6 +107,10 @@ const HOST_PROFILES: Record<AgentHostId, AgentHostProfile> = {
     dialogue: {
       expectation: 'Operate autonomously in the main OpenCode session and use subagents only for bounded research or review work.',
     },
+    subagents: {
+      supported: true,
+      instruction: 'Use OpenCode subagents only for bounded research or review work; keep issue workflow todos in the main session.',
+    },
     hooks: {
       supported: true,
       description: 'OpenCode can enforce repository behavior through host permissions or hooks when configured outside Executor init.',
@@ -100,20 +121,24 @@ const HOST_PROFILES: Record<AgentHostId, AgentHostProfile> = {
     id: 'codex',
     displayName: 'Codex',
     instructionTargets: [AGENTS_INSTRUCTIONS],
-    commandTargets: [],
+    commandTargets: [CODEX_REVIEW_FOCUS_AGENT],
     todo: {
       tools: ['update_plan'],
       fallback: 'If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state.',
       instruction: 'For Codex, use `update_plan` or the host plan/todo tool directly when available. If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.',
     },
     dialogue: {
-      expectation: 'Use Codex plan/todo support directly in the active session and keep durable state in configured provider records.',
+      expectation: 'Use Codex plan/todo support in the main session, spawn independent Codex subagents for local PR review focuses, wait for all review subagents before publishing provider feedback, and keep durable state in configured provider records.',
+    },
+    subagents: {
+      supported: true,
+      instruction: 'For local PR review, spawn one independent Codex subagent per active focus using each lane `promptText` from `pr gate --dry-run --json --local-review-prompts`. Prefer `.codex/agents/qube-review-focus.toml` when available. Run lanes in parallel when supported, wait for all subagents, then run `pr gate <pr> --json` without `--dry-run` to publish provider-visible feedback.',
     },
     hooks: {
       supported: true,
       description: 'Codex host hooks may exist in trusted host configuration; Executor init does not install them.',
     },
-    supportsProjectCommands: false,
+    supportsProjectCommands: true,
   },
   'claude-code': {
     id: 'claude-code',
@@ -127,6 +152,10 @@ const HOST_PROFILES: Record<AgentHostId, AgentHostProfile> = {
     },
     dialogue: {
       expectation: 'Keep issue workflow state visible in the main Claude Code conversation and use subagents only for bounded support work.',
+    },
+    subagents: {
+      supported: true,
+      instruction: 'Use Claude Code subagents only for bounded support work; keep issue workflow todos in the main session.',
     },
     hooks: {
       supported: true,

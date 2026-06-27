@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { parseInitTool, uniqueTools } from '../init_content.js';
@@ -410,7 +411,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     if (planned.write) writes.push(planned.write);
   }
 
-  const rendered = renderInitFiles(config, selectedProfiles);
+  const workspaceAieRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
+  const rendered = renderInitFiles(config, selectedProfiles, { workspaceAieRunner });
   warnings.push(...rendered.warnings);
   for (const renderedFile of rendered.files) {
     const planned = await planManagedFile({
