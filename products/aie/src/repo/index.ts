@@ -69,10 +69,12 @@ export interface InstructionStatus {
   opencodeMakeItSoManaged: boolean;
   opencodeMakeitsoAlias: boolean;
   opencodeMakeitsoAliasManaged: boolean;
+  codexReviewFocusAgent: boolean;
+  codexReviewFocusAgentManaged: boolean;
   targets: InstructionTargetStatus[];
 }
 
-type InstructionTargetStatusName = 'agents' | 'claude' | 'opencodeMakeItSo' | 'opencodeMakeitsoAlias';
+type InstructionTargetStatusName = 'agents' | 'claude' | 'opencodeMakeItSo' | 'opencodeMakeitsoAlias' | 'codexReviewFocusAgent';
 
 export interface InstructionTargetStatus {
   name: InstructionTargetStatusName;
@@ -299,12 +301,13 @@ export function findMilestoneWarnings(issues: GitHubIssue[], config: Config): Is
 }
 
 export function getInstructionStatus(repoRoot: string | null): InstructionStatus {
-  if (!repoRoot) return { agents: false, agentsManaged: false, claude: false, claudeManaged: false, opencodeMakeItSo: false, opencodeMakeItSoManaged: false, opencodeMakeitsoAlias: false, opencodeMakeitsoAliasManaged: false, targets: [] };
+  if (!repoRoot) return { agents: false, agentsManaged: false, claude: false, claudeManaged: false, opencodeMakeItSo: false, opencodeMakeItSoManaged: false, opencodeMakeitsoAlias: false, opencodeMakeitsoAliasManaged: false, codexReviewFocusAgent: false, codexReviewFocusAgentManaged: false, targets: [] };
   const nameByTargetId: Record<string, InstructionTargetStatusName> = {
     'agents-instructions': 'agents',
     'claude-instructions': 'claude',
     'opencode-make-it-so': 'opencodeMakeItSo',
     'opencode-makeitso-alias': 'opencodeMakeitsoAlias',
+    'codex-review-focus-agent': 'codexReviewFocusAgent',
   };
   const targetByPath = new Map(getAllAgentHostProfiles()
     .flatMap(profile => [
@@ -318,6 +321,7 @@ export function getInstructionStatus(repoRoot: string | null): InstructionStatus
   const claude = byName.get('claude');
   const makeItSo = byName.get('opencodeMakeItSo');
   const makeitsoAlias = byName.get('opencodeMakeitsoAlias');
+  const codexReviewFocusAgent = byName.get('codexReviewFocusAgent');
   return {
     agents: agents?.present ?? false,
     agentsManaged: agents?.managed ?? false,
@@ -327,6 +331,8 @@ export function getInstructionStatus(repoRoot: string | null): InstructionStatus
     opencodeMakeItSoManaged: makeItSo?.managed ?? false,
     opencodeMakeitsoAlias: makeitsoAlias?.present ?? false,
     opencodeMakeitsoAliasManaged: makeitsoAlias?.managed ?? false,
+    codexReviewFocusAgent: codexReviewFocusAgent?.present ?? false,
+    codexReviewFocusAgentManaged: codexReviewFocusAgent?.managed ?? false,
     targets,
   };
 }

@@ -1018,8 +1018,8 @@ function gateStatus(evidence: readonly LocalReviewEvidence[]): LocalReviewStatus
 function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFirst = false): string {
   const rerunCommand = prNumber > 0 ? `\`aie pr gate ${prNumber}\`` : '`aie pr gate <pr>`';
   if (status === 'passed') return prNumber > 0
-    ? `Local review is current for PR #${prNumber}; inspect PR comments, reviews, checks, issue checklist, and any feedback before merge.`
-    : 'Local review is recorded; inspect PR comments, reviews, checks, issue checklist, and any feedback before merge.';
+    ? `Local review evidence is recorded for PR #${prNumber}; inspect PR state, PR comments, reviews, checks, issue checklist, and any feedback before merge.`
+    : 'Local review evidence is recorded; inspect PR state, PR comments, reviews, checks, issue checklist, and any feedback before merge.';
   if (providerFirst && (status === 'missing' || status === 'pending')) {
     return `Run fresh-context review subagents for each active focus, publish provider-visible feedback on the pull request, then rerun ${rerunCommand}. Inspect PR comments and reviews on GitHub; local audit files are optional.`;
   }
