@@ -36,6 +36,7 @@
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+
   "files": [
     "bin/",
     "dist/",
@@ -44,7 +45,13 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/qube-cli": "0.1.2"
+    "@tjalve/qube-cli": "0.1.2",
+    "@tjalve/qube-core": "workspace:*"
+  },
+  "optionalDependencies": {
+    "@tjalve/qube-adapter-github": "workspace:*",
+    "@tjalve/qube-adapter-codex": "workspace:*",
+    "@tjalve/qube-adapter-opencode": "workspace:*"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

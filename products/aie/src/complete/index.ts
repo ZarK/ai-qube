@@ -48,11 +48,11 @@ export interface CompleteOptions {
   config?: Config;
 }
 
-function issueSummary(item: { key: { id: string }; title: string; state: 'open' | 'closed'; url: string | null; tags: string[] }): StartIssueSummary {
+function issueSummary(item: { key: { id: string }; title: string; state: 'open' | 'closed'; url: string | null; tags: readonly string[] }): StartIssueSummary {
   return { number: workItemKeyNumber({ providerId: 'github', id: item.key.id }, `work item ${item.key.id}`), title: item.title, state: item.state === 'open' ? 'OPEN' : 'CLOSED', url: item.url ?? '', labels: [...item.tags] };
 }
 
-function dependent(result: { item: Parameters<typeof issueSummary>[0]; status: DependentRefreshResult['status']; openBlockers: number[]; addLabels: string[]; removeLabels: string[]; actionId: string | null; reason: string }): DependentRefreshResult {
+function dependent(result: { item: { key: { id: string }; title: string; state: 'open' | 'closed'; url: string | null; tags: readonly string[] }; status: DependentRefreshResult['status']; openBlockers: number[]; addLabels: string[]; removeLabels: string[]; actionId: string | null; reason: string }): DependentRefreshResult {
   return { issue: issueSummary(result.item), status: result.status, openBlockers: result.openBlockers, addLabels: result.addLabels, removeLabels: result.removeLabels, actionId: result.actionId, reason: result.reason };
 }
 

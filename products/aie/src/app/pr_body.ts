@@ -4,7 +4,7 @@ import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_check
 import type { EvidenceSource, EvidenceTrust, GateEvidenceReasonCode } from '../core/gate_evidence.js';
 import { buildGateStatus, type GateStatusEntry, type GateStatusResult } from '../gates/index.js';
 import { runReviewGate, type ReviewGateResult } from '../review.js';
-import { createGitHubReviewProvider } from '../providers/github/github_review_provider.js';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { runPrGateService, type PrGateCheckDiagnostic, type PrGateExec, type PrGateResult } from './pr_gate.js';
 
 function redactText(text: string): string {
@@ -130,8 +130,8 @@ function gateLines(result: GateStatusResult): PrBodyGateLine[] {
   }));
 }
 
-async function getCurrentPullRequest(options: PrBodyOptions): Promise<{ pr: PrBodyPullRequest | null; warning: string | null }> {
-  const provider = createGitHubReviewProvider({ cwd: options.repoRoot, exec: options.exec });
+async function getCurrentPullRequest(config: Config, options: PrBodyOptions): Promise<{ pr: PrBodyPullRequest | null; warning: string | null }> {
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.repoRoot, exec: options.exec });
   const current = await provider.findCurrentReview();
   return { pr: current.pr, warning: current.warning };
 }
@@ -347,7 +347,7 @@ export async function buildPrBodyService(config: Config, options: PrBodyOptions)
   const uiAudit = runUiAudit(config, { issueNumber: options.issueNumber, repoRoot: options.repoRoot, homeDirectory: options.homeDirectory, check: true });
   const reviewGate = runReviewGate(config, { issueNumber: options.issueNumber, repoRoot: options.repoRoot });
   const issueChecklist = await inspectIssueChecklistState(options);
-  const currentPr = await getCurrentPullRequest(options);
+  const currentPr = await getCurrentPullRequest(config, options);
   const prReview = await inspectPrReviewGate(config, currentPr.pr, options);
   const prReviewers = prReviewerLines(prReview.result);
   const ready = readiness(options.issueNumber, gates, uiAudit, reviewGate, currentPr.pr, prReview.result, issueChecklist.result);

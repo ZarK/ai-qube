@@ -6,19 +6,12 @@ import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review
 import type { PrGateExec } from './pr_gate.js';
 import { blockedLane, executableReviewCommandsTrusted, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeLane, type LaneEvidence } from './local_review_runner_support.js';
 
+import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
+
 export type LocalReviewRunStatus = 'disabled' | 'planned' | 'completed' | 'pending' | 'unavailable' | 'failed';
 export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'pending' | 'unavailable' | 'failed';
 
-export interface CodexReviewCapability {
-  host: 'codex';
-  independentReviewer: boolean;
-  freshContext: boolean;
-  promptOnly: boolean;
-  hooks: boolean;
-  evidenceWriting: boolean;
-  missingCapabilities: string[];
-  nextAction: string;
-}
+export type CodexReviewCapability = HostReviewCapability & { host: 'codex' };
 
 export interface LocalReviewLaneRun {
   issueNumber: number;
@@ -72,23 +65,14 @@ function effectiveProfile(config: Config, required: boolean, shadow: boolean): L
   return config.reviewProfile;
 }
 
-export function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
-  const commandConfigured = typeof independentReviewerCommand === 'string' && independentReviewerCommand.trim() !== '';
-  const canSpawnFreshReviewer = commandConfigured || hostProvided;
-  return {
-    host: 'codex',
-    independentReviewer: canSpawnFreshReviewer,
-    freshContext: canSpawnFreshReviewer,
-    promptOnly: !canSpawnFreshReviewer,
-    hooks: false,
-    evidenceWriting: canSpawnFreshReviewer,
-    missingCapabilities: canSpawnFreshReviewer ? [] : ['codex-local-reviewer-not-configured'],
-    nextAction: commandConfigured
-      ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
-      : hostProvided
-        ? 'QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate.'
-        : 'Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.',
-  };
+export async function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): Promise<CodexReviewCapability> {
+  const capability = await probeHostReviewRunner('codex', { independentReviewerCommand, hostProvided });
+  return { ...capability, host: 'codex' };
+}
+
+export function probeCodexReviewCapabilitySync(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
+  const capability = probeHostReviewRunnerSync('codex', { independentReviewerCommand, hostProvided });
+  return { ...capability, host: 'codex' };
 }
 
 function codexCommand(config: Config): string | null {
@@ -115,11 +99,11 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string): string {
-  return `Spawn one independent Codex subagent with this focus promptText to review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Publish provider-visible feedback on the pull request; local audit JSON at ${evidencePath} is optional.`;
+  return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and this focus promptText to review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`aie pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
-  const codex = probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
+  const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');

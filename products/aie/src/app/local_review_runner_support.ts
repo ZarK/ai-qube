@@ -37,6 +37,22 @@ export function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
 }
 
+export function reviewSessionLockPath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), '.review-lock.json');
+}
+
+export function reviewSessionLockLines(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, evidencePaths: readonly string[]): string[] {
+  const lockPath = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  return [
+    `Review session lock: ${lockPath}.`,
+    'The main agent creates this lock before spawning review subagents and must delete it after publishing provider-visible feedback.',
+    'While the lock exists, review subagents must not edit source, tests, docs, config, package metadata, PR body, or issue content.',
+    'Do not run git restore, git checkout, git reset, or other commands that revert another agent\'s in-progress work in the shared checkout.',
+    `Subagents may write only these lane evidence paths plus matching host-provenance JSON: ${evidencePaths.join(', ')}.`,
+    'Provider-visible pull request comments are the human audit trail; local JSON under .qube/aie/reviews/ is optional audit evidence.',
+  ];
+}
+
 export function hash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
@@ -58,10 +74,12 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, runnerProvenance, and recordedAt.`,
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
     `Bind local-host evidence to same-user host provenance at this exact path: ${hostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
+    ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
     'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Writing the requested evidence and host-provenance files is allowed; do not edit source, tests, docs, config, package metadata, PR body, or issue content from inside the reviewer lane.',
-    'Return evidence for this lane only; the main agent will aggregate lane evidence and run the final PR gate.',
+    'Return evidence for this lane only; publish provider-visible lane review with `qube aie pr review publish <pr> --lane <lane> --issue <issue>` (or `aie pr review publish` in this repository) after writing lane evidence.',
+    'Return evidence for this lane only; the main agent waits for all lane reviews on the pull request before addressing feedback.',
     ...extraContext,
   ];
 }

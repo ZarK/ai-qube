@@ -3,6 +3,7 @@ import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/
 import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
+import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
@@ -24,6 +25,7 @@ import { formatCompleteHuman, formatStartHuman, formatSwitchHuman } from './rend
 import { formatRepoPrimeHuman } from './renderers/repo_renderer.js';
 import { formatStatusHuman } from './renderers/status_renderer.js';
 import { formatViewHuman } from './renderers/view_renderer.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from './review.js';
 import { startIssue } from './start/index.js';
 import { switchIssue } from './switch/index.js';
@@ -427,6 +429,57 @@ async function handlePrBody(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
+async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  const lane = stringArg(context, 'lane');
+  if (isHelpToken(pr) || isHelpToken(lane)) {
+    return usageResult(context, 'pr review publish', 'aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]', [
+      'Usage: aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]',
+      '',
+      'Publish one host-run lane review comment to the configured review provider for the current PR head.',
+      'Examples:',
+      '  aie pr review publish 12 --lane issue-compliance',
+      '  aie pr review publish 12 --lane code-quality --json',
+    ]);
+  }
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return commandFailure(context, { ok: false, command: 'pr review publish', error: cause }, cause);
+  }
+  const laneTrimmed = (lane ?? '').trim();
+  if (prNumber === null || laneTrimmed === '') {
+    const message = 'Failed to run `aie pr review publish`: missing pull request number or lane.';
+    return commandFailure(context, { ok: false, command: 'pr review publish', error: message }, message);
+  }
+  const laneId = COMPREHENSIVE_LOCAL_REVIEW_LANES.includes(laneTrimmed as LocalReviewLaneId) ? laneTrimmed as LocalReviewLaneId : null;
+  if (laneId === null) {
+    const message = `Failed to run \`aie pr review publish\`: unknown lane "${laneTrimmed}".`;
+    return commandFailure(context, { ok: false, command: 'pr review publish', error: message }, message);
+  }
+  const issueArg = stringArg(context, 'issue');
+  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
+  const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr review publish', loaded, 'Fix the selected Executor config, then rerun lane publish.');
+  try {
+    const result = await runPrReviewPublishService(loaded.config ?? getDefaults(), {
+      prNumber,
+      lane: laneId,
+      issueNumber,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      repoRoot: loaded.root,
+    });
+    return commandResult(context, result, formatPrReviewPublish(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to publish lane review for #${prNumber} lane ${laneId}. Likely cause: ${cause}.`;
+    return commandFailure(context, { ok: false, command: 'pr review publish', pr: prNumber, lane: laneId, error: message }, message);
+  }
+}
+
 async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
   if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', [
@@ -526,9 +579,10 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane>` from host review subagents to post lane feedback to the provider.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
+  'pr review publish': handlePrReviewPublish,
   'pr view': context => handleConfigCommand(context, 'pr view'),
   queue: async context => {
     const q = await computeQueue();

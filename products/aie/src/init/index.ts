@@ -313,7 +313,15 @@ async function planManagedFile(input: {
 }): Promise<{ action: InitAction; write?: PlannedWrite }> {
   const path = join(input.repoRoot, input.relativePath);
   const existingContent = await readTextIfPresent(path);
-  const update = planManagedUpdate({ existingContent, generatedBody: input.body, allowAppend: input.allowAppend, force: input.force, conflictPatterns: input.conflictPatterns, conflictReason: input.conflictReason });
+  const update = planManagedUpdate({
+    existingContent,
+    generatedBody: input.body,
+    allowAppend: input.allowAppend,
+    force: input.force,
+    commentStyle: input.relativePath.endsWith('.toml') ? 'hash' : 'html',
+    conflictPatterns: input.conflictPatterns,
+    conflictReason: input.conflictReason,
+  });
   const action = makeAction({
     id: input.id,
     path: input.relativePath,

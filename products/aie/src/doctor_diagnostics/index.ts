@@ -12,7 +12,7 @@ import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
-import { probeCodexReviewCapability } from '../app/local_review_runner.js';
+import { probeCodexReviewCapabilitySync } from '../app/local_review_runner.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 
@@ -234,7 +234,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localCommandLanes = config.reviewLanes.filter(lane => lane.runner === 'local-command' && lane.command?.trim());
   const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
   const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
-  const codexReviewCapability = probeCodexReviewCapability(localHostCommand, config.localReviewAgents.includes('codex'));
+  const codexReviewCapability = probeCodexReviewCapabilitySync(localHostCommand, config.localReviewAgents.includes('codex'));
   const localHostNeedsAgent = localHostLanes.length > 0 && !localHostCommand;
   const commandlessCodexHostReady = localHostNeedsAgent && codexReviewCapability.independentReviewer;
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
@@ -274,7 +274,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       promptOnly: codexReviewCapability.promptOnly,
       hooks: codexReviewCapability.hooks,
       evidenceWriting: codexReviewCapability.evidenceWriting,
-      missingCapabilities: codexReviewCapability.missingCapabilities,
+      missingCapabilities: [...codexReviewCapability.missingCapabilities],
     },
     nextAction: localRunnerReadiness === 'ready'
       ? 'Local review lanes are configured; run `aie pr gate <pr> --dry-run --json` to inspect planned lane execution.'

@@ -5,12 +5,42 @@ import { dirname } from 'path';
 export const MANAGED_SECTION_VERSION = 1;
 export const MANAGED_START = '<!-- BEGIN EXECUTOR MANAGED SECTION -->';
 export const MANAGED_END = '<!-- END EXECUTOR MANAGED SECTION -->';
+export type ManagedCommentStyle = 'html' | 'hash';
+
+interface ManagedMarkers {
+  start: string;
+  end: string;
+  version: string;
+  checksum: (value: string) => string;
+  versionPattern: RegExp;
+  checksumPattern: RegExp;
+}
+
+const MANAGED_MARKERS: Record<ManagedCommentStyle, ManagedMarkers> = {
+  html: {
+    start: MANAGED_START,
+    end: MANAGED_END,
+    version: `<!-- executor-managed-version: ${MANAGED_SECTION_VERSION} -->`,
+    checksum: value => `<!-- executor-managed-checksum: ${value} -->`,
+    versionPattern: /<!--\s*executor-managed-version:\s*\d+\s*-->/,
+    checksumPattern: /<!--\s*executor-managed-checksum:\s*([a-f0-9]+)\s*-->/,
+  },
+  hash: {
+    start: '# BEGIN EXECUTOR MANAGED SECTION',
+    end: '# END EXECUTOR MANAGED SECTION',
+    version: `# executor-managed-version: ${MANAGED_SECTION_VERSION}`,
+    checksum: value => `# executor-managed-checksum: ${value}`,
+    versionPattern: /#\s*executor-managed-version:\s*\d+/,
+    checksumPattern: /#\s*executor-managed-checksum:\s*([a-f0-9]+)/,
+  },
+};
 
 export interface ManagedUpdateOptions {
   existingContent: string | null;
   generatedBody: string;
   allowAppend: boolean;
   force: boolean;
+  commentStyle?: ManagedCommentStyle;
   conflictPatterns?: RegExp[];
   conflictReason?: string;
 }
@@ -45,32 +75,38 @@ function normalizeBody(body: string): string {
   return `${body.replace(/\r\n/g, '\n').trimEnd()}\n`;
 }
 
-export function renderManagedSection(generatedBody: string): string {
+export function renderManagedSection(generatedBody: string, commentStyle: ManagedCommentStyle = 'html'): string {
   const body = normalizeBody(generatedBody);
+  const markers = MANAGED_MARKERS[commentStyle];
   return [
-    MANAGED_START,
-    `<!-- executor-managed-version: ${MANAGED_SECTION_VERSION} -->`,
-    `<!-- executor-managed-checksum: ${checksum(body)} -->`,
+    markers.start,
+    markers.version,
+    markers.checksum(checksum(body)),
     body.trimEnd(),
-    MANAGED_END,
+    markers.end,
     '',
   ].join('\n');
 }
 
 function parseManagedSection(content: string): ParsedSection | null {
-  const start = content.indexOf(MANAGED_START);
-  if (start < 0) return null;
-  const endMarkerStart = content.indexOf(MANAGED_END, start + MANAGED_START.length);
+  const candidates = Object.values(MANAGED_MARKERS)
+    .map(markers => ({ markers, start: content.indexOf(markers.start) }))
+    .filter(candidate => candidate.start >= 0)
+    .sort((left, right) => left.start - right.start);
+  const candidate = candidates[0];
+  if (!candidate) return null;
+  const { markers, start } = candidate;
+  const endMarkerStart = content.indexOf(markers.end, start + markers.start.length);
   if (endMarkerStart < 0) return null;
-  let end = endMarkerStart + MANAGED_END.length;
+  let end = endMarkerStart + markers.end.length;
   if (content.slice(end, end + 2) === '\r\n') end += 2;
   else if (content[end] === '\n') end += 1;
   const block = content.slice(start, end);
-  const inner = content.slice(start + MANAGED_START.length, endMarkerStart);
-  const checksumMatch = inner.match(/<!--\s*executor-managed-checksum:\s*([a-f0-9]+)\s*-->/);
+  const inner = content.slice(start + markers.start.length, endMarkerStart);
+  const checksumMatch = inner.match(markers.checksumPattern);
   const body = normalizeBody(inner
-    .replace(/<!--\s*executor-managed-version:\s*\d+\s*-->/, '')
-    .replace(/<!--\s*executor-managed-checksum:\s*[a-f0-9]+\s*-->/, '')
+    .replace(markers.versionPattern, '')
+    .replace(markers.checksumPattern, '')
     .replace(/^\s*\n/, '')
     .trimEnd());
   return { start, end, block, body, checksum: checksumMatch ? checksumMatch[1] : null };
@@ -98,7 +134,7 @@ function appendSection(content: string, section: string): string {
 }
 
 export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateResult {
-  const section = renderManagedSection(options.generatedBody);
+  const section = renderManagedSection(options.generatedBody, options.commentStyle ?? 'html');
   if (options.existingContent === null) {
     return { ok: true, operation: 'create', content: section, managedFound: false, conflict: false, reason: 'File does not exist and will be created.' };
   }

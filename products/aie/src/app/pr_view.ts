@@ -1,7 +1,9 @@
 import type { GateResult } from '../core/gate_evidence.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
-import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
-import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
+import type { GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus } from '@tjalve/qube-adapter-github';
+import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '@tjalve/qube-adapter-github';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import type { ReviewForgePullRequest } from '../providers/review_forge_provider.js';
 import { parsePrNumber } from './pr_gate.js';
 
 export interface PrViewExecResult {
@@ -85,7 +87,7 @@ export interface PrViewOptions {
   exec?: PrViewExec;
 }
 
-function prResult(pr: GitHubReviewPullRequest): PrViewPullRequest {
+function prResult(pr: ReviewForgePullRequest): PrViewPullRequest {
   return {
     number: pr.number,
     title: pr.title,
@@ -174,7 +176,7 @@ function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability'
 }
 
 export async function runPrViewService(options: PrViewOptions): Promise<PrViewResult> {
-  const provider = createGitHubReviewProvider({ exec: options.exec, cwd: options.repoRoot });
+  const provider = await createReviewForgeProvider('github', { exec: options.exec, cwd: options.repoRoot });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
   const checks = prChecks(snapshot.item);

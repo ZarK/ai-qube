@@ -1,3 +1,39 @@
+import type { JsonObject } from "./json_value.js";
+
+export type { JsonObject, JsonValue } from "./json_value.js";
+export type {
+  EvidenceSource,
+  EvidenceTrust,
+  GateDefinition,
+  GateEvidence,
+  GateEvidenceReasonCode,
+  GateResult,
+  GateStage,
+} from "./gate_evidence.js";
+export { isVerifiedGateEvidence, normalizeGateEvidence } from "./gate_evidence.js";
+export type {
+  FeedbackTrust,
+  Mergeability,
+  ReviewDecision,
+  ReviewFeedback,
+  ReviewFeedbackSource,
+  ReviewItem,
+  ReviewItemKey,
+  ReviewState,
+} from "./review_item.js";
+export { normalizeReviewFeedback, normalizeReviewItem, normalizeReviewItemKey } from "./review_item.js";
+export type {
+  ReviewAgentAdapter,
+  ReviewAgentCommentBody,
+  ReviewForgeAdapterKind,
+  ReviewForgeCapabilities,
+  ReviewForgePlanOptions,
+  ReviewForgePolicy,
+  ReviewForgeProvider,
+  ReviewForgeSnapshot,
+  ReviewRequestTrigger,
+} from "./review_forge.js";
+
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
 export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code";
@@ -49,9 +85,6 @@ export interface QubeCommandSurfaceContract {
   readonly schemaRequired: boolean;
   readonly notes: string;
 }
-
-export type JsonObject = { readonly [key: string]: JsonValue };
-export type JsonValue = string | number | boolean | null | readonly JsonValue[] | JsonObject;
 
 export type ProviderResourceKind = "work-item" | "review-item" | "repository" | "gate-evidence" | "policy" | "action-plan";
 
@@ -420,6 +453,37 @@ export function normalizeWorkItemKey(providerId: string, id: string): WorkItemKe
   return { providerId: nonEmpty(providerId, "providerId"), id: nonEmpty(id, "id") };
 }
 
+export function sameWorkItemKey(left: WorkItemKey, right: WorkItemKey): boolean {
+  return left.providerId === right.providerId && left.id === right.id;
+}
+
+const CANONICAL_POSITIVE_INTEGER = /^[1-9]\d*$/;
+
+export function workItemKeyNumber(key: WorkItemKey, context = `work item ${key.providerId}:${key.id}`): number {
+  if (!CANONICAL_POSITIVE_INTEGER.test(key.id)) {
+    throw new Error(`Failed to render issue number: ${context} key.id must be a canonical positive base-10 integer; use a provider-specific adapter before rendering issue-number commands.`);
+  }
+  const number = Number.parseInt(key.id, 10);
+  if (!Number.isSafeInteger(number)) {
+    throw new Error(`Failed to render issue number: ${context} key.id exceeds JavaScript's safe integer range; use a provider-specific adapter before rendering issue-number commands.`);
+  }
+  return number;
+}
+
+export function maybeWorkItemKeyNumber(key: WorkItemKey): number | null {
+  if (!CANONICAL_POSITIVE_INTEGER.test(key.id)) return null;
+  const number = Number.parseInt(key.id, 10);
+  return Number.isSafeInteger(number) ? number : null;
+}
+
+export function workItemNumber(item: WorkItem): number {
+  return workItemKeyNumber(item.key, item.displayId);
+}
+
+export function sourceKey(source: ProviderSource): string {
+  return JSON.stringify([source.providerId, source.resourceKind, source.resourceId]);
+}
+
 export function uniqueWorkItemKeys(keys: readonly WorkItemKey[]): readonly WorkItemKey[] {
   const seen = new Set<string>();
   const unique: WorkItemKey[] = [];
@@ -509,3 +573,5 @@ export function createActionPlan(input: Omit<ActionPlan, "summary">): ActionPlan
 export function defineQubeAdapter<T extends QubeAdapterContract>(adapter: T): Readonly<T> {
   return Object.freeze({ ...adapter });
 }
+
+export * from "./review.js";

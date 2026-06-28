@@ -280,6 +280,8 @@ describe('init service', () => {
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
     assert.match(agent, /read-only PR reviewer/);
+    assert.match(agent, /^# BEGIN EXECUTOR MANAGED SECTION/);
+    assert.doesNotMatch(agent, /<!--/);
   });
 
   it('renders full always-loaded workflow instructions with host projections', async () => {

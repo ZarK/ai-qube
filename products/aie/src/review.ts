@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { Config } from './config/index.js';
 import { renderAgentPrompt, type RenderedAgentPrompt } from './agent_descriptors.js';
-import { probeCodexReviewCapability, type CodexReviewCapability } from './app/local_review_runner.js';
+import { probeCodexReviewCapabilitySync, type CodexReviewCapability } from './app/local_review_runner.js';
 import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
 import { redact } from './gh.js';
 import { readLocalIssueReviewGate, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewFreshness, type LocalReviewGate, type LocalReviewProfile, type LocalReviewPromptStackItem, type LocalReviewTrust } from './local_review_evidence.js';
@@ -447,7 +447,7 @@ export function runReviewGate(config: Config, options: ReviewGateOptions): Revie
     fallbackPrompt: buildFallbackPrompt(options.issueNumber),
     evidence,
     localReviewRunner: {
-      codex: probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex')),
+      codex: probeCodexReviewCapabilitySync(codexCommand(config), config.localReviewAgents.includes('codex')),
     },
     localReview,
     evidenceNeeded: [...EVIDENCE_NEEDED],

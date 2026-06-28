@@ -2,24 +2,52 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
-import { normalizeGateEvidence, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../../core/gate_evidence.js';
-import type { JsonObject, JsonValue } from '../../core/json_value.js';
-import type { ExecutorPolicy } from '../../core/policy.js';
-import { normalizeProviderSource } from '../../core/provider_source.js';
-import type { ReviewFeedback, ReviewItem, ReviewItemKey } from '../../core/review_item.js';
-import { normalizeReviewItem } from '../../core/review_item.js';
-import { GhExecutionError, GhRunResult, parseGhJson, redact, runGh } from '../../gh.js';
-import { getRepositoryIdentity } from '../../repo/index.js';
-import type { ReviewProvider, ReviewProviderCapabilities } from '../review_provider.js';
+import {
+  createAction,
+  createActionPlan,
+  normalizeGateEvidence,
+  normalizeProviderSource,
+  normalizeReviewItem,
+  type Action,
+  type ActionPlan,
+  type ActionResult,
+  type GateEvidence,
+  type GateEvidenceReasonCode,
+  type GateResult,
+  type JsonObject,
+  type JsonValue,
+  type ReviewFeedback,
+  type ReviewForgeCapabilities,
+  type ReviewForgePlanOptions,
+  type ReviewForgePolicy,
+  type ReviewForgeProvider,
+  type ReviewItem,
+  type ReviewItemKey,
+} from '@tjalve/qube-core';
 
+import {
+  MARKER_PREFIX,
+  QUBE_REVIEW_SERVICE_NAME,
+  commentBodyFor,
+  isNonActionableSummary,
+  markerFor,
+  normalizeHandle,
+  resolveReviewAgent,
+  reviewerId,
+  reviewerMarkerBodyFor,
+  sanitizeFeedbackText,
+  triggerFor,
+} from './github_review_agents.js';
 import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+import { GhExecutionError, parseGhJson, redact, runGh, type GhRunResult } from './gh.js';
+
 export type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
+export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolveReviewAgent } from './github_review_agents.js';
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
-const MARKER_PREFIX = 'aie:pr-gate';
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
+const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
 export type GitHubLocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
 export type GitHubLocalReviewPublishStatus = 'disabled' | 'pending' | 'planned' | 'published' | 'skipped' | 'failed';
@@ -74,6 +102,53 @@ interface LocalReviewComment {
   stale: boolean;
 }
 
+interface LaneReviewMetadata {
+  version: number;
+  head: string;
+  lane: string;
+  profile: string;
+  runId: string;
+  issueNumber: number;
+  prNumber: number;
+  host: string;
+  recommendation: GitHubLocalReviewRecommendation;
+  status: string;
+  summary: string;
+}
+
+interface LaneReviewComment {
+  metadata: LaneReviewMetadata;
+  author: RawAuthor | null | undefined;
+  body: string;
+  url: string | null;
+  stale: boolean;
+}
+
+export interface GitHubLaneReviewPublishInput {
+  dryRun: boolean;
+  prNumber: number;
+  headSha: string;
+  lane: string;
+  profile: string;
+  status: string;
+  recommendation: GitHubLocalReviewRecommendation;
+  host: string;
+  issueNumber: number;
+  summary: string;
+  findings: string[];
+  evidencePath: string | null;
+}
+
+export interface GitHubLaneReviewPublishResult {
+  status: GitHubLocalReviewPublishStatus;
+  runId: string | null;
+  marker: string | null;
+  body: string | null;
+  url: string | null;
+  failure: string | null;
+  nextAction: string;
+}
+
 interface RawCheckRun { id?: number; name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string; check_suite?: { id?: number } | null }
 interface RawCheckRunsResponse { check_runs?: RawCheckRun[] }
 interface RawCheckSuite { id?: number; status?: string; conclusion?: string | null; head_sha?: string | null }
@@ -120,34 +195,6 @@ function ensureGhSuccess(operation: string, result: GhRunResult): void {
 
 function actorName(author: RawAuthor | null | undefined): string { return redact(author?.login ?? 'unknown'); }
 
-function sanitizeFeedbackText(text: string | undefined): string {
-  return (text ?? '')
-    .replace(/<!--\s*internal state start\s*-->[\s\S]*?<!--\s*internal state end\s*-->/gi, '')
-    .replace(/<details>\s*<summary>\s*Prompt for AI Agents[\s\S]*?<\/details>/gi, '')
-    .replace(/<!--[\s\S]*?-->/g, '')
-    .replace(/Prompt for AI Agents[\s\S]*$/i, '');
-}
-
-function isNonActionableSummary(text: string | undefined, authorLogin?: string | null): boolean {
-  const normalized = sanitizeFeedbackText(text).replace(/\s+/g, ' ').trim().toLowerCase();
-  if (normalized === '') return true;
-  if (normalized.includes('no actionable comments were generated')) return true;
-  if (normalized.includes('review in progress')) return true;
-  if (normalized.includes('currently processing new changes')) return true;
-  if (normalized.includes('<summary>📝 walkthrough</summary>')) return true;
-  if (normalized.includes('<summary>walkthrough</summary>')) return true;
-  if (isCopilotOverview(normalized, authorLogin)) return true;
-  if (normalized.startsWith('**no issues found**') || normalized.startsWith('no issues found')) return true;
-  return false;
-}
-
-function isCopilotOverview(normalizedText: string, authorLogin?: string | null): boolean {
-  if ((authorLogin ?? '').toLowerCase() !== 'copilot-pull-request-reviewer') return false;
-  return normalizedText.startsWith('## pull request overview')
-    && normalizedText.includes('### reviewed changes')
-    && /\bcopilot reviewed \d+ out of \d+ changed files in this pull request\b/i.test(normalizedText);
-}
-
 function isResolvedProviderReviewSummary(text: string | undefined): boolean {
   const normalized = sanitizeFeedbackText(text).replace(/\s+/g, ' ').trim().toLowerCase();
   if (normalized.startsWith('**actionable comments posted:')) return true;
@@ -159,16 +206,6 @@ function summarize(text: string | undefined): string {
   const normalized = redact(sanitizeFeedbackText(text).replace(/\s+/g, ' ').trim());
   if (normalized === '') return 'No body text supplied.';
   return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
-}
-
-function normalizeHandle(name: string): string { const trimmed = name.trim(); return trimmed.startsWith('@') ? trimmed : `@${trimmed}`; }
-
-function reviewerId(name: string): string {
-  return name.trim().toLowerCase().replace(/^@/, '').replace(/[^a-z0-9_-]+/g, '-').replace(/^-+|-+$/g, '') || 'reviewer';
-}
-
-function markerFor(reviewer: string, headSha: string): string {
-  return `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:${headSha} -->`;
 }
 
 function trustedMarkerComment(comment: RawComment, trustedAuthor: string | null): boolean {
@@ -199,17 +236,15 @@ function hasStaleReview(reviews: RawReview[], reviewer: string, headSha: string)
 
 function isPendingRequest(reviewRequests: string[], reviewer: string): boolean { return reviewRequests.some(request => authorMatches(request, reviewer)); }
 
-function triggerFor(name: string): GitHubReviewRequestTrigger { return reviewerId(name) === 'copilot' ? 'github-reviewer' : 'comment'; }
+function hostReviewAdapter(adapter: ReviewForgePolicy['adapter']): boolean {
+  return adapter === 'local' || adapter === 'mixed' || adapter === 'shadow';
+}
 
-function configuredReviewerNames(policy: ExecutorPolicy): string[] {
+function configuredReviewerNames(policy: ReviewForgePolicy, activeLanes: readonly string[] = []): string[] {
   const names: string[] = [];
   const seen = new Set<string>();
-  const adapter = policy.reviews.adapter;
-  const sources = adapter === 'local'
-    ? policy.reviews.localReviewers
-    : adapter === 'mixed'
-      ? [...policy.reviews.reviewers, ...policy.reviews.localReviewers]
-      : policy.reviews.reviewers;
+  const adapter = policy.adapter;
+  const sources = adapter === 'local' ? [] : policy.reviewers;
   for (const rawName of sources) {
     const name = rawName.trim();
     if (name === '') continue;
@@ -217,6 +252,10 @@ function configuredReviewerNames(policy: ExecutorPolicy): string[] {
     if (seen.has(id)) continue;
     seen.add(id);
     names.push(name);
+  }
+  if (hostReviewAdapter(adapter) && activeLanes.length > 0) {
+    const hostId = reviewerId(QUBE_REVIEW_SERVICE_NAME);
+    if (!seen.has(hostId)) names.push(QUBE_REVIEW_SERVICE_NAME);
   }
   return names;
 }
@@ -228,23 +267,6 @@ function closingIssueNumbers(raw: RawPrView): number[] {
     .map(issue => issue.number)
     .filter((issueNumber): issueNumber is number => typeof issueNumber === 'number' && Number.isInteger(issueNumber) && issueNumber > 0);
   return [...new Set(numbers)].sort((left, right) => left - right);
-}
-
-function commentBodyFor(name: string, policy: ExecutorPolicy, headSha: string): { body: string; marker: string } {
-  const handle = normalizeHandle(name);
-  const marker = markerFor(name, headSha);
-  const requestText = policy.reviews.requestText.replace(/\s+/g, ' ').trim();
-  const id = reviewerId(name);
-  let command = `${handle} review this PR`;
-  if (id === 'coderabbit' || id === 'coderabbitai') command = `${handle} review`;
-  if (id === 'cubic' || id === 'cubic-dev-ai') command = `${handle} review this PR`;
-  const body = requestText === '' ? `${marker}\n${command}` : `${marker}\n${command}\n${redact(requestText)}`;
-  return { body, marker };
-}
-
-function reviewerMarkerBodyFor(name: string, headSha: string): { body: string; marker: string } {
-  const marker = markerFor(name, headSha);
-  return { body: `${marker}\nExecutor recorded a configured PR reviewer request for this PR head.`, marker };
 }
 
 function stableRunId(input: GitHubLocalReviewPublishInput): string {
@@ -310,6 +332,133 @@ function parseLocalReviewMetadata(body: string | undefined): LocalReviewMetadata
 function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | null): LocalReviewMetadata | null {
   if (trustedAuthor === null || !authorMatches(comment.author?.login ?? '', trustedAuthor)) return null;
   return parseLocalReviewMetadata(comment.body);
+}
+
+function laneReviewMarker(metadata: LaneReviewMetadata): string {
+  return `<!-- ${LANE_REVIEW_MARKER_PREFIX}:${JSON.stringify(metadata)} -->`;
+}
+
+function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata | null {
+  const match = (body ?? '').match(/<!--\s*qube-pr-review:(\{[\s\S]*?\})\s*-->/);
+  if (!match) return null;
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed)) return null;
+    if (parsed.version !== 1) return null;
+    if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
+    if (typeof parsed.lane !== 'string' || parsed.lane.trim() === '') return null;
+    if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
+    if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
+    const issueNumber = parsed.issueNumber;
+    const prNumber = parsed.prNumber;
+    if (typeof issueNumber !== 'number' || !Number.isSafeInteger(issueNumber) || issueNumber <= 0) return null;
+    if (typeof prNumber !== 'number' || !Number.isSafeInteger(prNumber) || prNumber <= 0) return null;
+    if (typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
+    if (parsed.recommendation !== 'approve' && parsed.recommendation !== 'request-changes' && parsed.recommendation !== 'pending' && parsed.recommendation !== 'inconclusive') return null;
+    if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
+    if (typeof parsed.summary !== 'string' || parsed.summary.trim() === '') return null;
+    return {
+      version: 1,
+      head: redact(parsed.head),
+      lane: redact(parsed.lane),
+      profile: redact(parsed.profile),
+      runId: redact(parsed.runId),
+      issueNumber,
+      prNumber,
+      host: redact(parsed.host),
+      recommendation: parsed.recommendation,
+      status: redact(parsed.status),
+      summary: redact(parsed.summary),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function trustedLaneReviewComment(comment: RawComment, trustedAuthor: string | null): LaneReviewMetadata | null {
+  if (trustedAuthor === null || !authorMatches(comment.author?.login ?? '', trustedAuthor)) return null;
+  return parseLaneReviewMetadata(comment.body);
+}
+
+function laneReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LaneReviewComment[] {
+  return comments.flatMap(comment => {
+    const metadata = trustedLaneReviewComment(comment, trustedAuthor);
+    if (!metadata) return [];
+    return [{ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha }];
+  });
+}
+
+function laneReviewSummary(comment: LaneReviewComment): string {
+  return `QUBE review (${comment.metadata.lane}): ${comment.metadata.recommendation} — ${summarize(comment.body)}`;
+}
+
+function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
+  return createHash('sha256')
+    .update(JSON.stringify({
+      head: input.headSha,
+      lane: input.lane,
+      profile: input.profile,
+      issueNumber: input.issueNumber,
+      prNumber: input.prNumber,
+      status: input.status,
+      recommendation: input.recommendation,
+      summary: input.summary,
+      findings: input.findings,
+    }))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; marker: string; runId: string } {
+  const runId = stableLaneRunId(input);
+  const metadata: LaneReviewMetadata = {
+    version: 1,
+    head: input.headSha,
+    lane: input.lane,
+    profile: input.profile,
+    runId,
+    issueNumber: input.issueNumber,
+    prNumber: input.prNumber,
+    host: input.host,
+    recommendation: input.recommendation,
+    status: input.status,
+    summary: input.summary,
+  };
+  const marker = laneReviewMarker(metadata);
+  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
+  const body = [
+    marker,
+    '',
+    `QUBE review (${input.lane}): ${input.recommendation}`,
+    '',
+    'Summary:',
+    sanitizePublishedText(input.summary),
+    '',
+    'Findings:',
+    ...findings,
+    '',
+    'Metadata:',
+    `- lane: ${redact(input.lane)}`,
+    `- host: ${redact(input.host)}`,
+    `- profile: ${redact(input.profile)}`,
+    `- issue: #${input.issueNumber}`,
+    `- run id: ${runId}`,
+    input.evidencePath ? `- evidence: ${redact(input.evidencePath)}` : '- evidence: optional local audit only',
+  ].join('\n');
+  return { body, marker, runId };
+}
+
+function currentLaneReviewRunIds(item: ReviewItem, headSha: string, lane: string): Set<string> {
+  const value = item.trustedMetadata.trustedLaneReviews;
+  if (!Array.isArray(value)) return new Set();
+  const runIds = value.flatMap(review => {
+    if (!isRecord(review)) return [];
+    if (review.stale === true) return [];
+    if (review.head !== headSha) return [];
+    if (review.lane !== lane) return [];
+    return typeof review.runId === 'string' && review.runId.trim() !== '' ? [review.runId] : [];
+  });
+  return new Set(runIds);
 }
 
 function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
@@ -641,6 +790,17 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
       trust: 'untrusted',
     });
   }
+  for (const laneReview of laneReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
+    if (laneReview.stale) continue;
+    items.push({
+      source: 'comment',
+      author: actorName(laneReview.author),
+      state: localReviewState(laneReview.metadata.recommendation),
+      summary: laneReviewSummary(laneReview),
+      url: laneReview.url,
+      trust: 'untrusted',
+    });
+  }
   for (const review of raw.latestReviews) {
     const state = review.state ?? 'UNKNOWN';
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
@@ -650,6 +810,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
     if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
+    if (trustedLaneReviewComment(comment, raw.trustedMarkerAuthor)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -706,6 +867,25 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
       url: comment.url ? redact(comment.url) : null,
     }];
   });
+  const trustedLaneReviews = raw.comments.flatMap(comment => {
+    const metadata = trustedLaneReviewComment(comment, raw.trustedMarkerAuthor);
+    if (!metadata) return [];
+    return [{
+      head: metadata.head,
+      lane: metadata.lane,
+      profile: metadata.profile,
+      runId: metadata.runId,
+      issueNumber: metadata.issueNumber,
+      prNumber: metadata.prNumber,
+      host: metadata.host,
+      recommendation: metadata.recommendation,
+      status: metadata.status,
+      summary: metadata.summary,
+      stale: metadata.head !== raw.pr.headRefOid,
+      author: comment.author?.login ?? null,
+      url: comment.url ? redact(comment.url) : null,
+    }];
+  });
   return {
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
@@ -717,6 +897,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null })),
     localReviews,
     trustedLocalReviews,
+    trustedLaneReviews,
     unavailable: raw.unavailable,
     trustedMarkerAuthor: raw.trustedMarkerAuthor,
   };
@@ -772,13 +953,16 @@ function redactReviewKeyId(id: string): string {
   return redact(id).replace(/\b([A-Za-z0-9_-]{20,})\b/g, '[REDACTED]');
 }
 
-function makeRequestAction(input: { item: ReviewItem; name: string; requestedForHead: boolean; staleRequest: boolean; pending: boolean; policy: ExecutorPolicy }): Action {
-  const trigger = triggerFor(input.name);
+function makeRequestAction(input: { item: ReviewItem; name: string; requestedForHead: boolean; staleRequest: boolean; pending: boolean; policy: ReviewForgePolicy }): Action {
+  const agent = resolveReviewAgent(input.name);
+  const trigger = agent?.triggerFor(input.name) ?? triggerFor(input.name);
   const handle = normalizeHandle(input.name);
   const id = reviewerId(input.name);
   const headRefOid = getJsonString(input.item.trustedMetadata.headRefOid) ?? 'UNKNOWN';
   const skipped = input.requestedForHead || input.pending;
-  const body = trigger === 'github-reviewer' ? reviewerMarkerBodyFor(input.name, headRefOid) : commentBodyFor(input.name, input.policy, headRefOid);
+  const body = trigger === 'github-reviewer'
+    ? (agent?.reviewerMarkerBodyFor(input.name, headRefOid) ?? reviewerMarkerBodyFor(input.name, headRefOid))
+    : (agent?.commentBodyFor(input.name, input.policy, headRefOid) ?? commentBodyFor(input.name, input.policy, headRefOid));
   return createAction({
     id: `${skipped ? 'skip-reviewer' : 'request-review'}:${id}`,
     kind: 'request-review',
@@ -792,7 +976,7 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
       reviewerId: id,
       reviewerName: redact(input.name),
       handle: redact(handle),
-      externalService: true,
+      externalService: id !== reviewerId(QUBE_REVIEW_SERVICE_NAME),
       requestedForHead: input.requestedForHead,
       staleRequest: input.staleRequest,
       pending: input.pending,
@@ -802,12 +986,12 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
   });
 }
 
-export class GitHubReviewProvider implements ReviewProvider {
+export class GitHubReviewForgeProvider implements ReviewForgeProvider {
   readonly id = 'github' as const;
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewProviderCapabilities { return { loadReview: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true }; }
+  capabilities(): ReviewForgeCapabilities { return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -839,6 +1023,12 @@ export class GitHubReviewProvider implements ReviewProvider {
     }
   }
 
+  async loadReviewSnapshot(key: ReviewItemKey): Promise<GitHubReviewSnapshot> {
+    if (key.providerId !== this.id) throw new Error(`load GitHub review snapshot failed: providerId ${key.providerId} is unsupported.`);
+    if (!/^[1-9]\d*$/.test(key.id)) throw new Error(`load GitHub review snapshot failed: key id ${redactReviewKeyId(key.id)} is not a positive pull request number.`);
+    return this.loadPullRequestReview(Number(key.id));
+  }
+
   async loadPullRequestReview(prNumber: number): Promise<GitHubReviewSnapshot> {
     const rawPr = await this.getPullRequest(prNumber);
     const unavailable: string[] = [];
@@ -846,7 +1036,7 @@ export class GitHubReviewProvider implements ReviewProvider {
     let reviewComments: RawReviewComment[] = [];
     let unresolvedThreads: RawThreadNode[] = [];
     try {
-      const repository = await getRepositoryIdentity(this.options);
+      const repository = await this.getRepositoryIdentity();
       ciDiagnostics = await this.loadCiDiagnostics(repository.nameWithOwner, rawPr);
       try {
         rawPr.comments = await this.getIssueComments(repository.nameWithOwner, prNumber);
@@ -885,13 +1075,13 @@ export class GitHubReviewProvider implements ReviewProvider {
     };
   }
 
-  planReviewRequest(item: ReviewItem, policy: ExecutorPolicy): ActionPlan {
+  planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options: ReviewForgePlanOptions = {}): ActionPlan {
     const headSha = getJsonString(item.trustedMetadata.headRefOid) ?? 'UNKNOWN';
     const reviewRequests = getJsonStrings(item.trustedMetadata.reviewRequests);
     const trustedMarkerAuthor = getJsonString(item.trustedMetadata.trustedMarkerAuthor);
     const comments = commentsFromMetadata(item);
     const latestReviews = latestReviewsFromMetadata(item);
-    const actions = configuredReviewerNames(policy).map(name => {
+    const actions = configuredReviewerNames(policy, options.activeLanes ?? []).map(name => {
       const trigger = triggerFor(name);
       const handle = normalizeHandle(name);
       const requestedForHead = trigger === 'github-reviewer' ? hasMarker(comments, name, headSha, trustedMarkerAuthor) || isCurrentReview(latestReviews, handle, headSha) : hasMarker(comments, name, headSha, trustedMarkerAuthor);
@@ -900,6 +1090,47 @@ export class GitHubReviewProvider implements ReviewProvider {
       return makeRequestAction({ item, name, requestedForHead, staleRequest, pending, policy });
     });
     return createActionPlan({ id: `github:review-request:${item.key.id}`, purpose: `Request configured PR reviewers for ${item.displayId}.`, dryRun: true, actions });
+  }
+
+  async publishLaneReviewFeedback(item: ReviewItem, input: GitHubLaneReviewPublishInput): Promise<GitHubLaneReviewPublishResult> {
+    const { body, marker, runId } = laneReviewBody(input);
+    if (currentLaneReviewRunIds(item, input.headSha, input.lane).has(runId)) {
+      return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
+    }
+    if (input.dryRun) {
+      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: `Rerun \`aie pr review publish <pr> --lane ${input.lane}\` without --dry-run to publish provider-visible lane review feedback.` });
+    }
+    let result: GhRunResult;
+    try {
+      result = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], this.options);
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub comment permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+      });
+    }
+    if (result.exitCode !== 0) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(result.stderr || result.stdout || 'gh pr comment failed'),
+        nextAction: `Fix GitHub comment permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+      });
+    }
+    return localReviewPublishResult({
+      status: 'published',
+      runId,
+      marker,
+      body,
+      url: publishedCommentUrl(result),
+      nextAction: `Provider-visible lane review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`,
+    });
   }
 
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {
@@ -1092,8 +1323,8 @@ export class GitHubReviewProvider implements ReviewProvider {
     if (!existsSync(workflowRoot)) return null;
     try {
       return readdirSync(workflowRoot)
-        .filter(name => name.endsWith('.yml') || name.endsWith('.yaml'))
-        .some(name => /\bworkflow_dispatch\b/.test(readFileSync(join(workflowRoot, name), 'utf8')));
+        .filter((name: string) => name.endsWith('.yml') || name.endsWith('.yaml'))
+        .some((name: string) => /\bworkflow_dispatch\b/.test(readFileSync(join(workflowRoot, name), 'utf8')));
     } catch {
       return null;
     }
@@ -1129,5 +1360,20 @@ export class GitHubReviewProvider implements ReviewProvider {
     if (requestKind === 'comment') { ensureGhSuccess(`gh pr comment ${prNumber}`, await runGh(['pr', 'comment', prNumber, '--body', body], this.options)); return; }
     throw new Error(`apply GitHub review action failed: request kind ${requestKind ?? 'unknown'} is not supported. Likely cause: action.details.requestKind is invalid. Next action: regenerate the action plan with requestKind "github-reviewer" or "comment".`);
   }
+
+  private async getRepositoryIdentity(): Promise<{ nameWithOwner: string; url: string }> {
+    const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], this.options);
+    ensureGhSuccess('gh repo view', result);
+    return parseGhJson<{ nameWithOwner: string; url: string }>(result.stdout, 'gh repo view', (value): value is { nameWithOwner: string; url: string } => isRecord(value) && typeof value.nameWithOwner === 'string' && typeof value.url === 'string');
+  }
 }
-export function createGitHubReviewProvider(options: GitHubReviewProviderOptions = {}): GitHubReviewProvider { return new GitHubReviewProvider(options); }
+
+export type GitHubReviewProvider = GitHubReviewForgeProvider;
+
+export function createGitHubReviewForgeProvider(options: GitHubReviewProviderOptions = {}): GitHubReviewForgeProvider {
+  return new GitHubReviewForgeProvider(options);
+}
+
+export function createGitHubReviewProvider(options: GitHubReviewProviderOptions = {}): GitHubReviewForgeProvider {
+  return createGitHubReviewForgeProvider(options);
+}
