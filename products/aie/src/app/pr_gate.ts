@@ -364,6 +364,7 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   if (status === 'unavailable') return 'Some PR review state or local review runner availability state was unavailable. Inspect the unavailable list, fix permissions, connectivity, or runner output, then rerun `aie pr gate`.';
   if (localReview.required && localReview.status !== 'passed' && status !== 'complete') {
     const feedbackAction = hasActionableFeedback(feedback) ? ' Also inspect and address provider review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
+    if (localReview.status === 'stale') return `${localReview.nextAction}${feedbackAction}`;
     const localGuidesGate = ['unavailable', 'missing', 'pending', 'inconclusive', 'malformed', 'failed', 'needs-work', 'stale'].includes(localReview.status);
     if (localGuidesGate && (!participantRollup || !participantsOnlyAwaitingHostWork(participantRollup) || status === 'failed' || status === 'inconclusive' || localReview.status === 'unavailable')) {
       return `${localReview.nextAction}${feedbackAction}`;

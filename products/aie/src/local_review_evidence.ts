@@ -514,20 +514,20 @@ function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalRe
     .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
 }
 
-function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[]): string[] {
+function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[], requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
   const blockers: string[] = [];
-  if (requiredLocalReviewLanes(profile).length > 0 && promptStack.length === 0) {
+  if (requiredLanes.length > 0 && promptStack.length === 0) {
     blockers.push(`Local review evidence for ${profile} must include a non-empty top-level promptStack.`);
   }
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of requiredLocalReviewLanes(profile)) {
+  for (const laneId of requiredLanes) {
     const lane = lanesById.get(laneId);
     if (!lane || lane.status !== 'passed') continue;
     if (lane.artifacts.length === 0) blockers.push(`${laneId} passed without artifact references.`);
     if (lane.promptStack.length === 0) blockers.push(`${laneId} passed without promptStack coverage.`);
   }
   const finalGate = lanesById.get('final-gate');
-  if (requiredLocalReviewLanes(profile).includes('final-gate') && finalGate) {
+  if (requiredLanes.includes('final-gate') && finalGate) {
     if (finalGate.status !== 'passed' || finalGate.recommendation !== 'approve') {
       blockers.push('final-gate must pass with recommendation approve before local review evidence can satisfy the gate.');
     }
@@ -605,11 +605,11 @@ function adapterMap(lanes: readonly LocalReviewLane[], adapter: LocalReviewEvide
   return new Map(lanes.map(lane => [lane.id, adapter]));
 }
 
-function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>): string[] {
-  if (shadow || requiredLocalReviewLanes(profile).length === 0) return [];
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
+  if (shadow || requiredLanes.length === 0) return [];
   const blockers: string[] = [];
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of requiredLocalReviewLanes(profile)) {
+  for (const laneId of requiredLanes) {
     const lane = lanesById.get(laneId);
     if (!lane) continue;
     const adapter = adapters.get(laneId) ?? 'manual-evidence';
@@ -641,7 +641,7 @@ function hash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity): LocalReviewStatus {
+function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): LocalReviewStatus {
   for (const lane of lanes) if (lane.status === 'malformed') return 'malformed';
   for (const lane of lanes) if (lane.status === 'unavailable') return 'unavailable';
   for (const lane of lanes) if (lane.status === 'failed') return 'failed';
@@ -651,7 +651,7 @@ function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfi
   for (const lane of lanes) if (lane.status === 'stale') return 'stale';
   for (const lane of lanes) if (lane.status === 'pending') return 'pending';
   const byId = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of requiredLocalReviewLanes(profile)) {
+  for (const laneId of requiredLanes) {
     if (!byId.has(laneId)) return 'missing';
     if (byId.get(laneId)?.status !== 'passed') return 'pending';
   }
@@ -838,10 +838,10 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const promptStack = lanesWithPublishStatus.flatMap(lane => lane.promptStack);
   const missingContext = missingRequiredContext(lanesWithPublishStatus, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
-  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack);
+  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack, requiredLanes);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
-  const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold);
+  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes);
+  const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
   const blockers = [...lanesWithPublishStatus.flatMap(lane => lane.blockers), ...thresholdBlockers(lanesWithPublishStatus, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);

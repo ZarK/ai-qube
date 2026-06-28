@@ -999,6 +999,48 @@ describe('PR gate service', () => {
     assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('without independent reviewer runner provenance')));
   });
 
+  it('validates active focused lanes with the same local-host evidence contract as profile lanes', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    config.reviewProfile = 'local-focused';
+    config.reviewLanes = [
+      {
+        id: 'security',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+        command: null,
+      },
+    ];
+    const evidence = localEvidence();
+    const baseLane = evidence.lanes.find(lane => lane.id === 'code-quality');
+    assert.ok(baseLane);
+    evidence.profile = 'local-focused';
+    evidence.lanes = [
+      {
+        ...baseLane,
+        id: 'security',
+        summary: 'security reviewed',
+        artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/security.txt', sha256: 'test-hash' }],
+        promptStack: promptStackForLane('security'),
+        runnerProvenance: null,
+      },
+    ];
+    writeLocalEvidence(repo, evidence, { rewritePromptHashes: false });
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.localReview.requiredLanes.length, 1);
+    assert.equal(result.localReview.requiredLanes[0], 'security');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.equal(result.status, 'pending');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('security passed without independent reviewer runner provenance')));
+  });
+
   it('rejects local-host evidence with a mismatched prompt stack hash', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
@@ -1986,7 +2028,8 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'rerun-required');
     assert.equal(result.localReview.status, 'stale');
-    assert.match(result.nextAction, /PR head changed|current PR head|publish provider-visible/);
+    assert.match(result.nextAction, /Rerun local review focuses for the current PR head, publish updated provider-visible feedback/);
+    assert.doesNotMatch(result.nextAction, /PR head changed after a review request/);
   });
 
   it('rejects self-attested local-host evidence without host provenance', async () => {
