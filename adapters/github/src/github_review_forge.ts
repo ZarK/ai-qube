@@ -381,11 +381,13 @@ function trustedLaneReviewComment(comment: RawComment, trustedAuthor: string | n
 }
 
 function laneReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LaneReviewComment[] {
-  return comments.flatMap(comment => {
+  const latest = new Map<string, LaneReviewComment>();
+  for (const comment of comments) {
     const metadata = trustedLaneReviewComment(comment, trustedAuthor);
-    if (!metadata) return [];
-    return [{ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha }];
-  });
+    if (!metadata) continue;
+    latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha });
+  }
+  return [...latest.values()];
 }
 
 function laneReviewSummary(comment: LaneReviewComment): string {
@@ -406,6 +408,7 @@ function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
 
 function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; marker: string; runId: string } {
   const runId = stableLaneRunId(input);
+  const summary = sanitizePublishedText(input.summary);
   const metadata: LaneReviewMetadata = {
     version: 1,
     head: input.headSha,
@@ -417,7 +420,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; ma
     host: input.host,
     recommendation: input.recommendation,
     status: input.status,
-    summary: input.summary,
+    summary,
   };
   const marker = laneReviewMarker(metadata);
   const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
@@ -427,7 +430,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; ma
     `QUBE review (${input.lane}): ${input.recommendation}`,
     '',
     'Summary:',
-    sanitizePublishedText(input.summary),
+    summary,
     '',
     'Findings:',
     ...findings,
@@ -454,15 +457,14 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
-      && review.summary === input.summary;
+      && review.summary === sanitizePublishedText(input.summary);
   });
 }
 
 function laneReviewMetadata(comments: RawComment[], trustedMarkerAuthor: string | null, headSha: string): JsonObject[] {
-  return comments.flatMap(comment => {
-    const metadata = trustedLaneReviewComment(comment, trustedMarkerAuthor);
-    if (!metadata) return [];
-    return [{
+  return laneReviewComments(comments, trustedMarkerAuthor, headSha).map(comment => {
+    const metadata = comment.metadata;
+    return {
       head: metadata.head,
       lane: metadata.lane,
       profile: metadata.profile,
@@ -476,7 +478,7 @@ function laneReviewMetadata(comments: RawComment[], trustedMarkerAuthor: string 
       stale: metadata.head !== headSha,
       author: comment.author?.login ?? null,
       url: comment.url ? redact(comment.url) : null,
-    }];
+    };
   });
 }
 
@@ -501,6 +503,10 @@ function localReviewSummary(comment: LocalReviewComment): string {
 
 function sanitizePublishedText(value: string): string {
   return redact(value)
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
+    .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, '[REDACTED]')
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s'"`]+/gi, '$1[REDACTED]')
+    .replace(/\b(api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|access[_-]?token)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|`[^`]*`|[^\s,;&)]+)/gi, '$1$2[REDACTED]')
     .replace(/\\\\[A-Za-z0-9._$-]+\\[^\r\n)<>]+/g, '[local-path]')
     .replace(/\b[A-Za-z]:[\\/][^\r\n)<>]+/g, '[local-path]')
     .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, '$1[local-path]');

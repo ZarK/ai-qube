@@ -122,6 +122,37 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12 } = {}) {
+  const metadata = {
+    version: 1,
+    head,
+    lane,
+    profile,
+    runId,
+    issueNumber,
+    prNumber,
+    host: 'codex',
+    recommendation,
+    status,
+    summary,
+  };
+  return {
+    author: { login: 'executor' },
+    body: [
+      `<!-- qube-pr-review:${JSON.stringify(metadata)} -->`,
+      '',
+      `QUBE review (${lane}): ${recommendation}`,
+      '',
+      'Summary:',
+      summary,
+      '',
+      'Findings:',
+      findings,
+    ].join('\n'),
+    url: `https://github.com/example/repo/pull/${prNumber}#issuecomment-${runId}`,
+  };
+}
+
 function promptStackHash(stack) {
   return createHash('sha256').update(JSON.stringify(stack.map(item => ({ id: item.id, sha256: item.sha256, source: item.source })))).digest('hex');
 }
@@ -1817,6 +1848,55 @@ describe('PR gate service', () => {
     assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
     assert.equal(exactDuplicate.status, 'skipped');
     assert.ok(fixture.calls.some(call => call[0] === 'pr' && call[1] === 'comment' && String(call[4] ?? '').includes('code review found blockers')));
+  });
+
+  it('loads the latest same-head lane feedback as authoritative', async () => {
+    const provider = createGitHubReviewForgeProvider({
+      exec: makePrExec({
+        prViews: [cleanLocalPr({
+          comments: [
+            laneReviewComment({ recommendation: 'request-changes', status: 'failed', runId: 'lane-old', summary: 'old lane blocker' }),
+            laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'lane-new', summary: 'new lane passed' }),
+          ],
+        })],
+      }).exec,
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const laneFeedback = snapshot.item.feedback.filter(item => item.summary.includes('QUBE review (code-quality)'));
+    const laneMetadata = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(laneFeedback.length, 1);
+    assert.equal(laneFeedback[0].state, 'APPROVED');
+    assert.equal(laneMetadata.length, 1);
+    assert.equal(laneMetadata[0].recommendation, 'approve');
+    assert.equal(laneMetadata[0].summary, 'new lane passed');
+  });
+
+  it('redacts common secrets from provider-visible lane review text', async () => {
+    const input = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'security',
+      profile: 'local-standard',
+      status: 'failed',
+      recommendation: 'request-changes',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'api_key=plain-secret-value password: hunter2 Authorization: Bearer bearer-secret',
+      findings: ['AWS key AKIA1234567890ABCDEF and token=another-secret-value must not publish.'],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/security.json',
+    };
+    const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
+
+    assert.equal(result.status, 'planned');
+    assert.doesNotMatch(result.body ?? '', /plain-secret-value|hunter2|bearer-secret|AKIA1234567890ABCDEF|another-secret-value/);
+    assert.match(result.body ?? '', /api_key=\[REDACTED\]/);
+    assert.match(result.body ?? '', /Authorization: Bearer \[REDACTED\]/i);
   });
 
   it('records Codex local-host command evidence without trusting command self-attestation', async () => {

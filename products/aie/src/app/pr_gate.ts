@@ -637,13 +637,20 @@ async function changedReviewPaths(config: Config, repoRoot: string): Promise<str
   ]);
 }
 
+function boundedPathList(paths: readonly string[], maxPaths = 60, maxCharacters = 1600): string {
+  if (paths.length === 0) return 'no changed paths were available from local git diff commands';
+  const visible = paths.slice(0, maxPaths);
+  const suffix = paths.length > visible.length ? `, ... ${paths.length - visible.length} more path(s) omitted; inspect git diff --name-only for the full list` : '';
+  return bounded(`${visible.join(', ')}${suffix}`, maxCharacters);
+}
+
 async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const paths = await changedReviewPaths(config, repoRoot);
   const diffStat = await gitText(repoRoot, ['diff', '--stat', `${config.baseRemote}/${config.baseBranch}...HEAD`], 4000);
   const sources = config.reviewContextSources;
   const reviewThreadMode = prThreadContextMode(sources);
   const requirementSources = sources.requirements.length > 0 ? sources.requirements.join(', ') : 'none configured';
-  const changedPaths = paths.length > 0 ? paths.join(', ') : 'no changed paths were available from local git diff commands';
+  const changedPaths = boundedPathList(paths);
   return [
     'Review context source policy:',
     `Repository instructions: ${sources.instructions.join(', ')}.`,
