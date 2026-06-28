@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
 import { parseInitTool, uniqueTools } from '../init_content.js';
@@ -312,7 +313,15 @@ async function planManagedFile(input: {
 }): Promise<{ action: InitAction; write?: PlannedWrite }> {
   const path = join(input.repoRoot, input.relativePath);
   const existingContent = await readTextIfPresent(path);
-  const update = planManagedUpdate({ existingContent, generatedBody: input.body, allowAppend: input.allowAppend, force: input.force, conflictPatterns: input.conflictPatterns, conflictReason: input.conflictReason });
+  const update = planManagedUpdate({
+    existingContent,
+    generatedBody: input.body,
+    allowAppend: input.allowAppend,
+    force: input.force,
+    commentStyle: input.relativePath.endsWith('.toml') ? 'hash' : 'html',
+    conflictPatterns: input.conflictPatterns,
+    conflictReason: input.conflictReason,
+  });
   const action = makeAction({
     id: input.id,
     path: input.relativePath,
@@ -410,7 +419,8 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
     if (planned.write) writes.push(planned.write);
   }
 
-  const rendered = renderInitFiles(config, selectedProfiles);
+  const workspaceAieRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
+  const rendered = renderInitFiles(config, selectedProfiles, { workspaceAieRunner });
   warnings.push(...rendered.warnings);
   for (const renderedFile of rendered.files) {
     const planned = await planManagedFile({

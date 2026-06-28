@@ -1,7 +1,7 @@
 import type { GateResult } from '../core/gate_evidence.js';
 import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
-import { createGitHubReviewProvider, type GitHubCiDiagnosticReasonCode, type GitHubCiDiagnosticStatus, type GitHubReviewPullRequest } from '../providers/github/github_review_provider.js';
-import { isGitHubCiDiagnosticReasonCode, isGitHubCiDiagnosticStatus } from '../providers/github/github_review_types.js';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import type { ReviewForgeCiDiagnostic, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
 import { parsePrNumber } from './pr_gate.js';
 
 export interface PrViewExecResult {
@@ -44,8 +44,8 @@ export interface PrViewCheck {
 
 export interface PrViewCheckDiagnostic {
   checkName: string;
-  status: GitHubCiDiagnosticStatus;
-  reasonCode: GitHubCiDiagnosticReasonCode;
+  status: ReviewForgeCiDiagnostic['status'];
+  reasonCode: ReviewForgeCiDiagnostic['reasonCode'];
   currentHeadSha: string;
   mappedToCurrentHeadCheckRun: boolean;
   mappedToCurrentHeadWorkflowRun: boolean;
@@ -85,7 +85,7 @@ export interface PrViewOptions {
   exec?: PrViewExec;
 }
 
-function prResult(pr: GitHubReviewPullRequest): PrViewPullRequest {
+function prResult(pr: ReviewForgePullRequest): PrViewPullRequest {
   return {
     number: pr.number,
     title: pr.title,
@@ -119,10 +119,18 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+function isCiDiagnosticStatus(value: string): boolean {
+  return ['mapped', 'pending-current-head-run', 'missing-current-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'stale-old-head-run', 'unknown'].includes(value);
+}
+
+function isCiDiagnosticReasonCode(value: string): boolean {
+  return ['current-head-check-run-found', 'current-head-workflow-run-found', 'current-head-check-run-pending', 'current-head-check-run-failed', 'current-head-check-run-skipped', 'missing-current-head-ci-run', 'stale-old-head-ci-run', 'ci-mapping-unknown'].includes(value);
+}
+
 function checkDiagnostic(value: unknown): PrViewCheckDiagnostic | undefined {
   if (!isRecord(value)) return undefined;
   if (typeof value.checkName !== 'string' || typeof value.status !== 'string' || typeof value.reasonCode !== 'string' || typeof value.currentHeadSha !== 'string' || typeof value.summary !== 'string' || typeof value.nextAction !== 'string') return undefined;
-  if (!isGitHubCiDiagnosticStatus(value.status) || !isGitHubCiDiagnosticReasonCode(value.reasonCode)) return undefined;
+  if (!isCiDiagnosticStatus(value.status) || !isCiDiagnosticReasonCode(value.reasonCode)) return undefined;
   return {
     checkName: value.checkName,
     status: value.status,
@@ -174,7 +182,7 @@ function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability'
 }
 
 export async function runPrViewService(options: PrViewOptions): Promise<PrViewResult> {
-  const provider = createGitHubReviewProvider({ exec: options.exec, cwd: options.repoRoot });
+  const provider = await createReviewForgeProvider('github', { exec: options.exec, cwd: options.repoRoot });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
   const checks = prChecks(snapshot.item);

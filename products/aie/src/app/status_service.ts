@@ -11,7 +11,8 @@ import type { RepoState } from '../core/repo_state.js';
 import type { ReviewItem } from '../core/review_item.js';
 import type { WorkItem } from '../core/work_item.js';
 import { githubIssueNumber } from '../providers/github/github_work_codec.js';
-import { createGitHubReviewProvider, type CurrentGitHubReview } from '../providers/github/github_review_provider.js';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import type { CurrentReviewForge } from '../providers/review_forge_provider.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
 import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../providers/repository_provider.js';
 import type { ReviewProvider, ReviewProviderCapabilities } from '../providers/review_provider.js';
@@ -128,7 +129,7 @@ export interface StatusServiceContext {
   workProvider: WorkProvider;
   repositoryProvider: RepositoryProvider;
   reviewProvider: ReviewProvider;
-  readCurrentReview: () => Promise<CurrentGitHubReview>;
+  readCurrentReview: () => Promise<CurrentReviewForge>;
   cwd?: string;
   now?: () => Date;
 }
@@ -156,15 +157,15 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const policy = configToExecutorPolicy(config);
   const workProvider = await createWorkProvider(config.providers.work.kind, { cwd: options.cwd });
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
-  const githubReviewProvider = createGitHubReviewProvider({ cwd: options.cwd });
+  const reviewForgeProvider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.cwd });
   return {
     configLoad,
     config,
     policy,
     workProvider,
     repositoryProvider,
-    reviewProvider: githubReviewProvider,
-    readCurrentReview: () => githubReviewProvider.findCurrentReview(),
+    reviewProvider: reviewForgeProvider,
+    readCurrentReview: () => reviewForgeProvider.findCurrentReview(),
     cwd: options.cwd,
   };
 }

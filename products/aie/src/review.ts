@@ -3,6 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { Config } from './config/index.js';
 import { renderAgentPrompt, type RenderedAgentPrompt } from './agent_descriptors.js';
+import { probeCodexReviewCapabilitySync, type CodexReviewCapability } from './app/local_review_runner.js';
 import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
 import { redact } from './gh.js';
 import { readLocalIssueReviewGate, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewFreshness, type LocalReviewGate, type LocalReviewProfile, type LocalReviewPromptStackItem, type LocalReviewTrust } from './local_review_evidence.js';
@@ -59,6 +60,9 @@ export interface ReviewGateResult {
   prompt: string;
   fallbackPrompt: string;
   evidence: ReviewGateEvidence;
+  localReviewRunner: {
+    codex: CodexReviewCapability;
+  };
   localReview: LocalReviewGate;
   evidenceNeeded: string[];
   warnings: string[];
@@ -232,6 +236,11 @@ function effectiveProfile(config: Config): LocalReviewProfile {
   if (localReviewShadow(config)) return 'local-shadow';
   if (localReviewRequired(config) && config.reviewProfile === 'remote-compatible') return 'local-standard';
   return config.reviewProfile;
+}
+
+function codexCommand(config: Config): string | null {
+  const command = config.reviewLanes.find(lane => lane.runner === 'local-host' && lane.command?.trim())?.command?.trim();
+  return command && command !== '' ? command : null;
 }
 
 function promptHash(fragment: string): string {
@@ -437,6 +446,9 @@ export function runReviewGate(config: Config, options: ReviewGateOptions): Revie
     prompt: buildPrompt(config, renderedPrompt),
     fallbackPrompt: buildFallbackPrompt(options.issueNumber),
     evidence,
+    localReviewRunner: {
+      codex: probeCodexReviewCapabilitySync(codexCommand(config), config.localReviewAgents.includes('codex')),
+    },
     localReview,
     evidenceNeeded: [...EVIDENCE_NEEDED],
     warnings: buildWarnings(reviewers),

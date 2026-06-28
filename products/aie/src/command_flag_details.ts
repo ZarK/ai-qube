@@ -121,6 +121,15 @@ export const REVIEW_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
 export const PR_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable PR review gate output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show reviewer request, comment, and wait plans without mutating GitHub or sleeping', default: false },
+  { name: '--local-review-prompts', type: 'boolean', description: 'Include full local review lane promptText bodies for independent host subagent execution; prompt rendering alone cannot satisfy required local review gates', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const PR_REVIEW_PUBLISH_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable lane review publish output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the provider-visible lane review comment without mutating GitHub', default: false },
+  { name: '--lane', type: 'string', description: 'Local review lane id to publish for the current PR head' },
+  { name: '--issue', type: 'integer', description: 'Linked issue number for the lane evidence when the PR does not expose one' },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

@@ -4,6 +4,21 @@ export interface QubeComponent {
   readonly packageName: string;
   readonly packageVersion: string;
   readonly summary: string;
+  readonly capabilities?: {
+    readonly localReview?: {
+      readonly freshContextReviewerSupport: "host-provided" | "configured-command" | "prompt-only" | "unsupported";
+      readonly promptOnlyFallback: boolean;
+      readonly manualEvidenceSatisfiesRequiredGate: boolean;
+      readonly provenanceRequired: readonly string[];
+      readonly provenanceAlternatives: readonly {
+        readonly anyOf: readonly string[];
+        readonly description: string;
+      }[];
+      readonly evidencePathPattern: string;
+      readonly hostProvenancePathPattern: string;
+      readonly nextAction: string;
+    };
+  };
 }
 
 export const qubeComponents: readonly QubeComponent[] = Object.freeze([
@@ -19,7 +34,24 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aie",
     packageName: "@tjalve/aie",
     packageVersion: "0.1.4",
-    summary: "Execute GitHub issue work through queue, branch, PR, and completion gates."
+    summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
+    capabilities: {
+      localReview: {
+        freshContextReviewerSupport: "host-provided",
+        promptOnlyFallback: true,
+        manualEvidenceSatisfiesRequiredGate: false,
+        provenanceRequired: ["runnerKind", "host", "freshContext", "promptOnly", "promptStackHash", "headSha", "providerPublishStatus"],
+        provenanceAlternatives: [
+          {
+            anyOf: ["taskId", "sessionId", "threadId"],
+            description: "At least one separate host task, session, or thread identifier is required when the host exposes one."
+          }
+        ],
+        evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
+        hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
+        nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."
+      }
+    }
   },
   {
     id: "quality",

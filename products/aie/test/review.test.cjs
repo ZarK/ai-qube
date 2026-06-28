@@ -56,6 +56,46 @@ function writeLocalReview(repo, issueNumber, status = 'passed') {
   }, null, 2));
 }
 
+function writeLocalLaneReview(repo, issueNumber) {
+  const directory = join(repo, '.qube', 'aie', 'reviews', String(issueNumber), '12', 'abc123');
+  mkdirSync(directory, { recursive: true });
+  const lanes = ['task-record-compliance', 'issue-compliance', 'code-quality', 'tests-quality', 'manual-qa', 'final-gate'];
+  for (const lane of lanes) {
+    writeFileSync(join(directory, `${lane}.json`), `${JSON.stringify({
+      version: 1,
+      issueNumber,
+      prNumber: 12,
+      headSha: 'abc123',
+      profile: 'local-standard',
+      adapter: 'local-command',
+      lane,
+      id: lane,
+      status: 'passed',
+      severity: 'none',
+      recommendation: 'approve',
+      summary: `${lane} reviewed`,
+      blockers: [],
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/12/abc123/${lane}.json`, sha256: 'test-hash' }],
+      commands: ['local review fixture'],
+      surfaces: ['PR'],
+      contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
+      promptStack: [{ id: `builtin:${lane}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
+      runnerProvenance: {
+        runnerKind: 'local-command',
+        host: 'local-command',
+        freshContext: true,
+        promptOnly: false,
+        taskId: 'review-task',
+        sessionId: null,
+        threadId: null,
+        promptStackHash: 'review-prompt-hash',
+        headSha: 'abc123',
+        providerPublishStatus: null,
+      },
+    }, null, 2)}\n`);
+  }
+}
+
 describe('review gate model', () => {
   it('renders the Oracle-style default prompt when no reviewer is configured', () => {
     const config = getDefaults();
@@ -160,6 +200,21 @@ describe('review gate model', () => {
     assert.equal(result.localReview.status, 'pending');
     assert.match(result.prompt, /Required lanes: .*code-quality/);
     assert.match(result.nextAction, /Record local review evidence|pr gate/);
+  });
+
+  it('reads per-lane local review evidence in issue-level review gates', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.localReviewAgents = ['local-command'];
+    writeLocalLaneReview(repo, 101);
+
+    const result = runReviewGate(config, { issueNumber: 101, repoRoot: repo });
+
+    assert.equal(result.localReview.required, true);
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReview.evidence[0].prNumber, 12);
+    assert.match(result.localReview.nextAction, /Local review evidence is recorded|inspect PR state/);
   });
 
   it('keeps mixed same-name local and GitHub reviewer targets distinct', () => {
@@ -271,6 +326,73 @@ describe('review gate CLI', () => {
     assert.equal(parsed.evidence.gateEvidence.result, 'missing');
     assert.match(parsed.nextAction, /Run the configured reviewer|reviewer/);
     assert.throws(() => readFileSync(marker, 'utf8'));
+  });
+
+  it('emits Codex fresh-context reviewer capability in review gate JSON', () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.lanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+    writeConfig(repo, config);
+
+    const result = binRun(['review', 'gate', '93', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.localReviewRunner.codex.host, 'codex');
+    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
+    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
+    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
+    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
+    assert.match(parsed.localReviewRunner.codex.nextAction, /Spawn independent Codex subagents/);
+  });
+
+  it('detects a configured local-host command after commandless local-host lanes', () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.localAgents = [];
+    config.policy.reviews.lanes = [
+      {
+        id: 'issue-compliance',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+      },
+      {
+        id: 'code-quality',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+        command: 'review-fixture',
+      },
+    ];
+    writeConfig(repo, config);
+
+    const result = binRun(['review', 'gate', '93', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.status, 0);
+    assert.equal(parsed.localReviewRunner.codex.independentReviewer, true);
+    assert.equal(parsed.localReviewRunner.codex.freshContext, true);
+    assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
+    assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
+    assert.match(parsed.localReviewRunner.codex.nextAction, /configured/);
   });
 
   it('fails review gate commands on malformed trusted config', () => {

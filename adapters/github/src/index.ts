@@ -92,35 +92,35 @@ const SUPPORTED_OPERATIONS = Object.freeze([
   freezeOperation({
     id: "load-pull-request",
     support: "supported",
-    owner: "@tjalve/aie",
-    summary: "Read pull request review, mergeability, linked issue, and check state through the GitHub review provider.",
+    owner: "@tjalve/qube-adapter-github",
+    summary: "Read pull request review, mergeability, linked issue, and check state through the GitHub review-forge adapter.",
     nextAction: "Use qube aie pr view <pr> --json for current PR state.",
   }),
   freezeOperation({
     id: "request-review-gate",
     support: "supported",
-    owner: "@tjalve/aie",
+    owner: "@tjalve/qube-adapter-github",
     summary: "Request configured GitHub review agents and record trusted review-gate markers for the current PR head.",
     nextAction: "Use qube aie pr gate <pr> to request reviewers and inspect gate state.",
   }),
   freezeOperation({
     id: "read-ci-status",
     support: "supported",
-    owner: "@tjalve/aie",
+    owner: "@tjalve/qube-adapter-github",
     summary: "Normalize GitHub status checks and check runs into trusted provider gate evidence.",
     nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> before merge.",
   }),
   freezeOperation({
     id: "diagnose-ci-status",
     support: "supported",
-    owner: "@tjalve/aie",
+    owner: "@tjalve/qube-adapter-github",
     summary: "Report whether PR checks map to the current head, stale workflow runs, failed runs, skipped runs, or pending runs.",
     nextAction: "Use the CI diagnostics in qube aie pr view <pr> --json to decide whether to wait, fix, or trigger fresh CI.",
   }),
   freezeOperation({
     id: "read-review-threads",
     support: "supported",
-    owner: "@tjalve/aie",
+    owner: "@tjalve/qube-adapter-github",
     summary: "Read unresolved GitHub pull request review threads as untrusted feedback inputs.",
     nextAction: "Use qube aie pr gate <pr> and address unresolved review threads before merge.",
   }),
@@ -186,6 +186,8 @@ export const githubAdapter = defineQubeAdapter({
     "work-queues",
     "pull-requests",
     "ci-status",
+    "review-forge-implementation",
+    "review-agent-templates",
     "review-gates",
     "review-threads",
     "unsupported-capability-reporting",
@@ -348,3 +350,62 @@ function checkReasonCode(result: GitHubCheckResult): GitHubCheckReasonCode {
   if (result === "stale") return "provider-check-stale";
   return "provider-check-unknown";
 }
+
+export {
+  GhAuthError,
+  GhExecutionError,
+  GhMalformedOutputError,
+  GhNetworkError,
+  GhNotFoundError,
+  NotGitHubRepositoryError,
+  parseGhJson,
+  redact,
+  runGh,
+  type GhExec,
+  type GhRunResult,
+} from "./gh.js";
+
+export {
+  MARKER_PREFIX,
+  QUBE_REVIEW_SERVICE_NAME,
+  commentBodyFor,
+  isCopilotOverview,
+  isNonActionableSummary,
+  listGitHubReviewAgents,
+  markerFor,
+  normalizeHandle,
+  resolveReviewAgent,
+  reviewerId,
+  reviewerMarkerBodyFor,
+  sanitizeFeedbackText,
+  triggerFor,
+} from "./github_review_agents.js";
+
+export type {
+  CurrentGitHubReview,
+  GitHubCiDiagnostic,
+  GitHubCiDiagnosticReasonCode,
+  GitHubCiDiagnosticStatus,
+  GitHubReviewProviderOptions,
+  GitHubReviewPullRequest,
+  GitHubReviewRequestTrigger,
+  GitHubReviewSnapshot,
+} from "./github_review_types.js";
+
+export {
+  isGitHubCiDiagnosticReasonCode,
+  isGitHubCiDiagnosticStatus,
+} from "./github_review_types.js";
+
+export {
+  GitHubReviewForgeProvider,
+  createGitHubReviewForgeProvider,
+  createGitHubReviewProvider,
+  type GitHubLaneReviewPublishInput,
+  type GitHubLaneReviewPublishResult,
+  type GitHubLocalReviewPublishInput,
+  type GitHubLocalReviewPublishResult,
+  type GitHubLocalReviewRecommendation,
+  type GitHubLocalReviewPublishStatus,
+  type GitHubReviewProvider,
+} from "./github_review_forge.js";

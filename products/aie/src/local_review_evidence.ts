@@ -1,9 +1,10 @@
+import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { redact } from './gh.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
-export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-comprehensive' | 'local-shadow';
+export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
 export type LocalReviewSeverity = 'none' | 'low' | 'medium' | 'high' | 'critical';
 export type LocalReviewRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
 export type LocalReviewContextKind = 'agents' | 'issue-body' | 'issue-comment' | 'milestone' | 'functional-requirement' | 'linked-issue' | 'pr-body' | 'pr-comment' | 'review-thread' | 'doc' | 'diff' | 'ci' | 'manual-qa';
@@ -43,6 +44,19 @@ export interface LocalReviewPromptStackItem {
   trust: LocalReviewTrust;
 }
 
+export interface LocalReviewRunnerProvenance {
+  runnerKind: 'local-command' | 'local-host' | 'manual-evidence' | 'prompt-only';
+  host: string;
+  freshContext: boolean;
+  promptOnly: boolean;
+  taskId: string | null;
+  sessionId: string | null;
+  threadId: string | null;
+  promptStackHash: string | null;
+  headSha: string;
+  providerPublishStatus: string | null;
+}
+
 export interface LocalReviewLane {
   id: LocalReviewLaneId;
   status: LocalReviewStatus;
@@ -56,6 +70,7 @@ export interface LocalReviewLane {
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: LocalReviewPromptStackItem[];
   toolsUsed: string[];
+  runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
 export interface LocalReviewEvidence {
@@ -76,6 +91,7 @@ export interface LocalReviewEvidence {
   lanes: LocalReviewLane[];
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: LocalReviewPromptStackItem[];
+  runnerProvenance: LocalReviewRunnerProvenance | null;
   recordedAt: string | null;
   stale: boolean;
 }
@@ -91,6 +107,39 @@ export interface LocalReviewGate {
   summary: string;
   nextAction: string;
 }
+
+interface TrustedLocalHostProvenance {
+  version: 1;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  lane: LocalReviewLaneId;
+  evidenceSha256: string;
+  runnerKind: 'local-host';
+  host: string;
+  freshContext: boolean;
+  promptOnly: boolean;
+  taskId: string | null;
+  sessionId: string | null;
+  threadId: string | null;
+  promptStackHash: string;
+  recordedAt: string;
+}
+
+interface LocalReviewPublishEvidence {
+  version: 1;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  provider: string;
+  status: string;
+}
+
+export const CORE_REVIEW_FOCUSES: readonly LocalReviewLaneId[] = [
+  'issue-compliance',
+  'code-quality',
+  'performance',
+];
 
 export const REQUIRED_LOCAL_REVIEW_LANES: readonly LocalReviewLaneId[] = [
   'task-record-compliance',
@@ -198,7 +247,7 @@ function readLaneId(value: unknown): LocalReviewLaneId | null {
 }
 
 function readProfile(value: unknown, fallback: LocalReviewProfile): LocalReviewProfile {
-  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-comprehensive' || value === 'local-shadow') return value;
+  if (value === 'remote-compatible' || value === 'local-standard' || value === 'local-focused' || value === 'local-comprehensive' || value === 'local-shadow') return value;
   return fallback;
 }
 
@@ -266,8 +315,34 @@ function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
   return stack;
 }
 
+function readNullableString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() !== '' ? redact(value.trim()) : null;
+}
+
+function readRunnerKind(value: unknown): LocalReviewRunnerProvenance['runnerKind'] {
+  if (value === 'local-command' || value === 'local-host' || value === 'manual-evidence' || value === 'prompt-only') return value;
+  return 'manual-evidence';
+}
+
+function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | null {
+  if (!isRecord(value)) return null;
+  return {
+    runnerKind: readRunnerKind(value.runnerKind),
+    host: stringValue(value.host, 'unknown-host'),
+    freshContext: value.freshContext === true,
+    promptOnly: value.promptOnly === true,
+    taskId: readNullableString(value.taskId),
+    sessionId: readNullableString(value.sessionId),
+    threadId: readNullableString(value.threadId),
+    promptStackHash: readNullableString(value.promptStackHash),
+    headSha: stringValue(value.headSha, 'unknown-head'),
+    providerPublishStatus: readNullableString(value.providerPublishStatus),
+  };
+}
+
 export function requiredLocalReviewLanes(profile: LocalReviewProfile): readonly LocalReviewLaneId[] {
   if (profile === 'local-comprehensive' || profile === 'local-shadow') return COMPREHENSIVE_LOCAL_REVIEW_LANES;
+  if (profile === 'local-focused') return CORE_REVIEW_FOCUSES;
   if (profile === 'local-standard') return REQUIRED_LOCAL_REVIEW_LANES;
   return [];
 }
@@ -298,6 +373,22 @@ function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber: numbe
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
 }
 
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  if (value !== null && typeof value === 'object') {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+export function localReviewEvidenceSha256(value: unknown): string {
+  return hash(canonicalJson(value));
+}
+
+export function trustedLocalHostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
+  return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+}
+
 function fallbackReviewer(reviewers: readonly string[]): LocalReviewEvidence['reviewer'] {
   const first = reviewers.map(name => name.trim()).find(name => name !== '') ?? 'local-reviewer';
   return { id: safeSegment(first), name: redact(first), adapterKind: 'local' };
@@ -318,6 +409,7 @@ function malformedEvidence(issueNumber: number | null, prNumber: number, headSha
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
@@ -340,6 +432,7 @@ function missingEvidence(issueNumber: number | null, prNumber: number, headSha: 
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
@@ -360,12 +453,13 @@ function staleEvidence(issueNumber: number, prNumber: number, headSha: string, p
     lanes: [],
     contextReviewed: [],
     promptStack: [],
+    runnerProvenance: null,
     recordedAt: null,
     stale: true,
   };
 }
 
-function readLanes(value: unknown): LocalReviewLane[] | null {
+function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenance | null = null): LocalReviewLane[] | null {
   if (!Array.isArray(value)) return null;
   const lanes: LocalReviewLane[] = [];
   for (const entry of value) {
@@ -386,6 +480,7 @@ function readLanes(value: unknown): LocalReviewLane[] | null {
       contextReviewed: readContextReviewed(entry.contextReviewed),
       promptStack: readPromptStack(entry.promptStack),
       toolsUsed: stringArray(entry.toolsUsed),
+      runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
   return lanes;
@@ -419,20 +514,20 @@ function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalRe
     .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
 }
 
-function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[]): string[] {
+function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[], requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
   const blockers: string[] = [];
-  if (requiredLocalReviewLanes(profile).length > 0 && promptStack.length === 0) {
+  if (requiredLanes.length > 0 && promptStack.length === 0) {
     blockers.push(`Local review evidence for ${profile} must include a non-empty top-level promptStack.`);
   }
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of requiredLocalReviewLanes(profile)) {
+  for (const laneId of requiredLanes) {
     const lane = lanesById.get(laneId);
     if (!lane || lane.status !== 'passed') continue;
     if (lane.artifacts.length === 0) blockers.push(`${laneId} passed without artifact references.`);
     if (lane.promptStack.length === 0) blockers.push(`${laneId} passed without promptStack coverage.`);
   }
   const finalGate = lanesById.get('final-gate');
-  if (requiredLocalReviewLanes(profile).includes('final-gate') && finalGate) {
+  if (requiredLanes.includes('final-gate') && finalGate) {
     if (finalGate.status !== 'passed' || finalGate.recommendation !== 'approve') {
       blockers.push('final-gate must pass with recommendation approve before local review evidence can satisfy the gate.');
     }
@@ -440,7 +535,113 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
   return blockers;
 }
 
-function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity): LocalReviewStatus {
+function promptHashKey(issueNumber: number, laneId: LocalReviewLaneId): string {
+  return `${issueNumber}:${laneId}`;
+}
+
+function explicitExpectedPromptHash(input: { issueNumber: number; laneId: LocalReviewLaneId; expectedPromptStackHashes?: Readonly<Record<string, string>> }): string | null {
+  return input.expectedPromptStackHashes?.[promptHashKey(input.issueNumber, input.laneId)]
+    ?? input.expectedPromptStackHashes?.[input.laneId]
+    ?? null;
+}
+
+function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, laneId: LocalReviewLaneId): TrustedLocalHostProvenance | null {
+  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || parsed.version !== 1) return null;
+    if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha || parsed.lane !== laneId) return null;
+    if (parsed.runnerKind !== 'local-host' || typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
+    if (typeof parsed.evidenceSha256 !== 'string' || !/^[a-f0-9]{64}$/.test(parsed.evidenceSha256)) return null;
+    if (parsed.freshContext !== true || parsed.promptOnly === true || typeof parsed.promptStackHash !== 'string' || parsed.promptStackHash.trim() === '') return null;
+    return {
+      version: 1,
+      issueNumber,
+      prNumber,
+      headSha,
+      lane: laneId,
+      evidenceSha256: parsed.evidenceSha256,
+      runnerKind: 'local-host',
+      host: parsed.host,
+      freshContext: parsed.freshContext,
+      promptOnly: parsed.promptOnly === true,
+      taskId: readNullableString(parsed.taskId),
+      sessionId: readNullableString(parsed.sessionId),
+      threadId: readNullableString(parsed.threadId),
+      promptStackHash: parsed.promptStackHash,
+      recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '',
+    };
+  } catch {
+    return null;
+  }
+}
+
+function trustedLocalHostBlockers(input: {
+  repoRoot: string;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  laneId: LocalReviewLaneId;
+  provenance: LocalReviewRunnerProvenance;
+  evidenceSha256: string | null;
+}): string[] {
+  if (input.provenance.runnerKind !== 'local-host') return [];
+  const trusted = readTrustedLocalHostProvenance(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.laneId);
+  if (!trusted) return [`${input.laneId} local-host evidence was not bound to a host provenance record.`];
+  const blockers: string[] = [];
+  if (!input.evidenceSha256) blockers.push(`${input.laneId} local-host evidence could not be bound to a canonical evidence digest.`);
+  if (input.evidenceSha256 && trusted.evidenceSha256 !== input.evidenceSha256) blockers.push(`${input.laneId} local-host evidence digest does not match the host provenance record.`);
+  if (trusted.host !== input.provenance.host) blockers.push(`${input.laneId} local-host provenance host does not match the host record.`);
+  if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the host record.`);
+  if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the host record.`);
+  if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
+  return blockers;
+}
+
+type LaneAdapterMap = ReadonlyMap<LocalReviewLaneId, LocalReviewEvidence['adapter']>;
+
+function adapterMap(lanes: readonly LocalReviewLane[], adapter: LocalReviewEvidence['adapter']): LaneAdapterMap {
+  return new Map(lanes.map(lane => [lane.id, adapter]));
+}
+
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
+  if (shadow || requiredLanes.length === 0) return [];
+  const blockers: string[] = [];
+  const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
+  for (const laneId of requiredLanes) {
+    const lane = lanesById.get(laneId);
+    if (!lane) continue;
+    const adapter = adapters.get(laneId) ?? 'manual-evidence';
+    if (adapter === 'manual-evidence') continue;
+    const provenance = lane.runnerProvenance;
+    if (!provenance) {
+      if (lane.status === 'passed') blockers.push(`${laneId} passed without independent reviewer runner provenance.`);
+      continue;
+    }
+    if (provenance.runnerKind !== adapter) blockers.push(`${laneId} runner provenance kind ${provenance.runnerKind} does not match evidence adapter ${adapter}.`);
+    if (!provenance.freshContext) blockers.push(`${laneId} did not record fresh independent reviewer context.`);
+    if (provenance.promptOnly) blockers.push(`${laneId} was prompt-only output and cannot satisfy a required local review gate.`);
+    if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
+    if (!provenance.taskId && !provenance.sessionId && !provenance.threadId) blockers.push(`${laneId} runner provenance did not record a separate task, session, or thread id.`);
+    if (!provenance.promptStackHash) {
+      blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
+    } else {
+      const expectedPromptStackHash = explicitExpectedPromptHash({ issueNumber, laneId, expectedPromptStackHashes });
+      if (expectedPromptStackHash && provenance.promptStackHash !== expectedPromptStackHash) {
+        blockers.push(`${laneId} runner provenance prompt stack hash does not match the current QUBE prompt stack.`);
+      }
+    }
+    blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha, laneId, provenance, evidenceSha256: evidenceHashes?.get(laneId) ?? null }));
+  }
+  return blockers;
+}
+
+function hash(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, threshold: LocalReviewSeverity, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): LocalReviewStatus {
   for (const lane of lanes) if (lane.status === 'malformed') return 'malformed';
   for (const lane of lanes) if (lane.status === 'unavailable') return 'unavailable';
   for (const lane of lanes) if (lane.status === 'failed') return 'failed';
@@ -450,7 +651,7 @@ function laneStatus(lanes: readonly LocalReviewLane[], profile: LocalReviewProfi
   for (const lane of lanes) if (lane.status === 'stale') return 'stale';
   for (const lane of lanes) if (lane.status === 'pending') return 'pending';
   const byId = new Map(lanes.map(lane => [lane.id, lane]));
-  for (const laneId of requiredLocalReviewLanes(profile)) {
+  for (const laneId of requiredLanes) {
     if (!byId.has(laneId)) return 'missing';
     if (byId.get(laneId)?.status !== 'passed') return 'pending';
   }
@@ -485,7 +686,7 @@ function evidenceSchemaVersion(parsed: Record<string, unknown>): unknown {
   return parsed.version ?? parsed.schemaVersion;
 }
 
-function parseEvidence(path: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
+function parseEvidence(path: string, repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers, profile);
@@ -493,17 +694,22 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers, profile);
     if (typeof parsed.headSha !== 'string' || parsed.headSha.trim() === '') return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence headSha metadata must be a non-empty string for this gate.', reviewers, profile);
     if (parsed.headSha !== headSha) return staleEvidence(issueNumber, prNumber, headSha, path, reviewers, profile);
-    const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const adapter = readAdapter(parsed.adapter);
+    const runnerProvenance = readRunnerProvenance(parsed.runnerProvenance);
+    const lanes = readLanes(parsed.lanes, runnerProvenance);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
+    const evidenceHash = localReviewEvidenceSha256(parsed);
+    const evidenceHashes = new Map(lanes.map(lane => [lane.id, evidenceHash]));
     const contextReviewed = readContextReviewed(parsed.contextReviewed);
     const promptStack = readPromptStack(parsed.promptStack);
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapterMap(lanes, adapter), shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes);
+    const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+    const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
@@ -518,6 +724,7 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
       lanes,
       contextReviewed,
       promptStack,
+      runnerProvenance,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };
@@ -526,7 +733,7 @@ function parseEvidence(path: string, issueNumber: number, prNumber: number, head
   }
 }
 
-function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter'] } | null {
+function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter']; evidenceSha256: string } | null {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
@@ -538,6 +745,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
     const status = readStatus(parsed.status);
     return {
       adapter: readAdapter(parsed.adapter),
+      evidenceSha256: localReviewEvidenceSha256(parsed),
       lane: {
         id,
         status,
@@ -551,6 +759,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         contextReviewed: readContextReviewed(parsed.contextReviewed),
         promptStack: readPromptStack(parsed.promptStack),
         toolsUsed: stringArray(parsed.toolsUsed),
+        runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };
   } catch {
@@ -558,13 +767,48 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
   }
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence | null {
+function readLocalReviewPublishEvidence(directory: string, issueNumber: number, prNumber: number, headSha: string): LocalReviewPublishEvidence | null {
+  const path = join(directory, 'publish.json');
+  if (!existsSync(path)) return null;
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (!isRecord(parsed) || parsed.version !== 1) return null;
+    if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha) return null;
+    if (typeof parsed.provider !== 'string' || parsed.provider.trim() === '') return null;
+    if (typeof parsed.status !== 'string' || parsed.status.trim() === '') return null;
+    return {
+      version: 1,
+      issueNumber,
+      prNumber,
+      headSha,
+      provider: parsed.provider,
+      status: parsed.status,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function withProviderPublishStatus(lane: LocalReviewLane, status: string | null): LocalReviewLane {
+  if (!status || !lane.runnerProvenance) return lane;
+  return {
+    ...lane,
+    runnerProvenance: {
+      ...lane.runnerProvenance,
+      providerPublishStatus: status,
+    },
+  };
+}
+
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[]): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   if (!existsSync(directory)) return null;
-  const requiredLanes = requiredLocalReviewLanes(profile);
+  const requiredLanes = requiredLanesInput ?? requiredLocalReviewLanes(profile);
   const lanes: LocalReviewLane[] = [];
   const missing: string[] = [];
   const adapters: LocalReviewEvidence['adapter'][] = [];
+  const laneAdapters = new Map<LocalReviewLaneId, LocalReviewEvidence['adapter']>();
+  const evidenceHashes = new Map<LocalReviewLaneId, string>();
   try {
     for (const laneId of requiredLanes) {
       const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
@@ -576,25 +820,31 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
       if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
       lanes.push(parsed.lane);
       adapters.push(parsed.adapter);
+      laneAdapters.set(laneId, parsed.adapter);
+      evidenceHashes.set(laneId, parsed.evidenceSha256);
     }
   } catch {
     return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
   }
   if (lanes.length === 0) return null;
+  const publishStatus = readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null;
+  const lanesWithPublishStatus = lanes.map(lane => withProviderPublishStatus(lane, publishStatus));
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
     return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
   }
-  const finalGate = lanes.find(lane => lane.id === 'final-gate');
-  const contextReviewed = lanes.flatMap(lane => lane.contextReviewed);
-  const promptStack = lanes.flatMap(lane => lane.promptStack);
-  const missingContext = missingRequiredContext(lanes, profile);
+  const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
+  const contextReviewed = lanesWithPublishStatus.flatMap(lane => lane.contextReviewed);
+  const promptStack = lanesWithPublishStatus.flatMap(lane => lane.promptStack);
+  const missingContext = missingRequiredContext(lanesWithPublishStatus, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
-  const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-  const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack, requiredLanes);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
+  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes);
+  const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
+  const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
-  const blockers = [...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
+  const blockers = [...lanesWithPublishStatus.flatMap(lane => lane.blockers), ...thresholdBlockers(lanesWithPublishStatus, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow), ...contextBlockers].filter((value, index, values) => values.indexOf(value) === index);
   return {
     issueNumber,
     prNumber,
@@ -604,17 +854,18 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     status,
     path: redact(directory),
     reviewer: fallbackReviewer(reviewers),
-    summary: finalGate?.summary ?? 'Local review lane evidence was loaded.',
+    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}`,
     blockers,
-    lanes,
+    lanes: lanesWithPublishStatus,
     contextReviewed,
     promptStack,
+    runnerProvenance: null,
     recordedAt: null,
     stale: false,
   };
 }
 
-function parseIssueEvidence(path: string, issueNumber: number, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
+function parseIssueEvidence(path: string, repoRoot: string, issueNumber: number, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON must be an object.', reviewers, profile);
@@ -622,17 +873,22 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
     if (parsed.issueNumber !== issueNumber) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence issue metadata does not match this gate.', reviewers, profile);
     const prNumber = typeof parsed.prNumber === 'number' && Number.isSafeInteger(parsed.prNumber) && parsed.prNumber > 0 ? parsed.prNumber : 0;
     const headSha = typeof parsed.headSha === 'string' && parsed.headSha.trim() !== '' ? parsed.headSha : 'unknown';
-    const lanes = readLanes(parsed.lanes);
-    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
     const adapter = readAdapter(parsed.adapter);
+    const runnerProvenance = readRunnerProvenance(parsed.runnerProvenance);
+    const lanes = readLanes(parsed.lanes, runnerProvenance);
+    if (!lanes) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence must include a lanes array with known lane ids.', reviewers, profile);
+    const evidenceHash = localReviewEvidenceSha256(parsed);
+    const evidenceHashes = new Map(lanes.map(lane => [lane.id, evidenceHash]));
     const contextReviewed = readContextReviewed(parsed.contextReviewed);
     const promptStack = readPromptStack(parsed.promptStack);
     const missingContext = missingRequiredContext(lanes, profile);
     const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
     const contractBlockers = evidenceContractBlockers(lanes, profile, promptStack);
-    const rawStatus = laneStatus(lanes, profile, severityThreshold) === 'passed' && contractBlockers.length > 0 ? 'failed' : laneStatus(lanes, profile, severityThreshold);
+    const runnerBlockers = provenanceBlockers(lanes, profile, adapterMap(lanes, adapter), shadow, headSha, issueNumber, prNumber, repoRoot, undefined, evidenceHashes);
+    const computedLaneStatus = laneStatus(lanes, profile, severityThreshold);
+    const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
     const status = statusWithAdapter(rawStatus, adapter, shadow);
-    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
+    const blockers = [...stringArray(parsed.blockers), ...lanes.flatMap(lane => lane.blockers), ...thresholdBlockers(lanes, severityThreshold), ...contractBlockers, ...runnerBlockers, ...adapterBlockers(adapter, status, shadow)].filter((value, index, values) => values.indexOf(value) === index);
     return {
       issueNumber,
       prNumber,
@@ -647,6 +903,7 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
       lanes,
       contextReviewed,
       promptStack,
+      runnerProvenance,
       recordedAt: typeof parsed.recordedAt === 'string' ? redact(parsed.recordedAt) : null,
       stale: status === 'stale',
     };
@@ -655,13 +912,24 @@ function parseIssueEvidence(path: string, issueNumber: number, reviewers: readon
   }
 }
 
-function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number): string | null {
+function directoryHasLaneEvidence(path: string): boolean {
+  try {
+    const laneFiles = new Set(COMPREHENSIVE_LOCAL_REVIEW_LANES.map(lane => `${lane}.json`));
+    return readdirSync(path, { withFileTypes: true })
+      .some(entry => entry.isFile() && laneFiles.has(entry.name));
+  } catch {
+    return false;
+  }
+}
+
+function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string | null {
   const laneRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
   if (existsSync(laneRoot)) {
     try {
       const directories = readdirSync(laneRoot, { withFileTypes: true })
         .filter(entry => entry.isDirectory())
         .map(entry => entry.name)
+        .filter(name => name !== safeSegment(headSha) && directoryHasLaneEvidence(join(laneRoot, name)))
         .sort();
       const newest = directories.at(-1);
       if (newest) return join(laneRoot, newest);
@@ -682,24 +950,50 @@ function findStaleEvidence(repoRoot: string, issueNumber: number, prNumber: numb
   }
 }
 
-function findIssueEvidence(repoRoot: string, issueNumber: number): string[] {
+type IssueEvidenceReference =
+  | { kind: 'aggregate'; path: string }
+  | { kind: 'lane-set'; path: string; prNumber: number; headSha: string };
+
+function findIssueEvidence(repoRoot: string, issueNumber: number): IssueEvidenceReference[] {
+  const references: IssueEvidenceReference[] = [];
+  const laneRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber));
+  if (existsSync(laneRoot)) {
+    try {
+      const prDirectories = readdirSync(laneRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && /^[0-9]+$/.test(entry.name))
+        .map(entry => ({ prNumber: Number.parseInt(entry.name, 10), path: join(laneRoot, entry.name) }));
+      for (const prDirectory of prDirectories) {
+        try {
+          const headDirectories = readdirSync(prDirectory.path, { withFileTypes: true })
+            .filter(entry => entry.isDirectory())
+            .map(entry => entry.name);
+          for (const headSha of headDirectories) references.push({ kind: 'lane-set', prNumber: prDirectory.prNumber, headSha, path: join(prDirectory.path, headSha) });
+        } catch {
+          continue;
+        }
+      }
+    } catch {
+      // Fall through to legacy aggregate evidence discovery.
+    }
+  }
   const directory = join(repoRoot, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`);
-  if (!existsSync(directory)) return [];
+  if (!existsSync(directory)) return references.sort((left, right) => left.path.localeCompare(right.path));
   try {
     const prDirectories = readdirSync(directory, { withFileTypes: true })
       .filter(entry => entry.isDirectory() && entry.name.startsWith('pr-'))
       .map(entry => join(directory, entry.name));
-    return prDirectories.flatMap(prDirectory => {
+    references.push(...prDirectories.flatMap(prDirectory => {
       try {
         return readdirSync(prDirectory, { withFileTypes: true })
           .filter(entry => entry.isFile() && entry.name.endsWith('.json'))
-          .map(entry => join(prDirectory, entry.name));
+          .map(entry => ({ kind: 'aggregate' as const, path: join(prDirectory, entry.name) }));
       } catch {
         return [];
       }
-    }).sort();
+    }));
+    return references.sort((left, right) => left.path.localeCompare(right.path));
   } catch {
-    return [];
+    return references.sort((left, right) => left.path.localeCompare(right.path));
   }
 }
 
@@ -721,16 +1015,19 @@ function gateStatus(evidence: readonly LocalReviewEvidence[]): LocalReviewStatus
   return evidence.reduce<LocalReviewStatus>((current, item) => statusPriority(item.status) > statusPriority(current) ? item.status : current, 'passed');
 }
 
-function gateNextAction(status: LocalReviewStatus, prNumber: number): string {
+function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFirst = false): string {
   const rerunCommand = prNumber > 0 ? `\`aie pr gate ${prNumber}\`` : '`aie pr gate <pr>`';
   if (status === 'passed') return prNumber > 0
-    ? `Local review evidence is current for PR #${prNumber}; inspect PR state, checks, issue checklist, and any feedback before merge.`
-    : 'Local review evidence is recorded; inspect PR state, checks, issue checklist, and any feedback before merge.';
-  if (status === 'stale') return `Rerun local review lanes for the current PR head, refresh local evidence, then rerun ${rerunCommand}.`;
-  if (status === 'failed' || status === 'needs-work') return 'Address local review blockers, rerun affected checks, refresh local evidence, and rerun the PR gate.';
-  if (status === 'inconclusive') return 'Refresh local review evidence with required AGENTS, issue, issue comments, milestone, functional requirement, linked issue, PR, and review-thread context before merge.';
-  if (status === 'unavailable' || status === 'malformed') return 'Fix local review evidence format or runner availability, then rerun the PR gate.';
-  return `Record local review evidence for all required lanes, then rerun ${rerunCommand}.`;
+    ? `Local review evidence is recorded for PR #${prNumber}; inspect PR state, PR comments, reviews, checks, issue checklist, and any feedback before merge.`
+    : 'Local review evidence is recorded; inspect PR state, PR comments, reviews, checks, issue checklist, and any feedback before merge.';
+  if (providerFirst && (status === 'missing' || status === 'pending')) {
+    return `Run fresh-context review subagents for each active focus, publish provider-visible feedback on the pull request, then rerun ${rerunCommand}. Inspect PR comments and reviews on GitHub; local audit files are optional.`;
+  }
+  if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
+  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback on the pull request, rerun affected checks, and rerun the PR gate.';
+  if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
+  if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
+  return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;
 }
 
 export function readLocalReviewGate(input: {
@@ -743,11 +1040,14 @@ export function readLocalReviewGate(input: {
   profile?: LocalReviewProfile;
   severityThreshold?: LocalReviewSeverity;
   shadow?: boolean;
+  expectedPromptStackHashes?: Readonly<Record<string, string>>;
+  activeFocuses?: readonly LocalReviewLaneId[];
+  providerFirst?: boolean;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
   const severityThreshold = input.severityThreshold ?? 'high';
-  const requiredLanes = [...requiredLocalReviewLanes(profile)];
+  const requiredLanes = [...(input.activeFocuses ?? requiredLocalReviewLanes(profile))];
   const mode = input.shadow ? 'shadow' : input.required ? 'required' : 'disabled';
   if (!input.required && !input.shadow) return { required: false, mode, profile, reviewers, requiredLanes, evidence: [], status: 'passed', summary: 'Local review evidence is not required by the selected review adapter.', nextAction: 'No local review evidence action is required.' };
   if (input.issueNumbers.length === 0) {
@@ -755,11 +1055,12 @@ export function readLocalReviewGate(input: {
     return { required: input.required, mode, profile, reviewers, requiredLanes, evidence, status: 'missing', summary: evidence[0].summary, nextAction: gateNextAction('missing', input.prNumber) };
   }
   const evidence = input.issueNumbers.map(issueNumber => {
-    const currentPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
+    const currentPath = laneEvidenceDirectory(input.repoRoot, issueNumber, input.prNumber, input.headSha);
+    const legacyPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes);
     if (laneEvidence) return laneEvidence;
-    if (existsSync(currentPath)) return parseEvidence(currentPath, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false);
-    const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber);
+    if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
+    const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     if (stalePath) return staleEvidence(issueNumber, input.prNumber, input.headSha, stalePath, input.reviewers, profile);
     return missingEvidence(issueNumber, input.prNumber, input.headSha, currentPath, input.reviewers, profile);
   });
@@ -773,7 +1074,7 @@ export function readLocalReviewGate(input: {
     evidence,
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
-    nextAction: gateNextAction(status, input.prNumber),
+    nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false),
   };
 }
 
@@ -795,7 +1096,10 @@ export function readLocalIssueReviewGate(input: {
   const evidencePaths = findIssueEvidence(input.repoRoot, input.issueNumber);
   const evidence = evidencePaths.length === 0
     ? [missingEvidence(input.issueNumber, 0, 'unknown', null, input.reviewers, profile)]
-    : evidencePaths.map(path => parseIssueEvidence(path, input.issueNumber, input.reviewers, profile, severityThreshold, input.shadow ?? false));
+    : evidencePaths.map(reference => reference.kind === 'lane-set'
+      ? parseLaneEvidenceSet(input.repoRoot, input.issueNumber, reference.prNumber, reference.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false)
+        ?? malformedEvidence(input.issueNumber, reference.prNumber, reference.headSha, reference.path, 'Local review lane evidence set could not be parsed for this issue gate.', input.reviewers, profile)
+      : parseIssueEvidence(reference.path, input.repoRoot, input.issueNumber, input.reviewers, profile, severityThreshold, input.shadow ?? false));
   const status = gateStatus(evidence);
   return {
     required: input.required,

@@ -222,6 +222,7 @@ export interface GateReadinessDiagnostics {
       missingTools: string[];
       codex: {
         independentReviewer: boolean;
+        freshContext: boolean;
         promptOnly: boolean;
         hooks: boolean;
         evidenceWriting: boolean;

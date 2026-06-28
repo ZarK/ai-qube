@@ -14,6 +14,19 @@ importers:
 
   .: {}
 
+  adapters/codex:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   adapters/github:
     dependencies:
       '@tjalve/qube-core':
@@ -115,6 +128,9 @@ importers:
       '@tjalve/qube-cli':
         specifier: 0.1.2
         version: link:../../packages/qube-cli
+      '@tjalve/qube-core':
+        specifier: 0.1.0
+        version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
         specifier: 24.12.2
@@ -122,6 +138,16 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+    optionalDependencies:
+      '@tjalve/qube-adapter-codex':
+        specifier: workspace:*
+        version: link:../../adapters/codex
+      '@tjalve/qube-adapter-github':
+        specifier: workspace:*
+        version: link:../../adapters/github
+      '@tjalve/qube-adapter-opencode':
+        specifier: workspace:*
+        version: link:../../adapters/opencode
 
   products/aiq:
     devDependencies:

@@ -42,7 +42,7 @@ export interface ShippingPolicy {
 }
 
 export type ReviewAdapterKind = 'github' | 'remote' | 'local' | 'mixed' | 'shadow';
-export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-comprehensive' | 'local-shadow';
+export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
 export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
 

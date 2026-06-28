@@ -8,6 +8,7 @@ export type CodexHostCapabilityId =
   | "inspect-repository-state"
   | "run-commands"
   | "audit-ui-with-browser"
+  | "spawn-fresh-reviewer"
   | "handoff-worktree"
   | "install-project-command"
   | "request-external-review"
@@ -79,6 +80,13 @@ const SUPPORTED_CAPABILITIES = Object.freeze([
     owner: "Codex Browser",
     summary: "Codex can audit unauthenticated local routes through the in-app browser when Browser use is available.",
     nextAction: "Use qube aie audit ui <issue> for evidence guidance, start the app, then inspect the real page with the Codex browser.",
+  }),
+  freezeCapability({
+    id: "spawn-fresh-reviewer",
+    support: "host-provided",
+    owner: "Codex app",
+    summary: "Codex can delegate bounded read-only review work to fresh subagents; QUBE renders explicit prompt bundles and requires recorded local-host provenance before gates pass.",
+    nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts, spawn Codex subagents from the active host, and record local-host evidence with task/session/thread provenance.",
   }),
   freezeCapability({
     id: "handoff-worktree",
