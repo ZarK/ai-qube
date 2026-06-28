@@ -431,7 +431,7 @@ async function handlePrBody(context: Parameters<RuntimeCommandHandler>[0]) {
 
 async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
-  const lane = stringArg(context, 'lane');
+  const lane = stringFlag(context, 'lane');
   if (isHelpToken(pr) || isHelpToken(lane)) {
     return usageResult(context, 'pr review publish', 'aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]', [
       'Usage: aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]',
@@ -459,7 +459,7 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
     const message = `Failed to run \`aie pr review publish\`: unknown lane "${laneTrimmed}".`;
     return commandFailure(context, { ok: false, command: 'pr review publish', error: message }, message);
   }
-  const issueArg = stringArg(context, 'issue');
+  const issueArg = stringFlag(context, 'issue');
   const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
   const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
   const loaded = await loadConfigFile();

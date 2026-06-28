@@ -18,6 +18,7 @@ try {
 }
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
+const { runPrReviewPublishService } = require('../dist/app/pr_review_publish.js');
 
 const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
 
@@ -1694,6 +1695,80 @@ describe('PR gate service', () => {
     assert.match(result.failure, /network unavailable/);
   });
 
+  it('fails lane review publishing when required lane evidence is missing', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /required local review lane evidence is missing or invalid/,
+    );
+  });
+
+  it('publishes evidence-backed lane review dry-runs from current local-host evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'issue-body', source: 'https://github.com/example/repo/issues/93', trust: 'untrusted-task-input', freshness: 'current' },
+        { kind: 'pr-body', source: 'https://github.com/example/repo/pull/12', trust: 'untrusted-task-input', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
+    assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
+  });
+
+  it('uses stable lane review run ids for the same issue, PR, head, and lane', async () => {
+    const input = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review passed',
+      findings: [],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const first = await provider.publishLaneReviewFeedback(snapshot.item, input);
+    const changedInput = {
+      ...input,
+      status: 'failed',
+      recommendation: 'request-changes',
+      summary: 'code review found blockers',
+      findings: ['Fix the blocker.'],
+    };
+    const changed = await provider.publishLaneReviewFeedback(snapshot.item, changedInput);
+    const publishedProvider = createGitHubReviewForgeProvider({
+      exec: makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-lane' }] })] }).exec,
+    });
+    const publishedSnapshot = await publishedProvider.loadPullRequestReview(12);
+    const skipped = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...changedInput, dryRun: false });
+
+    assert.equal(first.status, 'planned');
+    assert.equal(changed.status, 'planned');
+    assert.equal(first.runId, changed.runId);
+    assert.equal(skipped.status, 'skipped');
+  });
+
   it('records Codex local-host command evidence without trusting command self-attestation', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig();
@@ -3007,6 +3082,7 @@ describe('PR gate CLI and metadata', () => {
     const view = parsed.commands.find(command => command.name === 'pr view');
     const body = parsed.commands.find(command => command.name === 'pr body');
     const gate = parsed.commands.find(command => command.name === 'pr gate');
+    const publish = parsed.commands.find(command => command.name === 'pr review publish');
 
     assert.equal(result.status, 0);
     assert.equal(pr.mutation.mutates, false);
@@ -3025,5 +3101,12 @@ describe('PR gate CLI and metadata', () => {
     assert.equal(gate.interactions.json, true);
     assert.equal(gate.dryRun.supported, true);
     assert.equal(gate.flags.find(flag => flag.name === 'dry-run').type, 'boolean');
+    assert.equal(publish.mutation.mutates, true);
+    assert.deepEqual(publish.mutation.categories, ['github']);
+    assert.equal(publish.interactions.json, true);
+    assert.equal(publish.dryRun.supported, true);
+    assert.equal(publish.flags.find(flag => flag.name === 'lane').type, 'string');
+    assert.equal(publish.flags.find(flag => flag.name === 'issue').type, 'integer');
+    assert.equal(publish.flags.find(flag => flag.name === 'dry-run').type, 'boolean');
   });
 });

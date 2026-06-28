@@ -397,13 +397,8 @@ function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
     .update(JSON.stringify({
       head: input.headSha,
       lane: input.lane,
-      profile: input.profile,
       issueNumber: input.issueNumber,
       prNumber: input.prNumber,
-      status: input.status,
-      recommendation: input.recommendation,
-      summary: input.summary,
-      findings: input.findings,
     }))
     .digest('hex')
     .slice(0, 16);
