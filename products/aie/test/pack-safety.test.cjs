@@ -61,7 +61,7 @@ describe('package publish surface safety', () => {
   });
 
   it('keeps dependencies minimal and exact', () => {
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli']);
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli', '@tjalve/qube-core']);
     assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ['@types/node', 'typescript']);
     assert.equal(pkg.oclif, undefined);
 

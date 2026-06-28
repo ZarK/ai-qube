@@ -46,7 +46,7 @@
   ],
   "dependencies": {
     "@tjalve/qube-cli": "0.1.2",
-    "@tjalve/qube-core": "workspace:*"
+    "@tjalve/qube-core": "0.1.0"
   },
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",

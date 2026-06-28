@@ -12,7 +12,7 @@ export interface ProviderSource {
 
 function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
-  if (normalized === "") throw new Error(`${field} must be a non-empty string.`);
+  if (normalized === "") throw new Error(`${field} was empty or whitespace-only.`);
   return normalized;
 }
 

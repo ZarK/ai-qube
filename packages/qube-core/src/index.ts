@@ -433,6 +433,12 @@ function nonEmpty(value: string, field: string): string {
   return normalized;
 }
 
+function nonEmptyProviderSource(value: string, field: string): string {
+  const normalized = value.trim();
+  if (normalized === "") throw new Error(`${field} was empty or whitespace-only.`);
+  return normalized;
+}
+
 export function normalizeProviderSource(input: {
   readonly providerId: string;
   readonly resourceKind: ProviderResourceKind;
@@ -441,9 +447,9 @@ export function normalizeProviderSource(input: {
   readonly metadata?: JsonObject;
 }): ProviderSource {
   return {
-    providerId: nonEmpty(input.providerId, "providerId"),
+    providerId: nonEmptyProviderSource(input.providerId, "providerId"),
     resourceKind: input.resourceKind,
-    resourceId: input.resourceId === undefined || input.resourceId === null ? null : nonEmpty(input.resourceId, "resourceId"),
+    resourceId: input.resourceId === undefined || input.resourceId === null ? null : nonEmptyProviderSource(input.resourceId, "resourceId"),
     url: input.url === undefined ? null : input.url,
     metadata: input.metadata ?? {},
   };
