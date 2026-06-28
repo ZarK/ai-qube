@@ -443,17 +443,19 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; ma
   return { body, marker, runId };
 }
 
-function currentLaneReviewRunIds(item: ReviewItem, headSha: string, lane: string): Set<string> {
+function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
-  if (!Array.isArray(value)) return new Set();
-  const runIds = value.flatMap(review => {
-    if (!isRecord(review)) return [];
-    if (review.stale === true) return [];
-    if (review.head !== headSha) return [];
-    if (review.lane !== lane) return [];
-    return typeof review.runId === 'string' && review.runId.trim() !== '' ? [review.runId] : [];
+  if (!Array.isArray(value)) return false;
+  return value.some(review => {
+    if (!isRecord(review)) return false;
+    if (review.stale === true) return false;
+    return review.head === input.headSha
+      && review.lane === input.lane
+      && review.runId === runId
+      && review.recommendation === input.recommendation
+      && review.status === input.status
+      && review.summary === input.summary;
   });
-  return new Set(runIds);
 }
 
 function laneReviewMetadata(comments: RawComment[], trustedMarkerAuthor: string | null, headSha: string): JsonObject[] {
@@ -1101,7 +1103,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
   async publishLaneReviewFeedback(item: ReviewItem, input: GitHubLaneReviewPublishInput): Promise<GitHubLaneReviewPublishResult> {
     const { body, marker, runId } = laneReviewBody(input);
-    if (currentLaneReviewRunIds(item, input.headSha, input.lane).has(runId)) {
+    if (matchingCurrentLaneReview(item, input, runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
     }
     if (input.dryRun) {
@@ -1173,7 +1175,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       checks: [],
       trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, trustedMarkerAuthor, input.headSha) },
     });
-    if (currentLaneReviewRunIds(trustedItem, input.headSha, input.lane).has(runId)) {
+    if (matchingCurrentLaneReview(trustedItem, input, runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
     }
     if (input.dryRun) {

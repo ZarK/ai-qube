@@ -1777,7 +1777,7 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
   });
 
-  it('uses stable lane review run ids for the same issue, PR, head, and lane', async () => {
+  it('publishes superseding lane feedback when same-run evidence changes', async () => {
     const input = {
       dryRun: true,
       prNumber: 12,
@@ -1804,16 +1804,19 @@ describe('PR gate service', () => {
       findings: ['Fix the blocker.'],
     };
     const changed = await provider.publishLaneReviewFeedback(snapshot.item, changedInput);
-    const publishedProvider = createGitHubReviewForgeProvider({
-      exec: makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-lane' }] })] }).exec,
-    });
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-lane' }] })] });
+    const publishedProvider = createGitHubReviewForgeProvider({ exec: fixture.exec });
     const publishedSnapshot = await publishedProvider.loadPullRequestReview(12);
-    const skipped = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...changedInput, dryRun: false });
+    const superseding = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...changedInput, dryRun: false });
+    const exactDuplicate = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...input, dryRun: false });
 
     assert.equal(first.status, 'planned');
     assert.equal(changed.status, 'planned');
     assert.equal(first.runId, changed.runId);
-    assert.equal(skipped.status, 'skipped');
+    assert.equal(superseding.status, 'published');
+    assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
+    assert.equal(exactDuplicate.status, 'skipped');
+    assert.ok(fixture.calls.some(call => call[0] === 'pr' && call[1] === 'comment' && String(call[4] ?? '').includes('code review found blockers')));
   });
 
   it('records Codex local-host command evidence without trusting command self-attestation', async () => {
