@@ -1721,13 +1721,18 @@ describe('PR gate service', () => {
       toolsUsed: ['codex'],
     }));
     writeLocalEvidence(repo, evidence);
-    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+    const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
     const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'planned');
     assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
     assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
+    assert.ok(calls.some(call => call.join(' ') === `pr view 12 --json ${prViewFields}`));
+    assert.ok(calls.some(call => call.join(' ') === 'api repos/example/repo/issues/12/comments --method GET -F per_page=100 --paginate --slurp'));
+    assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
+    assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
+    assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
   });
 
   it('uses stable lane review run ids for the same issue, PR, head, and lane', async () => {

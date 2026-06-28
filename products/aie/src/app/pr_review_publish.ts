@@ -143,9 +143,13 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot });
-  const snapshot = await provider.loadPullRequestReview(options.prNumber);
-  const headSha = options.headSha ?? snapshot.pr.headRefOid;
-  const issueNumber = options.issueNumber ?? snapshot.closingIssueNumbers[0] ?? 0;
+  const target = options.headSha && options.issueNumber
+    ? null
+    : provider.loadPullRequestReviewTarget
+      ? await provider.loadPullRequestReviewTarget(options.prNumber)
+      : await provider.loadPullRequestReview(options.prNumber);
+  const headSha = options.headSha ?? target?.pr.headRefOid ?? '';
+  const issueNumber = options.issueNumber ?? target?.closingIssueNumbers[0] ?? 0;
   if (issueNumber <= 0) {
     throw new Error('publish lane review failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
@@ -164,7 +168,9 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
     findings: evidence.blockers,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
   };
-  const publish = await provider.publishLaneReviewFeedback(snapshot.item, publishInput);
+  const publish = provider.publishLaneReviewFeedbackForPullRequest
+    ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
+    : await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(options.prNumber)).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
 }
 

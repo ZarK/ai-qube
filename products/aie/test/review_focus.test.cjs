@@ -35,6 +35,23 @@ describe('review focus selection', () => {
     assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance', 'ui-ux-accessibility']);
   });
 
+  it('matches double-star patterns against root-level paths', () => {
+    const focuses = activeLocalReviewFocuses({
+      profile: 'local-focused',
+      lanes: [
+        { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'ui-ux-accessibility', required: 'when-matched', match: ['**/*.tsx'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'api-contract-compatibility', required: 'when-matched', match: ['**/api/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      ],
+      changedPaths: ['App.tsx', 'api/routes.ts'],
+      maxActive: 5,
+    });
+
+    assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance', 'ui-ux-accessibility', 'api-contract-compatibility']);
+  });
+
   it('keeps always-required focuses when capping when-matched focuses', () => {
     const focuses = activeLocalReviewFocuses({
       profile: 'local-focused',

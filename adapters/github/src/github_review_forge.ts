@@ -456,6 +456,28 @@ function currentLaneReviewRunIds(item: ReviewItem, headSha: string, lane: string
   return new Set(runIds);
 }
 
+function laneReviewMetadata(comments: RawComment[], trustedMarkerAuthor: string | null, headSha: string): JsonObject[] {
+  return comments.flatMap(comment => {
+    const metadata = trustedLaneReviewComment(comment, trustedMarkerAuthor);
+    if (!metadata) return [];
+    return [{
+      head: metadata.head,
+      lane: metadata.lane,
+      profile: metadata.profile,
+      runId: metadata.runId,
+      issueNumber: metadata.issueNumber,
+      prNumber: metadata.prNumber,
+      host: metadata.host,
+      recommendation: metadata.recommendation,
+      status: metadata.status,
+      summary: metadata.summary,
+      stale: metadata.head !== headSha,
+      author: comment.author?.login ?? null,
+      url: comment.url ? redact(comment.url) : null,
+    }];
+  });
+}
+
 function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
   return comments.flatMap(comment => {
     const metadata = trustedLocalReviewComment(comment, trustedAuthor);
@@ -862,25 +884,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
       url: comment.url ? redact(comment.url) : null,
     }];
   });
-  const trustedLaneReviews = raw.comments.flatMap(comment => {
-    const metadata = trustedLaneReviewComment(comment, raw.trustedMarkerAuthor);
-    if (!metadata) return [];
-    return [{
-      head: metadata.head,
-      lane: metadata.lane,
-      profile: metadata.profile,
-      runId: metadata.runId,
-      issueNumber: metadata.issueNumber,
-      prNumber: metadata.prNumber,
-      host: metadata.host,
-      recommendation: metadata.recommendation,
-      status: metadata.status,
-      summary: metadata.summary,
-      stale: metadata.head !== raw.pr.headRefOid,
-      author: comment.author?.login ?? null,
-      url: comment.url ? redact(comment.url) : null,
-    }];
-  });
+  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.trustedMarkerAuthor, raw.pr.headRefOid);
   return {
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
@@ -1024,6 +1028,14 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     return this.loadPullRequestReview(Number(key.id));
   }
 
+  async loadPullRequestReviewTarget(prNumber: number): Promise<{ pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }> {
+    const rawPr = await this.getPullRequest(prNumber);
+    return {
+      pr: normalizePr(rawPr),
+      closingIssueNumbers: closingIssueNumbers(rawPr),
+    };
+  }
+
   async loadPullRequestReview(prNumber: number): Promise<GitHubReviewSnapshot> {
     const rawPr = await this.getPullRequest(prNumber);
     const unavailable: string[] = [];
@@ -1090,6 +1102,78 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
   async publishLaneReviewFeedback(item: ReviewItem, input: GitHubLaneReviewPublishInput): Promise<GitHubLaneReviewPublishResult> {
     const { body, marker, runId } = laneReviewBody(input);
     if (currentLaneReviewRunIds(item, input.headSha, input.lane).has(runId)) {
+      return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
+    }
+    if (input.dryRun) {
+      return localReviewPublishResult({ status: 'planned', runId, marker, body, nextAction: `Rerun \`aie pr review publish <pr> --lane ${input.lane}\` without --dry-run to publish provider-visible lane review feedback.` });
+    }
+    let result: GhRunResult;
+    try {
+      result = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], this.options);
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub comment permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+      });
+    }
+    if (result.exitCode !== 0) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(result.stderr || result.stdout || 'gh pr comment failed'),
+        nextAction: `Fix GitHub comment permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+      });
+    }
+    return localReviewPublishResult({
+      status: 'published',
+      runId,
+      marker,
+      body,
+      url: publishedCommentUrl(result),
+      nextAction: `Provider-visible lane review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`,
+    });
+  }
+
+  async publishLaneReviewFeedbackForPullRequest(input: GitHubLaneReviewPublishInput): Promise<GitHubLaneReviewPublishResult> {
+    const { body, marker, runId } = laneReviewBody(input);
+    let comments: RawComment[];
+    let trustedMarkerAuthor: string;
+    try {
+      const repository = await this.getRepositoryIdentity();
+      comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
+      trustedMarkerAuthor = await this.currentLogin();
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId,
+        marker,
+        body,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub comment visibility or authentication, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
+      });
+    }
+    const trustedItem = normalizeReviewItem({
+      key: { providerId: this.id, id: String(input.prNumber) },
+      displayId: `#${input.prNumber}`,
+      title: `Pull request #${input.prNumber}`,
+      source: normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(input.prNumber), url: null }),
+      sourceRef: input.headSha,
+      targetRef: 'base',
+      state: 'open',
+      url: null,
+      reviewDecision: 'unknown',
+      mergeability: 'unknown',
+      feedback: [],
+      checks: [],
+      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, trustedMarkerAuthor, input.headSha) },
+    });
+    if (currentLaneReviewRunIds(trustedItem, input.headSha, input.lane).has(runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
     }
     if (input.dryRun) {

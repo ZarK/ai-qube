@@ -55,6 +55,11 @@ export interface ReviewForgeSnapshot {
   unavailable: string[];
 }
 
+export interface ReviewForgeReviewTarget {
+  pr: ReviewForgePullRequest;
+  closingIssueNumbers: number[];
+}
+
 export interface CurrentReviewForge {
   item: ReviewItem | null;
   pr: ReviewForgePullRequest | null;
@@ -111,10 +116,12 @@ export interface ReviewForgeProvider {
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<ActionResult[]>;
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
 }
 
 export interface ReviewForgeCapabilities {

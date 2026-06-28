@@ -17,6 +17,7 @@ import {
   type ReviewForgeProvider,
   type ReviewForgeProviderFactory,
   type ReviewForgeProviderId,
+  type ReviewForgeReviewTarget,
   type ReviewForgeSnapshot,
 } from './review_forge_provider.js';
 
@@ -114,10 +115,12 @@ interface LoadedGitHubReviewForgeProvider {
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
+  loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
 }
 
 function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
@@ -143,10 +146,16 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),
     findCurrentReview: () => provider.findCurrentReview(),
     loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
+    loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
+      ? (prNumber) => provider.loadPullRequestReviewTarget!(prNumber)
+      : undefined,
     planReviewRequest: (item, policy, options) => provider.planReviewRequest(item, toReviewForgePolicy(policy), options),
     apply: async (plan) => [...await provider.apply(plan)],
     publishLocalReviewFeedback: (item, input) => provider.publishLocalReviewFeedback(item, input),
     publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
+    publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
+      ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)
+      : undefined,
   };
 }
 
@@ -187,6 +196,10 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
     throw this.error('load pull request review');
   }
 
+  async loadPullRequestReviewTarget(_prNumber: number): Promise<ReviewForgeReviewTarget> {
+    throw this.error('load pull request review target');
+  }
+
   planReviewRequest(_item: ReviewItem, _policy: ExecutorPolicy): ActionPlan {
     return this.emptyPlan('review-request');
   }
@@ -200,6 +213,10 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
   }
 
   async publishLaneReviewFeedback(_item: ReviewItem, _input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
+    throw this.error('publish lane review feedback');
+  }
+
+  async publishLaneReviewFeedbackForPullRequest(_input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
     throw this.error('publish lane review feedback');
   }
 
