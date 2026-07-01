@@ -41,7 +41,7 @@ export type {
 
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
-export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code" | "grok-build";
+export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "jira" | "codex" | "opencode" | "claude-code" | "grok-build";
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
@@ -65,7 +65,7 @@ export interface QubeProductContract {
 }
 
 export interface QubeAdapterContract {
-  readonly id: "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code" | "grok-build";
+  readonly id: "github" | "gitlab" | "linear" | "jira" | "codex" | "opencode" | "claude-code" | "grok-build";
   readonly packageName: string;
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
@@ -235,7 +235,7 @@ export interface WorkProviderCapabilities {
   readonly ciMergeStatus: boolean;
 }
 
-export type WorkProviderId = "github" | "gitlab" | "linear";
+export type WorkProviderId = "github" | "gitlab" | "linear" | "jira";
 
 export interface WorkProvider {
   readonly id: WorkProviderId;
@@ -271,7 +271,7 @@ export const qubeProductContracts = [
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code", "grok-build"],
+    surfaces: ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"],
   },
   {
     id: "executor",
@@ -279,7 +279,7 @@ export const qubeProductContracts = [
     commandName: "aie",
     role: "Execute issue-driven work through repository and review gates.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code", "grok-build"],
+    surfaces: ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"],
   },
   {
     id: "quality",

@@ -204,7 +204,7 @@ describe('config validation', () => {
   it('rejects unknown fields and unsupported provider kinds with actionable paths', () => {
     const input = defaultFile();
     input.legacyFlatField = true;
-    input.providers.work = { kind: 'jira' };
+    input.providers.work = { kind: 'azure-devops' };
     input.providers.repository = { kind: 'github' };
     input.policy.labels.priorityLabels = ['old-shape'];
 

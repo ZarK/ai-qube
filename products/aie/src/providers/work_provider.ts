@@ -13,7 +13,7 @@ export interface WorkProviderCapabilities {
   ciMergeStatus: boolean;
 }
 
-export type WorkProviderId = 'github' | 'gitlab' | 'linear';
+export type WorkProviderId = 'github' | 'gitlab' | 'linear' | 'jira';
 
 export interface WorkProvider {
   readonly id: WorkProviderId;

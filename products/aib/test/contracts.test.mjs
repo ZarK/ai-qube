@@ -12,6 +12,7 @@ import {
   selectSpecChapters,
   renderGitHubIssueDraft,
   renderGitLabIssueDraft,
+  renderJiraIssueDraft,
   renderLinearIssueDraft,
   renderWorkItemDrafts,
   renderMarkdownWorkItemDraft,
@@ -165,6 +166,33 @@ test("GitLab rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://gitlab.example.com/acme/qube/-/issues/2");
 });
 
+test("Jira rendering adapts canonical drafts at the provider edge", () => {
+  const rendered = renderJiraIssueDraft({
+    ...sampleDraft,
+    providerMetadata: {
+      jira: {
+        blockedBy: ["ENG-1"],
+        labels: ["ready", "architecture"],
+        components: ["Platform"],
+        issueType: "Story",
+        priorityName: "Highest",
+        projectKey: "ENG",
+        url: "https://jira.example.com/browse/ENG-2"
+      }
+    }
+  });
+  assert.equal(rendered.summary, sampleDraft.title);
+  assert.deepEqual(rendered.blockedBy, ["ENG-1"]);
+  assert.deepEqual(rendered.labels, ["ready", "architecture"]);
+  assert.deepEqual(rendered.components, ["Platform"]);
+  assert.equal(rendered.issueType, "Story");
+  assert.equal(rendered.priorityName, "Highest");
+  assert.equal(rendered.projectKey, "ENG");
+  assert.match(rendered.description, /^Blocked by: ENG-1/m);
+  assert.match(rendered.description, /^Sequence: 2/m);
+  assert.equal(rendered.url, "https://jira.example.com/browse/ENG-2");
+});
+
 test("provider-neutral work item drafts render to GitHub previews and markdown exports", () => {
   const state = {
     version: 1,
@@ -217,6 +245,13 @@ test("provider-neutral work item drafts render to GitHub previews and markdown e
   assert.equal(gitlab.rendered[0].draftId, "draft-foundation");
   assert.deepEqual(gitlab.rendered[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
   assert.match(gitlab.rendered[0].description, /^Blocked by: draft-package/m);
+
+  const jira = renderWorkItemDrafts(state, "jira");
+  assert.equal(jira.provider, "jira");
+  assert.deepEqual(jira.artifacts, []);
+  assert.equal(jira.rendered[0].draftId, "draft-foundation");
+  assert.equal(jira.rendered[0].priorityName, "High");
+  assert.match(jira.rendered[0].description, /^Blocked by: draft-package/m);
 
   const markdown = renderWorkItemDrafts(state, "markdown", { outputDir: "review/issues" });
   assert.equal(markdown.provider, "markdown");

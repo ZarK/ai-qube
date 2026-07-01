@@ -1,13 +1,14 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { renderGitLabIssueDraft, type GitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
+import { renderJiraIssueDraft, type JiraIssueDraft } from "@tjalve/qube-adapter-jira";
 import { renderLinearIssueDraft, type LinearIssueDraft } from "@tjalve/qube-adapter-linear";
 
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
 import { renderGitHubIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
 
-export type WorkItemRenderProvider = "github" | "gitlab" | "linear" | "markdown";
+export type WorkItemRenderProvider = "github" | "gitlab" | "linear" | "jira" | "markdown";
 
 export interface WorkItemDraftResult {
   readonly milestone: MilestoneDraft;
@@ -29,6 +30,10 @@ export interface RenderedGitLabWorkItem extends GitLabIssueDraft {
   readonly draftId: string;
 }
 
+export interface RenderedJiraWorkItem extends JiraIssueDraft {
+  readonly draftId: string;
+}
+
 export interface RenderedMarkdownWorkItem extends MarkdownWorkItem {
   readonly draftId: string;
 }
@@ -37,7 +42,7 @@ export interface WorkItemRenderResult {
   readonly provider: WorkItemRenderProvider;
   readonly drafts: readonly WorkItemDraft[];
   readonly queueOrder: QueueOrderValidation;
-  readonly rendered: readonly (RenderedGitHubWorkItem | RenderedGitLabWorkItem | RenderedLinearWorkItem | RenderedMarkdownWorkItem)[];
+  readonly rendered: readonly (RenderedGitHubWorkItem | RenderedGitLabWorkItem | RenderedLinearWorkItem | RenderedJiraWorkItem | RenderedMarkdownWorkItem)[];
   readonly artifacts: readonly PlanningArtifact[];
 }
 
@@ -141,6 +146,20 @@ export function renderWorkItemDrafts(
     const rendered = drafts.map((draft) => ({
       draftId: draft.draftId,
       ...renderGitLabIssueDraft(draft)
+    }));
+    return {
+      provider,
+      drafts,
+      queueOrder,
+      rendered,
+      artifacts: []
+    };
+  }
+
+  if (provider === "jira") {
+    const rendered = drafts.map((draft) => ({
+      draftId: draft.draftId,
+      ...renderJiraIssueDraft(draft)
     }));
     return {
       provider,

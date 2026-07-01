@@ -277,6 +277,37 @@ describe("qube composer CLI", () => {
     assert.match(parsed.installPlan.notes.join("\n"), /merge request pipeline status for CI gates stay unsupported/);
   });
 
+  it("renders Jira work provider install notes without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "jira",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none",
+      "--yes",
+      "--dry-run",
+      "--json"
+    ]);
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.installPlan.selections.workProvider, "jira");
+    assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-jira/);
+    assert.match(parsed.installPlan.notes.join("\n"), /JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Jira transition IDs/);
+  });
+
   it("renders Claude Code install notes without prompting", () => {
     const result = runCli([
       "install",

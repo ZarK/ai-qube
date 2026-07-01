@@ -7,7 +7,7 @@ describe('work provider adapter boundary', () => {
     const adapters = listWorkProviderAdapters();
     const byId = Object.fromEntries(adapters.map(adapter => [adapter.id, adapter]));
 
-    assert.deepEqual(adapters.map(adapter => adapter.id), ['github', 'gitlab', 'linear']);
+    assert.deepEqual(adapters.map(adapter => adapter.id), ['github', 'gitlab', 'linear', 'jira']);
     assert.equal(byId.github.installed, true);
     assert.equal(byId.github.capabilities.commentMutations, true);
     assert.equal(byId.github.capabilities.reviewIntegration, true);
@@ -18,7 +18,10 @@ describe('work provider adapter boundary', () => {
     assert.equal(byId.gitlab.capabilities.applyLifecycleMutations, false);
     assert.equal(byId.linear.installed, false);
     assert.equal(byId.linear.packageName, '@tjalve/qube-adapter-linear');
+    assert.equal(byId.jira.installed, false);
+    assert.equal(byId.jira.packageName, '@tjalve/qube-adapter-jira');
     assert.equal(workProviderAdapterPackage('linear'), '@tjalve/qube-adapter-linear');
+    assert.equal(workProviderAdapterPackage('jira'), '@tjalve/qube-adapter-jira');
   });
 
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {

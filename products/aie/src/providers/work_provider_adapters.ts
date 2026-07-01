@@ -84,6 +84,10 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
     'Install the optional Linear work-provider adapter package before selecting providers.work.kind=linear.',
     'Configure LINEAR_API_KEY and LINEAR_TEAM_ID for Linear issue reads.',
   ]),
+  missingOptionalAdapter('jira', '@tjalve/qube-adapter-jira', [
+    'Install the optional Jira work-provider adapter package before selecting providers.work.kind=jira.',
+    'Configure JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and either JIRA_PROJECT_KEY or provider JQL for Jira issue reads.',
+  ]),
 ]);
 
 function missingOptionalAdapter(id: Exclude<WorkProviderId, 'github'>, packageName: string, setup: readonly string[]): WorkProviderAdapter {
