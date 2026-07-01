@@ -203,6 +203,24 @@ describe('doctor diagnostics', () => {
     assert.ok(diagnostics.nextActions.length >= 2);
   });
 
+  it('uses user-available disk blocks for review-preflight disk readiness', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 3, bavail: 1, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+    });
+
+    assert.equal(diagnostics.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.disk.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.disk.freeBytes, 1024 * 1024 * 1024);
+  });
+
   it('reports high loose git object counts with housekeeping guidance', () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });

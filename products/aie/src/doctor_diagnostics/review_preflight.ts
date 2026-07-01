@@ -11,7 +11,7 @@ type ReviewPreflightDiagnostics = GateReadinessDiagnostics['reviewPreflight'];
 
 export interface ReviewPreflightOptions {
   repoRoot: string;
-  statfs?: (path: string) => { bfree: number | bigint; bsize: number | bigint };
+  statfs?: (path: string) => { bavail?: number | bigint; bfree: number | bigint; bsize: number | bigint };
   gitCountObjects?: (repoRoot: string) => string;
 }
 
@@ -54,7 +54,8 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
   let disk: ReviewPreflightDiagnostics['checks']['disk'];
   try {
     const stats = statfs(options.repoRoot);
-    const freeBytes = Number(stats.bfree) * Number(stats.bsize);
+    const freeBlocks = stats.bavail ?? stats.bfree;
+    const freeBytes = Number(freeBlocks) * Number(stats.bsize);
     const nextAction = freeBytes < LOW_DISK_THRESHOLD_BYTES
       ? 'Free disk space before spawning local review lanes; keep at least 2 GiB available for build output and local review evidence.'
       : null;
