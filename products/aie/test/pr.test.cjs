@@ -3337,6 +3337,9 @@ describe('PR body service', () => {
     assert.match(result.body, /local review evidence:/);
     assert.match(result.body, /PR reviewer @QUBEReview/);
     assert.match(result.body, /manual-qa|final-gate/);
+    assert.doesNotMatch(result.body, /\.qube\/aie\/reviews/);
+    assert.doesNotMatch(result.body, /\.qube\\aie\\reviews/);
+    assert.doesNotMatch(result.body, new RegExp(repo.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.equal(result.readiness.status, 'ready');
     assert.equal(result.readiness.pending.some(item => item.includes('provider-visible')), false);
   });

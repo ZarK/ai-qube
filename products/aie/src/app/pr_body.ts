@@ -9,6 +9,8 @@ import { runPrGateService, type PrGateCheckDiagnostic, type PrGateExec, type PrG
 
 function redactText(text: string): string {
   return text
+    .replace(/\b[A-Za-z]:\\[^\s`'")\]]+/g, '[LOCAL_PATH]')
+    .replace(/(^|[\s(])\/(?:Users|home|tmp|var\/folders|private\/var)\/[^\s`'")\]]+/g, '$1[LOCAL_PATH]')
     .replace(/\b(ghp_[A-Za-z0-9_]{10,}|github_pat_[A-Za-z0-9_]{10,}|ghs_[A-Za-z0-9_]{10,}|gho_[A-Za-z0-9_]{10,}|ghu_[A-Za-z0-9_]{10,})\b/g, '[REDACTED]')
     .replace(/\b([A-Za-z0-9_-]{40,})\b/g, value => /[A-Z]/.test(value) && /[a-z]/.test(value) && /[0-9]/.test(value) ? '[REDACTED]' : value);
 }
@@ -291,9 +293,9 @@ function formatCiDiagnostics(result: PrGateResult | null): string[] {
 function formatLocalReview(result: PrGateResult | null): string[] {
   if (!result) return ['- local review evidence: unavailable until PR review-gate state is collected.'];
   if (!result.localReview.required && result.localReview.mode !== 'shadow') return ['- local review evidence: not required.'];
-  const lines = [`- local review evidence: ${result.localReview.status}; mode=${result.localReview.mode}; profile=${result.localReview.profile}; lanes=${result.localReview.requiredLanes.join(', ')}; ${result.localReview.summary}`];
+  const lines = [`- local review evidence: ${result.localReview.status}; mode=${result.localReview.mode}; profile=${result.localReview.profile}; lanes=${result.localReview.requiredLanes.join(', ')}; ${redactText(result.localReview.summary)}`];
   for (const evidence of result.localReview.evidence) {
-    lines.push(`  - issue #${evidence.issueNumber ?? 'unknown'} PR #${evidence.prNumber || 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+    lines.push(`  - issue #${evidence.issueNumber ?? 'unknown'} PR #${evidence.prNumber || 'unknown'}: ${evidence.status}; ${redactText(evidence.summary)}`);
   }
   return lines;
 }
