@@ -78,11 +78,18 @@ function validStatus(value: unknown): value is string {
   return value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable' || value === 'malformed' || value === 'inconclusive';
 }
 
-function readStructuredFindings(value: unknown): ReviewFinding[] {
+function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
   if (!Array.isArray(value)) return [];
   const findings: ReviewFinding[] = [];
-  for (const item of value) {
-    if (!isRecord(item) || typeof item.message !== 'string' || item.message.trim() === '') continue;
+  for (const [index, item] of value.entries()) {
+    const label = `findings[${index}]`;
+    if (!isRecord(item)) throw laneEvidenceFailure(path, `${label} must be an object.`);
+    if (typeof item.message !== 'string' || item.message.trim() === '') throw laneEvidenceFailure(path, `${label}.message must be a non-empty string.`);
+    if (item.location !== undefined && !isRecord(item.location)) throw laneEvidenceFailure(path, `${label}.location must be an object when present.`);
+    if (isRecord(item.location) && (typeof item.location.path !== 'string' || item.location.path.trim() === '')) throw laneEvidenceFailure(path, `${label}.location.path must be a non-empty string.`);
+    if (isRecord(item.location) && item.location.line !== undefined && !(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0)) throw laneEvidenceFailure(path, `${label}.location.line must be a positive integer when present.`);
+    if (isRecord(item.location) && item.location.endLine !== undefined && !(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0)) throw laneEvidenceFailure(path, `${label}.location.endLine must be a positive integer when present.`);
+    if (item.severity !== undefined && item.severity !== 'blocking' && item.severity !== 'advisory') throw laneEvidenceFailure(path, `${label}.severity must be blocking or advisory when present.`);
     const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
       ? {
           path: item.location.path.trim(),
@@ -153,7 +160,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   }
   if (adapter === 'local-host') validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
   const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === 'string') : [];
-  const structuredFindings = readStructuredFindings(raw.findings);
+  const structuredFindings = readStructuredFindings(raw.findings, path);
   return {
     evidence: raw,
     path,

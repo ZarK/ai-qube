@@ -128,6 +128,7 @@ interface LaneReviewMetadata {
   reviewId?: string | null;
   inlineCommentCount?: number;
   bodyFindingCount?: number;
+  findingDigest?: string;
 }
 
 interface LaneReviewComment {
@@ -394,6 +395,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       reviewId: typeof parsed.reviewId === 'number' || typeof parsed.reviewId === 'string' ? redact(String(parsed.reviewId)) : null,
       inlineCommentCount: typeof parsed.inlineCommentCount === 'number' && Number.isSafeInteger(parsed.inlineCommentCount) && parsed.inlineCommentCount >= 0 ? parsed.inlineCommentCount : undefined,
       bodyFindingCount: typeof parsed.bodyFindingCount === 'number' && Number.isSafeInteger(parsed.bodyFindingCount) && parsed.bodyFindingCount >= 0 ? parsed.bodyFindingCount : undefined,
+      findingDigest: typeof parsed.findingDigest === 'string' && parsed.findingDigest.trim() !== '' ? redact(parsed.findingDigest) : undefined,
     };
   } catch {
     return null;
@@ -460,10 +462,24 @@ function normalizeLaneFindings(input: GitHubLaneReviewPublishInput): ReviewFindi
     : normalizeReviewFinding(finding));
 }
 
+function findingDigest(findings: readonly ReviewFinding[]): string {
+  return createHash('sha256')
+    .update(JSON.stringify(findings.map(finding => ({
+      id: finding.id,
+      severity: finding.severity,
+      location: finding.location ?? null,
+      message: sanitizePublishedText(finding.message),
+      suggestion: finding.suggestion ? sanitizePublishedText(finding.suggestion) : null,
+    }))))
+    .digest('hex')
+    .slice(0, 16);
+}
+
 function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?: readonly ReviewFinding[], inlineCount = 0): { body: string; marker: string; runId: string; bodyFindingCount: number; inlineCommentCount: number } {
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
+  const digest = findingDigest(allFindings);
   const bodyFindings = bodyFindingsInput ?? allFindings;
   const metadata: LaneReviewMetadata = {
     version: 1,
@@ -480,6 +496,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     inline: 'review-api',
     inlineCommentCount: inlineCount,
     bodyFindingCount: bodyFindings.length,
+    findingDigest: digest,
   };
   const marker = laneReviewMarker(metadata);
   const findings = bodyFindings.length === 0 ? ['- None recorded in the review body.'] : bodyFindings.map(item => `- ${findingBodyText(item, input.evidencePath)}`);
@@ -501,6 +518,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     `- profile: ${redact(input.profile)}`,
     `- issue: #${input.issueNumber}`,
     `- run id: ${runId}`,
+    `- finding digest: ${digest}`,
     `- publish kind: pull-request-review`,
     `- inline comments: ${inlineCount}`,
     input.evidencePath ? `- evidence: ${redact(input.evidencePath)}` : '- evidence: optional local audit only',
@@ -511,6 +529,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
+  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input));
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
@@ -520,7 +539,8 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
-      && review.summary === sanitizePublishedText(input.summary);
+      && review.summary === sanitizePublishedText(input.summary)
+      && review.findingDigest === expectedFindingDigest;
   });
 }
 
@@ -542,6 +562,7 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       reviewId: metadata.reviewId ?? null,
       inlineCommentCount: metadata.inlineCommentCount ?? 0,
       bodyFindingCount: metadata.bodyFindingCount ?? null,
+      findingDigest: metadata.findingDigest ?? null,
       stale: metadata.head !== headSha,
       author: comment.author?.login ?? null,
       url: comment.url ? redact(comment.url) : null,

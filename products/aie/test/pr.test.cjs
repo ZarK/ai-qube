@@ -1897,6 +1897,28 @@ describe('PR gate service', () => {
     assert.match(result.publish.body ?? '', /1 finding\(s\) were published as inline review comments/);
   });
 
+  it('fails lane review publish when structured findings are malformed', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          summary: 'code quality found malformed structured findings',
+          findings: [{ severity: 'blocking' }],
+          contextReviewed: [{ kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' }],
+          toolsUsed: ['codex'],
+        }
+      : { ...lane, toolsUsed: ['codex'] });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /findings\[0\]\.message must be a non-empty string/,
+    );
+  });
+
   it('publishes superseding lane feedback when same-run evidence changes', async () => {
     const input = {
       dryRun: true,
@@ -1937,6 +1959,35 @@ describe('PR gate service', () => {
     assert.equal(superseding.publishKind, 'pull-request-review');
     assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
     assert.equal(exactDuplicate.status, 'skipped');
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'));
+  });
+
+  it('publishes updated lane feedback when only structured findings change', async () => {
+    const input = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'failed',
+      recommendation: 'request-changes',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review found blockers',
+      findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the first blocker.' }],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const first = await provider.publishLaneReviewFeedback(snapshot.item, input);
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ latestReviews: [{ author: { login: 'executor' }, body: first.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-existing', commit: { oid: 'abc123' } }] })] });
+    const publishedProvider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const publishedSnapshot = await publishedProvider.loadPullRequestReview(12);
+
+    const result = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...input, dryRun: false, findings: [{ id: 'finding-b', severity: 'blocking', message: 'Fix the second blocker.' }] });
+
+    assert.equal(result.status, 'published');
+    assert.match(result.body ?? '', /Fix the second blocker/);
     assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'));
   });
 
