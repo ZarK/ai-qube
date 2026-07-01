@@ -189,7 +189,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           lanes.push(plannedRun);
           continue;
         }
-        const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, path, contextLines, input.exec);
+        const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
+        const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, path, contextLines, publishCommand, input.exec);
         if (!evidence) {
           failed = true;
           produced.push(blockedLane(lane, 'malformed', 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-host'));
@@ -212,7 +213,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(plannedRun);
         continue;
       }
-      const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, path, contextLines, input.exec);
+      const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
+      const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, path, contextLines, publishCommand, input.exec);
       if (!evidence) {
         failed = true;
         produced.push(blockedLane(lane, 'malformed', 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', command, issueNumber, input.prNumber, input.repoRoot, input.headSha, 'local-command'));
