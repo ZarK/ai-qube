@@ -6,6 +6,8 @@ import type { DoctorReadinessStatus, GateReadinessDiagnostics } from './types.js
 
 const LOW_DISK_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024;
 const HIGH_LOOSE_OBJECT_THRESHOLD = 50000;
+const GIT_COUNT_OBJECTS_TIMEOUT_MS = 5000;
+const GIT_COUNT_OBJECTS_MAX_BUFFER = 1024 * 1024;
 
 type ReviewPreflightDiagnostics = GateReadinessDiagnostics['reviewPreflight'];
 
@@ -49,7 +51,12 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
 
   const nextActions: string[] = [];
   const statfs = options.statfs ?? statfsSync;
-  const gitCountObjects = options.gitCountObjects ?? ((repoRoot: string) => execFileSync('git', ['count-objects', '-v'], { cwd: repoRoot, encoding: 'utf8' }));
+  const gitCountObjects = options.gitCountObjects ?? ((repoRoot: string) => execFileSync('git', ['count-objects', '-v'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: GIT_COUNT_OBJECTS_MAX_BUFFER,
+    timeout: GIT_COUNT_OBJECTS_TIMEOUT_MS,
+  }));
 
   let disk: ReviewPreflightDiagnostics['checks']['disk'];
   try {
