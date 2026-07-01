@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy } from '../core/policy.js';
@@ -96,6 +97,11 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
   return command && command !== '' ? command : null;
 }
 
+function localAieCliPrefix(config: Config, repoRoot: string): string {
+  const workspaceRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
+  return renderAieCliPrefix(config, workspaceRunner);
+}
+
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot));
   const promptText = includePrompt ? rendered.text : '';
@@ -134,7 +140,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const contextLines = input.contextLines ?? [];
   const includePrompt = input.includePrompts === true;
-  const cliPrefix = renderAieCliPrefix(config);
+  const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   if (!input.required && !input.shadow) {
     return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }

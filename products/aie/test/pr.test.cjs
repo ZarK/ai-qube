@@ -1242,6 +1242,19 @@ describe('PR gate service', () => {
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
+  it('uses the source checkout runner in Codex spawn publish commands when available', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'bin', 'run'), '');
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `node products/aie/bin/run pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, publish provider-visible feedback with: node products\/aie\/bin\/run pr review publish 12 --lane/);
+  });
+
   it('plans commandless Codex local-host lanes per linked issue', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

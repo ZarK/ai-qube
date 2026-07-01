@@ -145,7 +145,7 @@ function probeCodexCapabilitySync(independentReviewerCommand?: string | null, ho
     nextAction: commandConfigured
       ? 'Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence.'
       : hostProvided
-        ? 'QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate.'
+        ? 'QUBE rendered spawnPrompt for host-run Codex subagents. Paste each spawnPrompt into an independent Codex subagent, record local-host evidence with task, session, or thread provenance, then rerun the PR gate.'
         : 'Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.',
   });
 }
