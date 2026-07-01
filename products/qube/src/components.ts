@@ -18,8 +18,38 @@ export interface QubeComponent {
       readonly hostProvenancePathPattern: string;
       readonly nextAction: string;
     };
+    readonly hostSurfaces?: readonly {
+      readonly id: string;
+      readonly support: "installed" | "optional" | "unsupported";
+      readonly summary: string;
+    }[];
   };
 }
+
+type QubeHostSurface = NonNullable<NonNullable<QubeComponent["capabilities"]>["hostSurfaces"]>[number];
+
+const executorHostSurfaces: readonly QubeHostSurface[] = Object.freeze([
+  {
+    id: "codex",
+    support: "installed",
+    summary: "Codex host capability reporting is built into @tjalve/qube."
+  },
+  {
+    id: "claude-code",
+    support: "installed",
+    summary: "Claude Code host capability reporting is built into @tjalve/qube."
+  },
+  {
+    id: "grok-build",
+    support: "installed",
+    summary: "Grok Build terminal CLI/TUI capability reporting is built into @tjalve/qube without installing or invoking Grok Build."
+  },
+  {
+    id: "opencode",
+    support: "optional",
+    summary: "OpenCode host capability reporting lives in @tjalve/qube-adapter-opencode."
+  }
+]);
 
 export const qubeComponents: readonly QubeComponent[] = Object.freeze([
   {
@@ -50,7 +80,8 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
         evidencePathPattern: ".qube/aie/reviews/<issue>/<pr>/<head>/<lane>.json",
         hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
         nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."
-      }
+      },
+      hostSurfaces: executorHostSurfaces
     }
   },
   {

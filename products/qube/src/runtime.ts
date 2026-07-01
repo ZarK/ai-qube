@@ -13,6 +13,7 @@ import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
+import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -65,7 +66,7 @@ const yesFlag = defineFlag({
 
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
-type InstallHost = "generic" | "codex" | "opencode" | "claude-code";
+type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build";
 type InstallWorkProvider = "github" | "gitlab" | "linear" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
@@ -344,6 +345,11 @@ const hostChoices = defineInstallerChoiceGroup({
       value: "claude-code",
       label: "Claude Code",
       description: "Keep Claude Code behavior separate from OpenCode and Codex."
+    },
+    {
+      value: "grok-build",
+      label: "Grok Build",
+      description: "Report terminal CLI/TUI, headless, ACP, and subagent capabilities without installing Grok Build."
     }
   ]
 });
@@ -454,7 +460,7 @@ const installCommand = defineCommand({
       name: "host",
       description: "Host surface to mention in setup notes.",
       type: "option",
-      options: ["generic", "codex", "opencode", "claude-code"]
+      options: ["generic", "codex", "opencode", "claude-code", "grok-build"]
     }),
     defineFlag({
       name: "work-provider",
@@ -3311,6 +3317,9 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.host === "claude-code") {
     files.push(...listClaudeCodeInstallFiles());
   }
+  if (selections.host === "grok-build") {
+    files.push(...listGrokBuildInstallFiles());
+  }
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
   }
@@ -3345,6 +3354,9 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   }
   if (selections.host === "claude-code") {
     notes.push(...listClaudeCodeInstallNotes());
+  }
+  if (selections.host === "grok-build") {
+    notes.push(...listGrokBuildInstallNotes());
   }
   if (selections.migration === "standalone-globals") {
     notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");

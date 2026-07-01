@@ -41,7 +41,7 @@ export type {
 
 export type QubeProductId = "bootstrap" | "executor" | "quality" | "umpire";
 
-export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code";
+export type QubeIntegrationSurface = "cli" | "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code" | "grok-build";
 export type QubeCommandClassification =
   | "qube-facing workflow command"
   | "standalone package command"
@@ -65,7 +65,7 @@ export interface QubeProductContract {
 }
 
 export interface QubeAdapterContract {
-  readonly id: "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code";
+  readonly id: "github" | "gitlab" | "linear" | "codex" | "opencode" | "claude-code" | "grok-build";
   readonly packageName: string;
   readonly surface: QubeIntegrationSurface;
   readonly owns: readonly string[];
@@ -271,7 +271,7 @@ export const qubeProductContracts = [
     commandName: "aib",
     role: "Plan and bootstrap work from idea to issue queue.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code"],
+    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code", "grok-build"],
   },
   {
     id: "executor",
@@ -279,7 +279,7 @@ export const qubeProductContracts = [
     commandName: "aie",
     role: "Execute issue-driven work through repository and review gates.",
     standalone: true,
-    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code"],
+    surfaces: ["cli", "github", "gitlab", "linear", "codex", "opencode", "claude-code", "grok-build"],
   },
   {
     id: "quality",
@@ -295,7 +295,7 @@ export const qubeProductContracts = [
     commandName: "aiu",
     role: "Coordinate safe agent continuation and host stop hooks.",
     standalone: true,
-    surfaces: ["cli", "opencode", "claude-code"],
+    surfaces: ["cli", "opencode", "claude-code", "grok-build"],
   },
 ] as const satisfies readonly QubeProductContract[];
 

@@ -29,6 +29,23 @@ export type {
   CodexHostSupport,
   CodexWorkspaceInspection,
 } from "./codex_host.js";
+export {
+  assertGrokBuildHostCapabilityAvailable,
+  formatGrokBuildUnsupportedCapabilityMessage,
+  getGrokBuildHostCapability,
+  inspectGrokBuildWorkspace,
+  listGrokBuildHostCapabilities,
+  listGrokBuildInstallFiles,
+  listGrokBuildInstallNotes,
+} from "./grok_build_host.js";
+export type {
+  GrokBuildCapabilityCategory,
+  GrokBuildHostCapability,
+  GrokBuildHostCapabilityId,
+  GrokBuildHostSupport,
+  GrokBuildWorkspaceInspection,
+  GrokBuildWorkspaceTarget,
+} from "./grok_build_host.js";
 export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { planQubeCli, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";

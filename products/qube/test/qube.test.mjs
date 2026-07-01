@@ -17,12 +17,19 @@ import {
   listClaudeCodeInstallNotes,
   assertCodexHostCapabilityAvailable,
   formatCodexUnsupportedCapabilityMessage,
+  assertGrokBuildHostCapabilityAvailable,
+  formatGrokBuildUnsupportedCapabilityMessage,
   findQubeComponent,
   getCodexHostCapability,
+  getGrokBuildHostCapability,
   inspectCodexWorkspace,
+  inspectGrokBuildWorkspace,
   listCodexInstallFiles,
   listCodexInstallNotes,
   listCodexHostCapabilities,
+  listGrokBuildHostCapabilities,
+  listGrokBuildInstallFiles,
+  listGrokBuildInstallNotes,
   planQubeCli,
   resolveCommand,
   resolveComponentCommand,
@@ -301,6 +308,43 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /No commands were run\./);
   });
 
+  it("renders Grok Build install notes without installing Grok Build", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "grok-build",
+      "--work-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none",
+      "--yes",
+      "--dry-run",
+      "--json"
+    ]);
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.installPlan.selections.host, "grok-build");
+    assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
+      "pnpm exec qube components"
+    ]);
+    assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
+    assert.match(parsed.installPlan.notes.join("\n"), /Grok Build host support uses AGENTS\.md/);
+    assert.match(parsed.installPlan.notes.join("\n"), /terminal-native coding agent and CLI surface/);
+    assert.match(parsed.installPlan.notes.join("\n"), /headless prompt mode with -p/);
+    assert.match(parsed.installPlan.notes.join("\n"), /does not install Grok Build or emit the xAI curl-pipe-shell installer/);
+    assert.doesNotMatch(parsed.installPlan.commands.map(step => step.command).join("\n"), /x\.ai\/cli\/install\.sh|curl -fsSL/);
+  });
+
   it("reports Codex host capabilities without current-session assumptions", () => {
     const capabilities = listCodexHostCapabilities();
     assert.equal(capabilities.filter(capability => capability.support === "supported").length, 3);
@@ -391,6 +435,53 @@ describe("qube composer CLI", () => {
     assert.equal(missingInspection.settingsDirectory.present, false);
   });
 
+  it("reports Grok Build terminal host capabilities from fixtures without invoking the host", () => {
+    const capabilities = listGrokBuildHostCapabilities();
+    assert.equal(capabilities.filter(capability => capability.support === "supported").length, 2);
+    assert.equal(capabilities.filter(capability => capability.support === "host-provided").length, 10);
+    assert.equal(capabilities.filter(capability => capability.support === "unsupported").length, 5);
+    assert.equal(new Set(capabilities.map(capability => capability.id)).size, capabilities.length);
+
+    assert.equal(assertGrokBuildHostCapabilityAvailable("read-instructions").support, "supported");
+    assert.equal(getGrokBuildHostCapability("run-terminal-cli").category, "terminal-cli");
+    assert.equal(getGrokBuildHostCapability("use-terminal-tui").category, "terminal-tui");
+    assert.equal(getGrokBuildHostCapability("run-headless-prompt").category, "automation");
+    assert.equal(getGrokBuildHostCapability("use-parallel-subagents").category, "subagent");
+    assert.equal(getGrokBuildHostCapability("use-worktree-subagents").category, "worktree");
+    assert.equal(getGrokBuildHostCapability("install-cli").support, "unsupported");
+    assert.match(getGrokBuildHostCapability("install-cli").summary, /does not install Grok Build/);
+    assert.deepEqual(listGrokBuildInstallFiles(), [
+      "AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records.",
+    ]);
+    assert.equal(listGrokBuildInstallNotes().length, 6);
+
+    const unknownCapability = getGrokBuildHostCapability("completely-unknown-id");
+    assert.equal(unknownCapability.support, "unsupported");
+    assert.match(formatGrokBuildUnsupportedCapabilityMessage(unknownCapability), /completely-unknown-id/);
+    assert.throws(() => assertGrokBuildHostCapabilityAvailable("install-cli"), /Unsupported Grok Build capability/);
+
+    const repo = mkdtempSync(path.join(tmpdir(), "qube-grok-build-host-"));
+    writeFileSync(path.join(repo, "AGENTS.md"), "Repository policy\n");
+    const inspection = inspectGrokBuildWorkspace(repo);
+
+    assert.equal(inspection.cwd, repo);
+    assert.equal(inspection.instructionTarget.present, true);
+    assert.equal(path.basename(inspection.instructionTarget.path), "AGENTS.md");
+    assert.deepEqual(inspection.commandExamples, ["grok-build", "grok-build -p \"<prompt>\""]);
+    assert.ok(inspection.capabilities.some(capability => capability.id === "run-terminal-cli" && capability.category === "terminal-cli"));
+    assert.ok(inspection.capabilities.some(capability => capability.id === "use-terminal-tui" && capability.category === "terminal-tui"));
+    assert.ok(inspection.capabilities.some(capability => capability.id === "use-acp" && capability.category === "automation"));
+    assert.ok(inspection.unsupportedCapabilities.some(capability => capability.id === "open-pull-request"));
+    assert.throws(() => inspection.capabilities.push(inspection.capabilities[0]), TypeError);
+    assert.throws(() => {
+      inspection.capabilities[0].summary = "mutated";
+    }, TypeError);
+
+    const repoWithoutInstructions = mkdtempSync(path.join(tmpdir(), "qube-grok-build-host-missing-"));
+    const missingInspection = inspectGrokBuildWorkspace(repoWithoutInstructions);
+    assert.equal(missingInspection.instructionTarget.present, false);
+  });
+
   it("blocks JSON install prompts unless flags or safe defaults are supplied", () => {
     const result = runCli(["install", "--json"]);
     assert.equal(result.status, 2);
@@ -450,6 +541,8 @@ describe("qube composer CLI", () => {
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
     assert.match(executor.capabilities.localReview.evidencePathPattern, /<lane>\.json/);
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
+    assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "installed"));
+    assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /without installing or invoking Grok Build/);
   });
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {
