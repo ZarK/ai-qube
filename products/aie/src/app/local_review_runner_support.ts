@@ -95,6 +95,69 @@ export function promptStack(lane: LocalReviewLaneId, contextLines: readonly stri
   });
 }
 
+export interface LocalReviewSpawnContract {
+  agentType: string;
+  forkContext: false;
+  modelTier: 'review' | 'economy';
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  taskPrompt: string;
+  publishCommand: string;
+}
+
+export function buildLocalReviewPublishCommand(prNumber: number, lane: LocalReviewLaneId, issueNumber: number, workspaceRunner = 'node products/aie/bin/run'): string {
+  return `${workspaceRunner} pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}`;
+}
+
+export function buildLocalReviewSpawnPrompt(input: {
+  hostAgentType: string;
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  promptText: string;
+  publishCommand: string;
+}): string {
+  const promptText = input.promptText.trim();
+  return [
+    `You are the QUBE ${input.hostAgentType} subagent for review lane "${input.lane}".`,
+    `Issue #${input.issueNumber}, PR #${input.prNumber}, head ${input.headSha}.`,
+    'Read-only focused PR review: inspect only what this lane requires; do not edit source, tests, docs, config, package metadata, PR body, or issue content.',
+    'The complete lane instructions are inline below. Do not read external prompt files and do not follow paths under .qube/aie/reviews/.../prompts/.',
+    '',
+    '--- LANE PROMPT START ---',
+    promptText,
+    '--- LANE PROMPT END ---',
+    '',
+    `When complete, publish provider-visible feedback with: ${input.publishCommand}`,
+    'Report recommendation, blockers, evidence path, runner provenance path, and provider comment URL if published.',
+  ].join('\n');
+}
+
+export function buildLocalReviewSpawnContract(input: {
+  hostAgentType: string;
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  promptText: string;
+  publishCommand: string;
+}): LocalReviewSpawnContract {
+  return {
+    agentType: input.hostAgentType,
+    forkContext: false,
+    modelTier: 'review',
+    lane: input.lane,
+    issueNumber: input.issueNumber,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    taskPrompt: buildLocalReviewSpawnPrompt(input),
+    publishCommand: input.publishCommand,
+  };
+}
+
 function promptStackEvidence(lane: LocalReviewLaneId): LaneEvidence['promptStack'] {
   return promptStack(lane).promptStack.map(fragment => ({
     id: fragment.id,

@@ -4,7 +4,7 @@ import type { ReviewLanePolicy } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import type { PrGateExec } from './pr_gate.js';
-import { blockedLane, executableReviewCommandsTrusted, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeLane, type LaneEvidence } from './local_review_runner_support.js';
+import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract } from './local_review_runner_support.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 
@@ -26,6 +26,8 @@ export interface LocalReviewLaneRun {
   promptStackHash: string;
   promptText: string;
   promptOutputContract: string;
+  spawnPrompt: string;
+  spawnContract: LocalReviewSpawnContract | null;
   summary: string;
   blocker: string | null;
 }
@@ -95,11 +97,33 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
 
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot));
-  return { issueNumber, issueNumbers: [...issueNumbers], lane, runner, command, status, evidencePath, evidencePaths: [...evidencePaths], promptFragmentIds: rendered.orderedFragmentIds, promptStackHash: hash(rendered.text), promptText: includePrompt ? rendered.text : '', promptOutputContract: rendered.outputContract, summary, blocker };
+  const promptText = includePrompt ? rendered.text : '';
+  const publishCommand = buildLocalReviewPublishCommand(prNumber, lane, issueNumber);
+  const spawnContract = includePrompt && runner === 'local-host' && promptText.trim() !== ''
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptText, publishCommand })
+    : null;
+  return {
+    issueNumber,
+    issueNumbers: [...issueNumbers],
+    lane,
+    runner,
+    command,
+    status,
+    evidencePath,
+    evidencePaths: [...evidencePaths],
+    promptFragmentIds: rendered.orderedFragmentIds,
+    promptStackHash: hash(rendered.text),
+    promptText,
+    promptOutputContract: rendered.outputContract,
+    spawnPrompt: spawnContract?.taskPrompt ?? '',
+    spawnContract,
+    summary,
+    blocker,
+  };
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string): string {
-  return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and this focus promptText to review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`aie pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
+  return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and fork_context false. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never reference .qube/aie/reviews/.../prompts/ files. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`aie pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {

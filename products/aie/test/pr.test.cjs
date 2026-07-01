@@ -1162,6 +1162,8 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].summary, /Codex subagent/);
     assert.match(result.localReviewRunner.lanes[0].evidencePath, /issue-compliance\.json|task-record-compliance\.json/);
     assert.equal(result.localReviewRunner.lanes[0].promptText, '');
+    assert.equal(result.localReviewRunner.lanes[0].spawnPrompt, '');
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract, null);
     assert.ok(result.localReviewRunner.lanes[0].promptFragmentIds.includes(`review-lanes/${result.localReviewRunner.lanes[0].lane}`));
     assert.equal(result.localReview.status, 'missing');
     assert.equal(result.status, 'pending');
@@ -1213,6 +1215,12 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /qube-review-focus subagent for review lane/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /--- LANE PROMPT START ---/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Do not read external prompt files/);
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.agentType, 'qube-review-focus');
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.forkContext, false);
+    assert.match(result.localReviewRunner.lanes[0].spawnContract.publishCommand, /pr review publish 12 --lane/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /deeply critical PR review agent/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /security and trust boundaries/);
