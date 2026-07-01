@@ -21,6 +21,7 @@ import {
   type JsonValue,
   type ReviewFeedback,
   type ReviewFinding,
+  type ReviewFindingSide,
   type ReviewForgeCapabilities,
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
@@ -691,7 +692,7 @@ function cleanupReviewPayload(path: string): void {
 }
 
 interface ParsedDiffIndex {
-  hasLine(path: string, line: number): boolean;
+  hasLine(path: string, line: number, side?: ReviewFindingSide): boolean;
 }
 
 function normalizeDiffPath(path: string): string {
@@ -699,31 +700,42 @@ function normalizeDiffPath(path: string): string {
 }
 
 function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
-  const linesByPath = new Map<string, Set<number>>();
+  const destinationLinesByPath = new Map<string, Set<number>>();
+  const sourceLinesByPath = new Map<string, Set<number>>();
   let currentPath: string | null = null;
+  let oldLine = 0;
   let newLine = 0;
   for (const line of diff.split(/\r?\n/)) {
     if (line.startsWith('+++ ')) {
       const rawPath = line.slice(4).trim();
       currentPath = rawPath === '/dev/null' ? null : normalizeDiffPath(rawPath);
-      if (currentPath && !linesByPath.has(currentPath)) linesByPath.set(currentPath, new Set());
+      if (currentPath && !destinationLinesByPath.has(currentPath)) destinationLinesByPath.set(currentPath, new Set());
+      if (currentPath && !sourceLinesByPath.has(currentPath)) sourceLinesByPath.set(currentPath, new Set());
       continue;
     }
-    const hunk = line.match(/^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+    const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
     if (hunk) {
-      newLine = Number.parseInt(hunk[1], 10);
+      oldLine = Number.parseInt(hunk[1], 10);
+      newLine = Number.parseInt(hunk[2], 10);
       continue;
     }
     if (!currentPath || newLine <= 0 || line.startsWith('diff --git') || line.startsWith('--- ')) continue;
-    if (line.startsWith('+') || line.startsWith(' ')) {
-      linesByPath.get(currentPath)?.add(newLine);
+    if (line.startsWith('+')) {
+      destinationLinesByPath.get(currentPath)?.add(newLine);
       newLine += 1;
-    } else if (!line.startsWith('-')) {
+    } else if (line.startsWith('-')) {
+      sourceLinesByPath.get(currentPath)?.add(oldLine);
+      oldLine += 1;
+    } else {
+      destinationLinesByPath.get(currentPath)?.add(newLine);
+      sourceLinesByPath.get(currentPath)?.add(oldLine);
+      oldLine += 1;
       newLine += 1;
     }
   }
   return {
-    hasLine(path: string, line: number): boolean {
+    hasLine(path: string, line: number, side: ReviewFindingSide = 'destination'): boolean {
+      const linesByPath = side === 'source' ? sourceLinesByPath : destinationLinesByPath;
       return linesByPath.get(normalizeDiffPath(path))?.has(line) ?? false;
     },
   };
@@ -731,17 +743,18 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
 
 function inlineReviewComment(finding: ReviewFinding, evidencePath: string | null): JsonObject | null {
   const location = finding.location;
-  if (!location || typeof location.line !== 'number' || location.side === 'source') return null;
+  if (!location || typeof location.line !== 'number') return null;
   const body = findingBodyText(finding, evidencePath);
+  const side = location.side === 'source' ? 'LEFT' : 'RIGHT';
   const comment: Record<string, JsonValue> = {
     path: normalizeDiffPath(location.path),
     line: location.endLine ?? location.line,
-    side: 'RIGHT',
+    side,
     body,
   };
   if (location.endLine && location.endLine !== location.line) {
     comment.start_line = location.line;
-    comment.start_side = 'RIGHT';
+    comment.start_side = side;
   }
   return comment;
 }
@@ -1368,64 +1381,74 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       return localReviewPublishResult({ status: 'planned', runId, marker, body, publishKind: 'pull-request-review', inlineCommentCount, bodyFindingCount, nextAction: `Rerun \`aie pr review publish <pr> --lane ${input.lane}\` without --dry-run to publish provider-visible pull request review feedback.` });
     }
     const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
+      const args = ['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST'];
       const payloadPath = reviewPayloadPath(payload);
       try {
-        return await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST', '--input', payloadPath], this.options);
+        return await runGh([...args, '--input', payloadPath], this.options);
+      } catch (error: unknown) {
+        return {
+          args: [...args, '--input', payloadPath],
+          exitCode: error instanceof GhExecutionError ? error.exitCode : 1,
+          stdout: '',
+          stderr: error instanceof GhExecutionError ? error.stderr : error instanceof Error ? error.message : String(error),
+        };
       } finally {
         cleanupReviewPayload(payloadPath);
       }
     };
-    let result: GhRunResult;
+    const publishReviewResult = (publishResult: GhRunResult, publishBody: ReturnType<typeof laneReviewBody>, nextAction: string): GitHubLaneReviewPublishResult => {
+      const reviewUrl = publishedReviewUrl(publishResult);
+      return localReviewPublishResult({
+        status: 'published',
+        runId: publishBody.runId,
+        marker: publishBody.marker,
+        body: publishBody.body,
+        url: reviewUrl,
+        reviewUrl,
+        publishKind: 'pull-request-review',
+        inlineCommentCount: publishBody.inlineCommentCount,
+        bodyFindingCount: publishBody.bodyFindingCount,
+        inlineCommentUrls: [],
+        nextAction,
+      });
+    };
     const payload = {
       commit_id: input.headSha,
       body,
       event: reviewEvent(input.recommendation),
       comments: inlineComments,
     };
-    try {
-      result = await submitReview(payload);
-    } catch (error: unknown) {
-      return localReviewPublishResult({
-        status: 'failed',
-        runId,
-        marker,
-        body,
-        publishKind: 'pull-request-review',
-        inlineCommentCount,
-        bodyFindingCount,
-        failure: redact(error instanceof Error ? error.message : String(error)),
-        nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
-      });
-    }
+    const result = await submitReview(payload);
     if (result.exitCode !== 0) {
       const fallbackBody = laneReviewBody(input, allFindings, 0);
-      const fallbackPayload = {
+      const intendedBodyOnlyResult = await submitReview({
         commit_id: input.headSha,
         body: fallbackBody.body,
-        event: 'COMMENT',
+        event: reviewEvent(input.recommendation),
         comments: [],
-      };
-      let fallbackResult: GhRunResult | null = null;
-      try {
-        fallbackResult = await submitReview(fallbackPayload);
-      } catch {
-        fallbackResult = null;
+      });
+      if (intendedBodyOnlyResult.exitCode === 0) {
+        return publishReviewResult(
+          intendedBodyOnlyResult,
+          fallbackBody,
+          `Provider-visible body-only pull request review for ${input.lane} was published after GitHub rejected inline review comments; rerun PR view/gate to inspect provider state.`,
+        );
       }
-      if (fallbackResult?.exitCode === 0) {
-        const reviewUrl = publishedReviewUrl(fallbackResult);
-        return localReviewPublishResult({
-          status: 'published',
-          runId: fallbackBody.runId,
-          marker: fallbackBody.marker,
+      let commentFallbackResult: GhRunResult | null = null;
+      if (reviewEvent(input.recommendation) !== 'COMMENT') {
+        commentFallbackResult = await submitReview({
+          commit_id: input.headSha,
           body: fallbackBody.body,
-          url: reviewUrl,
-          reviewUrl,
-          publishKind: 'pull-request-review',
-          inlineCommentCount: fallbackBody.inlineCommentCount,
-          bodyFindingCount: fallbackBody.bodyFindingCount,
-          inlineCommentUrls: [],
-          nextAction: `Provider-visible body-only pull request review for ${input.lane} was published after GitHub rejected inline or recommendation-specific review submission; rerun PR view/gate to inspect provider state.`,
+          event: 'COMMENT',
+          comments: [],
         });
+        if (commentFallbackResult.exitCode === 0) {
+          return publishReviewResult(
+            commentFallbackResult,
+            fallbackBody,
+            `Provider-visible body-only COMMENT pull request review for ${input.lane} was published after GitHub rejected the intended review event; the QUBE marker retains the lane recommendation for gate evaluation.`,
+          );
+        }
       }
       return localReviewPublishResult({
         status: 'failed',
@@ -1435,24 +1458,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         publishKind: 'pull-request-review',
         inlineCommentCount,
         bodyFindingCount,
-        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}${fallbackResult ? `; fallback failed: ${fallbackResult.stderr || fallbackResult.stdout || 'gh api body-only pull request review failed'}` : '; fallback failed before GitHub returned a result'}`),
+        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${intendedBodyOnlyResult.stderr || intendedBodyOnlyResult.stdout || 'gh api body-only pull request review failed'}${commentFallbackResult ? `; comment fallback failed: ${commentFallbackResult.stderr || commentFallbackResult.stdout || 'gh api body-only comment pull request review failed'}` : ''}`),
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
       });
     }
-    const reviewUrl = publishedReviewUrl(result);
-    return localReviewPublishResult({
-      status: 'published',
-      runId,
-      marker,
-      body,
-      url: reviewUrl,
-      reviewUrl,
-      publishKind: 'pull-request-review',
-      inlineCommentCount,
-      bodyFindingCount,
-      inlineCommentUrls: [],
-      nextAction: `Provider-visible pull request review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`,
-    });
+    return publishReviewResult(result, { body, marker, runId, bodyFindingCount, inlineCommentCount }, `Provider-visible pull request review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`);
   }
 
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {

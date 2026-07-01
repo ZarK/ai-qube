@@ -499,6 +499,7 @@ function makePrExec(options = {}) {
   const workflowRuns = options.workflowRuns || [];
   const workflowRunsById = options.workflowRunsById || {};
   const reviewApiResults = [...(options.reviewApiResults || [])];
+  const reviewPayloads = [];
   let currentPr = prViews[0];
   const threads = options.threads || [];
   const exec = async (args) => {
@@ -533,6 +534,7 @@ function makePrExec(options = {}) {
       const inputIndex = args.indexOf('--input');
       const payloadPath = inputIndex >= 0 ? args[inputIndex + 1] : null;
       const payload = payloadPath ? JSON.parse(readFileSync(payloadPath, 'utf8')) : {};
+      reviewPayloads.push(payload);
       const queuedResult = reviewApiResults.shift();
       if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
       const state = payload.event === 'APPROVE' ? 'APPROVED' : payload.event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'COMMENTED';
@@ -594,7 +596,7 @@ function makePrExec(options = {}) {
     }
     return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
   };
-  return { exec, calls, events };
+  return { exec, calls, events, reviewPayloads };
 }
 
 function fixtureLocalCommand(args) {
@@ -2055,6 +2057,42 @@ describe('PR gate service', () => {
     assert.equal(result.inlineCommentCount, 0);
     assert.equal(result.bodyFindingCount, 1);
     assert.equal(reviewPosts.length, 2);
+    assert.equal(fixture.reviewPayloads[0].event, 'REQUEST_CHANGES');
+    assert.equal(fixture.reviewPayloads[0].comments.length, 1);
+    assert.equal(fixture.reviewPayloads[1].event, 'REQUEST_CHANGES');
+    assert.equal(fixture.reviewPayloads[1].comments.length, 0);
+  });
+
+  it('publishes source-side findings as left-side inline review comments', async () => {
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'failed',
+      recommendation: 'request-changes',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review found blockers',
+      findings: [{ severity: 'blocking', message: 'Fix the removed export.', location: { path: 'src/review.ts', line: 1, side: 'source' } }],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      diff: 'diff --git a/src/review.ts b/src/review.ts\n--- a/src/review.ts\n+++ b/src/review.ts\n@@ -1,2 +1,2 @@\n-export const oldValue = true;\n export const kept = true;\n+export const newValue = true;\n',
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.inlineCommentCount, 1);
+    assert.equal(result.bodyFindingCount, 0);
+    assert.equal(fixture.reviewPayloads[0].comments[0].path, 'src/review.ts');
+    assert.equal(fixture.reviewPayloads[0].comments[0].line, 1);
+    assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');
   });
 
   it('redacts common secrets from provider-visible lane review text', async () => {

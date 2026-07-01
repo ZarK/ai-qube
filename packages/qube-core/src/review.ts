@@ -151,7 +151,7 @@ export interface ReviewFinding {
 }
 
 export interface ReviewDiffIndex {
-  hasLine(path: string, line: number): boolean;
+  hasLine(path: string, line: number, side?: ReviewFindingSide): boolean;
 }
 
 export interface PartitionedReviewFindings {
@@ -206,7 +206,7 @@ export function partitionReviewFindings(findings: readonly ReviewFinding[], diff
   for (const finding of findings.map(normalizeReviewFinding)) {
     const location = finding.location;
     const line = location?.line;
-    if (location && typeof line === "number" && location.side !== "source" && diffIndex.hasLine(location.path, line)) {
+    if (location && typeof line === "number" && diffIndex.hasLine(location.path, line, location.side ?? "destination")) {
       inline.push(finding);
     } else {
       body.push(finding);
