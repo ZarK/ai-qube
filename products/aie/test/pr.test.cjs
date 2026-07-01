@@ -122,7 +122,7 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
-function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12 } = {}) {
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline } = {}) {
   const metadata = {
     version: 1,
     head,
@@ -135,6 +135,7 @@ function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendat
     recommendation,
     status,
     summary,
+    ...(inline ? { inline } : {}),
   };
   return {
     author: { login: 'executor' },
@@ -501,6 +502,9 @@ function makePrExec(options = {}) {
       currentPr = payload;
       return { args, exitCode: 0, stdout: JSON.stringify(payload), stderr: '' };
     }
+    if (args[0] === 'pr' && args[1] === 'diff') {
+      return { args, exitCode: 0, stdout: options.diff ?? 'diff --git a/src/review.ts b/src/review.ts\n--- a/src/review.ts\n+++ b/src/review.ts\n@@ -1,1 +1,3 @@\n export const kept = true;\n+export const changed = true;\n+export const reviewed = true;\n', stderr: '' };
+    }
     if (args[0] === 'issue' && args[1] === 'view') {
       const issueNumber = Number(args[2]);
       const body = options.issueBodies?.[issueNumber] ?? '';
@@ -517,6 +521,24 @@ function makePrExec(options = {}) {
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') {
       return { args, exitCode: 0, stdout: JSON.stringify(options.issueComments || issueCommentsFromPr(currentPr)), stderr: '' };
+    }
+    if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews') {
+      const inputIndex = args.indexOf('--input');
+      const payloadPath = inputIndex >= 0 ? args[inputIndex + 1] : null;
+      const payload = payloadPath ? JSON.parse(readFileSync(payloadPath, 'utf8')) : {};
+      const state = payload.event === 'APPROVE' ? 'APPROVED' : payload.event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'COMMENTED';
+      const url = 'https://github.com/example/repo/pull/12#pullrequestreview-123';
+      if (options.reviewVisible !== false) {
+        currentPr = {
+          ...currentPr,
+          latestReviews: [
+            ...(currentPr.latestReviews || []),
+            { id: 123, author: { login: options.reviewAuthor ?? 'executor' }, body: payload.body, state, url, commit: { oid: currentPr.headRefOid || 'abc123' } },
+          ],
+        };
+        if (prViews.length > 0) prViews[0] = currentPr;
+      }
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: 123, html_url: url }), stderr: '' };
     }
     if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
       return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };
@@ -1815,13 +1837,46 @@ describe('PR gate service', () => {
     const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'planned');
+    assert.equal(result.publish.publishKind, 'pull-request-review');
     assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
     assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
     assert.ok(calls.some(call => call.join(' ') === `pr view 12 --json ${prViewFields}`));
+    assert.ok(calls.some(call => call.join(' ') === 'pr diff 12 --patch'));
     assert.ok(calls.some(call => call.join(' ') === 'api repos/example/repo/issues/12/comments --method GET -F per_page=100 --paginate --slurp'));
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
+  });
+
+  it('partitions structured lane findings into inline review comments and review body findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          summary: 'code quality found structured findings',
+          findings: [
+            { id: 'inline-1', severity: 'blocking', location: { path: 'src/review.ts', line: 2, side: 'destination' }, message: 'Anchor this on the changed line.' },
+            { id: 'body-1', severity: 'advisory', location: { path: 'src/review.ts', line: 50, side: 'destination' }, message: 'Keep this in the review body.' },
+          ],
+          contextReviewed: [
+            { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+          ],
+          toolsUsed: ['codex'],
+        }
+      : { ...lane, toolsUsed: ['codex'] });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.equal(result.publish.publishKind, 'pull-request-review');
+    assert.equal(result.publish.inlineCommentCount, 1);
+    assert.equal(result.publish.bodyFindingCount, 1);
+    assert.match(result.publish.body ?? '', /Keep this in the review body/);
+    assert.match(result.publish.body ?? '', /1 finding\(s\) were published as inline review comments/);
   });
 
   it('publishes superseding lane feedback when same-run evidence changes', async () => {
@@ -1861,9 +1916,10 @@ describe('PR gate service', () => {
     assert.equal(changed.status, 'planned');
     assert.equal(first.runId, changed.runId);
     assert.equal(superseding.status, 'published');
+    assert.equal(superseding.publishKind, 'pull-request-review');
     assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
     assert.equal(exactDuplicate.status, 'skipped');
-    assert.ok(fixture.calls.some(call => call[0] === 'pr' && call[1] === 'comment' && String(call[4] ?? '').includes('code review found blockers')));
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'));
   });
 
   it('loads the latest same-head lane feedback as authoritative', async () => {
@@ -1887,6 +1943,30 @@ describe('PR gate service', () => {
     assert.equal(laneMetadata.length, 1);
     assert.equal(laneMetadata[0].recommendation, 'approve');
     assert.equal(laneMetadata[0].summary, 'new lane passed');
+  });
+
+  it('loads trusted lane feedback from pull request review bodies', async () => {
+    const reviewBody = laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'review-api-run', summary: 'review api lane passed', inline: 'review-api' }).body;
+    const provider = createGitHubReviewForgeProvider({
+      exec: makePrExec({
+        prViews: [cleanLocalPr({
+          latestReviews: [
+            { id: 456, author: { login: 'executor' }, body: reviewBody, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-456', commit: { oid: 'abc123' } },
+          ],
+        })],
+      }).exec,
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const laneFeedback = snapshot.item.feedback.filter(item => item.summary.includes('QUBE review (code-quality)'));
+    const laneMetadata = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(laneFeedback.length, 1);
+    assert.equal(laneFeedback[0].source, 'review');
+    assert.equal(laneFeedback[0].state, 'APPROVED');
+    assert.equal(laneMetadata.length, 1);
+    assert.equal(laneMetadata[0].recommendation, 'approve');
+    assert.equal(laneMetadata[0].summary, 'review api lane passed');
   });
 
   it('redacts common secrets from provider-visible lane review text', async () => {

@@ -129,6 +129,90 @@ export interface ReviewForgeCapabilities {
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;
   readonly publishLaneReview?: boolean;
+  readonly publishLaneReviewInline?: boolean;
+}
+
+export type ReviewFindingSeverity = "blocking" | "advisory";
+export type ReviewFindingSide = "source" | "destination";
+
+export interface ReviewFindingLocation {
+  readonly path: string;
+  readonly line?: number;
+  readonly endLine?: number;
+  readonly side?: ReviewFindingSide;
+}
+
+export interface ReviewFinding {
+  readonly id: string;
+  readonly severity: ReviewFindingSeverity;
+  readonly location?: ReviewFindingLocation;
+  readonly message: string;
+  readonly suggestion?: string;
+}
+
+export interface ReviewDiffIndex {
+  hasLine(path: string, line: number): boolean;
+}
+
+export interface PartitionedReviewFindings {
+  readonly inline: readonly ReviewFinding[];
+  readonly body: readonly ReviewFinding[];
+}
+
+function stableFindingId(input: Omit<ReviewFinding, "id"> & { id?: string }): string {
+  const base = [
+    input.severity,
+    input.location?.path ?? "",
+    input.location?.line ?? "",
+    input.location?.endLine ?? "",
+    input.location?.side ?? "",
+    input.message,
+  ].join("\0");
+  let hash = 0;
+  for (let index = 0; index < base.length; index += 1) {
+    hash = Math.imul(31, hash) + base.charCodeAt(index) | 0;
+  }
+  return `finding-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function normalizeReviewFinding(input: Omit<ReviewFinding, "id"> & { readonly id?: string }): ReviewFinding {
+  const message = nonEmpty(input.message, "message");
+  const severity = input.severity === "blocking" ? "blocking" : "advisory";
+  let location: ReviewFindingLocation | undefined;
+  if (input.location) {
+    const path = nonEmpty(input.location.path, "location.path");
+    const line = positiveInteger(input.location.line) ? input.location.line : undefined;
+    const endLine = positiveInteger(input.location.endLine) ? input.location.endLine : undefined;
+    const side = input.location.side === "source" ? "source" : "destination";
+    location = { path, ...(line ? { line } : {}), ...(endLine ? { endLine } : {}), side };
+  }
+  const suggestion = typeof input.suggestion === "string" && input.suggestion.trim() !== "" ? input.suggestion.trim() : undefined;
+  return {
+    id: typeof input.id === "string" && input.id.trim() !== "" ? input.id.trim() : stableFindingId({ severity, location, message, suggestion }),
+    severity,
+    ...(location ? { location } : {}),
+    message,
+    ...(suggestion ? { suggestion } : {}),
+  };
+}
+
+export function partitionReviewFindings(findings: readonly ReviewFinding[], diffIndex: ReviewDiffIndex): PartitionedReviewFindings {
+  const inline: ReviewFinding[] = [];
+  const body: ReviewFinding[] = [];
+  for (const finding of findings.map(normalizeReviewFinding)) {
+    const location = finding.location;
+    const line = location?.line;
+    if (location && typeof line === "number" && location.side !== "source" && diffIndex.hasLine(location.path, line)) {
+      inline.push(finding);
+    } else {
+      body.push(finding);
+    }
+  }
+  return { inline, body };
 }
 
 export interface ReviewForgeProviderPlanOptions {
@@ -157,7 +241,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly host: string;
   readonly issueNumber: number;
   readonly summary: string;
-  readonly findings: readonly string[];
+  readonly findings: readonly (ReviewFinding | string)[];
   readonly evidencePath: string | null;
 }
 
@@ -167,6 +251,11 @@ export interface ReviewLaneReviewPublishResult {
   readonly marker: string | null;
   readonly body: string | null;
   readonly url: string | null;
+  readonly publishKind?: "issue-comment" | "pull-request-review";
+  readonly inlineCommentCount?: number;
+  readonly bodyFindingCount?: number;
+  readonly reviewUrl?: string | null;
+  readonly inlineCommentUrls?: readonly string[];
   readonly failure: string | null;
   readonly nextAction: string;
 }

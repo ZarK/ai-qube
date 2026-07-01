@@ -43,6 +43,7 @@ export interface ReviewForgeCapabilities {
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;
   readonly publishLaneReview?: boolean;
+  readonly publishLaneReviewInline?: boolean;
 }
 
 export interface ReviewForgeProvider {

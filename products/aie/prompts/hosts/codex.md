@@ -25,7 +25,7 @@ Publishing rules:
 
 - After required lane evidence exists for the current PR head, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback.
 - Rerun `pr gate <pr> --json` until provider state shows current-head approval or actionable findings to fix.
-- Provider-visible PR comments are the merge gate and human audit trail; local files under `.qube/aie/reviews/` are optional audit evidence.
+- Provider-visible PR reviews and comments are the merge gate and human audit trail; local files under `.qube/aie/reviews/` are optional audit evidence.
 - Delete the review session lock after publish completes or when abandoning the review cycle.
 
 Thread hygiene:

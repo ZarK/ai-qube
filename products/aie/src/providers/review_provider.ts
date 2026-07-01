@@ -1,6 +1,7 @@
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ReviewItem, ReviewItemKey } from '../core/review_item.js';
+import type { ReviewFinding } from '@tjalve/qube-core';
 
 export interface ReviewProviderCapabilities {
   loadReview: boolean;
@@ -21,7 +22,7 @@ export interface ReviewLaneReviewPublishInput {
   host: string;
   issueNumber: number;
   summary: string;
-  findings: string[];
+  findings: Array<ReviewFinding | string>;
   evidencePath: string | null;
 }
 
@@ -31,6 +32,11 @@ export interface ReviewLaneReviewPublishResult {
   marker: string | null;
   body: string | null;
   url: string | null;
+  publishKind?: 'issue-comment' | 'pull-request-review';
+  inlineCommentCount?: number;
+  bodyFindingCount?: number;
+  reviewUrl?: string | null;
+  inlineCommentUrls?: string[];
   failure: string | null;
   nextAction: string;
 }

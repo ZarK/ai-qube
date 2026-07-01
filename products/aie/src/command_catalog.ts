@@ -355,7 +355,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'pr review publish',
-    description: 'Publish one evidence-backed host-run lane review comment to the configured review provider for the current PR head.',
+    description: 'Publish one evidence-backed host-run lane pull request review to the configured review provider for the current PR head.',
     args: ['pr'],
     flags: PR_REVIEW_PUBLISH_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: PR_REVIEW_PUBLISH_FLAG_DETAILS,

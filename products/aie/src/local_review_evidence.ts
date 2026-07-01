@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import type { ReviewFinding } from '@tjalve/qube-core';
 import { redact } from './gh.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
@@ -64,6 +65,7 @@ export interface LocalReviewLane {
   recommendation: LocalReviewRecommendation;
   summary: string;
   blockers: string[];
+  findings: ReviewFinding[];
   artifacts: string[];
   commands: string[];
   surfaces: string[];
@@ -190,6 +192,36 @@ function stringValue(value: unknown, fallback: string): string {
 
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map(redact) : [];
+}
+
+function readFindingSeverity(value: unknown): ReviewFinding['severity'] {
+  return value === 'blocking' ? 'blocking' : 'advisory';
+}
+
+function readFindings(value: unknown): ReviewFinding[] {
+  if (!Array.isArray(value)) return [];
+  const findings: ReviewFinding[] = [];
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const message = typeof entry.message === 'string' && entry.message.trim() !== '' ? redact(entry.message.trim()) : '';
+    if (message === '') continue;
+    const location = isRecord(entry.location) && typeof entry.location.path === 'string' && entry.location.path.trim() !== ''
+      ? {
+          path: redact(entry.location.path.trim()),
+          ...(typeof entry.location.line === 'number' && Number.isSafeInteger(entry.location.line) && entry.location.line > 0 ? { line: entry.location.line } : {}),
+          ...(typeof entry.location.endLine === 'number' && Number.isSafeInteger(entry.location.endLine) && entry.location.endLine > 0 ? { endLine: entry.location.endLine } : {}),
+          side: entry.location.side === 'source' ? 'source' as const : 'destination' as const,
+        }
+      : undefined;
+    findings.push({
+      id: typeof entry.id === 'string' && entry.id.trim() !== '' ? redact(entry.id.trim()) : `finding-${findings.length + 1}`,
+      severity: readFindingSeverity(entry.severity),
+      ...(location ? { location } : {}),
+      message,
+      ...(typeof entry.suggestion === 'string' && entry.suggestion.trim() !== '' ? { suggestion: redact(entry.suggestion.trim()) } : {}),
+    });
+  }
+  return findings;
 }
 
 function artifactArray(value: unknown): string[] {
@@ -474,6 +506,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       recommendation: readRecommendation(entry.recommendation, status),
       summary: stringValue(entry.summary, `${id} local review lane did not provide a summary.`),
       blockers: stringArray(entry.blockers),
+      findings: readFindings(entry.findings),
       artifacts: artifactArray(entry.artifacts),
       commands: stringArray(entry.commands),
       surfaces: stringArray(entry.surfaces),
@@ -753,6 +786,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         recommendation: readRecommendation(parsed.recommendation, status),
         summary: stringValue(parsed.summary, `${id} local review lane did not provide a summary.`),
         blockers: stringArray(parsed.blockers),
+        findings: readFindings(parsed.findings),
         artifacts: artifactArray(parsed.artifacts),
         commands: stringArray(parsed.commands),
         surfaces: stringArray(parsed.surfaces),

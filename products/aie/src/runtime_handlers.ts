@@ -436,7 +436,8 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
     return usageResult(context, 'pr review publish', 'aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]', [
       'Usage: aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]',
       '',
-      'Publish one host-run lane review comment to the configured review provider for the current PR head.',
+      'Publish one host-run lane pull request review to the configured review provider for the current PR head.',
+      'Requires GitHub CLI authentication that can create pull request reviews for the repository.',
       'Examples:',
       '  aie pr review publish 12 --lane issue-compliance',
       '  aie pr review publish 12 --lane code-quality --json',
@@ -579,7 +580,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback to the provider.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,

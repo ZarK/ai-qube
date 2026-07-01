@@ -44,6 +44,7 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   planReviewRequests: true,
   applyReviewRequests: true,
   publishLaneReview: true,
+  publishLaneReviewInline: true,
   publishLocalReview: true,
   ciDiagnostics: true,
 });
@@ -110,7 +111,7 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
 
 interface LoadedGitHubReviewForgeProvider {
   readonly id: 'github';
-  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean };
+  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean };
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
@@ -140,6 +141,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
       planReviewRequests: provider.capabilities().planReviewRequests,
       applyReviewRequests: provider.capabilities().applyReviewRequests,
       publishLaneReview: provider.capabilities().publishLaneReview ?? true,
+      publishLaneReviewInline: provider.capabilities().publishLaneReviewInline ?? false,
       publishLocalReview: true,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
@@ -177,6 +179,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
       planReviewRequests: MISSING_REVIEW_FORGE_CAPABILITIES.planReviewRequests,
       applyReviewRequests: MISSING_REVIEW_FORGE_CAPABILITIES.applyReviewRequests,
       publishLaneReview: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReview,
+      publishLaneReviewInline: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReviewInline,
     };
   }
 

@@ -8,6 +8,8 @@ const LOW_DISK_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024;
 const HIGH_LOOSE_OBJECT_THRESHOLD = 50000;
 const GIT_COUNT_OBJECTS_TIMEOUT_MS = 5000;
 const GIT_COUNT_OBJECTS_MAX_BUFFER = 1024 * 1024;
+const GH_AUTH_STATUS_TIMEOUT_MS = 5000;
+const GH_AUTH_STATUS_MAX_BUFFER = 1024 * 1024;
 
 type ReviewPreflightDiagnostics = GateReadinessDiagnostics['reviewPreflight'];
 
@@ -15,6 +17,7 @@ export interface ReviewPreflightOptions {
   repoRoot: string;
   statfs?: (path: string) => { bavail?: number | bigint; bfree: number | bigint; bsize: number | bigint };
   gitCountObjects?: (repoRoot: string) => string;
+  ghAuthStatus?: (repoRoot: string) => string;
 }
 
 function localReviewEnabled(config: Config): boolean {
@@ -29,6 +32,7 @@ function disabledPreflight(): ReviewPreflightDiagnostics {
       disk: { readiness: 'disabled', freeBytes: null, thresholdBytes: LOW_DISK_THRESHOLD_BYTES, nextAction: null },
       dist: { readiness: 'disabled', path: 'products/aie/dist/bin/run.js', present: false, nextAction: null },
       gitObjects: { readiness: 'disabled', looseCount: null, threshold: HIGH_LOOSE_OBJECT_THRESHOLD, nextAction: null },
+      githubReviewAuth: { readiness: 'disabled', authenticated: false, scopes: null, nextAction: null },
     },
     nextActions: [],
   };
@@ -46,6 +50,21 @@ function overallStatus(statuses: DoctorReadinessStatus[]): DoctorReadinessStatus
   return 'ready';
 }
 
+function parseGhScopes(output: string): string[] | null {
+  const match = output.match(/Token scopes:\s*([^\r\n]+)/i);
+  if (!match) return null;
+  return match[1]
+    .split(',')
+    .map(scope => scope.replace(/^['"\s]+|['"\s]+$/g, '').trim())
+    .filter(scope => scope !== '');
+}
+
+function canCreatePullRequestReviews(scopes: readonly string[] | null): boolean {
+  if (scopes === null) return true;
+  const normalized = scopes.map(scope => scope.toLowerCase());
+  return normalized.includes('repo') || normalized.includes('pull_requests:write') || normalized.includes('pull-requests:write');
+}
+
 export function buildReviewPreflightDiagnostics(config: Config, options: ReviewPreflightOptions): ReviewPreflightDiagnostics {
   if (!localReviewEnabled(config)) return disabledPreflight();
 
@@ -56,6 +75,12 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
     encoding: 'utf8',
     maxBuffer: GIT_COUNT_OBJECTS_MAX_BUFFER,
     timeout: GIT_COUNT_OBJECTS_TIMEOUT_MS,
+  }));
+  const ghAuthStatus = options.ghAuthStatus ?? ((repoRoot: string) => execFileSync('gh', ['auth', 'status'], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    maxBuffer: GH_AUTH_STATUS_MAX_BUFFER,
+    timeout: GH_AUTH_STATUS_TIMEOUT_MS,
   }));
 
   let disk: ReviewPreflightDiagnostics['checks']['disk'];
@@ -111,10 +136,30 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
     gitObjects = { readiness: 'unavailable', looseCount: null, threshold: HIGH_LOOSE_OBJECT_THRESHOLD, nextAction };
   }
 
+  let githubReviewAuth: ReviewPreflightDiagnostics['checks']['githubReviewAuth'];
+  try {
+    const output = ghAuthStatus(options.repoRoot);
+    const scopes = parseGhScopes(output);
+    const nextAction = canCreatePullRequestReviews(scopes)
+      ? null
+      : 'GitHub CLI authentication may not be able to create pull request reviews; refresh `gh auth login` or token scopes with repo or pull_requests:write access before publishing lane reviews.';
+    if (nextAction) nextActions.push(nextAction);
+    githubReviewAuth = {
+      readiness: nextAction ? 'needs-action' : 'ready',
+      authenticated: true,
+      scopes,
+      nextAction,
+    };
+  } catch {
+    const nextAction = 'GitHub CLI authentication is unavailable; run `gh auth status` and `gh auth login` before publishing lane reviews as pull request reviews.';
+    nextActions.push(nextAction);
+    githubReviewAuth = { readiness: 'unavailable', authenticated: false, scopes: null, nextAction };
+  }
+
   return {
     enabled: true,
-    readiness: overallStatus([disk.readiness, dist.readiness, gitObjects.readiness]),
-    checks: { disk, dist, gitObjects },
+    readiness: overallStatus([disk.readiness, dist.readiness, gitObjects.readiness, githubReviewAuth.readiness]),
+    checks: { disk, dist, gitObjects, githubReviewAuth },
     nextActions,
   };
 }
