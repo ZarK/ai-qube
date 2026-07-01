@@ -105,6 +105,7 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
 function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand));
+  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand));
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && promptText.trim() !== ''
     ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptText, publishCommand })
@@ -119,7 +120,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     evidencePath,
     evidencePaths: [...evidencePaths],
     promptFragmentIds: rendered.orderedFragmentIds,
-    promptStackHash: hash(rendered.text),
+    promptStackHash: hash(stableRendered.text),
     promptText,
     promptOutputContract: rendered.outputContract,
     spawnPrompt: spawnContract?.taskPrompt ?? '',
