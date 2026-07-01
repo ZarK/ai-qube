@@ -86,12 +86,14 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
   let gitObjects: ReviewPreflightDiagnostics['checks']['gitObjects'];
   try {
     const looseCount = countLooseObjects(gitCountObjects(options.repoRoot));
-    const nextAction = looseCount !== null && looseCount >= HIGH_LOOSE_OBJECT_THRESHOLD
-      ? 'Loose git object count is high; run git housekeeping such as `git gc --prune=now` when no review or merge operation is active.'
-      : null;
+    const nextAction = looseCount === null
+      ? 'Review-preflight could not parse loose git object count; verify git output from `git count-objects -v` before spawning local review lanes.'
+      : looseCount >= HIGH_LOOSE_OBJECT_THRESHOLD
+        ? 'Loose git object count is high; run git housekeeping such as `git gc --prune=now` when no review or merge operation is active.'
+        : null;
     if (nextAction) nextActions.push(nextAction);
     gitObjects = {
-      readiness: nextAction ? 'needs-action' : 'ready',
+      readiness: looseCount === null ? 'unavailable' : nextAction ? 'needs-action' : 'ready',
       looseCount,
       threshold: HIGH_LOOSE_OBJECT_THRESHOLD,
       nextAction,

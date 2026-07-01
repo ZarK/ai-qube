@@ -240,6 +240,25 @@ describe('doctor diagnostics', () => {
     assert.match(diagnostics.checks.gitObjects.nextAction, /git gc --prune=now/);
   });
 
+  it('reports malformed loose git object output as unavailable', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'unexpected output\n',
+    });
+
+    assert.equal(diagnostics.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.gitObjects.readiness, 'unavailable');
+    assert.equal(diagnostics.checks.gitObjects.looseCount, null);
+    assert.match(diagnostics.checks.gitObjects.nextAction, /git count-objects -v/);
+  });
+
   it('keeps review-preflight disabled when local review is off', () => {
     const config = getDefaults();
     config.reviewAdapter = 'github';
