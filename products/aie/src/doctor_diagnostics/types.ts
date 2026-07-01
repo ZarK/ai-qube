@@ -245,6 +245,31 @@ export interface GateReadinessDiagnostics {
     externalServices: string[];
     reviewWaitMinutes: number;
   };
+  reviewPreflight: {
+    enabled: boolean;
+    readiness: DoctorReadinessStatus;
+    checks: {
+      disk: {
+        readiness: DoctorReadinessStatus;
+        freeBytes: number | null;
+        thresholdBytes: number;
+        nextAction: string | null;
+      };
+      dist: {
+        readiness: DoctorReadinessStatus;
+        path: string;
+        present: boolean;
+        nextAction: string | null;
+      };
+      gitObjects: {
+        readiness: DoctorReadinessStatus;
+        looseCount: number | null;
+        threshold: number;
+        nextAction: string | null;
+      };
+    };
+    nextActions: string[];
+  };
   aiq: {
     enabled: boolean;
     configured: boolean;

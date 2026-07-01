@@ -1,14 +1,14 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
-const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, computeDoctorOk } = require('../dist/doctor.js');
+const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, computeDoctorOk } = require('../dist/doctor.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
 
 function makeGitRepo() {
@@ -160,6 +160,81 @@ describe('doctor diagnostics', () => {
     assert.ok(!diagnostics.externalServices.includes('local-oracle'));
     assert.equal(diagnostics.supplyChain.readiness, 'ready');
     assert.ok(diagnostics.supplyChain.supplyChainSensitiveGates.includes('build'));
+  });
+
+  it('reports ready review-preflight diagnostics when local review is configured', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 3, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 42\nsize: 128\n',
+    });
+
+    assert.equal(diagnostics.enabled, true);
+    assert.equal(diagnostics.readiness, 'ready');
+    assert.equal(diagnostics.checks.disk.readiness, 'ready');
+    assert.equal(diagnostics.checks.dist.present, true);
+    assert.equal(diagnostics.checks.dist.path, 'products/aie/dist/bin/run.js');
+    assert.equal(diagnostics.checks.gitObjects.looseCount, 42);
+    assert.deepEqual(diagnostics.nextActions, []);
+  });
+
+  it('reports missing dist and low disk as review-preflight action items', () => {
+    const repo = makeGitRepo();
+    const config = getDefaults();
+    config.reviewAdapter = 'mixed';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 1, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+    });
+
+    assert.equal(diagnostics.readiness, 'missing');
+    assert.equal(diagnostics.checks.disk.readiness, 'needs-action');
+    assert.match(diagnostics.checks.disk.nextAction, /2 GiB/);
+    assert.equal(diagnostics.checks.dist.readiness, 'missing');
+    assert.match(diagnostics.checks.dist.nextAction, /pnpm --filter @tjalve\/aie run build/);
+    assert.ok(diagnostics.nextActions.length >= 2);
+  });
+
+  it('reports high loose git object counts with housekeeping guidance', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'shadow';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 50000\nsize: 100000\n',
+    });
+
+    assert.equal(diagnostics.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.gitObjects.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.gitObjects.looseCount, 50000);
+    assert.match(diagnostics.checks.gitObjects.nextAction, /git gc --prune=now/);
+  });
+
+  it('keeps review-preflight disabled when local review is off', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'github';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: process.cwd(),
+      statfs: () => { throw new Error('should not run'); },
+      gitCountObjects: () => { throw new Error('should not run'); },
+    });
+
+    assert.equal(diagnostics.enabled, false);
+    assert.equal(diagnostics.readiness, 'disabled');
+    assert.deepEqual(diagnostics.nextActions, []);
   });
 
   it('reports configured local-command runner readiness separately from Codex host review support', () => {

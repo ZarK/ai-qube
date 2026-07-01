@@ -13,8 +13,10 @@ import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.j
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
 import { probeCodexReviewCapabilitySync } from '../app/local_review_runner.js';
+import { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
+export { buildReviewPreflightDiagnostics } from './review_preflight.js';
 
 export function computeDoctorOk(input: DoctorOkInputs): boolean {
   const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate);
@@ -215,6 +217,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localReviewShadow = config.reviewAdapter === 'shadow' || config.reviewProfile === 'local-shadow';
   const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
   const localEvidenceRoot = '.qube/aie/reviews';
+  const reviewPreflight = buildReviewPreflightDiagnostics(config, { repoRoot: options.evidenceRoot ?? process.cwd() });
   const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit);
   const fallbackBrowserAutomation = toolAvailability('playwright', false);
   const aiqTool = toolAvailability('aiq', config.qualityControl);
@@ -372,6 +375,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       externalServices: reviewerServices,
       reviewWaitMinutes: config.reviewWaitMinutes,
     },
+    reviewPreflight,
     aiq: {
       enabled: config.qualityControl,
       configured: aiqConfigured,
