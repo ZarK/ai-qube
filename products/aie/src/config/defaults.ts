@@ -1,7 +1,7 @@
 import type { ExecutorPolicy } from '../core/policy.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
-import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig } from './types.js';
+import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
 import { DEFAULT_CONFIG_VERSION } from './types.js';
 
 export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
@@ -128,11 +128,32 @@ export function cloneGate(gate: GateConfig): GateConfig {
   return { ...gate, env: { ...gate.env } };
 }
 
+function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderSelection {
+  return {
+    kind: input.kind,
+    ...(input.jira ? {
+      jira: {
+        ...(input.jira.workflowSchema ? {
+          workflowSchema: {
+            statusMap: { ...input.jira.workflowSchema.statusMap },
+            openStatusNames: [...input.jira.workflowSchema.openStatusNames],
+            closedStatusNames: [...input.jira.workflowSchema.closedStatusNames],
+            priorityMap: { ...input.jira.workflowSchema.priorityMap },
+            linkRules: input.jira.workflowSchema.linkRules.map(rule => ({ ...rule })),
+            ...(input.jira.workflowSchema.sprintField ? { sprintField: input.jira.workflowSchema.sprintField } : {}),
+            ...(input.jira.workflowSchema.epicField ? { epicField: input.jira.workflowSchema.epicField } : {}),
+          },
+        } : {}),
+      },
+    } : {}),
+  };
+}
+
 export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
   return {
     version: input.version,
     providers: {
-      work: { ...input.providers.work },
+      work: cloneWorkProviderSelection(input.providers.work),
       review: { ...input.providers.review },
       repository: { ...input.providers.repository },
       ci: { ...input.providers.ci },

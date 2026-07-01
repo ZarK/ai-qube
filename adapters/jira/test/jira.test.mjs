@@ -185,6 +185,20 @@ describe("Jira work provider adapter", () => {
     assert.equal(rendered.url, "https://jira.example.com/browse/ENG-2");
   });
 
+  it("preserves provider-neutral blockers in Jira draft structure", () => {
+    const rendered = renderJiraIssueDraft({
+      title: "Add queued work preview",
+      priority: "normal",
+      status: "blocked",
+      components: ["Executor"],
+      blockedBy: ["ENG-1"],
+      bodySections: [{ heading: "Acceptance", body: "Shows blocked Jira work." }],
+    });
+
+    assert.deepEqual(rendered.blockedBy, ["ENG-1"]);
+    assert.match(rendered.description, /Blocked by: ENG-1/);
+  });
+
   it("reports missing Jira credentials and unsupported mutations explicitly", async () => {
     assert.throws(
       () => createJiraWorkProvider({ baseUrl: "", email: "", apiToken: "", projectKey: "ENG" }),
@@ -197,6 +211,10 @@ describe("Jira work provider adapter", () => {
     assert.throws(
       () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: 'ENG" OR project = OPS' }),
       /projectKey must be a Jira project key/,
+    );
+    assert.throws(
+      () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: "ENG", limit: 0 }),
+      /limit must be an integer between 1 and 1000/,
     );
 
     const issue = makeJiraIssue();
@@ -270,6 +288,39 @@ describe("Jira work provider adapter", () => {
       assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10020"));
       assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10014"));
       assert.match(requests[0].options.headers.Authorization, /^Basic /);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("bounds single issue Jira reads to configured fields", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        assert.equal(requestUrl.pathname, "/rest/api/3/issue/ENG-123");
+        const fields = requestUrl.searchParams.get("fields");
+        assert.ok(fields.includes("summary"));
+        assert.ok(fields.includes("customfield_10020"));
+        assert.ok(!fields.includes("*all"));
+        return {
+          ok: true,
+          async json() {
+            return makeJiraIssue({ key: "ENG-123" });
+          },
+        };
+      };
+      const provider = createJiraWorkProvider({
+        baseUrl: "https://jira.example.com/",
+        email: "user@example.com",
+        apiToken: "token",
+        projectKey: "ENG",
+        workflowSchema: { sprintField: "customfield_10020" },
+      });
+
+      const item = await provider.getWorkItem({ providerId: "jira", id: "ENG-123" });
+
+      assert.equal(item.key.id, "ENG-123");
     } finally {
       globalThis.fetch = originalFetch;
     }

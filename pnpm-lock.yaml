@@ -161,6 +161,9 @@ importers:
       '@tjalve/qube-adapter-github':
         specifier: workspace:*
         version: link:../../adapters/github
+      '@tjalve/qube-adapter-jira':
+        specifier: workspace:*
+        version: link:../../adapters/jira
       '@tjalve/qube-adapter-opencode':
         specifier: workspace:*
         version: link:../../adapters/opencode

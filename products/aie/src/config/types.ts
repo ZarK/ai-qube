@@ -12,6 +12,34 @@ export interface ProviderSelection<K extends string> {
   kind: K;
 }
 
+export type JiraWorkStatus = 'in-progress' | 'ready' | 'blocked' | 'unknown';
+export type JiraWorkPriority = 'critical' | 'high' | 'medium' | 'low' | 'none';
+export type JiraLinkRelation = 'blocker' | 'blockedBy' | 'ignore';
+
+export interface JiraIssueLinkRuleConfig {
+  typeName: string;
+  inward: JiraLinkRelation;
+  outward: JiraLinkRelation;
+}
+
+export interface JiraWorkflowSchemaConfig {
+  statusMap: Record<string, JiraWorkStatus>;
+  openStatusNames: string[];
+  closedStatusNames: string[];
+  priorityMap: Record<string, JiraWorkPriority>;
+  linkRules: JiraIssueLinkRuleConfig[];
+  sprintField?: string;
+  epicField?: string;
+}
+
+export interface JiraWorkProviderConfig {
+  workflowSchema?: JiraWorkflowSchemaConfig;
+}
+
+export interface WorkProviderSelection extends ProviderSelection<WorkProviderKind> {
+  jira?: JiraWorkProviderConfig;
+}
+
 export interface ProviderCapabilityPolicy {
   work: boolean;
   review: boolean;
@@ -21,7 +49,7 @@ export interface ProviderCapabilityPolicy {
 }
 
 export interface ProviderSelections {
-  work: ProviderSelection<WorkProviderKind>;
+  work: WorkProviderSelection;
   review: ProviderSelection<ReviewProviderKind>;
   repository: ProviderSelection<RepositoryProviderKind>;
   ci: ProviderSelection<CiProviderKind>;

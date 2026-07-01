@@ -77,6 +77,20 @@ describe('config validation', () => {
 
   it('accepts explicit provider selections and nested policy values', () => {
     const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        workflowSchema: {
+          statusMap: { Queued: 'ready', Blocked: 'blocked' },
+          openStatusNames: ['Queued', 'Blocked'],
+          closedStatusNames: ['Done'],
+          priorityMap: { P0: 'critical' },
+          linkRules: [{ typeName: 'Dependency', inward: 'blocker', outward: 'blockedBy' }],
+          sprintField: 'customfield_10020',
+          epicField: 'customfield_10014',
+        },
+      },
+    };
     input.policy.labels.priorities = ['P1', 'P2'];
     input.policy.branch.noWorktree = false;
     input.policy.reviews.adapter = 'mixed';
@@ -87,6 +101,11 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, true);
+    assert.equal(result.config.providers.work.kind, 'jira');
+    assert.equal(result.config.providers.work.jira.workflowSchema.statusMap.Queued, 'ready');
+    assert.equal(result.config.providers.work.jira.workflowSchema.priorityMap.P0, 'critical');
+    assert.equal(result.config.providers.work.jira.workflowSchema.linkRules[0].inward, 'blocker');
+    assert.equal(result.config.providers.work.jira.workflowSchema.sprintField, 'customfield_10020');
     assert.deepEqual(result.config.priorityLabels, ['P1', 'P2']);
     assert.equal(result.config.noWorktree, false);
     assert.equal(result.config.reviewAdapter, 'mixed');
@@ -219,6 +238,16 @@ describe('config validation', () => {
 
   it('rejects unsupported nested policy values with actionable paths', () => {
     const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        workflowSchema: {
+          statusMap: { Queued: 'queued' },
+          priorityMap: { P0: 'urgent' },
+          linkRules: [{ typeName: 'Dependency', inward: 'waits-on', outward: 'blockedBy' }],
+        },
+      },
+    };
     input.policy.reviews.waitMinutes = '15';
     input.policy.reviews.adapter = 'unsupported';
     input.policy.milestoneOrdering.missingAssignment = 'required';
@@ -228,6 +257,9 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.statusMap.Queued'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.priorityMap.P0'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.linkRules[0].inward'));
     assert.ok(result.errors.some((error) => error.path === 'policy.reviews.waitMinutes'));
     assert.ok(result.errors.some((error) => error.path === 'policy.reviews.adapter'));
     assert.ok(result.errors.some((error) => error.path === 'policy.milestoneOrdering.missingAssignment'));

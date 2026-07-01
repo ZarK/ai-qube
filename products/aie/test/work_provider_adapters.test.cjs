@@ -44,4 +44,46 @@ describe('work provider adapter boundary', () => {
       /@tjalve\/qube-adapter-linear.*LINEAR_API_KEY.*qube install --work-provider linear/s,
     );
   });
+
+  it('passes Jira workflow schema through the optional adapter boundary', async () => {
+    const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
+    let requestedFields = [];
+    const provider = await createWorkProvider('jira', {
+      jql: 'project = "ENG"',
+      workflowSchema: {
+        statusMap: { Queued: 'ready' },
+        openStatusNames: ['Queued'],
+        priorityMap: { P0: 'critical' },
+        sprintField: 'customfield_10020',
+      },
+      client: {
+        async listIssues(input) {
+          requestedFields = input.fields;
+          return [{
+            id: '10001',
+            key: 'ENG-1',
+            fields: {
+              summary: 'Queued Jira work',
+              status: { name: 'Queued' },
+              priority: { name: 'P0' },
+              labels: [],
+              components: [],
+              project: { key: 'ENG' },
+              comment: { comments: [], total: 0 },
+              issuelinks: [],
+            },
+          }];
+        },
+        async getIssue() {
+          throw new Error('not needed');
+        },
+      },
+    });
+
+    const items = await provider.listOpenWorkItems();
+
+    assert.equal(items[0].status, 'ready');
+    assert.equal(items[0].priority, 'critical');
+    assert.ok(requestedFields.includes('customfield_10020'));
+  });
 });

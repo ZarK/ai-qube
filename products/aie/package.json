@@ -51,7 +51,8 @@
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",
     "@tjalve/qube-adapter-codex": "workspace:*",
-    "@tjalve/qube-adapter-opencode": "workspace:*"
+    "@tjalve/qube-adapter-opencode": "workspace:*",
+    "@tjalve/qube-adapter-jira": "workspace:*"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

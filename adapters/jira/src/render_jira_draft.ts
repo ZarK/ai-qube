@@ -29,9 +29,10 @@ export interface JiraIssueDraft {
 
 export function renderJiraIssueDraft(draft: JiraWorkItemDraft): JiraIssueDraft {
   const metadata = readJiraMetadata(draft.providerMetadata?.jira);
+  const blockedBy = metadata.blockedBy.length > 0 ? metadata.blockedBy : draft.blockedBy ?? [];
   return {
     summary: draft.title,
-    description: renderDraftBody(draft, metadata.blockedBy),
+    description: renderDraftBody(draft, blockedBy),
     issueType: metadata.issueType ?? "Task",
     priorityName: metadata.priorityName ?? priorityName(draft.priority),
     labels: metadata.labels.length > 0 ? metadata.labels : [
@@ -39,7 +40,7 @@ export function renderJiraIssueDraft(draft: JiraWorkItemDraft): JiraIssueDraft {
       ...draft.components.map((component) => component.toLowerCase()),
     ],
     components: metadata.components.length > 0 ? metadata.components : draft.components,
-    blockedBy: metadata.blockedBy,
+    blockedBy,
     ...(metadata.projectKey ? { projectKey: metadata.projectKey } : {}),
     ...(metadata.url ? { url: metadata.url } : {}),
   };

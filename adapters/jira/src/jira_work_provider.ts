@@ -27,6 +27,8 @@ interface JiraSearchResponse {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_SEARCH_PAGE_SIZE = 100;
+const DEFAULT_WORK_ITEM_LIMIT = 100;
+const MAX_WORK_ITEM_LIMIT = 1_000;
 const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/u;
 
 function required(value: string | undefined, name: string): string {
@@ -91,7 +93,7 @@ class FetchJiraRestClient implements JiraRestClient {
 
   async getIssue(key: string): Promise<JiraIssue> {
     const url = new URL(`${this.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}`);
-    url.searchParams.set("fields", "*all");
+    url.searchParams.set("fields", this.fields.join(","));
     return this.request<JiraIssue>(url);
   }
 
@@ -198,7 +200,7 @@ export class JiraWorkProvider implements WorkProvider {
   constructor(options: JiraWorkProviderOptions = {}) {
     this.client = options.client ?? new FetchJiraRestClient(options);
     this.jql = defaultJql(options);
-    this.limit = options.limit ?? 100;
+    this.limit = workItemLimit(options.limit);
     this.workflowSchema = options.workflowSchema;
   }
 
@@ -254,4 +256,12 @@ export class JiraWorkProvider implements WorkProvider {
 
 export function createJiraWorkProvider(options: JiraWorkProviderOptions = {}): JiraWorkProvider {
   return new JiraWorkProvider(options);
+}
+
+function workItemLimit(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_WORK_ITEM_LIMIT;
+  if (!Number.isInteger(value) || value < 1 || value > MAX_WORK_ITEM_LIMIT) {
+    throw new Error(`Jira work provider limit must be an integer between 1 and ${MAX_WORK_ITEM_LIMIT}.`);
+  }
+  return value;
 }

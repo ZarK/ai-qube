@@ -155,7 +155,12 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const configLoad = await loadConfigFile(options.cwd);
   const config = configLoad.ok && configLoad.config ? configLoad.config : getDefaults();
   const policy = configToExecutorPolicy(config);
-  const workProvider = await createWorkProvider(config.providers.work.kind, { cwd: options.cwd });
+  const workProvider = await createWorkProvider(config.providers.work.kind, {
+    cwd: options.cwd,
+    ...(config.providers.work.kind === 'jira' && config.providers.work.jira?.workflowSchema
+      ? { workflowSchema: config.providers.work.jira.workflowSchema }
+      : {}),
+  });
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
   const reviewForgeProvider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.cwd });
   return {

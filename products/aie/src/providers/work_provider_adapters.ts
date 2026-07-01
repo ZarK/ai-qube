@@ -10,6 +10,14 @@ export interface WorkProviderAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
   readonly limit?: number;
+  readonly client?: unknown;
+  readonly workflowSchema?: unknown;
+  readonly baseUrl?: string;
+  readonly email?: string;
+  readonly apiToken?: string;
+  readonly projectKey?: string;
+  readonly jql?: string;
+  readonly requestTimeoutMs?: number;
 }
 
 export interface WorkProviderAdapterMetadata {

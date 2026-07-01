@@ -10,6 +10,7 @@ import { workItemNumber } from '../core/work_item.js';
 import type { GhExec } from '../gh.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle.js';
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
+import type { WorkProviderAdapterOptions } from '../providers/work_provider_adapters.js';
 import type { WorkProvider } from '../providers/work_provider.js';
 
 export interface LifecycleServiceContext {
@@ -38,13 +39,24 @@ export interface ApplyResult {
 
 export async function createLifecycleContext(options: { config?: Config; cwd?: string; exec?: GhExec; limit?: number }): Promise<LifecycleServiceContext> {
   const config = options.config ?? (await loadConfig(options.cwd)) ?? getDefaults();
-  const provider = await createWorkProvider(config.providers.work.kind, { exec: options.exec, cwd: options.cwd, limit: options.limit });
+  const provider = await createWorkProvider(config.providers.work.kind, workProviderOptions(config, options));
   return {
     config,
     policy: configToExecutorPolicy(config),
     provider,
     exec: options.exec,
     cwd: options.cwd,
+  };
+}
+
+function workProviderOptions(config: Config, options: { cwd?: string; exec?: GhExec; limit?: number }): WorkProviderAdapterOptions {
+  return {
+    exec: options.exec,
+    cwd: options.cwd,
+    limit: options.limit,
+    ...(config.providers.work.kind === 'jira' && config.providers.work.jira?.workflowSchema
+      ? { workflowSchema: config.providers.work.jira.workflowSchema }
+      : {}),
   };
 }
 
