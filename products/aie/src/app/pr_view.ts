@@ -57,6 +57,18 @@ export interface PrViewCheckDiagnostic {
   nextAction: string;
 }
 
+export interface PrViewLaneReview {
+  lane: string;
+  recommendation: string;
+  status: string;
+  inline: string;
+  inlineCommentCount: number;
+  bodyFindingCount: number | null;
+  reviewUrl?: string;
+  stale: boolean;
+  author?: string;
+}
+
 export interface PrViewResult {
   ok: true;
   command: 'pr view';
@@ -65,6 +77,7 @@ export interface PrViewResult {
   reviewDecision: ReviewItem['reviewDecision'];
   mergeability: ReviewItem['mergeability'];
   feedback: PrViewFeedback[];
+  laneReviews: PrViewLaneReview[];
   checks: PrViewCheck[];
   ciDiagnostics: PrViewCheckDiagnostic[];
   counts: {
@@ -113,6 +126,39 @@ function prFeedback(item: ReviewItem): PrViewFeedback[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function prLaneReviews(item: ReviewItem): PrViewLaneReview[] {
+  const value = item.trustedMetadata.trustedLaneReviews;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(record => {
+    if (!isRecord(record)) return [];
+    const lane = stringValue(record.lane);
+    const recommendation = stringValue(record.recommendation);
+    const status = stringValue(record.status);
+    const inline = stringValue(record.inline);
+    if (!lane || !recommendation || !status || !inline) return [];
+    const bodyFindingCount = numberValue(record.bodyFindingCount);
+    return [{
+      lane,
+      recommendation,
+      status,
+      inline,
+      inlineCommentCount: numberValue(record.inlineCommentCount) ?? 0,
+      bodyFindingCount: bodyFindingCount ?? null,
+      reviewUrl: stringValue(record.url),
+      stale: record.stale === true,
+      author: stringValue(record.author),
+    }];
+  });
 }
 
 function stringArray(value: unknown): string[] {
@@ -185,6 +231,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
   const provider = await createReviewForgeProvider('github', { exec: options.exec, cwd: options.repoRoot });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
+  const laneReviews = prLaneReviews(snapshot.item);
   const checks = prChecks(snapshot.item);
   const partial = {
     reviewDecision: snapshot.item.reviewDecision,
@@ -200,6 +247,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
     reviewDecision: snapshot.item.reviewDecision,
     mergeability: snapshot.item.mergeability,
     feedback,
+    laneReviews,
     checks,
     ciDiagnostics: checks.map(check => check.diagnostic).filter((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined),
     counts: {
@@ -224,6 +272,10 @@ export function formatPrView(result: PrViewResult): string {
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);
+  }
+  if (result.laneReviews.length > 0) {
+    lines.push('Lane reviews:');
+    for (const item of result.laneReviews) lines.push(`- ${item.lane}: ${item.recommendation}; inline=${item.inline}; inlineComments=${item.inlineCommentCount}; bodyFindings=${item.bodyFindingCount ?? 'unknown'}${item.reviewUrl ? `; ${item.reviewUrl}` : ''}`);
   }
   if (result.checks.length > 0) {
     lines.push('Checks:');

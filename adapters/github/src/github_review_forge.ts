@@ -549,7 +549,7 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
   });
 }
 
-function pullRequestReviews(rawPr: RawPrView): RawReview[] {
+function laneMarkerReviews(rawPr: RawPrView): RawReview[] {
   return rawPr.reviews && rawPr.reviews.length > 0 ? rawPr.reviews : rawPr.latestReviews ?? [];
 }
 
@@ -1045,7 +1045,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   return items;
 }
 
-function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
+function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; laneReviews: RawReview[]; unavailable: string[]; trustedMarkerAuthor: string | null }): JsonObject {
   const localReviews = raw.comments.flatMap(comment => {
     const metadata = parseLocalReviewMetadata(comment.body);
     if (!metadata) return [];
@@ -1092,7 +1092,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
       url: comment.url ? redact(comment.url) : null,
     }];
   });
-  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.latestReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid);
+  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid);
   return {
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
@@ -1223,7 +1223,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     try {
       const raw = parseGhJson<RawPrView>(result.stdout, 'gh pr view current branch', isRawPrView);
       const pr = normalizePr(raw);
-      return { item: this.reviewItem(raw, [], [], [], [], [], [], null, []), pr, warning: null };
+      return { item: this.reviewItem(raw, [], [], [], [], [], [], [], null, []), pr, warning: null };
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error);
       return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${redact(detail)}` };
@@ -1274,10 +1274,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     let trustedMarkerAuthor: string | null = null;
     try { trustedMarkerAuthor = await this.currentLogin(); } catch { trustedMarkerAuthor = null; }
     const comments = rawPr.comments ?? [];
-    const latestReviews = pullRequestReviews(rawPr);
+    const latestReviews = rawPr.latestReviews ?? [];
+    const laneReviews = laneMarkerReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     return {
-      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics),
+      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, laneReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics),
       pr: normalizePr(rawPr),
       ciDiagnostics,
       closingIssueNumbers: closingIssueNumbers(rawPr),
@@ -1336,7 +1337,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       .filter((comment): comment is JsonObject => comment !== null);
     const { body, marker, runId, bodyFindingCount, inlineCommentCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
     let comments: RawComment[];
-    let latestReviews: RawReview[];
+    let laneReviews: RawReview[];
     let trustedMarkerAuthor: string;
     let repositoryName: string;
     try {
@@ -1344,7 +1345,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       repositoryName = repository.nameWithOwner;
       comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
       const rawPr = await this.getPullRequest(input.prNumber);
-      latestReviews = pullRequestReviews(rawPr);
+      laneReviews = laneMarkerReviews(rawPr);
       trustedMarkerAuthor = await this.currentLogin();
     } catch (error: unknown) {
       return localReviewPublishResult({
@@ -1372,7 +1373,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       mergeability: 'unknown',
       feedback: [],
       checks: [],
-      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, latestReviews, trustedMarkerAuthor, input.headSha) },
+      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, laneReviews, trustedMarkerAuthor, input.headSha) },
     });
     if (matchingCurrentLaneReview(trustedItem, input, runId)) {
       return localReviewPublishResult({ status: 'skipped', runId, marker, body: null, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
@@ -1668,7 +1669,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     }
   }
 
-  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[]): ReviewItem {
+  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], laneReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[]): ReviewItem {
     const pr = normalizePr(rawPr);
     const source = normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(rawPr.number), url: pr.url });
     return normalizeReviewItem({
@@ -1683,7 +1684,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       mergeability: mapMergeability(rawPr),
       feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid }),
       checks: checks(rawPr.statusCheckRollup, ciDiagnostics),
-      trustedMetadata: { ...metadata({ pr, reviewRequests, comments, latestReviews, unavailable, trustedMarkerAuthor }), ciDiagnostics: ciDiagnostics.map(ciDiagnosticMetadata) },
+      trustedMetadata: { ...metadata({ pr, reviewRequests, comments, latestReviews, laneReviews, unavailable, trustedMarkerAuthor }), ciDiagnostics: ciDiagnostics.map(ciDiagnosticMetadata) },
       source,
     });
   }

@@ -128,7 +128,7 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
-function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline } = {}) {
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount } = {}) {
   const metadata = {
     version: 1,
     head,
@@ -142,6 +142,8 @@ function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendat
     status,
     summary,
     ...(inline ? { inline } : {}),
+    ...(typeof inlineCommentCount === 'number' ? { inlineCommentCount } : {}),
+    ...(typeof bodyFindingCount === 'number' ? { bodyFindingCount } : {}),
   };
   return {
     author: { login: 'executor' },
@@ -3011,6 +3013,38 @@ describe('PR body service', () => {
     assert.equal(result.feedback[0].source, 'review');
     assert.match(result.feedback[0].summary, /Please fix the parser/);
     assert.doesNotMatch(JSON.stringify(result), /SECRET|internal state/);
+  });
+
+  it('emits trusted lane review counts and URLs in PR view JSON without replaying stale general review feedback', async () => {
+    const laneBody = laneReviewComment({
+      recommendation: 'approve',
+      status: 'passed',
+      runId: 'lane-review-api',
+      summary: 'lane passed',
+      inline: 'review-api',
+      inlineCommentCount: 2,
+      bodyFindingCount: 1,
+    }).body;
+    const pr = basePr({
+      reviewDecision: 'UNKNOWN',
+      mergeStateStatus: 'CLEAN',
+      reviews: [
+        { id: 1, author: { login: 'reviewer' }, state: 'COMMENTED', body: 'Old stale general note.', url: 'https://github.com/example/repo/pull/12#pullrequestreview-1', commit: { oid: 'old-head' } },
+        { id: 2, author: { login: 'executor' }, state: 'COMMENTED', body: laneBody, url: 'https://github.com/example/repo/pull/12#pullrequestreview-2', commit: { oid: 'abc123' } },
+      ],
+      latestReviews: [],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.equal(result.feedback.length, 0);
+    assert.equal(result.laneReviews.length, 1);
+    assert.equal(result.laneReviews[0].lane, 'code-quality');
+    assert.equal(result.laneReviews[0].inline, 'review-api');
+    assert.equal(result.laneReviews[0].inlineCommentCount, 2);
+    assert.equal(result.laneReviews[0].bodyFindingCount, 1);
+    assert.equal(result.laneReviews[0].reviewUrl, 'https://github.com/example/repo/pull/12#pullrequestreview-2');
   });
 
   it('drafts issue-closing PR text with gate, UI audit, review, and readiness state', async () => {
