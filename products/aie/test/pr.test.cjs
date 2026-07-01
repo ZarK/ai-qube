@@ -1915,6 +1915,44 @@ describe('PR gate service', () => {
     assert.match(result.body ?? '', /Authorization: Bearer \[REDACTED\]/i);
   });
 
+  it('redacts and truncates provider-visible lane publish text without changing local evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const privateKey = '-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----';
+    const oversizedBlocker = `token=another-secret-value ${'Visible blocker detail. '.repeat(80)}final-visible-tail-marker`;
+    const evidence = localEvidence({ laneStatus: 'failed' });
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          summary: `Do not publish ${privateKey} api_key=plain-secret-value`,
+          blockers: [oversizedBlocker],
+          contextReviewed: [
+            { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+            { kind: 'issue-body', source: 'https://github.com/example/repo/issues/93', trust: 'untrusted-task-input', freshness: 'current' },
+            { kind: 'pr-body', source: 'https://github.com/example/repo/pull/12', trust: 'untrusted-task-input', freshness: 'current' },
+            { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+          ],
+          toolsUsed: ['codex'],
+        }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const lanePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json');
+    const before = readFileSync(lanePath, 'utf8');
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+    const body = result.publish.body ?? '';
+
+    assert.equal(result.publish.status, 'planned');
+    assert.doesNotMatch(body, /private-key-material|plain-secret-value|another-secret-value|final-visible-tail-marker/);
+    assert.match(body, /\[REDACTED PRIVATE KEY\]/);
+    assert.match(body, /api_key=\[REDACTED\]/);
+    assert.match(body, /token=\[REDACTED\]/);
+    assert.match(body, /truncated; full detail retained in local evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
+    assert.equal(readFileSync(lanePath, 'utf8'), before);
+    assert.match(before, /private-key-material|plain-secret-value|another-secret-value|final-visible-tail-marker/);
+  });
+
   it('records Codex local-host command evidence without trusting command self-attestation', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig();

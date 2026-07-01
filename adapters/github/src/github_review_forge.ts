@@ -423,7 +423,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput): { body: string; ma
     summary,
   };
   const marker = laneReviewMarker(metadata);
-  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
+  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${truncatePublishedFinding(item, input.evidencePath)}`);
   const body = [
     marker,
     '',
@@ -503,6 +503,7 @@ function localReviewSummary(comment: LocalReviewComment): string {
 
 function sanitizePublishedText(value: string): string {
   return redact(value)
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[REDACTED PRIVATE KEY]')
     .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, '[REDACTED]')
     .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, '[REDACTED]')
     .replace(/(authorization\s*:\s*bearer\s+)[^\s'"`]+/gi, '$1[REDACTED]')
@@ -510,6 +511,17 @@ function sanitizePublishedText(value: string): string {
     .replace(/\\\\[A-Za-z0-9._$-]+\\[^\r\n)<>]+/g, '[local-path]')
     .replace(/\b[A-Za-z]:[\\/][^\r\n)<>]+/g, '[local-path]')
     .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, '$1[local-path]');
+}
+
+const MAX_PUBLISHED_FINDING_LENGTH = 600;
+
+function truncatePublishedFinding(value: string, evidencePath: string | null): string {
+  const text = sanitizePublishedText(value);
+  if (text.length <= MAX_PUBLISHED_FINDING_LENGTH) return text;
+  const detail = evidencePath ? `full detail retained in local evidence: ${redact(evidencePath)}` : 'full detail retained in local evidence JSON';
+  const suffix = ` [truncated; ${detail}]`;
+  const limit = Math.max(0, MAX_PUBLISHED_FINDING_LENGTH - suffix.length);
+  return `${text.slice(0, limit).trimEnd()}${suffix}`;
 }
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
@@ -531,7 +543,7 @@ function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; 
     inline: 'unsupported',
   };
   const marker = localReviewMarker(metadata);
-  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${sanitizePublishedText(item)}`);
+  const findings = input.findings.length === 0 ? ['- None recorded.'] : input.findings.map(item => `- ${truncatePublishedFinding(item, input.evidencePath)}`);
   const issues = issueNumbers.length === 0 ? ['- No linked issue metadata was available.'] : issueNumbers.map(issue => `- issue #${issue}`);
   const body = [
     marker,
