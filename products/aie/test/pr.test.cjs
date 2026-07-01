@@ -1900,8 +1900,8 @@ describe('PR gate service', () => {
       recommendation: 'request-changes',
       host: 'codex',
       issueNumber: 93,
-      summary: 'api_key=plain-secret-value password: hunter2 Authorization: Bearer bearer-secret',
-      findings: ['AWS key AKIA1234567890ABCDEF and token=another-secret-value must not publish.'],
+      summary: 'api_key=plain-secret-value OPENAI_API_KEY=openai-secret password: hunter2 Authorization: Bearer bearer-secret',
+      findings: ['AWS key AKIA1234567890ABCDEF and GITHUB_TOKEN=github-secret DATABASE_PASSWORD=db-secret token=another-secret-value must not publish.'],
       evidencePath: '.qube/aie/reviews/93/12/abc123/security.json',
     };
     const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
@@ -1910,8 +1910,11 @@ describe('PR gate service', () => {
     const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
 
     assert.equal(result.status, 'planned');
-    assert.doesNotMatch(result.body ?? '', /plain-secret-value|hunter2|bearer-secret|AKIA1234567890ABCDEF|another-secret-value/);
+    assert.doesNotMatch(result.body ?? '', /plain-secret-value|openai-secret|hunter2|bearer-secret|AKIA1234567890ABCDEF|github-secret|db-secret|another-secret-value/);
     assert.match(result.body ?? '', /api_key=\[REDACTED\]/);
+    assert.match(result.body ?? '', /OPENAI_API_KEY=\[REDACTED\]/);
+    assert.match(result.body ?? '', /GITHUB_TOKEN=\[REDACTED\]/);
+    assert.match(result.body ?? '', /DATABASE_PASSWORD=\[REDACTED\]/);
     assert.match(result.body ?? '', /Authorization: Bearer \[REDACTED\]/i);
   });
 
@@ -1919,7 +1922,7 @@ describe('PR gate service', () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     const privateKey = '-----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----';
-    const oversizedBlocker = `token=another-secret-value ${'Visible blocker detail. '.repeat(80)}final-visible-tail-marker`;
+    const oversizedBlocker = `token=another-secret-value ${'Visible blocker detail. '.repeat(700)}final-visible-tail-marker`;
     const evidence = localEvidence({ laneStatus: 'failed' });
     evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
       ? {
@@ -1948,7 +1951,8 @@ describe('PR gate service', () => {
     assert.match(body, /\[REDACTED PRIVATE KEY\]/);
     assert.match(body, /api_key=\[REDACTED\]/);
     assert.match(body, /token=\[REDACTED\]/);
-    assert.match(body, /truncated; full detail retained in local evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
+    assert.match(body, /Visible blocker detail\. Visible blocker detail\./);
+    assert.match(body, /truncated because this single finding exceeded 12000 characters; source retained at \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
     assert.equal(readFileSync(lanePath, 'utf8'), before);
     assert.match(before, /private-key-material|plain-secret-value|another-secret-value|final-visible-tail-marker/);
   });
