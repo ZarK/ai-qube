@@ -48,7 +48,7 @@ import { GhExecutionError, parseGhJson, redact, runGh, type GhRunResult } from '
 export type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
 export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolveReviewAgent } from './github_review_agents.js';
 
-const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
+const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
@@ -513,6 +513,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
+    if (review.inline !== 'review-api') return false;
     return review.head === input.headSha
       && review.lane === input.lane
       && review.runId === runId
@@ -545,6 +546,10 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       url: comment.url ? redact(comment.url) : null,
     };
   });
+}
+
+function pullRequestReviews(rawPr: RawPrView): RawReview[] {
+  return rawPr.reviews && rawPr.reviews.length > 0 ? rawPr.reviews : rawPr.latestReviews ?? [];
 }
 
 function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
@@ -1256,7 +1261,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     let trustedMarkerAuthor: string | null = null;
     try { trustedMarkerAuthor = await this.currentLogin(); } catch { trustedMarkerAuthor = null; }
     const comments = rawPr.comments ?? [];
-    const latestReviews = rawPr.latestReviews ?? [];
+    const latestReviews = pullRequestReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     return {
       item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics),
@@ -1326,7 +1331,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       repositoryName = repository.nameWithOwner;
       comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
       const rawPr = await this.getPullRequest(input.prNumber);
-      latestReviews = rawPr.latestReviews ?? [];
+      latestReviews = pullRequestReviews(rawPr);
       trustedMarkerAuthor = await this.currentLogin();
     } catch (error: unknown) {
       return localReviewPublishResult({
@@ -1362,6 +1367,14 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     if (input.dryRun) {
       return localReviewPublishResult({ status: 'planned', runId, marker, body, publishKind: 'pull-request-review', inlineCommentCount, bodyFindingCount, nextAction: `Rerun \`aie pr review publish <pr> --lane ${input.lane}\` without --dry-run to publish provider-visible pull request review feedback.` });
     }
+    const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
+      const payloadPath = reviewPayloadPath(payload);
+      try {
+        return await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST', '--input', payloadPath], this.options);
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    };
     let result: GhRunResult;
     const payload = {
       commit_id: input.headSha,
@@ -1369,11 +1382,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       event: reviewEvent(input.recommendation),
       comments: inlineComments,
     };
-    const payloadPath = reviewPayloadPath(payload);
     try {
-      result = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST', '--input', payloadPath], this.options);
+      result = await submitReview(payload);
     } catch (error: unknown) {
-      cleanupReviewPayload(payloadPath);
       return localReviewPublishResult({
         status: 'failed',
         runId,
@@ -1386,8 +1397,36 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
       });
     }
-    cleanupReviewPayload(payloadPath);
     if (result.exitCode !== 0) {
+      const fallbackBody = laneReviewBody(input, allFindings, 0);
+      const fallbackPayload = {
+        commit_id: input.headSha,
+        body: fallbackBody.body,
+        event: 'COMMENT',
+        comments: [],
+      };
+      let fallbackResult: GhRunResult | null = null;
+      try {
+        fallbackResult = await submitReview(fallbackPayload);
+      } catch {
+        fallbackResult = null;
+      }
+      if (fallbackResult?.exitCode === 0) {
+        const reviewUrl = publishedReviewUrl(fallbackResult);
+        return localReviewPublishResult({
+          status: 'published',
+          runId: fallbackBody.runId,
+          marker: fallbackBody.marker,
+          body: fallbackBody.body,
+          url: reviewUrl,
+          reviewUrl,
+          publishKind: 'pull-request-review',
+          inlineCommentCount: fallbackBody.inlineCommentCount,
+          bodyFindingCount: fallbackBody.bodyFindingCount,
+          inlineCommentUrls: [],
+          nextAction: `Provider-visible body-only pull request review for ${input.lane} was published after GitHub rejected inline or recommendation-specific review submission; rerun PR view/gate to inspect provider state.`,
+        });
+      }
       return localReviewPublishResult({
         status: 'failed',
         runId,
@@ -1396,7 +1435,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         publishKind: 'pull-request-review',
         inlineCommentCount,
         bodyFindingCount,
-        failure: redact(result.stderr || result.stdout || 'gh api pull request review failed'),
+        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}${fallbackResult ? `; fallback failed: ${fallbackResult.stderr || fallbackResult.stdout || 'gh api body-only pull request review failed'}` : '; fallback failed before GitHub returned a result'}`),
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
       });
     }

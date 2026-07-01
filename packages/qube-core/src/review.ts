@@ -631,7 +631,7 @@ function hasStaleRemoteReview(reviews: ReturnType<typeof trustedLatestReviews>, 
 }
 
 function laneReviewRecord(item: ReviewItem, laneId: string, headSha: string): { [key: string]: JsonValue } | null {
-  const laneReviews = trustedLaneReviews(item).filter(record => record.lane === laneId && record.head === headSha && record.stale !== true);
+  const laneReviews = trustedLaneReviews(item).filter(record => record.lane === laneId && record.head === headSha && record.stale !== true && record.inline === "review-api");
   const laneReview = laneReviews.at(-1);
   if (laneReview) return laneReview;
   const aggregate = trustedLocalReviews(item).find(record => laneReceivedFromAggregate(record, laneId, headSha));

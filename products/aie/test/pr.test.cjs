@@ -16,11 +16,17 @@ try {
 } catch {
   ({ createGitHubReviewForgeProvider } = require('../../../adapters/github/dist/index.js'));
 }
+let observeReviewParticipants;
+try {
+  ({ observeReviewParticipants } = require('@tjalve/qube-core'));
+} catch {
+  ({ observeReviewParticipants } = require('../../../packages/qube-core/dist/index.js'));
+}
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService } = require('../dist/app/pr_review_publish.js');
 
-const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,latestReviews,statusCheckRollup,closingIssuesReferences';
+const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-pr-gate-'));
@@ -492,6 +498,7 @@ function makePrExec(options = {}) {
   const checkSuites = options.checkSuites || [];
   const workflowRuns = options.workflowRuns || [];
   const workflowRunsById = options.workflowRunsById || {};
+  const reviewApiResults = [...(options.reviewApiResults || [])];
   let currentPr = prViews[0];
   const threads = options.threads || [];
   const exec = async (args) => {
@@ -526,14 +533,21 @@ function makePrExec(options = {}) {
       const inputIndex = args.indexOf('--input');
       const payloadPath = inputIndex >= 0 ? args[inputIndex + 1] : null;
       const payload = payloadPath ? JSON.parse(readFileSync(payloadPath, 'utf8')) : {};
+      const queuedResult = reviewApiResults.shift();
+      if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
       const state = payload.event === 'APPROVE' ? 'APPROVED' : payload.event === 'REQUEST_CHANGES' ? 'CHANGES_REQUESTED' : 'COMMENTED';
       const url = 'https://github.com/example/repo/pull/12#pullrequestreview-123';
       if (options.reviewVisible !== false) {
+        const review = { id: 123, author: { login: options.reviewAuthor ?? 'executor' }, body: payload.body, state, url, commit: { oid: currentPr.headRefOid || 'abc123' } };
         currentPr = {
           ...currentPr,
+          reviews: [
+            ...(currentPr.reviews || []),
+            review,
+          ],
           latestReviews: [
             ...(currentPr.latestReviews || []),
-            { id: 123, author: { login: options.reviewAuthor ?? 'executor' }, body: payload.body, state, url, commit: { oid: currentPr.headRefOid || 'abc123' } },
+            review,
           ],
         };
         if (prViews.length > 0) prViews[0] = currentPr;
@@ -868,7 +882,7 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
     assert.ok(calls.some(args => args.join(' ') === `pr view 12 --json ${prViewFields}`));
     assert.equal(prViewFields.split(',').includes('comments'), false);
-    assert.equal(prViewFields.split(',').includes('reviews'), false);
+    assert.equal(prViewFields.split(',').includes('reviews'), true);
   });
 
   it('omits non-actionable provider summaries from PR gate feedback', async () => {
@@ -1967,6 +1981,80 @@ describe('PR gate service', () => {
     assert.equal(laneMetadata.length, 1);
     assert.equal(laneMetadata[0].recommendation, 'approve');
     assert.equal(laneMetadata[0].summary, 'review api lane passed');
+  });
+
+  it('loads trusted lane feedback from the full pull request review list', async () => {
+    const codeQualityBody = laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'review-api-code', summary: 'code quality passed', inline: 'review-api' }).body;
+    const performanceBody = laneReviewComment({ lane: 'performance', recommendation: 'approve', status: 'passed', runId: 'review-api-performance', summary: 'performance passed', inline: 'review-api' }).body;
+    const provider = createGitHubReviewForgeProvider({
+      exec: makePrExec({
+        prViews: [cleanLocalPr({
+          reviews: [
+            { id: 456, author: { login: 'executor' }, body: codeQualityBody, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-456', commit: { oid: 'abc123' } },
+            { id: 457, author: { login: 'executor' }, body: performanceBody, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-457', commit: { oid: 'abc123' } },
+          ],
+          latestReviews: [
+            { id: 457, author: { login: 'executor' }, body: performanceBody, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-457', commit: { oid: 'abc123' } },
+          ],
+        })],
+      }).exec,
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const laneMetadata = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(laneMetadata.length, 2);
+    assert.deepEqual(laneMetadata.map(item => item.lane).sort(), ['code-quality', 'performance']);
+  });
+
+  it('does not satisfy host lanes from legacy issue-comment lane metadata', async () => {
+    const provider = createGitHubReviewForgeProvider({
+      exec: makePrExec({
+        prViews: [cleanLocalPr({
+          comments: [
+            laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'legacy-comment-run', summary: 'legacy comment lane passed', inline: 'issue-comment' }),
+          ],
+        })],
+      }).exec,
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const observations = observeReviewParticipants(snapshot.item, [{ id: 'lane:code-quality', handle: '@QUBEReview (code-quality)', kind: 'host-lane', transport: 'host-lane', externalService: false, laneId: 'code-quality' }], 'abc123');
+
+    assert.equal(snapshot.item.trustedMetadata.trustedLaneReviews[0].inline, 'issue-comment');
+    assert.equal(observations[0].received, false);
+  });
+
+  it('falls back to a body-only pull request review when GitHub rejects inline review publish', async () => {
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'failed',
+      recommendation: 'request-changes',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review found blockers',
+      findings: [{ severity: 'blocking', message: 'Fix the changed export.', location: { path: 'src/review.ts', line: 2 } }],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      reviewApiResults: [{ exitCode: 1, stdout: '', stderr: 'HTTP 422 validation failed' }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.publishKind, 'pull-request-review');
+    assert.equal(result.inlineCommentCount, 0);
+    assert.equal(result.bodyFindingCount, 1);
+    assert.equal(reviewPosts.length, 2);
   });
 
   it('redacts common secrets from provider-visible lane review text', async () => {
