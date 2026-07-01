@@ -61,9 +61,10 @@ function hostProvenancePath(repoRoot: string, issueNumber: number, prNumber: num
   return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
 }
 
-export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string): string[] {
+export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string, publishCommand?: string): string[] {
   const primaryIssue = issueNumbers[0] ?? 0;
   const primaryEvidencePath = evidencePaths[0] ?? '';
+  const lanePublishCommand = publishCommand?.trim() || 'qube aie pr review publish <pr> --lane <lane> --issue <issue>';
   return [
     `Run local review lane ${lane}.`,
     `Issue: #${primaryIssue}.`,
@@ -78,7 +79,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Writing the requested evidence and host-provenance files is allowed; do not edit source, tests, docs, config, package metadata, PR body, or issue content from inside the reviewer lane.',
-    'Return evidence for this lane only; publish provider-visible lane review with `qube aie pr review publish <pr> --lane <lane> --issue <issue>` (or `aie pr review publish` in this repository) after writing lane evidence.',
+    `Return evidence for this lane only; publish provider-visible lane review with \`${lanePublishCommand}\` after writing lane evidence.`,
     'Return evidence for this lane only; the main agent waits for all lane reviews on the pull request before addressing feedback.',
     ...extraContext,
   ];
