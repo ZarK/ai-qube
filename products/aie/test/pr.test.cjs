@@ -2123,6 +2123,49 @@ describe('PR gate service', () => {
     assert.equal(fixture.reviewPayloads[1].comments.length, 0);
   });
 
+  it('falls back to a comment pull request review when GitHub rejects the requested review event', async () => {
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review found no blockers',
+      findings: [{ severity: 'advisory', message: 'No blocking findings.', location: { path: 'src/review.ts', line: 2 } }],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      reviewApiResults: [
+        { exitCode: 1, stdout: '', stderr: 'HTTP 422 validation failed' },
+        { exitCode: 1, stdout: '', stderr: 'HTTP 422 cannot approve own pull request' },
+      ],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.publishKind, 'pull-request-review');
+    assert.equal(result.inlineCommentCount, 0);
+    assert.equal(result.bodyFindingCount, 1);
+    assert.match(result.nextAction, /COMMENT pull request review/);
+    assert.equal(reviewPosts.length, 3);
+    assert.equal(fixture.reviewPayloads[0].event, 'APPROVE');
+    assert.equal(fixture.reviewPayloads[0].comments.length, 1);
+    assert.equal(fixture.reviewPayloads[1].event, 'APPROVE');
+    assert.equal(fixture.reviewPayloads[1].comments.length, 0);
+    assert.equal(fixture.reviewPayloads[2].event, 'COMMENT');
+    assert.equal(fixture.reviewPayloads[2].comments.length, 0);
+    assert.match(fixture.reviewPayloads[2].body, /"recommendation":"approve"/);
+  });
+
   it('publishes source-side findings as left-side inline review comments', async () => {
     const input = {
       dryRun: false,
