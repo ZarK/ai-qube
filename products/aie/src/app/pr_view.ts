@@ -1,5 +1,5 @@
 import type { GateResult } from '../core/gate_evidence.js';
-import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
+import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeCiDiagnostic, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
 import { parsePrNumber } from './pr_gate.js';
@@ -33,6 +33,26 @@ export interface PrViewFeedback {
   url?: string;
 }
 
+export interface PrViewMergeBlock {
+  reason: ReviewMergeBlock['reason'];
+  summary: string;
+  url?: string;
+}
+
+export interface PrViewThread {
+  providerId: string;
+  id: string;
+  resolved: boolean;
+  outdated: boolean;
+  viewerCanResolve: boolean;
+  path?: string;
+  line?: number;
+  originalLine?: number;
+  author: string;
+  summary: string;
+  url?: string;
+}
+
 export interface PrViewCheck {
   key: string;
   name: string;
@@ -57,6 +77,18 @@ export interface PrViewCheckDiagnostic {
   nextAction: string;
 }
 
+export interface PrViewLaneReview {
+  lane: string;
+  recommendation: string;
+  status: string;
+  inline: string;
+  inlineCommentCount: number;
+  bodyFindingCount: number | null;
+  reviewUrl?: string;
+  stale: boolean;
+  author?: string;
+}
+
 export interface PrViewResult {
   ok: true;
   command: 'pr view';
@@ -65,6 +97,9 @@ export interface PrViewResult {
   reviewDecision: ReviewItem['reviewDecision'];
   mergeability: ReviewItem['mergeability'];
   feedback: PrViewFeedback[];
+  mergeBlockers: PrViewMergeBlock[];
+  reviewThreads: PrViewThread[];
+  laneReviews: PrViewLaneReview[];
   checks: PrViewCheck[];
   ciDiagnostics: PrViewCheckDiagnostic[];
   counts: {
@@ -72,6 +107,7 @@ export interface PrViewResult {
     reviews: number;
     reviewComments: number;
     unresolvedThreads: number;
+    reviewThreads: number;
     checks: number;
   };
   unavailable: string[];
@@ -111,8 +147,65 @@ function prFeedback(item: ReviewItem): PrViewFeedback[] {
     }));
 }
 
+function prMergeBlockers(item: ReviewItem): PrViewMergeBlock[] {
+  return item.mergeBlockers.map(blocker => ({
+    reason: blocker.reason,
+    summary: blocker.summary,
+    url: blocker.url ?? undefined,
+  }));
+}
+
+function prReviewThreads(item: ReviewItem): PrViewThread[] {
+  return item.conversations.map((thread: ReviewConversation) => ({
+    providerId: thread.providerId,
+    id: thread.id,
+    resolved: thread.resolved,
+    outdated: thread.outdated,
+    viewerCanResolve: thread.viewerCanResolve,
+    path: thread.path ?? undefined,
+    line: thread.line ?? undefined,
+    originalLine: thread.originalLine ?? undefined,
+    author: thread.author,
+    summary: thread.summary,
+    url: thread.url ?? undefined,
+  }));
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' && value.trim() !== '' ? value : undefined;
+}
+
+function numberValue(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function prLaneReviews(item: ReviewItem): PrViewLaneReview[] {
+  const value = item.trustedMetadata.trustedLaneReviews;
+  if (!Array.isArray(value)) return [];
+  return value.flatMap(record => {
+    if (!isRecord(record)) return [];
+    const lane = stringValue(record.lane);
+    const recommendation = stringValue(record.recommendation);
+    const status = stringValue(record.status);
+    const inline = stringValue(record.inline);
+    if (!lane || !recommendation || !status || !inline) return [];
+    const bodyFindingCount = numberValue(record.bodyFindingCount);
+    return [{
+      lane,
+      recommendation,
+      status,
+      inline,
+      inlineCommentCount: numberValue(record.inlineCommentCount) ?? 0,
+      bodyFindingCount: bodyFindingCount ?? null,
+      reviewUrl: stringValue(record.url),
+      stale: record.stale === true,
+      author: stringValue(record.author),
+    }];
+  });
 }
 
 function stringArray(value: unknown): string[] {
@@ -171,8 +264,9 @@ function actionableCiDiagnostic(checks: PrViewCheck[]): PrViewCheckDiagnostic | 
   return checks.map(check => check.diagnostic).find((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined && ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
-function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability' | 'unavailable' | 'checks'>): string {
+function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability' | 'unavailable' | 'checks' | 'mergeBlockers'>): string {
   if (result.unavailable.length > 0) return 'Some PR review state was unavailable. Fix permissions or connectivity, then rerun `aie pr view <pr> --json` or `aie pr gate <pr>`.';
+  if (result.mergeBlockers.some(blocker => blocker.reason === 'unresolved-review-thread')) return 'Address unresolved code conversation feedback, then run `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` and rerun `aie pr gate <pr>`.';
   const ciDiagnostic = actionableCiDiagnostic(result.checks);
   if (ciDiagnostic) return ciDiagnostic.nextAction;
   if (result.reviewDecision === 'changes-requested') return 'Address requested PR feedback, rerun affected gates, push follow-up commits, then run `aie pr gate <pr>`.';
@@ -185,12 +279,16 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
   const provider = await createReviewForgeProvider('github', { exec: options.exec, cwd: options.repoRoot });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
+  const mergeBlockers = prMergeBlockers(snapshot.item);
+  const reviewThreads = prReviewThreads(snapshot.item);
+  const laneReviews = prLaneReviews(snapshot.item);
   const checks = prChecks(snapshot.item);
   const partial = {
     reviewDecision: snapshot.item.reviewDecision,
     mergeability: snapshot.item.mergeability,
     unavailable: snapshot.unavailable,
     checks,
+    mergeBlockers,
   };
   return {
     ok: true,
@@ -200,6 +298,9 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
     reviewDecision: snapshot.item.reviewDecision,
     mergeability: snapshot.item.mergeability,
     feedback,
+    mergeBlockers,
+    reviewThreads,
+    laneReviews,
     checks,
     ciDiagnostics: checks.map(check => check.diagnostic).filter((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined),
     counts: {
@@ -207,6 +308,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
       reviews: snapshot.reviewsCount,
       reviewComments: snapshot.reviewCommentsCount,
       unresolvedThreads: snapshot.unresolvedThreadsCount,
+      reviewThreads: reviewThreads.length,
       checks: checks.length,
     },
     unavailable: snapshot.unavailable,
@@ -221,9 +323,21 @@ export function formatPrView(result: PrViewResult): string {
   lines.push(`Head: ${result.pr.headSha}`);
   lines.push(`State: ${result.state}; review=${result.reviewDecision}; mergeability=${result.mergeability}; draft=${result.pr.draft ? 'yes' : 'no'}.`);
   lines.push(`Feedback counts: comments=${result.counts.comments}, reviews=${result.counts.reviews}, reviewComments=${result.counts.reviewComments}, unresolvedThreads=${result.counts.unresolvedThreads}.`);
+  if (result.mergeBlockers.length > 0) {
+    lines.push('Merge blockers:');
+    for (const blocker of result.mergeBlockers) lines.push(`- ${blocker.reason}: ${blocker.summary}${blocker.url ? ` (${blocker.url})` : ''}`);
+  }
+  if (result.reviewThreads.length > 0) {
+    lines.push('Review threads:');
+    for (const thread of result.reviewThreads) lines.push(`- ${thread.id}: resolved=${thread.resolved ? 'yes' : 'no'}; outdated=${thread.outdated ? 'yes' : 'no'}; canResolve=${thread.viewerCanResolve ? 'yes' : 'no'}; ${thread.path ?? 'unknown path'}${thread.line ? `:${thread.line}` : ''}; ${thread.summary}${thread.url ? ` (${thread.url})` : ''}`);
+  }
   if (result.feedback.length > 0) {
     lines.push('Feedback requiring inspection:');
     for (const item of result.feedback) lines.push(`- ${item.source} from ${item.author}${item.state ? ` (${item.state})` : ''}: ${item.summary}`);
+  }
+  if (result.laneReviews.length > 0) {
+    lines.push('Lane reviews:');
+    for (const item of result.laneReviews) lines.push(`- ${item.lane}: ${item.recommendation}; inline=${item.inline}; inlineComments=${item.inlineCommentCount}; bodyFindings=${item.bodyFindingCount ?? 'unknown'}${item.reviewUrl ? `; ${item.reviewUrl}` : ''}`);
   }
   if (result.checks.length > 0) {
     lines.push('Checks:');

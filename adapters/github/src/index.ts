@@ -10,6 +10,7 @@ export type GitHubOperation =
   | "read-ci-status"
   | "diagnose-ci-status"
   | "read-review-threads"
+  | "resolve-review-threads"
   | "run-aiq-github-action"
   | "trigger-workflow-run"
   | "approve-pull-request"
@@ -121,8 +122,15 @@ const SUPPORTED_OPERATIONS = Object.freeze([
     id: "read-review-threads",
     support: "supported",
     owner: "@tjalve/qube-adapter-github",
-    summary: "Read unresolved GitHub pull request review threads as untrusted feedback inputs.",
-    nextAction: "Use qube aie pr gate <pr> and address unresolved review threads before merge.",
+    summary: "Read unresolved GitHub pull request review threads, anchors, ids, and resolve capability as untrusted feedback inputs.",
+    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> and address unresolved review threads before merge.",
+  }),
+  freezeOperation({
+    id: "resolve-review-threads",
+    support: "supported",
+    owner: "@tjalve/qube-adapter-github",
+    summary: "Resolve addressed GitHub pull request review threads through the provider GraphQL mutation.",
+    nextAction: "Use qube aie pr thread resolve <pr> --thread <id> after the review feedback has been addressed.",
   }),
 ]);
 

@@ -25,6 +25,52 @@ export interface ReviewFeedback {
   readonly trust: FeedbackTrust;
 }
 
+export type ReviewMergeBlockReason =
+  | "unresolved-review-thread"
+  | "review-required"
+  | "changes-requested"
+  | "checks-pending"
+  | "checks-failed"
+  | "draft"
+  | "merge-state-blocked"
+  | "conflict"
+  | "unknown";
+
+export interface ReviewMergeBlock {
+  readonly reason: ReviewMergeBlockReason;
+  readonly summary: string;
+  readonly url: string | null;
+}
+
+export interface ReviewConversation {
+  readonly providerId: string;
+  readonly id: string;
+  readonly resolved: boolean;
+  readonly outdated: boolean;
+  readonly viewerCanResolve: boolean;
+  readonly path: string | null;
+  readonly line: number | null;
+  readonly originalLine: number | null;
+  readonly author: string;
+  readonly summary: string;
+  readonly url: string | null;
+}
+
+export interface ResolveReviewThreadInput {
+  readonly prNumber: number;
+  readonly threadIds: readonly string[];
+  readonly dryRun: boolean;
+}
+
+export interface ResolveReviewThreadResult {
+  readonly status: "planned" | "resolved" | "skipped" | "failed";
+  readonly prNumber: number;
+  readonly resolvedThreadIds: readonly string[];
+  readonly skippedThreadIds: readonly string[];
+  readonly failedThreadIds: readonly string[];
+  readonly nextAction: string;
+}
+
 export interface ReviewItem {
   readonly key: ReviewItemKey;
   readonly displayId: string;
@@ -37,6 +83,8 @@ export interface ReviewItem {
   readonly reviewDecision: ReviewDecision;
   readonly mergeability: Mergeability;
   readonly feedback: readonly ReviewFeedback[];
+  readonly mergeBlockers: readonly ReviewMergeBlock[];
+  readonly conversations: readonly ReviewConversation[];
   readonly checks: readonly GateEvidence[];
   readonly trustedMetadata: JsonObject;
   readonly source: ProviderSource;
@@ -63,10 +111,36 @@ export function normalizeReviewFeedback(
   };
 }
 
+function normalizeReviewMergeBlock(input: ReviewMergeBlock): ReviewMergeBlock {
+  return {
+    reason: input.reason,
+    summary: nonEmpty(input.summary, "mergeBlock.summary"),
+    url: input.url,
+  };
+}
+
+function normalizeReviewConversation(input: ReviewConversation): ReviewConversation {
+  return {
+    providerId: nonEmpty(input.providerId, "conversation.providerId"),
+    id: nonEmpty(input.id, "conversation.id"),
+    resolved: input.resolved,
+    outdated: input.outdated,
+    viewerCanResolve: input.viewerCanResolve,
+    path: input.path,
+    line: input.line,
+    originalLine: input.originalLine,
+    author: nonEmpty(input.author, "conversation.author"),
+    summary: nonEmpty(input.summary, "conversation.summary"),
+    url: input.url,
+  };
+}
+
 export function normalizeReviewItem(
-  input: Omit<ReviewItem, "linkedWorkItems" | "feedback" | "checks" | "trustedMetadata"> & {
+  input: Omit<ReviewItem, "linkedWorkItems" | "feedback" | "mergeBlockers" | "conversations" | "checks" | "trustedMetadata"> & {
     readonly linkedWorkItems?: readonly WorkItemKey[];
     readonly feedback?: ReadonlyArray<Omit<ReviewFeedback, "trust"> & { trust?: FeedbackTrust }>;
+    readonly mergeBlockers?: readonly ReviewMergeBlock[];
+    readonly conversations?: readonly ReviewConversation[];
     readonly checks?: readonly GateEvidence[];
     readonly trustedMetadata?: JsonObject;
   },
@@ -80,6 +154,8 @@ export function normalizeReviewItem(
     targetRef: nonEmpty(input.targetRef, "targetRef"),
     linkedWorkItems: uniqueWorkItemKeys(input.linkedWorkItems ?? []),
     feedback: (input.feedback ?? []).map(normalizeReviewFeedback),
+    mergeBlockers: (input.mergeBlockers ?? []).map(normalizeReviewMergeBlock),
+    conversations: (input.conversations ?? []).map(normalizeReviewConversation),
     checks: (input.checks ?? []).map(normalizeGateEvidence),
     trustedMetadata: input.trustedMetadata ?? {},
   };

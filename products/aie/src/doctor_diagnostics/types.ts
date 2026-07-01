@@ -267,6 +267,12 @@ export interface GateReadinessDiagnostics {
         threshold: number;
         nextAction: string | null;
       };
+      githubReviewAuth: {
+        readiness: DoctorReadinessStatus;
+        authenticated: boolean;
+        scopes: string[] | null;
+        nextAction: string | null;
+      };
     };
     nextActions: string[];
   };

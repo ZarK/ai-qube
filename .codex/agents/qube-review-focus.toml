@@ -14,7 +14,7 @@ Inspect the real repository state, linked issue requirements, PR diff, tests, CI
 
 While a review session lock exists, do not run git restore, git checkout, git reset, or other commands that revert another agent's work in the shared checkout. Do not run broad repository test suites unless the lane prompt requires a narrowly scoped verification command.
 
-Provider-visible pull request comments are the human audit trail for merge guidance. Local JSON under .qube/aie/reviews/ is optional audit evidence for the main agent to publish through pr gate.
+Provider-visible pull request reviews and comments are the human audit trail for merge guidance. Local JSON under .qube/aie/reviews/ is optional audit evidence for the main agent to publish through pr gate.
 
 Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash when available, and this subagent task/session/thread id when Codex exposes one.
 

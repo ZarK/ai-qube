@@ -16,7 +16,7 @@ import {
   type ReviewParticipantObservation,
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
-import type { ReviewFeedback, ReviewItem } from '../core/review_item.js';
+import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
@@ -77,6 +77,26 @@ export interface PrGateFeedback {
   url?: string;
 }
 
+export interface PrGateMergeBlock {
+  reason: ReviewMergeBlock['reason'];
+  summary: string;
+  url?: string;
+}
+
+export interface PrGateConversation {
+  providerId: string;
+  id: string;
+  resolved: boolean;
+  outdated: boolean;
+  viewerCanResolve: boolean;
+  path?: string;
+  line?: number;
+  originalLine?: number;
+  author: string;
+  summary: string;
+  url?: string;
+}
+
 export interface PrGatePullRequest {
   number: number;
   title: string;
@@ -119,6 +139,8 @@ export interface PrGateResult {
   reviewers: PrGateReviewer[];
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
+  mergeBlockers: PrGateMergeBlock[];
+  conversations: PrGateConversation[];
   checkDiagnostics: PrGateCheckDiagnostic[];
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
@@ -235,6 +257,30 @@ function prFeedback(item: ReviewItem): PrGateFeedback[] {
       summary: entry.summary,
       url: entry.url ?? undefined,
     }));
+}
+
+function prMergeBlockers(item: ReviewItem): PrGateMergeBlock[] {
+  return item.mergeBlockers.map(blocker => ({
+    reason: blocker.reason,
+    summary: blocker.summary,
+    url: blocker.url ?? undefined,
+  }));
+}
+
+function prConversations(item: ReviewItem): PrGateConversation[] {
+  return item.conversations.map((thread: ReviewConversation) => ({
+    providerId: thread.providerId,
+    id: thread.id,
+    resolved: thread.resolved,
+    outdated: thread.outdated,
+    viewerCanResolve: thread.viewerCanResolve,
+    path: thread.path ?? undefined,
+    line: thread.line ?? undefined,
+    originalLine: thread.originalLine ?? undefined,
+    author: thread.author,
+    summary: thread.summary,
+    url: thread.url ?? undefined,
+  }));
 }
 
 function isQubeLocalReviewFeedback(item: PrGateFeedback): boolean {
@@ -360,7 +406,7 @@ function actionableCiDiagnostic(checkDiagnostics: PrGateCheckDiagnostic[]): PrGa
   return checkDiagnostics.find(diagnostic => ['missing-current-head-run', 'stale-old-head-run', 'failed-current-head-run', 'skipped-current-head-run', 'pending-current-head-run'].includes(diagnostic.status));
 }
 
-function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[], participantRollup: ReviewParticipantRollup | null): string {
+function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: boolean, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], localReview: LocalReviewGate, feedback: PrGateFeedback[], mergeBlockers: PrGateMergeBlock[], participantRollup: ReviewParticipantRollup | null): string {
   if (status === 'unavailable') return 'Some PR review state or local review runner availability state was unavailable. Inspect the unavailable list, fix permissions, connectivity, or runner output, then rerun `aie pr gate`.';
   if (localReview.required && localReview.status !== 'passed' && status !== 'complete') {
     const feedbackAction = hasActionableFeedback(feedback) ? ' Also inspect and address provider review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
@@ -377,6 +423,7 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   }
   if (status === 'inconclusive') return localReview.nextAction;
   if (hasUncheckedIssueChecklist(issueChecklists)) return 'Verify each unchecked linked GitHub issue criterion with `aie checklist verify <issue> --index <n> --prompt`, then rerun with criterion evidence and rerun `aie pr gate`.';
+  if (mergeBlockers.some(blocker => blocker.reason === 'unresolved-review-thread')) return 'Address unresolved code conversation feedback, then run `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` and rerun `aie pr gate <pr>`.';
   if (status === 'failed') return 'Inspect and address review feedback, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.';
   const ciDiagnostic = actionableCiDiagnostic(checkDiagnostics);
   if (ciDiagnostic) return ciDiagnostic.nextAction;
@@ -759,6 +806,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
   const feedback = prFeedback(finalSnapshot.item);
+  const mergeBlockers = prMergeBlockers(finalSnapshot.item);
+  const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
@@ -776,6 +825,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     reviewers,
     actions,
     feedback,
+    mergeBlockers,
+    conversations,
     checkDiagnostics,
     localReviewRunner,
     localReview,
@@ -794,7 +845,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, reviewParticipantRollup),
+    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup),
   };
 }
 
@@ -810,6 +861,14 @@ export function formatPrGate(result: PrGateResult): string {
   lines.push('Actions:');
   for (const action of result.actions) lines.push(`- ${action.status}: ${action.description}`);
   lines.push(`Feedback counts: comments=${result.counts.comments}, reviews=${result.counts.reviews}, reviewComments=${result.counts.reviewComments}, unresolvedThreads=${result.counts.unresolvedThreads}.`);
+  if (result.mergeBlockers.length > 0) {
+    lines.push('Merge blockers:');
+    for (const blocker of result.mergeBlockers) lines.push(`- ${blocker.reason}: ${blocker.summary}${blocker.url ? ` (${blocker.url})` : ''}`);
+  }
+  if (result.conversations.length > 0) {
+    lines.push('Code conversations:');
+    for (const conversation of result.conversations) lines.push(`- ${conversation.id}: resolved=${conversation.resolved ? 'yes' : 'no'}; outdated=${conversation.outdated ? 'yes' : 'no'}; canResolve=${conversation.viewerCanResolve ? 'yes' : 'no'}; ${conversation.path ?? 'unknown path'}${conversation.line ? `:${conversation.line}` : ''}; ${conversation.summary}${conversation.url ? ` (${conversation.url})` : ''}`);
+  }
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
   for (const lane of result.localReviewRunner.lanes) {
     lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; evidence=${lane.evidencePath}`);

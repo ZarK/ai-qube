@@ -4,6 +4,7 @@ import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_ver
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
 import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
+import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
@@ -332,6 +333,52 @@ async function handleConfigCommand(context: Parameters<RuntimeCommandHandler>[0]
   return handlePrGate(context);
 }
 
+async function handlePrThreadResolve(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  if (isHelpToken(pr)) return usageResult(context, 'pr thread resolve', 'aie pr thread resolve <pr> (--thread <id>|--all) [--dry-run] [--json]', [
+    'Usage: aie pr thread resolve <pr> (--thread <id>|--all) [--dry-run] [--json]',
+    '',
+    'Resolve addressed GitHub pull request review conversation threads so provider merge blockers can clear.',
+    'Use `aie pr view <pr> --json` to inspect reviewThreads ids before resolving selected feedback.',
+    'Examples:',
+    ...commandExamples('pr thread resolve').map(example => `  ${example}`),
+  ]);
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie pr thread resolve 12 --all --dry-run\` or \`aie pr thread resolve --help\`.`;
+    return commandFailure(context, { ok: false, command: 'pr thread resolve', error: message }, message);
+  }
+  if (prNumber === null) {
+    const message = 'Failed to run `aie pr thread resolve`: missing pull request number. Likely cause: no PR argument was provided. Next action: run `aie pr thread resolve 12 --all --dry-run` or `aie pr thread resolve --help`.';
+    return commandFailure(context, { ok: false, command: 'pr thread resolve', error: message, usage: 'aie pr thread resolve <pr> (--thread <id>|--all) [--dry-run] [--json]', examples: commandExamples('pr thread resolve') }, message);
+  }
+  const threadIds = stringListFlag(context, 'thread') ?? [];
+  const all = readBooleanFlag(context, 'all');
+  if (!all && threadIds.length === 0) {
+    const message = 'Failed to run `aie pr thread resolve`: pass --thread <id> at least once or use --all.';
+    return commandFailure(context, { ok: false, command: 'pr thread resolve', pr: prNumber, error: message }, message);
+  }
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr thread resolve', loaded, 'Fix the selected Executor config, then resolve review threads again.');
+  try {
+    const result = await runPrThreadResolveService({
+      prNumber,
+      threadIds,
+      all,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      repoRoot: loaded.root,
+    });
+    return commandResult(context, result, formatPrThreadResolve(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to resolve review threads for #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication, review-thread ids, and repository permissions, then rerun with --dry-run.`;
+    return commandFailure(context, { ok: false, command: 'pr thread resolve', pr: prNumber, error: message }, message);
+  }
+}
+
 async function handleAuditUi(context: Parameters<RuntimeCommandHandler>[0]) {
   const issue = stringArg(context, 'issue');
   if (isHelpToken(issue)) return usageResult(context, 'audit ui', 'aie audit ui <issue> [--prepare] [--check] [--dry-run] [--json]', ['Usage: aie audit ui <issue> [--prepare] [--check] [--dry-run] [--json]', '', 'Plan and inspect a manual UI audit for a real running application.', 'Examples:', ...commandExamples('audit ui').map(example => `  ${example}`)]);
@@ -436,7 +483,8 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
     return usageResult(context, 'pr review publish', 'aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]', [
       'Usage: aie pr review publish <pr> --lane <lane> [--issue <n>] [--dry-run] [--json]',
       '',
-      'Publish one host-run lane review comment to the configured review provider for the current PR head.',
+      'Publish one host-run lane pull request review to the configured review provider for the current PR head.',
+      'Requires GitHub CLI authentication that can create pull request reviews for the repository.',
       'Examples:',
       '  aie pr review publish 12 --lane issue-compliance',
       '  aie pr review publish 12 --lane code-quality --json',
@@ -579,10 +627,11 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback to the provider.', 'PR helpers coordinate body drafting, configured reviewer requests, and review-state inspection; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,
+  'pr thread resolve': handlePrThreadResolve,
   'pr view': context => handleConfigCommand(context, 'pr view'),
   queue: async context => {
     const q = await computeQueue();

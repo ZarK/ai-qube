@@ -22,8 +22,9 @@ export function stringFlag(context: RuntimeCommandContext, name: string): string
 export function stringListFlag(context: RuntimeCommandContext, name: string): string[] | undefined {
   const value = context.flags[name];
   if (value === undefined) return undefined;
-  if (typeof value === 'string') return [value];
-  if (Array.isArray(value) && value.every(item => typeof item === 'string')) return value;
+  const split = (input: string): string[] => input.split(',').map(item => item.trim()).filter(item => item !== '');
+  if (typeof value === 'string') return split(value);
+  if (Array.isArray(value) && value.every(item => typeof item === 'string')) return value.flatMap(split);
   return undefined;
 }
 

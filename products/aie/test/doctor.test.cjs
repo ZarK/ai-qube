@@ -173,6 +173,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 42\nsize: 128\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo, read:org\n',
     });
 
     assert.equal(diagnostics.enabled, true);
@@ -181,6 +182,8 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.checks.dist.present, true);
     assert.equal(diagnostics.checks.dist.path, 'products/aie/dist/bin/run.js');
     assert.equal(diagnostics.checks.gitObjects.looseCount, 42);
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'ready');
+    assert.equal(diagnostics.checks.githubReviewAuth.authenticated, true);
     assert.deepEqual(diagnostics.nextActions, []);
   });
 
@@ -193,6 +196,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
     });
 
     assert.equal(diagnostics.readiness, 'missing');
@@ -214,6 +218,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 3, bavail: 1, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
@@ -232,12 +237,34 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'count: 50000\nsize: 100000\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
     });
 
     assert.equal(diagnostics.readiness, 'needs-action');
     assert.equal(diagnostics.checks.gitObjects.readiness, 'needs-action');
     assert.equal(diagnostics.checks.gitObjects.looseCount, 50000);
     assert.match(diagnostics.checks.gitObjects.nextAction, /git gc --prune=now/);
+  });
+
+  it('reports GitHub pull request review auth scope issues in review preflight', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: read:org\n',
+    });
+
+    assert.equal(diagnostics.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.githubReviewAuth.readiness, 'needs-action');
+    assert.equal(diagnostics.checks.githubReviewAuth.authenticated, true);
+    assert.deepEqual(diagnostics.checks.githubReviewAuth.scopes, ['read:org']);
+    assert.match(diagnostics.checks.githubReviewAuth.nextAction, /pull request reviews/);
   });
 
   it('reports malformed loose git object output as unavailable', () => {
@@ -251,6 +278,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => 'unexpected output\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');
@@ -270,6 +298,7 @@ describe('doctor diagnostics', () => {
       repoRoot: repo,
       statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
       gitCountObjects: () => { throw new Error('git timed out'); },
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
     });
 
     assert.equal(diagnostics.readiness, 'unavailable');

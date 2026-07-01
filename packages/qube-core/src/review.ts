@@ -68,6 +68,37 @@ export interface ReviewFeedback {
   readonly trust: FeedbackTrust;
 }
 
+export type ReviewMergeBlockReason =
+  | "unresolved-review-thread"
+  | "review-required"
+  | "changes-requested"
+  | "checks-pending"
+  | "checks-failed"
+  | "draft"
+  | "merge-state-blocked"
+  | "conflict"
+  | "unknown";
+
+export interface ReviewMergeBlock {
+  readonly reason: ReviewMergeBlockReason;
+  readonly summary: string;
+  readonly url: string | null;
+}
+
+export interface ReviewConversation {
+  readonly providerId: string;
+  readonly id: string;
+  readonly resolved: boolean;
+  readonly outdated: boolean;
+  readonly viewerCanResolve: boolean;
+  readonly path: string | null;
+  readonly line: number | null;
+  readonly originalLine: number | null;
+  readonly author: string;
+  readonly summary: string;
+  readonly url: string | null;
+}
+
 export interface ReviewItem {
   readonly key: ReviewItemKey;
   readonly displayId: string;
@@ -80,6 +111,8 @@ export interface ReviewItem {
   readonly reviewDecision: ReviewDecision;
   readonly mergeability: Mergeability;
   readonly feedback: readonly ReviewFeedback[];
+  readonly mergeBlockers: readonly ReviewMergeBlock[];
+  readonly conversations: readonly ReviewConversation[];
   readonly checks: readonly GateEvidence[];
   readonly trustedMetadata: JsonObject;
   readonly source: ProviderSource;
@@ -119,6 +152,7 @@ export interface ReviewForgeSnapshot {
   readonly reviewsCount: number;
   readonly reviewCommentsCount: number;
   readonly unresolvedThreadsCount: number;
+  readonly conversationsCount?: number;
   readonly pullRequest: ReviewForgePullRequestSummary;
 }
 
@@ -129,6 +163,91 @@ export interface ReviewForgeCapabilities {
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;
   readonly publishLaneReview?: boolean;
+  readonly publishLaneReviewInline?: boolean;
+  readonly resolveReviewThreads?: boolean;
+}
+
+export type ReviewFindingSeverity = "blocking" | "advisory";
+export type ReviewFindingSide = "source" | "destination";
+
+export interface ReviewFindingLocation {
+  readonly path: string;
+  readonly line?: number;
+  readonly endLine?: number;
+  readonly side?: ReviewFindingSide;
+}
+
+export interface ReviewFinding {
+  readonly id: string;
+  readonly severity: ReviewFindingSeverity;
+  readonly location?: ReviewFindingLocation;
+  readonly message: string;
+  readonly suggestion?: string;
+}
+
+export interface ReviewDiffIndex {
+  hasLine(path: string, line: number, side?: ReviewFindingSide): boolean;
+}
+
+export interface PartitionedReviewFindings {
+  readonly inline: readonly ReviewFinding[];
+  readonly body: readonly ReviewFinding[];
+}
+
+function stableFindingId(input: Omit<ReviewFinding, "id"> & { id?: string }): string {
+  const base = [
+    input.severity,
+    input.location?.path ?? "",
+    input.location?.line ?? "",
+    input.location?.endLine ?? "",
+    input.location?.side ?? "",
+    input.message,
+  ].join("\0");
+  let hash = 0;
+  for (let index = 0; index < base.length; index += 1) {
+    hash = Math.imul(31, hash) + base.charCodeAt(index) | 0;
+  }
+  return `finding-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
+
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function normalizeReviewFinding(input: Omit<ReviewFinding, "id"> & { readonly id?: string }): ReviewFinding {
+  const message = nonEmpty(input.message, "message");
+  const severity = input.severity === "blocking" ? "blocking" : "advisory";
+  let location: ReviewFindingLocation | undefined;
+  if (input.location) {
+    const path = nonEmpty(input.location.path, "location.path");
+    const line = positiveInteger(input.location.line) ? input.location.line : undefined;
+    const endLine = positiveInteger(input.location.endLine) ? input.location.endLine : undefined;
+    const side = input.location.side === "source" ? "source" : "destination";
+    location = { path, ...(line ? { line } : {}), ...(endLine ? { endLine } : {}), side };
+  }
+  const suggestion = typeof input.suggestion === "string" && input.suggestion.trim() !== "" ? input.suggestion.trim() : undefined;
+  return {
+    id: typeof input.id === "string" && input.id.trim() !== "" ? input.id.trim() : stableFindingId({ severity, location, message, suggestion }),
+    severity,
+    ...(location ? { location } : {}),
+    message,
+    ...(suggestion ? { suggestion } : {}),
+  };
+}
+
+export function partitionReviewFindings(findings: readonly ReviewFinding[], diffIndex: ReviewDiffIndex): PartitionedReviewFindings {
+  const inline: ReviewFinding[] = [];
+  const body: ReviewFinding[] = [];
+  for (const finding of findings.map(normalizeReviewFinding)) {
+    const location = finding.location;
+    const line = location?.line;
+    if (location && typeof line === "number" && diffIndex.hasLine(location.path, line, location.side ?? "destination")) {
+      inline.push(finding);
+    } else {
+      body.push(finding);
+    }
+  }
+  return { inline, body };
 }
 
 export interface ReviewForgeProviderPlanOptions {
@@ -144,6 +263,7 @@ export interface ReviewForgeProvider {
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewForgeProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLaneReviewFeedback?(item: ReviewItem, input: ReviewLaneReviewPublishInput): Promise<ReviewLaneReviewPublishResult>;
+  resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
 
 export interface ReviewLaneReviewPublishInput {
@@ -157,7 +277,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly host: string;
   readonly issueNumber: number;
   readonly summary: string;
-  readonly findings: readonly string[];
+  readonly findings: readonly (ReviewFinding | string)[];
   readonly evidencePath: string | null;
 }
 
@@ -167,7 +287,27 @@ export interface ReviewLaneReviewPublishResult {
   readonly marker: string | null;
   readonly body: string | null;
   readonly url: string | null;
+  readonly publishKind?: "issue-comment" | "pull-request-review";
+  readonly inlineCommentCount?: number;
+  readonly bodyFindingCount?: number;
+  readonly reviewUrl?: string | null;
+  readonly inlineCommentUrls?: readonly string[];
   readonly failure: string | null;
+  readonly nextAction: string;
+}
+
+export interface ResolveReviewThreadInput {
+  readonly prNumber: number;
+  readonly threadIds: readonly string[];
+  readonly dryRun: boolean;
+}
+
+export interface ResolveReviewThreadResult {
+  readonly status: "planned" | "resolved" | "skipped" | "failed";
+  readonly prNumber: number;
+  readonly resolvedThreadIds: readonly string[];
+  readonly skippedThreadIds: readonly string[];
+  readonly failedThreadIds: readonly string[];
   readonly nextAction: string;
 }
 
@@ -345,9 +485,35 @@ export function normalizeReviewFeedback(input: Omit<ReviewFeedback, "trust"> & {
   };
 }
 
-export function normalizeReviewItem(input: Omit<ReviewItem, "linkedWorkItems" | "feedback" | "checks" | "trustedMetadata"> & {
+function normalizeReviewMergeBlock(input: ReviewMergeBlock): ReviewMergeBlock {
+  return {
+    reason: input.reason,
+    summary: nonEmpty(input.summary, "mergeBlock.summary"),
+    url: input.url,
+  };
+}
+
+function normalizeReviewConversation(input: ReviewConversation): ReviewConversation {
+  return {
+    providerId: nonEmpty(input.providerId, "conversation.providerId"),
+    id: nonEmpty(input.id, "conversation.id"),
+    resolved: input.resolved,
+    outdated: input.outdated,
+    viewerCanResolve: input.viewerCanResolve,
+    path: input.path,
+    line: input.line,
+    originalLine: input.originalLine,
+    author: nonEmpty(input.author, "conversation.author"),
+    summary: nonEmpty(input.summary, "conversation.summary"),
+    url: input.url,
+  };
+}
+
+export function normalizeReviewItem(input: Omit<ReviewItem, "linkedWorkItems" | "feedback" | "mergeBlockers" | "conversations" | "checks" | "trustedMetadata"> & {
   linkedWorkItems?: readonly WorkItemKey[];
   feedback?: ReadonlyArray<Omit<ReviewFeedback, "trust"> & { trust?: FeedbackTrust }>;
+  mergeBlockers?: readonly ReviewMergeBlock[];
+  conversations?: readonly ReviewConversation[];
   checks?: readonly GateEvidence[];
   trustedMetadata?: JsonObject;
 }): ReviewItem {
@@ -360,6 +526,8 @@ export function normalizeReviewItem(input: Omit<ReviewItem, "linkedWorkItems" | 
     targetRef: nonEmpty(input.targetRef, "targetRef"),
     linkedWorkItems: uniqueWorkItemKeys(input.linkedWorkItems ?? []),
     feedback: (input.feedback ?? []).map(normalizeReviewFeedback),
+    mergeBlockers: (input.mergeBlockers ?? []).map(normalizeReviewMergeBlock),
+    conversations: (input.conversations ?? []).map(normalizeReviewConversation),
     checks: (input.checks ?? []).map(normalizeGateEvidence),
     trustedMetadata: input.trustedMetadata ?? {},
   };
@@ -542,7 +710,7 @@ function hasStaleRemoteReview(reviews: ReturnType<typeof trustedLatestReviews>, 
 }
 
 function laneReviewRecord(item: ReviewItem, laneId: string, headSha: string): { [key: string]: JsonValue } | null {
-  const laneReviews = trustedLaneReviews(item).filter(record => record.lane === laneId && record.head === headSha && record.stale !== true);
+  const laneReviews = trustedLaneReviews(item).filter(record => record.lane === laneId && record.head === headSha && record.stale !== true && record.inline === "review-api");
   const laneReview = laneReviews.at(-1);
   if (laneReview) return laneReview;
   const aggregate = trustedLocalReviews(item).find(record => laneReceivedFromAggregate(record, laneId, headSha));

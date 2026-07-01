@@ -5,6 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 
 const execFileAsync = promisify(execFile);
@@ -16,6 +17,7 @@ export interface LaneEvidence {
   recommendation: LocalReviewRecommendation;
   summary: string;
   blockers: string[];
+  findings: ReviewFinding[];
   artifacts: Array<{ kind: string; path: string; sha256: string }>;
   commands: string[];
   surfaces: string[];
@@ -49,7 +51,7 @@ export function reviewSessionLockLines(repoRoot: string, issueNumber: number, pr
     'While the lock exists, review subagents must not edit source, tests, docs, config, package metadata, PR body, or issue content.',
     'Do not run git restore, git checkout, git reset, or other commands that revert another agent\'s in-progress work in the shared checkout.',
     `Subagents may write only these lane evidence paths plus matching host-provenance JSON: ${evidencePaths.join(', ')}.`,
-    'Provider-visible pull request comments are the human audit trail; local JSON under .qube/aie/reviews/ is optional audit evidence.',
+    'Provider-visible pull request reviews and comments are the human audit trail; local JSON under .qube/aie/reviews/ is optional audit evidence.',
   ];
 }
 
@@ -72,7 +74,8 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `Pull request: #${prNumber}.`,
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at this exact issue evidence path: ${primaryEvidencePath}.`,
-    `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, runnerProvenance, and recordedAt.`,
+    `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, runnerProvenance, and recordedAt.`,
+    'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, and location.path plus location.line when the finding can be anchored to the PR diff.',
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
     `Bind local-host evidence to same-user host provenance at this exact path: ${hostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
@@ -137,7 +140,7 @@ export function buildLocalReviewSpawnPrompt(input: {
     '--- LANE PROMPT END ---',
     '',
     `When complete, publish provider-visible feedback with: ${input.publishCommand}`,
-    'Report recommendation, blockers, evidence path, runner provenance path, and provider comment URL if published.',
+    'Report recommendation, blockers, evidence path, runner provenance path, and provider review URL if published.',
   ].join('\n');
 }
 
@@ -193,6 +196,30 @@ function readStringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
 
+function readFindings(value: unknown): ReviewFinding[] {
+  if (!Array.isArray(value)) return [];
+  const findings: ReviewFinding[] = [];
+  for (const item of value) {
+    if (!isRecord(item) || typeof item.message !== 'string' || item.message.trim() === '') continue;
+    const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
+      ? {
+          path: item.location.path.trim(),
+          ...(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0 ? { line: item.location.line } : {}),
+          ...(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0 ? { endLine: item.location.endLine } : {}),
+          side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
+        }
+      : undefined;
+    findings.push({
+      id: typeof item.id === 'string' && item.id.trim() !== '' ? item.id.trim() : `finding-${findings.length + 1}`,
+      severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+      ...(location ? { location } : {}),
+      message: item.message.trim(),
+      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+    });
+  }
+  return findings;
+}
+
 function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map(item => ({
@@ -236,6 +263,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
     recommendation: readRecommendation(value.recommendation, status),
     summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? value.summary.trim() : `${id} local review completed.`,
     blockers: readStringArray(value.blockers),
+    findings: readFindings(value.findings),
     artifacts: readArtifacts(value.artifacts),
     commands: readStringArray(value.commands),
     surfaces: readStringArray(value.surfaces),
@@ -435,6 +463,7 @@ export function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, 
     recommendation: status === 'pending' || status === 'missing' || status === 'stale' ? 'pending' : 'request-changes',
     summary,
     blockers: [blocker],
+    findings: [],
     artifacts: [],
     commands: command ? [command] : [],
     surfaces: ['PR'],

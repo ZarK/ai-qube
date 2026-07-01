@@ -1,7 +1,8 @@
 import type { GhExec } from '../gh.js';
+import type { ReviewFinding } from '@tjalve/qube-core';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
-import type { ReviewItem, ReviewItemKey } from '../core/review_item.js';
+import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
 import type {
   ReviewLaneReviewPublishInput,
   ReviewLaneReviewPublishResult,
@@ -52,6 +53,7 @@ export interface ReviewForgeSnapshot {
   reviewsCount: number;
   reviewCommentsCount: number;
   unresolvedThreadsCount: number;
+  conversationsCount?: number;
   unavailable: string[];
 }
 
@@ -83,7 +85,7 @@ export interface ReviewForgeLocalReviewPublishInput {
   issueNumbers: number[];
   lanes: string[];
   summary: string;
-  findings: string[];
+  findings: Array<ReviewFinding | string>;
 }
 
 export interface ReviewForgeLocalReviewPublishResult {
@@ -106,7 +108,9 @@ export interface ReviewForgeProviderCapabilities {
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
   publishLaneReview?: boolean;
+  publishLaneReviewInline?: boolean;
   publishLocalReview?: boolean;
+  resolveReviewThreads?: boolean;
 }
 
 export interface ReviewForgeProvider {
@@ -122,6 +126,7 @@ export interface ReviewForgeProvider {
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
 
 export interface ReviewForgeCapabilities {
@@ -130,7 +135,9 @@ export interface ReviewForgeCapabilities {
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
   publishLaneReview: boolean;
+  publishLaneReviewInline: boolean;
   publishLocalReview: boolean;
+  resolveReviewThreads: boolean;
   ciDiagnostics: boolean;
 }
 
@@ -140,7 +147,9 @@ export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object
   planReviewRequests: false,
   applyReviewRequests: false,
   publishLaneReview: false,
+  publishLaneReviewInline: false,
   publishLocalReview: false,
+  resolveReviewThreads: false,
   ciDiagnostics: false,
 });
 

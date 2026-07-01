@@ -33,6 +33,10 @@ describe("github adapter contract", () => {
     const aiqAction = assertGitHubOperationSupported("run-aiq-github-action");
     assert.equal(aiqAction.support, "standalone");
 
+    const resolveThreads = getGitHubOperationSupport("resolve-review-threads");
+    assert.equal(resolveThreads.support, "supported");
+    assert.match(resolveThreads.nextAction, /pr thread resolve/);
+
     const workflowRun = getGitHubOperationSupport("trigger-workflow-run");
     assert.equal(workflowRun.support, "unsupported");
     assert.match(workflowRun.nextAction, /current-head run/);
@@ -43,7 +47,7 @@ describe("github adapter contract", () => {
     assert.match(unknown.summary, /No product package has registered real GitHub behavior/);
 
     const operations = listGitHubOperationSupport();
-    assert.equal(operations.filter((operation) => operation.support === "supported").length, 9);
+    assert.equal(operations.filter((operation) => operation.support === "supported").length, 10);
     assert.equal(operations.filter((operation) => operation.support === "standalone").length, 1);
     assert.equal(operations.filter((operation) => operation.support === "unsupported").length, 4);
   });

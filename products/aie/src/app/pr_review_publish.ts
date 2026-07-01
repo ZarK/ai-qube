@@ -1,6 +1,7 @@
 import type { Config } from '../config/index.js';
 import { readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
+import type { ReviewFinding } from '@tjalve/qube-core';
 import { localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation } from '../providers/review_forge_provider.js';
@@ -77,6 +78,37 @@ function validStatus(value: unknown): value is string {
   return value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable' || value === 'malformed' || value === 'inconclusive';
 }
 
+function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
+  if (!Array.isArray(value)) return [];
+  const findings: ReviewFinding[] = [];
+  for (const [index, item] of value.entries()) {
+    const label = `findings[${index}]`;
+    if (!isRecord(item)) throw laneEvidenceFailure(path, `${label} must be an object.`);
+    if (typeof item.message !== 'string' || item.message.trim() === '') throw laneEvidenceFailure(path, `${label}.message must be a non-empty string.`);
+    if (item.location !== undefined && !isRecord(item.location)) throw laneEvidenceFailure(path, `${label}.location must be an object when present.`);
+    if (isRecord(item.location) && (typeof item.location.path !== 'string' || item.location.path.trim() === '')) throw laneEvidenceFailure(path, `${label}.location.path must be a non-empty string.`);
+    if (isRecord(item.location) && item.location.line !== undefined && !(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0)) throw laneEvidenceFailure(path, `${label}.location.line must be a positive integer when present.`);
+    if (isRecord(item.location) && item.location.endLine !== undefined && !(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0)) throw laneEvidenceFailure(path, `${label}.location.endLine must be a positive integer when present.`);
+    if (item.severity !== undefined && item.severity !== 'blocking' && item.severity !== 'advisory') throw laneEvidenceFailure(path, `${label}.severity must be blocking or advisory when present.`);
+    const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
+      ? {
+          path: item.location.path.trim(),
+          ...(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0 ? { line: item.location.line } : {}),
+          ...(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0 ? { endLine: item.location.endLine } : {}),
+          side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
+        }
+      : undefined;
+    findings.push({
+      id: typeof item.id === 'string' && item.id.trim() !== '' ? item.id.trim() : `finding-${findings.length + 1}`,
+      severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+      ...(location ? { location } : {}),
+      message: item.message.trim(),
+      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+    });
+  }
+  return findings;
+}
+
 function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, evidence: Record<string, unknown>, evidencePath: string, provenance: Record<string, unknown>): void {
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane);
   let parsed: unknown;
@@ -100,7 +132,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
@@ -128,12 +160,17 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   }
   if (adapter === 'local-host') validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
   const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === 'string') : [];
+  const structuredFindings = readStructuredFindings(raw.findings, path);
+  if (blockers.length > 0 && structuredFindings.length === 0) {
+    throw laneEvidenceFailure(path, 'blocking lane evidence must include structured findings[] entries for provider-visible review publishing.');
+  }
   return {
     evidence: raw,
     path,
     status: raw.status,
     summary,
     blockers,
+    findings: structuredFindings,
     profile,
     host: stringField(provenance, 'host') || 'local-review',
     recommendation: readRecommendation(raw.recommendation ?? raw.status),
@@ -165,7 +202,7 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
     host: evidence.host,
     issueNumber,
     summary: evidence.summary,
-    findings: evidence.blockers,
+    findings: evidence.findings,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest

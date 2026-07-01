@@ -1,5 +1,5 @@
 import type { ActionPlan, ActionResult } from "./index.js";
-import type { ReviewItem, ReviewItemKey } from "./review_item.js";
+import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from "./review_item.js";
 
 export type ReviewForgeAdapterKind = "github" | "remote" | "local" | "mixed" | "shadow";
 export type ReviewRequestTrigger = "github-reviewer" | "comment";
@@ -43,6 +43,8 @@ export interface ReviewForgeCapabilities {
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;
   readonly publishLaneReview?: boolean;
+  readonly publishLaneReviewInline?: boolean;
+  readonly resolveReviewThreads?: boolean;
 }
 
 export interface ReviewForgeProvider {
@@ -53,4 +55,5 @@ export interface ReviewForgeProvider {
   loadReviewSnapshot(key: ReviewItemKey): Promise<ReviewForgeSnapshot>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewForgePlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
+  resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
