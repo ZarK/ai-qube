@@ -1658,9 +1658,36 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `Rerun without --dry-run to resolve ${threadIds.length} GitHub review thread${threadIds.length === 1 ? '' : 's'}.`,
       };
     }
+    let prThreads: RawThreadNode[];
+    try {
+      const repository = await this.getRepositoryIdentity();
+      prThreads = await this.getUnresolvedThreads(repository.nameWithOwner, input.prNumber);
+    } catch {
+      return {
+        status: 'failed',
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: threadIds,
+        nextAction: `Could not verify GitHub review thread ids against PR #${input.prNumber}. Rerun \`aie pr view ${input.prNumber} --json\` to inspect unresolved reviewThreads, then retry.`,
+      };
+    }
+    const resolvableThreadIds = new Set(prThreads.filter(thread => thread.viewerCanResolve === true).map(thread => thread.id).filter((id): id is string => typeof id === 'string' && id.trim() !== ''));
+    const skippedThreadIds = threadIds.filter(threadId => !resolvableThreadIds.has(threadId));
+    const selectedThreadIds = threadIds.filter(threadId => resolvableThreadIds.has(threadId));
+    if (selectedThreadIds.length === 0) {
+      return {
+        status: 'skipped',
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds,
+        failedThreadIds: [],
+        nextAction: `No selected GitHub review thread ids belong to unresolved viewer-resolvable threads on PR #${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
+      };
+    }
     const resolvedThreadIds: string[] = [];
     const failedThreadIds: string[] = [];
-    for (const threadId of threadIds) {
+    for (const threadId of selectedThreadIds) {
       const result = await this.resolveReviewThread(threadId);
       if (result) resolvedThreadIds.push(threadId);
       else failedThreadIds.push(threadId);
@@ -1670,11 +1697,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       status,
       prNumber: input.prNumber,
       resolvedThreadIds,
-      skippedThreadIds: [],
+      skippedThreadIds,
       failedThreadIds,
       nextAction: failedThreadIds.length > 0
         ? `Some GitHub review threads could not be resolved. Verify permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
-        : `Resolved ${resolvedThreadIds.length} GitHub review thread${resolvedThreadIds.length === 1 ? '' : 's'}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
+        : `Resolved ${resolvedThreadIds.length} GitHub review thread${resolvedThreadIds.length === 1 ? '' : 's'}${skippedThreadIds.length > 0 ? ` and skipped ${skippedThreadIds.length} id${skippedThreadIds.length === 1 ? '' : 's'} not resolvable on PR #${input.prNumber}` : ''}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
     };
   }
 

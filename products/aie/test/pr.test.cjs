@@ -3227,6 +3227,23 @@ describe('PR body service', () => {
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
   });
 
+  it('skips explicit review thread ids that are not unresolved viewer-resolvable threads on the selected PR', async () => {
+    const threads = [
+      { id: 'PRRT_resolve_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
+      { id: 'PRRT_unowned_1', isResolved: false, viewerCanResolve: false, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Cannot resolve.', url: 'https://github.com/example/repo/pull/12#discussion_r7' }] } },
+    ];
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: ['PRRT_resolve_1', 'PRRT_foreign_1', 'PRRT_unowned_1'], all: false, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'resolved');
+    assert.deepEqual(result.resolvedThreadIds, ['PRRT_resolve_1']);
+    assert.deepEqual(result.skippedThreadIds, ['PRRT_foreign_1', 'PRRT_unowned_1']);
+    const mutations = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread')));
+    assert.equal(mutations.length, 1);
+    assert.ok(mutations[0].some(arg => String(arg) === 'threadId=PRRT_resolve_1'));
+  });
+
   it('reports failed review thread resolve mutations without throwing', async () => {
     const threads = [
       { id: 'PRRT_resolve_fail', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
