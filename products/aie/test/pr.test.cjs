@@ -3376,6 +3376,29 @@ describe('PR body service', () => {
     assert.equal(result.readiness.pending.some(item => item.includes('provider-visible')), false);
   });
 
+  it('does not require issue-level UI audit or review gate when PR-local review supersedes them', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    writeLocalEvidence(repo, localEvidence({ issueNumber: 105 }));
+    const currentPr = { number: 12, title: 'Local review PR', state: 'OPEN', url: 'https://github.com/example/repo/pull/12', reviewDecision: 'APPROVED', mergeStateStatus: 'CLEAN', mergeable: 'MERGEABLE', isDraft: false };
+    const pr = approvedLocalPr({ closingIssuesReferences: [{ number: 105 }] });
+    const { exec } = makePrExec({ prViews: [pr], issueBodies: { 105: '' } });
+    const wrappedExec = async args => {
+      if (args.join(' ') === 'pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft') return { args, exitCode: 0, stdout: JSON.stringify(currentPr), stderr: '' };
+      return exec(args);
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 105, repoRoot: repo, exec: wrappedExec });
+
+    assert.equal(result.readiness.status, 'ready');
+    assert.match(result.body, /Manual UI audit: not applicable/);
+    assert.match(result.body, /Review-agent gate: superseded by PR-local review agents/);
+    assert.doesNotMatch(result.body, /Create browser-observation/);
+    assert.doesNotMatch(result.body, /Review-agent gate: pending/);
+    assert.equal(result.readiness.pendingDetails.some(item => item.source === 'manual-audit'), false);
+    assert.equal(result.readiness.pendingDetails.some(item => item.source === 'review-agent' && item.reasonCode === 'review-not-recorded'), false);
+  });
+
   it('uses local review reason codes in PR body readiness', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
