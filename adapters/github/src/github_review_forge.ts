@@ -1734,7 +1734,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
   private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
     const [owner, repo] = repoName.split('/');
     if (!owner || !repo) return [];
-    const query = `query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(first: 20) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }`;
+    const query = `query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(last: 1) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }`;
     const nodes: RawThreadNode[] = [];
     let cursor: string | null = null;
     for (;;) {
@@ -1752,8 +1752,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
   private async resolveReviewThread(threadId: string): Promise<boolean> {
     const query = 'mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }';
-    const result = await runGh(['api', 'graphql', '-f', `threadId=${threadId}`, '-f', `query=${query}`], this.options);
-    return result.exitCode === 0;
+    try {
+      const result = await runGh(['api', 'graphql', '-f', `threadId=${threadId}`, '-f', `query=${query}`], this.options);
+      if (result.exitCode !== 0) return false;
+      const parsed = parseGhJson<{ data?: { resolveReviewThread?: { thread?: { id?: unknown; isResolved?: unknown } | null } | null } }>(
+        result.stdout,
+        `gh api graphql resolve review thread ${threadId}`,
+        value => isRecord(value),
+      );
+      const thread = parsed.data?.resolveReviewThread?.thread;
+      return thread?.id === threadId && thread.isResolved === true;
+    } catch {
+      return false;
+    }
   }
 
   private async currentLogin(): Promise<string> {

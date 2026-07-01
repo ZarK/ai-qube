@@ -161,13 +161,16 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (adapter === 'local-host') validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
   const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === 'string') : [];
   const structuredFindings = readStructuredFindings(raw.findings, path);
+  if (blockers.length > 0 && structuredFindings.length === 0) {
+    throw laneEvidenceFailure(path, 'blocking lane evidence must include structured findings[] entries for provider-visible review publishing.');
+  }
   return {
     evidence: raw,
     path,
     status: raw.status,
     summary,
     blockers,
-    findings: structuredFindings.length > 0 ? structuredFindings : blockers,
+    findings: structuredFindings,
     profile,
     host: stringField(provenance, 'host') || 'local-review',
     recommendation: readRecommendation(raw.recommendation ?? raw.status),

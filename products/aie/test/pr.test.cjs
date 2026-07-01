@@ -503,6 +503,7 @@ function makePrExec(options = {}) {
   const workflowRuns = options.workflowRuns || [];
   const workflowRunsById = options.workflowRunsById || {};
   const reviewApiResults = [...(options.reviewApiResults || [])];
+  const resolveThreadResults = [...(options.resolveThreadResults || [])];
   const reviewPayloads = [];
   let currentPr = prViews[0];
   const threads = options.threads || [];
@@ -578,6 +579,8 @@ function makePrExec(options = {}) {
       const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
       if (queryArg && queryArg.includes('resolveReviewThread')) {
         const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
+        const queuedResult = resolveThreadResults.shift();
+        if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
       }
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
@@ -1873,6 +1876,29 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
   });
 
+  it('rejects blocking lane publish evidence without structured findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence({ laneStatus: 'failed', blockers: ['Fix the changed parser.'] });
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          contextReviewed: [
+            { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+            { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+          ],
+          toolsUsed: ['codex'],
+        }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /blocking lane evidence must include structured findings\[\]/,
+    );
+  });
+
   it('partitions structured lane findings into inline review comments and review body findings', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -2238,6 +2264,7 @@ describe('PR gate service', () => {
           ...lane,
           summary: `Do not publish ${privateKey} api_key=plain-secret-value`,
           blockers: [oversizedBlocker],
+          findings: [{ id: 'oversized-redacted', severity: 'blocking', message: oversizedBlocker }],
           contextReviewed: [
             { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
             { kind: 'issue-body', source: 'https://github.com/example/repo/issues/93', trust: 'untrusted-task-input', freshness: 'current' },
@@ -3083,6 +3110,7 @@ describe('PR gate service', () => {
   it('collects paginated review comments and unresolved review threads', async () => {
     const config = getDefaults();
     config.reviewAgents = [];
+    const graphqlQueries = [];
     const exec = async args => {
       if (args[0] === 'pr' && args[1] === 'view') return { args, exitCode: 0, stdout: JSON.stringify(basePr({ reviewDecision: 'APPROVED' })), stderr: '' };
       if (args.join(' ') === 'repo view --json nameWithOwner,url') return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
@@ -3090,6 +3118,8 @@ describe('PR gate service', () => {
       if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') return { args, exitCode: 0, stdout: JSON.stringify([]), stderr: '' };
       if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/comments') return { args, exitCode: 0, stdout: JSON.stringify([[{ user: { login: 'reviewer-a' }, body: 'First page.', html_url: 'https://github.com/example/repo/pull/12#discussion_r1' }], [{ user: { login: 'reviewer-b' }, body: 'Second page.', html_url: 'https://github.com/example/repo/pull/12#discussion_r2' }]]), stderr: '' };
       if (args[0] === 'api' && args[1] === 'graphql') {
+        const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
+        if (queryArg) graphqlQueries.push(queryArg);
         const after = args.find(arg => arg.startsWith('after='));
         const nodes = after ? [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer-b' }, body: 'Second thread.', url: 'https://github.com/example/repo/pull/12#discussion_r4' }] } }] : [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer-a' }, body: 'First thread.', url: 'https://github.com/example/repo/pull/12#discussion_r3' }] } }];
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage: !after, endCursor: after ? null : 'cursor-1' } } } } } }), stderr: '' };
@@ -3102,6 +3132,7 @@ describe('PR gate service', () => {
     assert.equal(result.counts.reviewComments, 2);
     assert.equal(result.counts.unresolvedThreads, 2);
     assert.equal(result.status, 'failed');
+    assert.ok(graphqlQueries.every(query => query.includes('comments(last: 1)')));
   });
 });
 
@@ -3162,6 +3193,23 @@ describe('PR body service', () => {
     assert.equal(result.status, 'resolved');
     assert.deepEqual(result.resolvedThreadIds, ['PRRT_resolve_1']);
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
+  });
+
+  it('reports failed review thread resolve mutations without throwing', async () => {
+    const threads = [
+      { id: 'PRRT_resolve_fail', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
+    ];
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })],
+      threads,
+      resolveThreadResults: [{ exitCode: 1, stdout: '', stderr: 'GraphQL mutation failed' }],
+    });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'failed');
+    assert.deepEqual(result.resolvedThreadIds, []);
+    assert.deepEqual(result.failedThreadIds, ['PRRT_resolve_fail']);
   });
 
   it('parses comma-separated repeated review thread flags', () => {
