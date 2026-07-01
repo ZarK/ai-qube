@@ -2224,6 +2224,38 @@ describe('PR gate service', () => {
     assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');
   });
 
+  it('publishes deleted-file source-side findings as left-side inline review comments', async () => {
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      profile: 'local-standard',
+      status: 'failed',
+      recommendation: 'request-changes',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review found blockers',
+      findings: [{ severity: 'blocking', message: 'Fix the removed file before deleting it.', location: { path: 'src/removed.ts', line: 1, side: 'source' } }],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      diff: 'diff --git a/src/removed.ts b/src/removed.ts\n--- a/src/removed.ts\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-export const removed = true;\n-export const alsoRemoved = true;\n',
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
+
+    assert.equal(result.status, 'published');
+    assert.equal(result.inlineCommentCount, 1);
+    assert.equal(result.bodyFindingCount, 0);
+    assert.equal(fixture.reviewPayloads[0].comments[0].path, 'src/removed.ts');
+    assert.equal(fixture.reviewPayloads[0].comments[0].line, 1);
+    assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');
+  });
+
   it('redacts common secrets from provider-visible lane review text', async () => {
     const input = {
       dryRun: true,

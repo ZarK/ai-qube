@@ -727,15 +727,21 @@ function normalizeDiffPath(path: string): string {
 function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
   const destinationLinesByPath = new Map<string, Set<number>>();
   const sourceLinesByPath = new Map<string, Set<number>>();
-  let currentPath: string | null = null;
+  let currentDestinationPath: string | null = null;
+  let currentSourcePath: string | null = null;
   let oldLine = 0;
   let newLine = 0;
   for (const line of diff.split(/\r?\n/)) {
+    if (line.startsWith('--- ')) {
+      const rawPath = line.slice(4).trim();
+      currentSourcePath = rawPath === '/dev/null' ? null : normalizeDiffPath(rawPath);
+      if (currentSourcePath && !sourceLinesByPath.has(currentSourcePath)) sourceLinesByPath.set(currentSourcePath, new Set());
+      continue;
+    }
     if (line.startsWith('+++ ')) {
       const rawPath = line.slice(4).trim();
-      currentPath = rawPath === '/dev/null' ? null : normalizeDiffPath(rawPath);
-      if (currentPath && !destinationLinesByPath.has(currentPath)) destinationLinesByPath.set(currentPath, new Set());
-      if (currentPath && !sourceLinesByPath.has(currentPath)) sourceLinesByPath.set(currentPath, new Set());
+      currentDestinationPath = rawPath === '/dev/null' ? null : normalizeDiffPath(rawPath);
+      if (currentDestinationPath && !destinationLinesByPath.has(currentDestinationPath)) destinationLinesByPath.set(currentDestinationPath, new Set());
       continue;
     }
     const hunk = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
@@ -744,16 +750,21 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
       newLine = Number.parseInt(hunk[2], 10);
       continue;
     }
-    if (!currentPath || newLine <= 0 || line.startsWith('diff --git') || line.startsWith('--- ')) continue;
+    if (line.startsWith('diff --git')) {
+      currentDestinationPath = null;
+      currentSourcePath = null;
+      continue;
+    }
+    if (oldLine <= 0 && newLine <= 0) continue;
     if (line.startsWith('+')) {
-      destinationLinesByPath.get(currentPath)?.add(newLine);
+      if (currentDestinationPath && newLine > 0) destinationLinesByPath.get(currentDestinationPath)?.add(newLine);
       newLine += 1;
     } else if (line.startsWith('-')) {
-      sourceLinesByPath.get(currentPath)?.add(oldLine);
+      if (currentSourcePath && oldLine > 0) sourceLinesByPath.get(currentSourcePath)?.add(oldLine);
       oldLine += 1;
     } else {
-      destinationLinesByPath.get(currentPath)?.add(newLine);
-      sourceLinesByPath.get(currentPath)?.add(oldLine);
+      if (currentDestinationPath && newLine > 0) destinationLinesByPath.get(currentDestinationPath)?.add(newLine);
+      if (currentSourcePath && oldLine > 0) sourceLinesByPath.get(currentSourcePath)?.add(oldLine);
       oldLine += 1;
       newLine += 1;
     }
