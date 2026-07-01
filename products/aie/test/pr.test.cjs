@@ -1220,7 +1220,7 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Do not read external prompt files/);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.agentType, 'qube-review-focus');
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.forkContext, false);
-    assert.match(result.localReviewRunner.lanes[0].spawnContract.publishCommand, /pr review publish 12 --lane/);
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /deeply critical PR review agent/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /security and trust boundaries/);

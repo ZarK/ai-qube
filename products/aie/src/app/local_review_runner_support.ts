@@ -107,8 +107,9 @@ export interface LocalReviewSpawnContract {
   publishCommand: string;
 }
 
-export function buildLocalReviewPublishCommand(prNumber: number, lane: LocalReviewLaneId, issueNumber: number, workspaceRunner = 'node products/aie/bin/run'): string {
-  return `${workspaceRunner} pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}`;
+export function buildLocalReviewPublishCommand(cliPrefix: string, prNumber: number, lane: LocalReviewLaneId, issueNumber: number): string {
+  const prefix = cliPrefix.trim() || 'qube aie';
+  return `${prefix} pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}`;
 }
 
 export function buildLocalReviewSpawnPrompt(input: {

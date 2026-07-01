@@ -15,7 +15,7 @@ Spawn rules:
 - Paste each lane `spawnPrompt` (or `spawnContract.taskPrompt`) verbatim as the subagent task prompt. Do not reference `.qube/aie/reviews/.../prompts/` files or tell subagents to read a separate prompt file.
 - For large context reads (issue bodies, milestone text, long PR comment threads), spawn economy-tier explorer subagents when the host supports them; review-focus subagents should consume explorer summaries instead of rereading huge texts directly.
 - Run pending lanes in parallel when Codex supports parallel subagents; otherwise run them sequentially.
-- Each subagent is read-only: inspect repository state, run only narrowly scoped verification commands allowed by the lane prompt, and write only the lane evidence JSON and host-provenance JSON paths named in its `promptText`.
+- Each subagent is read-only: inspect repository state, run only narrowly scoped verification commands allowed by the inline `spawnPrompt`, and write only the lane evidence JSON and host-provenance JSON paths named in that inline lane prompt.
 - Freeze main-session edits and tests until every spawned subagent finishes. Do not patch, commit, or run broad test suites while review subagents are still running.
 - Wait for every spawned subagent to finish before aggregating results or publishing provider feedback.
 - Record each subagent task, session, or thread id in lane evidence `runnerProvenance` when the host exposes one.

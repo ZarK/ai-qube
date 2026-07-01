@@ -249,7 +249,7 @@ const SYNC_PROFILES: Record<AgentHostId, AgentHostProfile> = {
     },
     subagents: {
       supported: true,
-      instruction: 'For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: "qube-review-focus"` and `fork_context: false`, paste each lane `spawnPrompt` from `pr gate --dry-run --json --local-review-prompts` verbatim as the subagent task prompt (never reference .qube/aie/reviews/.../prompts/ files), wait for all subagents before editing or testing in the main session, have each subagent publish with `pr review publish <pr> --lane <lane>`, delete the review session lock, rerun `pr gate <pr> --json`, then inspect PR comments for merge guidance.',
+      instruction: 'For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: "qube-review-focus"` and `fork_context: false`, paste each lane `spawnPrompt` from `pr gate --dry-run --json --local-review-prompts` verbatim as the subagent task prompt (never reference .qube/aie/reviews/.../prompts/ files), wait for all subagents before editing or testing in the main session, have each subagent publish with `pr review publish <pr> --lane <lane> --issue <issue>`, delete the review session lock, rerun `pr gate <pr> --json`, then inspect PR comments for merge guidance.',
     },
     hooks: {
       supported: true,
