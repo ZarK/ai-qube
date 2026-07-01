@@ -1456,22 +1456,6 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
           `Provider-visible body-only pull request review for ${input.lane} was published after GitHub rejected inline review comments; rerun PR view/gate to inspect provider state.`,
         );
       }
-      let commentFallbackResult: GhRunResult | null = null;
-      if (reviewEvent(input.recommendation) !== 'COMMENT') {
-        commentFallbackResult = await submitReview({
-          commit_id: input.headSha,
-          body: fallbackBody.body,
-          event: 'COMMENT',
-          comments: [],
-        });
-        if (commentFallbackResult.exitCode === 0) {
-          return publishReviewResult(
-            commentFallbackResult,
-            fallbackBody,
-            `Provider-visible body-only COMMENT pull request review for ${input.lane} was published after GitHub rejected the intended review event; the QUBE marker retains the lane recommendation for gate evaluation.`,
-          );
-        }
-      }
       return localReviewPublishResult({
         status: 'failed',
         runId,
@@ -1480,7 +1464,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         publishKind: 'pull-request-review',
         inlineCommentCount,
         bodyFindingCount,
-        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${intendedBodyOnlyResult.stderr || intendedBodyOnlyResult.stdout || 'gh api body-only pull request review failed'}${commentFallbackResult ? `; comment fallback failed: ${commentFallbackResult.stderr || commentFallbackResult.stdout || 'gh api body-only comment pull request review failed'}` : ''}`),
+        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${intendedBodyOnlyResult.stderr || intendedBodyOnlyResult.stdout || 'gh api body-only pull request review failed'}`),
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
       });
     }
