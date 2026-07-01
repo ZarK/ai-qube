@@ -2,12 +2,12 @@
 
 This matrix records host integration ownership by product. It separates real product surfaces from shared adapter contract packages.
 
-| Product | Package | CLI | GitHub | GitLab | Linear | Codex | OpenCode | Claude Code | Ownership decision |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Bootstrap | `@tjalve/aib` | yes | yes | yes | yes | yes | yes | yes | AIB owns planning state and work-item rendering. GitHub, GitLab, and Linear output are safe preview/rendering surfaces; Codex, OpenCode, and Claude Code output is host instruction installation, with OpenCode adding project command assets. |
-| Executor | `@tjalve/aie` | yes | yes | yes | yes | yes | yes | yes | AIE owns GitHub work-item, PR, queue, branch, review, and completion behavior. It also owns GitLab and Linear read mapping with explicit lifecycle mutation gaps, plus Codex/OpenCode/Claude Code host instruction init/migration for agent execution workflows. |
-| Quality | `@tjalve/aiq` | yes | no | no | no | no | no | no | AIQ owns quality command behavior and evidence. Its GitHub Action and OpenCode plugin packages are standalone adapters, not QUBE-facing GitHub/OpenCode product surfaces. |
-| Umpire | `@tjalve/aiu` | yes | no | no | no | no | yes | yes | AIU owns continuation policy, trusted state, OpenCode plugin composition, Claude Code stop-hook handling, and local continuation state. |
+| Product | Package | CLI | GitHub | GitLab | Linear | Codex | OpenCode | Claude Code | Grok Build | Ownership decision |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Bootstrap | `@tjalve/aib` | yes | yes | yes | yes | yes | yes | yes | yes | AIB owns planning state and work-item rendering. GitHub, GitLab, and Linear output are safe preview/rendering surfaces; Codex, OpenCode, Claude Code, and Grok Build output is host instruction installation, with OpenCode adding project command assets. |
+| Executor | `@tjalve/aie` | yes | yes | yes | yes | yes | yes | yes | yes | AIE owns GitHub work-item, PR, queue, branch, review, and completion behavior. It also owns GitLab and Linear read mapping with explicit lifecycle mutation gaps, plus Codex/OpenCode/Claude Code/Grok Build host instruction init/migration for agent execution workflows. |
+| Quality | `@tjalve/aiq` | yes | no | no | no | no | no | no | no | AIQ owns quality command behavior and evidence. Its GitHub Action and OpenCode plugin packages are standalone adapters, not QUBE-facing GitHub/OpenCode product surfaces. |
+| Umpire | `@tjalve/aiu` | yes | no | no | no | no | yes | yes | yes | AIU owns continuation policy, trusted state, OpenCode plugin composition, Claude Code stop-hook handling, host continuation boundaries, and local continuation state. |
 
 `@tjalve/qube` includes the installed Codex host capability layer. It detects project `AGENTS.md`, reports Codex-local todo, command execution, Browser use, and worktree/handoff capabilities as host-provided, and reports unsupported Codex operations such as OpenCode-style project command installation, direct external reviewer invocation, branch creation, and pull request creation with actionable next steps.
 
@@ -28,6 +28,16 @@ Product packages still own Claude Code-specific side effects:
 - QUBE installer guidance consumes the Claude Code capability layer for `qube install --host claude-code` notes.
 - Claude Code todo and conversation state remains local host state; durable work state stays in GitHub issues, pull requests, and `.qube/` artifacts.
 - QUBE composer install notes do not create `.claude/commands` or `.claude/skills` assets.
+
+`@tjalve/qube` includes the installed Grok Build host capability layer. It detects project `AGENTS.md`, reports terminal CLI, terminal TUI, headless prompt mode, ACP, plugins, hooks, skills, MCP servers, parallel subagents, and worktree subagents as distinct host-owned capabilities, and reports unsupported Grok Build operations such as QUBE-driven CLI installation, direct external reviewer invocation, branch creation, pull request creation, and continuation ownership with actionable next steps.
+
+Product packages still own Grok Build-specific side effects:
+
+- AIB can plan or write `AGENTS.md` instruction assets for Grok Build-compatible repository policy through existing AGENTS.md instruction flows.
+- AIE can install managed Executor instructions through existing AGENTS.md flows and still owns branch, PR, provider-visible review, review-thread, and completion workflow.
+- AIU documents Grok Build continuation as unsupported until a tested continuation or stop-hook path exists; host conversation state remains host-owned.
+- QUBE installer guidance consumes the Grok Build capability layer for `qube install --host grok-build` notes.
+- QUBE does not install Grok Build and does not emit third-party curl-pipe-shell installers as automated setup paths.
 
 `@tjalve/qube-adapter-opencode` is the shared OpenCode host adapter. It detects `AGENTS.md` and `.opencode/commands`, reports the host todo tools (`todowrite` and `todoread`), records the supported project-command and prompt/stop-hook capability boundaries, and returns explicit unsupported-capability results for behavior that OpenCode does not own, such as external review requests, branch creation, or pull request creation.
 
