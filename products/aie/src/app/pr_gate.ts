@@ -83,7 +83,7 @@ export interface PrGateMergeBlock {
   url?: string;
 }
 
-export interface PrGateThread {
+export interface PrGateConversation {
   providerId: string;
   id: string;
   resolved: boolean;
@@ -140,7 +140,7 @@ export interface PrGateResult {
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
   mergeBlockers: PrGateMergeBlock[];
-  reviewThreads: PrGateThread[];
+  conversations: PrGateConversation[];
   checkDiagnostics: PrGateCheckDiagnostic[];
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
@@ -267,7 +267,7 @@ function prMergeBlockers(item: ReviewItem): PrGateMergeBlock[] {
   }));
 }
 
-function prReviewThreads(item: ReviewItem): PrGateThread[] {
+function prConversations(item: ReviewItem): PrGateConversation[] {
   return item.conversations.map((thread: ReviewConversation) => ({
     providerId: thread.providerId,
     id: thread.id,
@@ -807,7 +807,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
   const feedback = prFeedback(finalSnapshot.item);
   const mergeBlockers = prMergeBlockers(finalSnapshot.item);
-  const reviewThreads = prReviewThreads(finalSnapshot.item);
+  const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
@@ -826,7 +826,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     actions,
     feedback,
     mergeBlockers,
-    reviewThreads,
+    conversations,
     checkDiagnostics,
     localReviewRunner,
     localReview,
@@ -865,9 +865,9 @@ export function formatPrGate(result: PrGateResult): string {
     lines.push('Merge blockers:');
     for (const blocker of result.mergeBlockers) lines.push(`- ${blocker.reason}: ${blocker.summary}${blocker.url ? ` (${blocker.url})` : ''}`);
   }
-  if (result.reviewThreads.length > 0) {
-    lines.push('Review threads:');
-    for (const thread of result.reviewThreads) lines.push(`- ${thread.id}: resolved=${thread.resolved ? 'yes' : 'no'}; outdated=${thread.outdated ? 'yes' : 'no'}; canResolve=${thread.viewerCanResolve ? 'yes' : 'no'}; ${thread.path ?? 'unknown path'}${thread.line ? `:${thread.line}` : ''}; ${thread.summary}${thread.url ? ` (${thread.url})` : ''}`);
+  if (result.conversations.length > 0) {
+    lines.push('Code conversations:');
+    for (const conversation of result.conversations) lines.push(`- ${conversation.id}: resolved=${conversation.resolved ? 'yes' : 'no'}; outdated=${conversation.outdated ? 'yes' : 'no'}; canResolve=${conversation.viewerCanResolve ? 'yes' : 'no'}; ${conversation.path ?? 'unknown path'}${conversation.line ? `:${conversation.line}` : ''}; ${conversation.summary}${conversation.url ? ` (${conversation.url})` : ''}`);
   }
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
   for (const lane of result.localReviewRunner.lanes) {

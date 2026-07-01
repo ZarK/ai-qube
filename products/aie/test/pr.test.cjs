@@ -2982,9 +2982,9 @@ describe('PR gate service', () => {
     assert.equal(result.counts.reviewComments, 1);
     assert.equal(result.counts.unresolvedThreads, 1);
     assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
-    assert.equal(result.reviewThreads[0].id, 'PRRT_thread_1');
-    assert.equal(result.reviewThreads[0].path, 'src/review.ts');
-    assert.equal(result.reviewThreads[0].viewerCanResolve, true);
+    assert.equal(result.conversations[0].id, 'PRRT_thread_1');
+    assert.equal(result.conversations[0].path, 'src/review.ts');
+    assert.equal(result.conversations[0].viewerCanResolve, true);
     assert.ok(result.feedback.some(item => item.source === 'thread'));
     assert.match(result.nextAction, /pr thread resolve/);
   });
