@@ -353,7 +353,7 @@ describe('review gate CLI', () => {
     assert.equal(parsed.localReviewRunner.codex.freshContext, true);
     assert.equal(parsed.localReviewRunner.codex.promptOnly, false);
     assert.deepEqual(parsed.localReviewRunner.codex.missingCapabilities, []);
-    assert.match(parsed.localReviewRunner.codex.nextAction, /Spawn independent Codex subagents/);
+    assert.match(parsed.localReviewRunner.codex.nextAction, /spawnPrompt/);
   });
 
   it('detects a configured local-host command after commandless local-host lanes', () => {

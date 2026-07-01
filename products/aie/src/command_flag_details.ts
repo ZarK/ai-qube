@@ -121,7 +121,7 @@ export const REVIEW_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
 export const PR_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable PR review gate output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show reviewer request, comment, and wait plans without mutating GitHub or sleeping', default: false },
-  { name: '--local-review-prompts', type: 'boolean', description: 'Include full local review lane promptText bodies for independent host subagent execution; prompt rendering alone cannot satisfy required local review gates', default: false },
+  { name: '--local-review-prompts', type: 'boolean', description: 'Include full local review lane promptText and spawnPrompt bodies for independent host subagent execution; paste spawnPrompt verbatim when spawning reviewers', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

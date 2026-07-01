@@ -112,7 +112,7 @@ export const codexHostProfile: AgentHostProfile = Object.freeze({
   }),
   subagents: Object.freeze({
     supported: true,
-    instruction: "For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: \"qube-review-focus\"` and `fork_context: false` using each lane `promptText` from `pr gate --dry-run --json --local-review-prompts`, wait for all subagents before editing or testing in the main session, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback, delete the review session lock, then inspect PR comments for merge guidance.",
+    instruction: "For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: \"qube-review-focus\"` and `fork_context: false` by pasting each lane `spawnPrompt` verbatim from `pr gate --dry-run --json --local-review-prompts`, wait for all subagents before editing or testing in the main session, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback, delete the review session lock, then inspect PR comments for merge guidance.",
   }),
   hooks: Object.freeze({
     supported: true,
@@ -141,7 +141,7 @@ const SUPPORTED_OPERATIONS = Object.freeze([
     id: "spawn-review-subagent",
     support: "supported",
     owner: "Codex host",
-    summary: "Codex can spawn independent qube-review-focus subagents from rendered lane promptText.",
+    summary: "Codex can spawn independent qube-review-focus subagents from rendered lane spawnPrompt.",
     nextAction: "Use pr gate --dry-run --json --local-review-prompts and spawn one subagent per lane.",
   }),
 ]);
@@ -186,7 +186,7 @@ export function probeCodexReviewCapability(independentReviewerCommand?: string |
     nextAction: commandConfigured
       ? "Codex local-host review execution is configured; run local-host lanes and record current-head local-host evidence."
       : hostProvided
-        ? "QUBE rendered promptText for host-run Codex subagents. Spawn independent Codex subagents from the active host and record local-host evidence with task, session, or thread provenance, then rerun the PR gate."
+        ? "QUBE rendered spawnPrompt for host-run Codex subagents. Spawn independent Codex subagents from the active host by pasting each spawnPrompt verbatim, record local-host evidence with task, session, or thread provenance, then rerun the PR gate."
         : "Codex local-host review support was not explicitly configured. Configure codex as a local review agent or provide a trusted local-host command before requiring local-host review lanes.",
   });
 }

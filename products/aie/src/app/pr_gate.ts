@@ -752,7 +752,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
   });
-  const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `aie pr review publish <pr> --lane <lane>` from each review subagent.');
+  const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes });
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid);

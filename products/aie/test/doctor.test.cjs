@@ -211,7 +211,7 @@ describe('doctor diagnostics', () => {
     assert.equal(diagnostics.reviewAgent.localRunner.codex.promptOnly, false);
     assert.equal(diagnostics.reviewAgent.localRunner.codex.freshContext, true);
     assert.deepEqual(diagnostics.reviewAgent.localRunner.codex.missingCapabilities, []);
-    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /Spawn independent Codex subagents/);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /spawnPrompt/);
   });
 
   it('does not claim commandless local-host review support without configured Codex agent', () => {

@@ -61,9 +61,10 @@ function hostProvenancePath(repoRoot: string, issueNumber: number, prNumber: num
   return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
 }
 
-export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string): string[] {
+export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string, publishCommand?: string): string[] {
   const primaryIssue = issueNumbers[0] ?? 0;
   const primaryEvidencePath = evidencePaths[0] ?? '';
+  const lanePublishCommand = publishCommand?.trim() || 'qube aie pr review publish <pr> --lane <lane> --issue <issue>';
   return [
     `Run local review lane ${lane}.`,
     `Issue: #${primaryIssue}.`,
@@ -78,7 +79,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
     'Writing the requested evidence and host-provenance files is allowed; do not edit source, tests, docs, config, package metadata, PR body, or issue content from inside the reviewer lane.',
-    'Return evidence for this lane only; publish provider-visible lane review with `qube aie pr review publish <pr> --lane <lane> --issue <issue>` (or `aie pr review publish` in this repository) after writing lane evidence.',
+    `Return evidence for this lane only; publish provider-visible lane review with \`${lanePublishCommand}\` after writing lane evidence.`,
     'Return evidence for this lane only; the main agent waits for all lane reviews on the pull request before addressing feedback.',
     ...extraContext,
   ];
@@ -93,6 +94,75 @@ export function promptStack(lane: LocalReviewLaneId, contextLines: readonly stri
     contextLines,
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context.',
   });
+}
+
+export interface LocalReviewSpawnContract {
+  agentType: string;
+  forkContext: false;
+  modelTier: 'review' | 'economy';
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  promptStackHash: string;
+  taskPrompt: string;
+  publishCommand: string;
+}
+
+export function buildLocalReviewPublishCommand(cliPrefix: string, prNumber: number, lane: LocalReviewLaneId, issueNumber: number): string {
+  const prefix = cliPrefix.trim() || 'qube aie';
+  return `${prefix} pr review publish ${prNumber} --lane ${lane} --issue ${issueNumber}`;
+}
+
+export function buildLocalReviewSpawnPrompt(input: {
+  hostAgentType: string;
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  promptStackHash: string;
+  promptText: string;
+  publishCommand: string;
+}): string {
+  const promptText = input.promptText.trim();
+  return [
+    `You are the QUBE ${input.hostAgentType} subagent for review lane "${input.lane}".`,
+    `Issue #${input.issueNumber}, PR #${input.prNumber}, head ${input.headSha}.`,
+    `Prompt stack hash for runnerProvenance.promptStackHash: ${input.promptStackHash}.`,
+    'Read-only focused PR review: inspect only what this lane requires; do not edit source, tests, docs, config, package metadata, PR body, or issue content.',
+    'The complete lane instructions are inline below. Do not read external prompt files and do not follow paths under .qube/aie/reviews/.../prompts/.',
+    '',
+    '--- LANE PROMPT START ---',
+    promptText,
+    '--- LANE PROMPT END ---',
+    '',
+    `When complete, publish provider-visible feedback with: ${input.publishCommand}`,
+    'Report recommendation, blockers, evidence path, runner provenance path, and provider comment URL if published.',
+  ].join('\n');
+}
+
+export function buildLocalReviewSpawnContract(input: {
+  hostAgentType: string;
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  promptStackHash: string;
+  promptText: string;
+  publishCommand: string;
+}): LocalReviewSpawnContract {
+  return {
+    agentType: input.hostAgentType,
+    forkContext: false,
+    modelTier: 'review',
+    lane: input.lane,
+    issueNumber: input.issueNumber,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    promptStackHash: input.promptStackHash,
+    taskPrompt: buildLocalReviewSpawnPrompt(input),
+    publishCommand: input.publishCommand,
+  };
 }
 
 function promptStackEvidence(lane: LocalReviewLaneId): LaneEvidence['promptStack'] {
@@ -282,8 +352,8 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], exec?: PrGateExec): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot));
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand));
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,
