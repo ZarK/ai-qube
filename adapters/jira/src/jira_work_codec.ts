@@ -301,7 +301,12 @@ export function attachJiraBlockedBy(items: WorkItem[]): WorkItem[] {
   for (const item of items) {
     for (const blocker of item.blockers) {
       const key = JSON.stringify([blocker.providerId, blocker.id]);
-      blockedBy.set(key, [...(blockedBy.get(key) ?? []), item.key]);
+      const current = blockedBy.get(key);
+      if (current) {
+        current.push(item.key);
+      } else {
+        blockedBy.set(key, [item.key]);
+      }
     }
   }
   return items.map((item) => normalizeWorkItem({

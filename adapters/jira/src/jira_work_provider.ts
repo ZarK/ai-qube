@@ -2,7 +2,7 @@ import { createAction, createActionPlan, type Action, type ActionPlan, type Acti
 import { attachJiraBlockedBy, jiraIssueToWorkItem, type JiraIssue, type JiraWorkflowSchema } from "./jira_work_codec.js";
 
 export interface JiraRestClient {
-  listIssues(input: { jql: string; limit: number }): Promise<JiraIssue[]>;
+  listIssues(input: { jql: string; limit: number; fields?: readonly string[] }): Promise<JiraIssue[]>;
   getIssue(key: string): Promise<JiraIssue>;
 }
 
@@ -20,9 +20,14 @@ export interface JiraWorkProviderOptions {
 
 interface JiraSearchResponse {
   readonly issues?: readonly JiraIssue[];
+  readonly startAt?: number;
+  readonly maxResults?: number;
+  readonly total?: number;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_SEARCH_PAGE_SIZE = 100;
+const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/u;
 
 function required(value: string | undefined, name: string): string {
   if (value && value.trim() !== "") return value.trim();
@@ -47,34 +52,41 @@ class FetchJiraRestClient implements JiraRestClient {
   private readonly email: string;
   private readonly apiToken: string;
   private readonly requestTimeoutMs: number;
+  private readonly fields: readonly string[];
 
   constructor(options: JiraWorkProviderOptions) {
-    this.baseUrl = required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL").replace(/\/+$/u, "");
+    this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL"));
     this.email = required(options.email ?? process.env.JIRA_EMAIL, "JIRA_EMAIL");
     this.apiToken = required(options.apiToken ?? process.env.JIRA_API_TOKEN, "JIRA_API_TOKEN");
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
+    this.fields = searchFields(options.workflowSchema);
   }
 
-  async listIssues(input: { jql: string; limit: number }): Promise<JiraIssue[]> {
+  async listIssues(input: { jql: string; limit: number; fields?: readonly string[] }): Promise<JiraIssue[]> {
+    const issues: JiraIssue[] = [];
+    const fields = input.fields ?? this.fields;
+    let startAt = 0;
+    while (issues.length < input.limit) {
+      const maxResults = Math.min(DEFAULT_SEARCH_PAGE_SIZE, input.limit - issues.length);
+      const payload = await this.searchPage({ jql: input.jql, fields, startAt, maxResults });
+      const pageIssues = [...(payload.issues ?? [])];
+      issues.push(...pageIssues);
+      if (pageIssues.length === 0) break;
+      const total = payload.total;
+      if (typeof total === "number" && issues.length >= total) break;
+      if (pageIssues.length < maxResults) break;
+      startAt = (payload.startAt ?? startAt) + pageIssues.length;
+    }
+    return issues;
+  }
+
+  private async searchPage(input: { jql: string; fields: readonly string[]; startAt: number; maxResults: number }): Promise<JiraSearchResponse> {
     const url = new URL(`${this.baseUrl}/rest/api/3/search`);
     url.searchParams.set("jql", input.jql);
-    url.searchParams.set("maxResults", String(input.limit));
-    url.searchParams.set("fields", [
-      "summary",
-      "description",
-      "issuetype",
-      "status",
-      "priority",
-      "labels",
-      "components",
-      "assignee",
-      "project",
-      "comment",
-      "issuelinks",
-      "parent",
-    ].join(","));
-    const payload = await this.request<JiraSearchResponse>(url);
-    return [...(payload.issues ?? [])];
+    url.searchParams.set("startAt", String(input.startAt));
+    url.searchParams.set("maxResults", String(input.maxResults));
+    url.searchParams.set("fields", input.fields.join(","));
+    return this.request<JiraSearchResponse>(url);
   }
 
   async getIssue(key: string): Promise<JiraIssue> {
@@ -107,9 +119,41 @@ class FetchJiraRestClient implements JiraRestClient {
   }
 }
 
+function normalizeBaseUrl(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== "https:") {
+    throw new Error("Jira work provider requires JIRA_BASE_URL to use https when sending JIRA_EMAIL and JIRA_API_TOKEN.");
+  }
+  return url.toString().replace(/\/+$/u, "");
+}
+
+function searchFields(schema: JiraWorkflowSchema | undefined): readonly string[] {
+  const fields = [
+    "summary",
+    "description",
+    "issuetype",
+    "status",
+    "priority",
+    "labels",
+    "components",
+    "assignee",
+    "project",
+    "comment",
+    "issuelinks",
+    "parent",
+  ];
+  for (const field of [schema?.sprintField, schema?.epicField]) {
+    if (field && !fields.includes(field)) fields.push(field);
+  }
+  return fields;
+}
+
 function defaultJql(options: JiraWorkProviderOptions): string {
   if (options.jql && options.jql.trim() !== "") return options.jql.trim();
   const projectKey = required(options.projectKey ?? process.env.JIRA_PROJECT_KEY, "JIRA_PROJECT_KEY or jql");
+  if (!JIRA_PROJECT_KEY.test(projectKey)) {
+    throw new Error("Jira work provider projectKey must be a Jira project key such as ENG or OPS_2. Use explicit jql for custom project clauses.");
+  }
   return `project = "${projectKey}" AND resolution = Unresolved ORDER BY priority DESC, updated DESC`;
 }
 
@@ -172,7 +216,7 @@ export class JiraWorkProvider implements WorkProvider {
   }
 
   async listOpenWorkItems(): Promise<WorkItem[]> {
-    const issues = await this.client.listIssues({ jql: this.jql, limit: this.limit });
+    const issues = await this.client.listIssues({ jql: this.jql, limit: this.limit, fields: searchFields(this.workflowSchema) });
     return attachJiraBlockedBy(issues.map(issue => jiraIssueToWorkItem(issue, this.workflowSchema)).filter(item => item.state === "open"));
   }
 

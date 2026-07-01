@@ -122,10 +122,14 @@ describe("Jira work provider adapter", () => {
         statusMap: { "Waiting for customer": "blocked", Queued: "ready" },
         priorityMap: { P0: "critical", P2: "high" },
         linkRules: [{ typeName: "Dependency", inward: "blocker", outward: "blockedBy" }],
+        sprintField: "customfield_10020",
+        epicField: "customfield_10014",
       },
       client: {
         async listIssues(input) {
           assert.equal(input.jql, 'project = "OPS" AND resolution = Unresolved ORDER BY priority DESC, updated DESC');
+          assert.ok(input.fields.includes("customfield_10020"));
+          assert.ok(input.fields.includes("customfield_10014"));
           return issues;
         },
         async getIssue(key) {
@@ -186,6 +190,14 @@ describe("Jira work provider adapter", () => {
       () => createJiraWorkProvider({ baseUrl: "", email: "", apiToken: "", projectKey: "ENG" }),
       /JIRA_BASE_URL/,
     );
+    assert.throws(
+      () => createJiraWorkProvider({ baseUrl: "http://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: "ENG" }),
+      /requires JIRA_BASE_URL to use https/,
+    );
+    assert.throws(
+      () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: 'ENG" OR project = OPS' }),
+      /projectKey must be a Jira project key/,
+    );
 
     const issue = makeJiraIssue();
     const provider = createJiraWorkProvider({
@@ -212,5 +224,54 @@ describe("Jira work provider adapter", () => {
       () => provider.getWorkItem({ providerId: "github", id: "123" }),
       /providerId github is unsupported/,
     );
+  });
+
+  it("paginates Jira search reads and requests configured custom fields", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    try {
+      globalThis.fetch = async (url, options) => {
+        const requestUrl = new URL(String(url));
+        requests.push({ url: requestUrl, options });
+        const startAt = Number(requestUrl.searchParams.get("startAt"));
+        const pageSize = startAt === 0 ? 100 : 50;
+        return {
+          ok: true,
+          async json() {
+            return {
+              startAt,
+              maxResults: pageSize,
+              total: 150,
+              issues: Array.from({ length: pageSize }, (_value, index) => makeJiraIssue({
+                id: String(startAt + index + 1),
+                key: `ENG-${startAt + index + 1}`,
+              })),
+            };
+          },
+        };
+      };
+      const provider = createJiraWorkProvider({
+        baseUrl: "https://jira.example.com/",
+        email: "user@example.com",
+        apiToken: "token",
+        projectKey: "ENG",
+        limit: 150,
+        workflowSchema: {
+          sprintField: "customfield_10020",
+          epicField: "customfield_10014",
+        },
+      });
+
+      const items = await provider.listOpenWorkItems();
+
+      assert.equal(items.length, 150);
+      assert.deepEqual(requests.map((request) => request.url.searchParams.get("startAt")), ["0", "100"]);
+      assert.deepEqual(requests.map((request) => request.url.searchParams.get("maxResults")), ["100", "50"]);
+      assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10020"));
+      assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10014"));
+      assert.match(requests[0].options.headers.Authorization, /^Basic /);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
   });
 });
