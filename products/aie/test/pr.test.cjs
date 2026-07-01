@@ -26,6 +26,7 @@ const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService } = require('../dist/app/pr_review_publish.js');
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
+const { stringListFlag } = require('../dist/runtime_result.js');
 
 const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
@@ -3118,6 +3119,12 @@ describe('PR body service', () => {
     assert.equal(result.status, 'resolved');
     assert.deepEqual(result.resolvedThreadIds, ['PRRT_resolve_1']);
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
+  });
+
+  it('parses comma-separated repeated review thread flags', () => {
+    const threadIds = stringListFlag({ args: {}, flags: { thread: ['PRRT_one, PRRT_two', 'PRRT_three'] } }, 'thread');
+
+    assert.deepEqual(threadIds, ['PRRT_one', 'PRRT_two', 'PRRT_three']);
   });
 
   it('emits trusted lane review counts and URLs in PR view JSON without replaying stale general review feedback', async () => {
