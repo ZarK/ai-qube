@@ -106,9 +106,10 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand));
   const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand));
+  const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && promptText.trim() !== ''
-    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptText, publishCommand })
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand })
     : null;
   return {
     issueNumber,
@@ -120,7 +121,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     evidencePath,
     evidencePaths: [...evidencePaths],
     promptFragmentIds: rendered.orderedFragmentIds,
-    promptStackHash: hash(stableRendered.text),
+    promptStackHash,
     promptText,
     promptOutputContract: rendered.outputContract,
     spawnPrompt: spawnContract?.taskPrompt ?? '',

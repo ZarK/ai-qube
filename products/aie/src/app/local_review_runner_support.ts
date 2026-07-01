@@ -104,6 +104,7 @@ export interface LocalReviewSpawnContract {
   issueNumber: number;
   prNumber: number;
   headSha: string;
+  promptStackHash: string;
   taskPrompt: string;
   publishCommand: string;
 }
@@ -119,6 +120,7 @@ export function buildLocalReviewSpawnPrompt(input: {
   issueNumber: number;
   prNumber: number;
   headSha: string;
+  promptStackHash: string;
   promptText: string;
   publishCommand: string;
 }): string {
@@ -126,6 +128,7 @@ export function buildLocalReviewSpawnPrompt(input: {
   return [
     `You are the QUBE ${input.hostAgentType} subagent for review lane "${input.lane}".`,
     `Issue #${input.issueNumber}, PR #${input.prNumber}, head ${input.headSha}.`,
+    `Prompt stack hash for runnerProvenance.promptStackHash: ${input.promptStackHash}.`,
     'Read-only focused PR review: inspect only what this lane requires; do not edit source, tests, docs, config, package metadata, PR body, or issue content.',
     'The complete lane instructions are inline below. Do not read external prompt files and do not follow paths under .qube/aie/reviews/.../prompts/.',
     '',
@@ -144,6 +147,7 @@ export function buildLocalReviewSpawnContract(input: {
   issueNumber: number;
   prNumber: number;
   headSha: string;
+  promptStackHash: string;
   promptText: string;
   publishCommand: string;
 }): LocalReviewSpawnContract {
@@ -155,6 +159,7 @@ export function buildLocalReviewSpawnContract(input: {
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
     headSha: input.headSha,
+    promptStackHash: input.promptStackHash,
     taskPrompt: buildLocalReviewSpawnPrompt(input),
     publishCommand: input.publishCommand,
   };

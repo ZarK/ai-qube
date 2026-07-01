@@ -1189,6 +1189,8 @@ describe('PR gate service', () => {
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.agentType, 'qube-review-focus');
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.forkContext, false);
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `qube aie pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, new RegExp(`Prompt stack hash for runnerProvenance\\.promptStackHash: ${result.localReviewRunner.lanes[0].promptStackHash}\\.`));
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /deeply critical PR review agent/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /security and trust boundaries/);
@@ -1241,7 +1243,9 @@ describe('PR gate service', () => {
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.publishCommand, `node products/aie/bin/run pr review publish 12 --lane ${result.localReviewRunner.lanes[0].lane} --issue 93`);
+    assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /When complete, publish provider-visible feedback with: node products\/aie\/bin\/run pr review publish 12 --lane/);
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Prompt stack hash for runnerProvenance\.promptStackHash: [a-f0-9]{64}\./);
     assert.match(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `node products\/aie\/bin\/run pr review publish 12 --lane/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /publish provider-visible lane review with `qube aie pr review publish/);
   });
