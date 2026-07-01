@@ -133,6 +133,14 @@ export const PR_REVIEW_PUBLISH_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const PR_THREAD_RESOLVE_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable review-thread resolution output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show selected review threads without mutating GitHub', default: false },
+  { name: '--thread', type: 'string', description: 'GitHub review thread node id to resolve; repeat or comma-separate', multiple: true },
+  { name: '--all', type: 'boolean', description: 'Resolve every currently unresolved review thread that the authenticated user can resolve', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const PR_VIEW_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable concise PR state', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },

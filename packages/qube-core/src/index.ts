@@ -14,11 +14,16 @@ export { isVerifiedGateEvidence, normalizeGateEvidence } from "./gate_evidence.j
 export type {
   FeedbackTrust,
   Mergeability,
+  ResolveReviewThreadInput,
+  ResolveReviewThreadResult,
+  ReviewConversation,
   ReviewDecision,
   ReviewFeedback,
   ReviewFeedbackSource,
   ReviewItem,
   ReviewItemKey,
+  ReviewMergeBlock,
+  ReviewMergeBlockReason,
   ReviewState,
 } from "./review_item.js";
 export { normalizeReviewFeedback, normalizeReviewItem, normalizeReviewItemKey } from "./review_item.js";

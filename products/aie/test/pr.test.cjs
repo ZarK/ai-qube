@@ -25,6 +25,7 @@ try {
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService } = require('../dist/app/pr_review_publish.js');
+const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 
 const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
@@ -573,6 +574,11 @@ function makePrExec(options = {}) {
       return run ? { args, exitCode: 0, stdout: JSON.stringify(run), stderr: '' } : { args, exitCode: 1, stdout: '', stderr: 'workflow run not found' };
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
+      const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
+      if (queryArg && queryArg.includes('resolveReviewThread')) {
+        const threadIdArg = args.find(arg => typeof arg === 'string' && arg.startsWith('threadId='));
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
+      }
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
     }
     if (args[0] === 'review-fixture') {
@@ -1859,7 +1865,7 @@ describe('PR gate service', () => {
     assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
     assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
     assert.ok(calls.some(call => call.join(' ') === `pr view 12 --json ${prViewFields}`));
-    assert.ok(calls.some(call => call.join(' ') === 'pr diff 12 --patch'));
+    assert.equal(calls.some(call => call.join(' ') === 'pr diff 12 --patch'), false);
     assert.ok(calls.some(call => call.join(' ') === 'api repos/example/repo/issues/12/comments --method GET -F per_page=100 --paginate --slurp'));
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
@@ -1887,9 +1893,9 @@ describe('PR gate service', () => {
     writeLocalEvidence(repo, evidence);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
 
-    assert.equal(result.publish.status, 'planned');
+    assert.equal(result.publish.status, 'published');
     assert.equal(result.publish.publishKind, 'pull-request-review');
     assert.equal(result.publish.inlineCommentCount, 1);
     assert.equal(result.publish.bodyFindingCount, 1);
@@ -2961,7 +2967,13 @@ describe('PR gate service', () => {
       latestReviews: [{ author: { login: 'reviewer' }, state: 'CHANGES_REQUESTED', body: 'Please fix this.', url: 'https://github.com/example/repo/pull/12#pullrequestreview-1' }],
     });
     const reviewComments = [{ user: { login: 'reviewer' }, body: 'Line-level problem.', html_url: 'https://github.com/example/repo/pull/12#discussion_r1' }];
-    const threads = [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Unresolved thread.', url: 'https://github.com/example/repo/pull/12#discussion_r2' }] } }];
+    const threads = [{
+      id: 'PRRT_thread_1',
+      isResolved: false,
+      isOutdated: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Unresolved thread.', url: 'https://github.com/example/repo/pull/12#discussion_r2', path: 'src/review.ts', line: 2, originalLine: 2 }] },
+    }];
     const { exec } = makePrExec({ prViews: [pr], reviewComments, threads });
 
     const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
@@ -2969,8 +2981,12 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'failed');
     assert.equal(result.counts.reviewComments, 1);
     assert.equal(result.counts.unresolvedThreads, 1);
+    assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
+    assert.equal(result.reviewThreads[0].id, 'PRRT_thread_1');
+    assert.equal(result.reviewThreads[0].path, 'src/review.ts');
+    assert.equal(result.reviewThreads[0].viewerCanResolve, true);
     assert.ok(result.feedback.some(item => item.source === 'thread'));
-    assert.match(result.nextAction, /Inspect and address review feedback/);
+    assert.match(result.nextAction, /pr thread resolve/);
   });
 
   it('counts resolved REST review comments without surfacing them as feedback', async () => {
@@ -3064,6 +3080,44 @@ describe('PR body service', () => {
     assert.equal(result.feedback[0].source, 'review');
     assert.match(result.feedback[0].summary, /Please fix the parser/);
     assert.doesNotMatch(JSON.stringify(result), /SECRET|internal state/);
+  });
+
+  it('emits merge blockers and review thread ids in PR view JSON', async () => {
+    const pr = basePr({
+      reviewDecision: '',
+      mergeStateStatus: 'BLOCKED',
+      mergeable: 'MERGEABLE',
+    });
+    const threads = [{
+      id: 'PRRT_view_1',
+      isResolved: false,
+      viewerCanResolve: true,
+      comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Resolve this conversation.', url: 'https://github.com/example/repo/pull/12#discussion_r5', path: 'src/review.ts', line: 3, originalLine: 3 }] },
+    }];
+    const { exec } = makePrExec({ prViews: [pr], threads });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.equal(result.mergeability, 'blocked');
+    assert.equal(result.counts.reviewThreads, 1);
+    assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
+    assert.equal(result.reviewThreads[0].id, 'PRRT_view_1');
+    assert.equal(result.reviewThreads[0].path, 'src/review.ts');
+    assert.match(result.nextAction, /pr thread resolve/);
+  });
+
+  it('resolves all unresolved viewer-resolvable review threads', async () => {
+    const threads = [
+      { id: 'PRRT_resolve_1', isResolved: false, viewerCanResolve: true, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Addressed.', url: 'https://github.com/example/repo/pull/12#discussion_r6' }] } },
+      { id: 'PRRT_unowned_1', isResolved: false, viewerCanResolve: false, comments: { nodes: [{ author: { login: 'reviewer' }, body: 'Cannot resolve.', url: 'https://github.com/example/repo/pull/12#discussion_r7' }] } },
+    ];
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ mergeStateStatus: 'BLOCKED' })], threads });
+
+    const result = await runPrThreadResolveService({ prNumber: 12, threadIds: [], all: true, dryRun: false, exec: fixture.exec });
+
+    assert.equal(result.status, 'resolved');
+    assert.deepEqual(result.resolvedThreadIds, ['PRRT_resolve_1']);
+    assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'graphql' && call.some(arg => String(arg).includes('resolveReviewThread'))).length, 1);
   });
 
   it('emits trusted lane review counts and URLs in PR view JSON without replaying stale general review feedback', async () => {

@@ -88,6 +88,7 @@ export interface GitHubReviewSnapshot {
   reviewsCount: number;
   reviewCommentsCount: number;
   unresolvedThreadsCount: number;
+  conversationsCount?: number;
   unavailable: string[];
 }
 
@@ -106,7 +107,27 @@ export interface RawStatusCheck { conclusion?: string; status?: string; state?: 
 export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
 export interface RawIssueComment { body?: string; html_url?: string; user?: RawAuthor | null }
 export interface RawReviewComment { body?: string; html_url?: string; path?: string; user?: { login?: string } | null }
-export interface RawThreadNode { id?: string; isResolved?: boolean; comments?: { nodes?: Array<{ body?: string; author?: RawAuthor | null; url?: string }> } }
+export interface RawThreadComment {
+  id?: string;
+  databaseId?: number;
+  body?: string;
+  author?: RawAuthor | null;
+  url?: string;
+  path?: string;
+  line?: number | null;
+  originalLine?: number | null;
+  diffHunk?: string;
+  outdated?: boolean;
+  createdAt?: string;
+}
+export interface RawThreadNode {
+  id?: string;
+  isResolved?: boolean;
+  isOutdated?: boolean;
+  viewerCanResolve?: boolean;
+  viewerCanUnresolve?: boolean;
+  comments?: { nodes?: RawThreadComment[] };
+}
 export interface RawThreadPage { nodes?: RawThreadNode[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
 export interface RawThreadResponse { data?: { repository?: { pullRequest?: { reviewThreads?: RawThreadPage } | null } | null } }
 export interface LoginResponse { login: string }

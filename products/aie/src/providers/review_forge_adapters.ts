@@ -3,7 +3,7 @@ import type { GhExec } from '../gh.js';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
-import type { ReviewItem, ReviewItemKey } from '../core/review_item.js';
+import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
 import type { ReviewProviderPlanOptions } from './review_provider.js';
 
 import {
@@ -46,6 +46,7 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   publishLaneReview: true,
   publishLaneReviewInline: true,
   publishLocalReview: true,
+  resolveReviewThreads: true,
   ciDiagnostics: true,
 });
 
@@ -111,7 +112,7 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
 
 interface LoadedGitHubReviewForgeProvider {
   readonly id: 'github';
-  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean };
+  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; resolveReviewThreads?: boolean };
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
@@ -122,6 +123,7 @@ interface LoadedGitHubReviewForgeProvider {
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
 
 function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
@@ -143,6 +145,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
       publishLaneReview: provider.capabilities().publishLaneReview ?? true,
       publishLaneReviewInline: provider.capabilities().publishLaneReviewInline ?? false,
       publishLocalReview: true,
+      resolveReviewThreads: provider.capabilities().resolveReviewThreads ?? false,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),
@@ -157,6 +160,9 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
     publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
     publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
       ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)
+      : undefined,
+    resolveReviewThreads: provider.resolveReviewThreads
+      ? (input) => provider.resolveReviewThreads!(input)
       : undefined,
   };
 }
@@ -180,6 +186,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
       applyReviewRequests: MISSING_REVIEW_FORGE_CAPABILITIES.applyReviewRequests,
       publishLaneReview: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReview,
       publishLaneReviewInline: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReviewInline,
+      resolveReviewThreads: MISSING_REVIEW_FORGE_CAPABILITIES.resolveReviewThreads,
     };
   }
 
@@ -221,6 +228,10 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
 
   async publishLaneReviewFeedbackForPullRequest(_input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult> {
     throw this.error('publish lane review feedback');
+  }
+
+  async resolveReviewThreads(_input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult> {
+    throw this.error('resolve review threads');
   }
 
   private emptyPlan(command: string): ActionPlan {
