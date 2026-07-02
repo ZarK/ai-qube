@@ -4,11 +4,11 @@ import type { RepoState } from './core/repo_state.js';
 import type { WorkItem } from './core/work_item.js';
 import { Config, getDefaults, loadConfig } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
-import type { GitHubIssue } from './github.js';
-import type { GhExec } from './gh.js';
+import type { GitHubIssue } from '@tjalve/qube-adapter-github';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import { createLocalGitRepositoryProvider, actionPlanWithResults, type GitExec, type GitRunResult } from './providers/local/local_git_provider.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
-import { githubIssueNumber, githubIssueToWorkItem } from './providers/github/github_work_codec.js';
+import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
+import { githubIssueNumber, githubIssueToWorkItem } from '@tjalve/qube-adapter-github';
 import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, validateBranchPattern } from './core/branch_rules.js';
 
 export type { GitExec, GitRunResult };

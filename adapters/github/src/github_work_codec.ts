@@ -1,7 +1,5 @@
-import type { GitHubIssue, GitHubMilestone } from '../../github.js';
-import { parseChecklist } from '../../checklist.js';
-import { normalizeProviderSource } from '../../core/provider_source.js';
-import { normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from '../../core/work_item.js';
+import { normalizeProviderSource, normalizeWorkItem, normalizeWorkItemKey, type WorkChecklist, type WorkItem, type WorkItemKey, type WorkPriority, type WorkProject, type WorkStatus } from "@tjalve/qube-core";
+import type { GitHubIssue, GitHubMilestone } from './github_issue_api.js';
 
 const PROVIDER_ID = 'github';
 
@@ -21,12 +19,22 @@ export interface WorkChecklistItem {
 }
 
 export function parseWorkChecklistItems(body: string): WorkChecklistItem[] {
-  return parseChecklist(body).items.map(item => ({ text: item.text, checked: item.checked }));
+  return parseChecklistItems(body);
 }
 
 export function parseWorkChecklist(body: string): WorkChecklist {
-  const checklist = parseChecklist(body);
-  return { total: checklist.total, completed: checklist.checked };
+  const items = parseChecklistItems(body);
+  return { total: items.length, completed: items.filter(item => item.checked).length };
+}
+
+function parseChecklistItems(body: string): WorkChecklistItem[] {
+  const items: WorkChecklistItem[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[-*+]\s*)?\[( |x|X)\]\s+(.+?)\s*$/);
+    if (!match) continue;
+    items.push({ checked: match[1].toLowerCase() === 'x', text: match[2] });
+  }
+  return items;
 }
 
 function mapStatus(labels: string[]): WorkStatus {

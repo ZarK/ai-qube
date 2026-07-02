@@ -5,7 +5,7 @@ import { Config } from './config/index.js';
 import { renderAgentPrompt, type RenderedAgentPrompt } from './agent_descriptors.js';
 import { probeCodexReviewCapabilitySync, type CodexReviewCapability } from './app/local_review_runner.js';
 import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
-import { redact } from './gh.js';
+import { redact } from '@tjalve/qube-adapter-github';
 import { readLocalIssueReviewGate, requiredLocalReviewLanes, type LocalReviewContextReviewed, type LocalReviewFreshness, type LocalReviewGate, type LocalReviewProfile, type LocalReviewPromptStackItem, type LocalReviewTrust } from './local_review_evidence.js';
 
 export type ReviewGateEvidenceSource = 'not-recorded' | 'agent-reported' | 'evidence-found';

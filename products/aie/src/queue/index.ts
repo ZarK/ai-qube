@@ -1,7 +1,7 @@
 import { loadConfig, getDefaults, Config } from '../config/index.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { computeWorkQueue, type WorkMilestoneGroup, type WorkQueuePolicy } from '../core/queue_rules.js';
-import { githubIssueNumber } from '../providers/github/github_work_codec.js';
+import { githubIssueNumber } from '@tjalve/qube-adapter-github';
 import { createLifecycleContext } from '../app/lifecycle_services.js';
 import { runNextWorkService } from '../app/next_work.js';
 

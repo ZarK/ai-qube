@@ -1,5 +1,5 @@
 import type { ReviewForgePolicy } from '@tjalve/qube-core';
-import type { GhExec } from '../gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';

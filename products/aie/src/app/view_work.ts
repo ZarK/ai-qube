@@ -2,7 +2,7 @@ import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
-import { githubIssueNumber, parseWorkChecklist, parseWorkChecklistItems } from '../providers/github/github_work_codec.js';
+import { githubIssueNumber, parseWorkChecklist, parseWorkChecklistItems } from '@tjalve/qube-adapter-github';
 import { githubIssueLifecycleUnsupportedReason, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface ViewServiceResult {

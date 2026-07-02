@@ -1,4 +1,4 @@
-import { runGh, parseGhJson, GhExec, GhMalformedOutputError, GhExecutionError } from './gh.js';
+import { runGh, parseGhJson, type GhExec, GhMalformedOutputError, GhExecutionError } from './gh.js';
 
 function isRawGhLabel(v: unknown): v is RawGhLabel {
   return !!v && typeof v === 'object' && 'name' in (v as object);

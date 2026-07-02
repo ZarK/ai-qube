@@ -1,5 +1,5 @@
 import { buildLifecyclePlan, type LifecyclePlan } from '../lifecycle.js';
-import { githubIssueNumber, parseWorkChecklistItems } from '../providers/github/github_work_codec.js';
+import { githubIssueNumber, parseWorkChecklistItems } from '@tjalve/qube-adapter-github';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import type { Action } from '../core/action_plan.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';

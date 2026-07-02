@@ -1,9 +1,9 @@
 import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey } from './core/work_item.js';
-import type { GhExec } from './gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import { buildWorkDependencyGraph, computeWorkQueue, planStatusSyncFromWorkItems, resolveWorkStatusLabels, type WorkQueuePolicy } from './core/queue_rules.js';
 import { getDefaults, loadConfig, type Config } from './config/index.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
-import { githubIssueNumber } from './providers/github/github_work_codec.js';
+import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
+import { githubIssueNumber } from '@tjalve/qube-adapter-github';
 
 export interface BlockerDetail {
   number: number;

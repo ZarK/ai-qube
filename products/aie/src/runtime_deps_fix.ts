@@ -3,7 +3,7 @@ import type { ActionPlan, ActionResult } from './core/action_plan.js';
 import { getDefaults, loadConfig } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
 import { computeStatusFixPlanFromWorkItems, configToWorkQueuePolicy, type StatusFixPlan } from './deps.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
+import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
 import { commandFailure, readBooleanFlag, outputJson } from './runtime_result.js';
 
 export interface StatusFixResult {

@@ -5,7 +5,7 @@ import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, typ
 import type { JsonObject } from '../core/json_value.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
-import { redact } from '../gh.js';
+import { redact } from '@tjalve/qube-adapter-github';
 import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from '../supply_chain_guard.js';
 
 export type GateRequirement = 'required' | 'advisory';

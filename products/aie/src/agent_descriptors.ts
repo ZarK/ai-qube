@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { LocalReviewTrust } from './local_review_evidence.js';
-import { redact } from './gh.js';
+import { redact } from '@tjalve/qube-adapter-github';
 
 export type AgentRoleKind = 'reviewer' | 'qa' | 'acceptance-verifier' | 'planner' | 'researcher';
 export type AgentCategoryId = 'review' | 'qa' | 'acceptance-verification' | 'planning' | 'research';

@@ -1,15 +1,15 @@
-import type { GhExec } from '../gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { WorkItem, WorkItemKey } from '../core/work_item.js';
-import { createGitHubWorkProvider } from './github/github_work_provider.js';
 import type { WorkProvider, WorkProviderCapabilities, WorkProviderId } from './work_provider.js';
 
 export interface WorkProviderAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
   readonly limit?: number;
+  readonly includeAssignees?: boolean;
   readonly client?: unknown;
   readonly workflowSchema?: unknown;
   readonly email?: string;
@@ -70,18 +70,24 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
   Object.freeze({
     id: 'github',
     packageName: '@tjalve/qube-adapter-github',
-    installed: true,
+    installed: false,
     capabilities: GITHUB_CAPABILITIES,
     setup: Object.freeze([
-      'GitHub work support is available through the built-in Executor adapter boundary.',
+      'Install the optional GitHub work-provider adapter package before selecting providers.work.kind=github.',
       'Authenticate gh for the target repository before running mutating lifecycle commands.',
     ]),
-    create: async (options: WorkProviderAdapterOptions) => createGitHubWorkProvider({
-      exec: options.exec,
-      cwd: options.cwd,
-      includeAssignees: false,
-      limit: options.limit,
-    }),
+    create: async (options: WorkProviderAdapterOptions) => {
+      const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-github', 'createGitHubWorkProvider');
+      return loaded ? loaded({
+        exec: options.exec,
+        cwd: options.cwd,
+        includeAssignees: false,
+        limit: options.limit,
+      }) : new MissingWorkProvider('github', '@tjalve/qube-adapter-github', [
+        'Install the optional GitHub work-provider adapter package before selecting providers.work.kind=github.',
+        'Authenticate gh for the target repository before running mutating lifecycle commands.',
+      ]);
+    },
   }),
   missingOptionalAdapter('gitlab', '@tjalve/qube-adapter-gitlab', [
     'Install the optional GitLab work-provider adapter package before selecting providers.work.kind=gitlab.',
@@ -97,7 +103,7 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
   ]),
 ]);
 
-function missingOptionalAdapter(id: Exclude<WorkProviderId, 'github'>, packageName: string, setup: readonly string[]): WorkProviderAdapter {
+function missingOptionalAdapter(id: WorkProviderId, packageName: string, setup: readonly string[]): WorkProviderAdapter {
   return Object.freeze({
     id,
     packageName,

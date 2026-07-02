@@ -1,7 +1,7 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
 import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
-import { githubIssueNumber } from './providers/github/github_work_codec.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
+import { githubIssueNumber } from '@tjalve/qube-adapter-github';
+import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
 import { commandFailure, commandResult, stringArg } from './runtime_result.js';
 
 function lineOutput(lines: string[]): string {
