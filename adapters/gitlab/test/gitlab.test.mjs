@@ -281,6 +281,14 @@ describe("GitLab review forge adapter", () => {
               resolved: false,
               position: { new_path: "src/review.ts", new_line: 7 },
               web_url: "https://gitlab.example.com/discussion/1",
+            },
+            {
+              id: 3,
+              body: "Follow-up reply keeps the discussion unresolved.",
+              author: { username: "maintainer" },
+              resolvable: false,
+              resolved: false,
+              web_url: "https://gitlab.example.com/discussion/1#note_3",
             }],
           }];
         },
@@ -307,7 +315,52 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
     assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "unresolved-review-thread"), true);
     assert.equal(snapshot.item.conversations[0].path, "src/review.ts");
+    assert.equal(snapshot.item.conversations[0].line, 7);
+    assert.equal(snapshot.item.conversations[0].summary, "Follow-up reply keeps the discussion unresolved.");
     assert.equal(snapshot.item.feedback.some(item => item.source === "thread" && item.state === "unresolved"), true);
+  });
+
+  it("surfaces documented GitLab merge status blockers", async () => {
+    const cases = [
+      ["not_approved", "review-required"],
+      ["requested_changes", "changes-requested"],
+      ["discussions_not_resolved", "unresolved-review-thread"],
+      ["ci_must_pass", "checks-pending"],
+      ["status_checks_must_pass", "checks-pending"],
+      ["need_rebase", "merge-state-blocked"],
+      ["security_policy_violations", "merge-state-blocked"],
+      ["locked_paths", "merge-state-blocked"],
+    ];
+    let detailedMergeStatus = "not_approved";
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({
+            detailed_merge_status: detailedMergeStatus,
+          });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    for (const [status, reason] of cases) {
+      detailedMergeStatus = status;
+      const snapshot = await provider.loadPullRequestReview(12);
+      assert.equal(snapshot.item.mergeability, "blocked");
+      assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === reason && blocker.summary.includes(status)), true);
+    }
   });
 
   it("does not pass GitLab pipeline evidence when the pipeline sha is stale or missing", async () => {

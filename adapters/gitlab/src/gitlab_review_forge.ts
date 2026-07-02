@@ -48,9 +48,58 @@ function mapMergeState(mr: GitLabMergeRequest): ReviewItem["state"] {
 function mapMergeability(mr: GitLabMergeRequest): ReviewItem["mergeability"] {
   const status = (mr.detailed_merge_status ?? mr.merge_status ?? "").toLowerCase();
   if (status === "mergeable" || status === "can_be_merged") return "mergeable";
-  if (status.includes("conflict") || status === "cannot_be_merged") return "conflicting";
-  if (status.includes("blocked") || status.includes("checking") || status.includes("approval") || status.includes("pipeline")) return "blocked";
+  if (status === "conflict" || status.includes("conflict") || status === "cannot_be_merged") return "conflicting";
+  if (gitLabMergeStatusBlocker(status) !== null || status.includes("blocked") || status.includes("checking") || status.includes("approval") || status.includes("pipeline")) return "blocked";
   return "unknown";
+}
+
+function gitLabMergeStatusBlocker(status: string): Omit<ReviewMergeBlock, "url"> | null {
+  switch (status) {
+    case "approvals_syncing":
+      return { reason: "merge-state-blocked", summary: "GitLab merge approvals are still syncing." };
+    case "checking":
+    case "unchecked":
+    case "preparing":
+      return { reason: "merge-state-blocked", summary: `GitLab merge status is ${status}; mergeability is still being calculated.` };
+    case "ci_must_pass":
+    case "ci_still_running":
+    case "commits_status":
+    case "security_policy_pipeline_check":
+    case "status_checks_must_pass":
+      return { reason: "checks-pending", summary: `GitLab merge status is ${status}; required pipeline or status checks must pass before merge.` };
+    case "conflict":
+    case "cannot_be_merged":
+    case "cannot_be_merged_recheck":
+      return { reason: "conflict", summary: "GitLab reports this merge request cannot merge cleanly." };
+    case "discussions_not_resolved":
+      return { reason: "unresolved-review-thread", summary: "GitLab reports unresolved discussions that must be resolved before merge." };
+    case "draft_status":
+      return { reason: "draft", summary: "GitLab reports this merge request is a draft." };
+    case "jira_association_missing":
+      return { reason: "merge-state-blocked", summary: "GitLab reports a required Jira association is missing." };
+    case "merge_request_blocked":
+      return { reason: "merge-state-blocked", summary: "GitLab reports this merge request is blocked by another merge request." };
+    case "merge_time":
+      return { reason: "merge-state-blocked", summary: "GitLab reports this merge request cannot be merged until the configured merge time." };
+    case "need_rebase":
+      return { reason: "merge-state-blocked", summary: "GitLab reports this merge request must be rebased before merge." };
+    case "not_approved":
+      return { reason: "review-required", summary: "GitLab reports approval is required before merge." };
+    case "not_open":
+      return { reason: "merge-state-blocked", summary: "GitLab reports this merge request must be open before merge." };
+    case "requested_changes":
+      return { reason: "changes-requested", summary: "GitLab reports requested changes on the merge request." };
+    case "security_policy_violations":
+      return { reason: "merge-state-blocked", summary: "GitLab reports security policy violations that must be resolved before merge." };
+    case "locked_paths":
+      return { reason: "merge-state-blocked", summary: "GitLab reports locked paths that must be unlocked before merge." };
+    case "locked_lfs_files":
+      return { reason: "merge-state-blocked", summary: "GitLab reports locked LFS files that must be unlocked before merge." };
+    case "title_regex":
+      return { reason: "merge-state-blocked", summary: "GitLab reports the merge request title does not satisfy the configured pattern." };
+    default:
+      return null;
+  }
 }
 
 function normalizePr(mr: GitLabMergeRequest): GitLabReviewPullRequest {
@@ -127,9 +176,12 @@ function checks(mr: GitLabMergeRequest, diagnostics: GitLabCiDiagnostic[]): Gate
 
 function mergeBlockers(mr: GitLabMergeRequest, checkEvidence: readonly GateEvidence[], conversations: readonly { resolved: boolean }[]): ReviewMergeBlock[] {
   const blockers: ReviewMergeBlock[] = [];
+  const status = (mr.detailed_merge_status ?? mr.merge_status ?? "").toLowerCase();
+  const statusBlocker = gitLabMergeStatusBlocker(status);
   if (mr.draft || mr.work_in_progress) blockers.push({ reason: "draft", summary: "GitLab merge request is a draft.", url: mr.web_url });
   if (mapMergeability(mr) === "conflicting") blockers.push({ reason: "conflict", summary: "GitLab reports merge conflicts for this merge request.", url: mr.web_url });
-  if (mapMergeability(mr) === "blocked") blockers.push({ reason: "merge-state-blocked", summary: `GitLab merge status is ${mr.detailed_merge_status ?? mr.merge_status ?? "unknown"}.`, url: mr.web_url });
+  if (statusBlocker) blockers.push({ ...statusBlocker, summary: `${statusBlocker.summary} (status=${status})`, url: mr.web_url });
+  else if (mapMergeability(mr) === "blocked") blockers.push({ reason: "merge-state-blocked", summary: `GitLab merge status is ${mr.detailed_merge_status ?? mr.merge_status ?? "unknown"}.`, url: mr.web_url });
   if (checkEvidence.some(check => check.result === "failed")) blockers.push({ reason: "checks-failed", summary: "One or more GitLab pipelines failed.", url: mr.head_pipeline?.web_url ?? mr.web_url });
   if (checkEvidence.some(check => check.result === "unknown")) blockers.push({ reason: "checks-pending", summary: "One or more GitLab pipelines are pending or unknown.", url: mr.head_pipeline?.web_url ?? mr.web_url });
   if (conversations.some(conversation => !conversation.resolved)) blockers.push({ reason: "unresolved-review-thread", summary: "One or more GitLab merge request discussions are unresolved.", url: mr.web_url });
@@ -415,6 +467,7 @@ function trustedMetadataNote(note: GitLabNote, trustedMarkerAuthor: string | nul
 function reviewConversations(discussions: readonly GitLabDiscussion[]) {
   return discussions.flatMap(discussion => {
     const latest = discussion.notes?.at(-1);
+    const anchor = discussion.notes ? [...discussion.notes].reverse().find(note => note.position?.new_path || note.position?.old_path || note.position?.new_line || note.position?.old_line) : undefined;
     if (!latest || !discussion.notes?.some(note => note.resolvable)) return [];
     return [{
       providerId: "gitlab",
@@ -422,9 +475,9 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
       resolved: discussion.notes.every(note => !note.resolvable || note.resolved === true),
       outdated: false,
       viewerCanResolve: false,
-      path: latest.position?.new_path ?? latest.position?.old_path ?? null,
-      line: latest.position?.new_line ?? null,
-      originalLine: latest.position?.old_line ?? null,
+      path: anchor?.position?.new_path ?? anchor?.position?.old_path ?? null,
+      line: anchor?.position?.new_line ?? null,
+      originalLine: anchor?.position?.old_line ?? null,
       author: userName(latest.author),
       summary: latest.body.trim().slice(0, 500) || "GitLab discussion comment",
       url: latest.web_url ?? null,
