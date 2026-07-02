@@ -9,7 +9,7 @@ import type {
   ReviewProviderPlanOptions,
 } from './review_provider.js';
 
-export type ReviewForgeProviderId = 'github';
+export type ReviewForgeProviderId = 'github' | 'gitlab';
 
 export interface ReviewForgeProviderOptions {
   readonly exec?: GhExec;

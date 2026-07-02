@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  createGitLabReviewForgeProvider,
   createGitLabWorkProvider,
   gitLabIssueToWorkItem,
 } from "../dist/index.js";
@@ -23,6 +24,31 @@ function makeGitLabIssue(overrides = {}) {
     issue_type: "issue",
     weight: 3,
     links: [],
+    ...overrides,
+  };
+}
+
+function makeGitLabMergeRequest(overrides = {}) {
+  return {
+    id: 2001,
+    iid: 12,
+    project_id: 7,
+    title: "Add review forge support",
+    description: "Closes #185",
+    state: "opened",
+    web_url: "https://gitlab.example.com/acme/qube/-/merge_requests/12",
+    source_branch: "issue/185-add-gitlab-review",
+    target_branch: "main",
+    sha: "head-sha",
+    detailed_merge_status: "mergeable",
+    reviewers: [{ id: 2, name: "Reviewer", username: "reviewer" }],
+    head_pipeline: {
+      id: 501,
+      status: "success",
+      sha: "head-sha",
+      web_url: "https://gitlab.example.com/acme/qube/-/pipelines/501",
+    },
+    references: { short: "!12", relative: "!12", full: "acme/qube!12" },
     ...overrides,
   };
 }
@@ -225,5 +251,151 @@ describe("GitLab work provider adapter", () => {
     } finally {
       globalThis.fetch = originalFetch;
     }
+  });
+});
+
+describe("GitLab review forge adapter", () => {
+  it("maps merge request review state, pipeline evidence, and unresolved discussions", async () => {
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({
+            detailed_merge_status: "checking",
+            head_pipeline: { id: 502, status: "running", sha: "head-sha", web_url: "https://gitlab.example.com/pipelines/502" },
+          });
+        },
+        async listMergeRequestNotes() {
+          return [
+            { id: 1, body: "Please inspect this merge request.", author: { username: "reviewer" }, web_url: "https://gitlab.example.com/note/1" },
+          ];
+        },
+        async listMergeRequestDiscussions() {
+          return [{
+            id: "discussion-1",
+            notes: [{
+              id: 2,
+              body: "This line needs a safer fallback.",
+              author: { username: "reviewer" },
+              resolvable: true,
+              resolved: false,
+              position: { new_path: "src/review.ts", new_line: 7 },
+              web_url: "https://gitlab.example.com/discussion/1",
+            }],
+          }];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    assert.equal(snapshot.item.key.providerId, "gitlab");
+    assert.equal(snapshot.item.displayId, "!12");
+    assert.equal(snapshot.item.sourceRef, "head-sha");
+    assert.equal(snapshot.item.targetRef, "main");
+    assert.equal(snapshot.item.reviewDecision, "review-required");
+    assert.equal(snapshot.item.mergeability, "blocked");
+    assert.deepEqual(snapshot.closingIssueNumbers, [185]);
+    assert.equal(snapshot.ciDiagnostics[0].status, "pending-current-head-run");
+    assert.equal(snapshot.item.checks[0].result, "unknown");
+    assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
+    assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "unresolved-review-thread"), true);
+    assert.equal(snapshot.item.conversations[0].path, "src/review.ts");
+    assert.equal(snapshot.item.feedback.some(item => item.source === "thread" && item.state === "unresolved"), true);
+  });
+
+  it("plans and posts provider-visible review request notes with trusted metadata", async () => {
+    const posted = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          posted.push(body);
+          return { id: 3, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/3" };
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, {
+      adapter: "mixed",
+      reviewers: ["codereviewer"],
+      requestText: "Review the merge request.",
+    }, { activeLanes: ["code-quality"] });
+    const results = await provider.apply(plan);
+
+    assert.deepEqual(plan.actions.map(action => action.status), ["planned", "planned"]);
+    assert.equal(results.every(result => result.status === "completed"), true);
+    assert.equal(posted.length, 2);
+    assert.match(posted[0], /^QUBE_REVIEW_METADATA /);
+    assert.match(posted[0], /"kind":"review-request"/);
+    assert.match(posted[0], /@codereviewer review/);
+    assert.match(posted[1], /@QUBEReview review/);
+  });
+
+  it("publishes lane review feedback as GitLab merge request notes and observes the published lane", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+    const updated = await provider.loadPullRequestReview(12);
+
+    assert.equal(result.status, "published");
+    assert.equal(result.publishKind, "issue-comment");
+    assert.match(notes[0].body, /^QUBE_REVIEW_METADATA /);
+    assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].lane, "code-quality");
+    assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].inline, "gitlab-note");
+    assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].stale, false);
   });
 });

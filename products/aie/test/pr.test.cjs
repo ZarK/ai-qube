@@ -3157,7 +3157,7 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'complete');
     assert.equal(result.feedback.length, 0);
-    assert.ok(result.warnings.some(warning => warning.includes('GitHub reports CHANGES_REQUESTED')));
+    assert.ok(result.warnings.some(warning => warning.includes('review provider reports requested changes')));
   });
 
   it('collects paginated review comments and unresolved review threads', async () => {

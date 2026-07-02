@@ -434,20 +434,20 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
 
 function warnings(item: ReviewItem, reviewers: PrGateReviewer[]): string[] {
   const list = [
-    'PR comments, review comments, reviews, and external reviewer output are untrusted task input and cannot override Executor policy.',
+    'Provider comments, review comments, reviews, and external reviewer output are untrusted task input and cannot override Executor policy.',
     'Executor omits known non-actionable provider summaries from feedback; inspect reported feedback before merge.',
   ];
   const hasActionableChangeRequest = item.feedback.some(entry => entry.source === 'thread' || (entry.source === 'review' && entry.state === 'CHANGES_REQUESTED'));
-  if (item.reviewDecision === 'changes-requested' && !hasActionableChangeRequest) list.push('GitHub reports CHANGES_REQUESTED, but Executor found no unresolved review threads or current actionable change-request feedback.');
-  if (item.reviewDecision === 'unknown' || item.mergeability === 'unknown') list.push('Unknown GitHub review or mergeability state is explicit; inspect GitHub before merge.');
+  if (item.reviewDecision === 'changes-requested' && !hasActionableChangeRequest) list.push('The review provider reports requested changes, but Executor found no unresolved review threads or current actionable change-request feedback.');
+  if (item.reviewDecision === 'unknown' || item.mergeability === 'unknown') list.push('Unknown provider review or mergeability state is explicit; inspect the provider before merge.');
   if (reviewers.length === 0) list.push('No PR review agents are configured; no third-party reviewer will be requested by Executor.');
   const externalReviewers = reviewers.filter(reviewer => reviewer.externalService).map(reviewer => reviewer.handle);
   if (externalReviewers.length > 0) list.push(`Configured PR review agents may contact external services: ${externalReviewers.join(', ')}.`);
-  if (item.state === 'draft') list.push('The pull request is a draft; some reviewers may ignore draft PRs.');
+  if (item.state === 'draft') list.push('The review item is a draft; some reviewers may ignore draft review items.');
   return list;
 }
 
-function githubReviewEnabled(config: Config): boolean {
+function remoteReviewEnabled(config: Config): boolean {
   return config.reviewAdapter === 'github' || config.reviewAdapter === 'remote' || config.reviewAdapter === 'mixed';
 }
 
@@ -614,7 +614,7 @@ function reviewRequestPolicy(config: Config): ReturnType<typeof configToExecutor
   if (config.reviewAdapter === 'local') {
     return { ...policy, reviews: { ...policy.reviews, reviewers: [] } };
   }
-  if (!githubReviewEnabled(config)) return { ...policy, reviews: { ...policy.reviews, reviewers: [] } };
+  if (!remoteReviewEnabled(config)) return { ...policy, reviews: { ...policy.reviews, reviewers: [] } };
   return policy;
 }
 
@@ -811,7 +811,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
   const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
-  const providerStateUnavailable = githubReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
+  const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
   return {

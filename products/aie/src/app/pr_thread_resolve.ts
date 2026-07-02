@@ -1,4 +1,5 @@
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { getDefaults, loadConfig } from '../config/index.js';
 import type { GhExec } from '../providers/github_adapter_exports.js';
 import type { ResolveReviewThreadResult } from '../core/review_item.js';
 import { parsePrNumber } from './pr_gate.js';
@@ -19,7 +20,8 @@ export interface PrThreadResolveResult extends ResolveReviewThreadResult {
 }
 
 export async function runPrThreadResolveService(options: PrThreadResolveOptions): Promise<PrThreadResolveResult> {
-  const provider = await createReviewForgeProvider('github', { cwd: options.repoRoot, exec: options.exec });
+  const config = await loadConfig(options.repoRoot ?? process.cwd()) ?? getDefaults();
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.repoRoot, exec: options.exec });
   const capabilities = provider.capabilities();
   if (!capabilities.resolveReviewThreads || !provider.resolveReviewThreads) {
     throw new Error('Configured review provider cannot resolve review threads. Next action: use a provider adapter with resolveReviewThreads support.');

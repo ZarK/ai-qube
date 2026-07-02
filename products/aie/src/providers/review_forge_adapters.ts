@@ -50,6 +50,18 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   ciDiagnostics: true,
 });
 
+const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
+  loadReview: true,
+  findCurrentBranchReview: true,
+  planReviewRequests: true,
+  applyReviewRequests: true,
+  publishLaneReview: true,
+  publishLaneReviewInline: false,
+  publishLocalReview: false,
+  resolveReviewThreads: false,
+  ciDiagnostics: true,
+});
+
 const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
   Object.freeze({
     id: 'github',
@@ -62,10 +74,28 @@ const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
     ]),
     create: async (options: ReviewForgeAdapterOptions) => {
       const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-github', 'createGitHubReviewForgeProvider');
-      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedGitHubReviewForgeProvider);
+      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedReviewForgeProvider);
       return new MissingReviewForgeProvider('github', '@tjalve/qube-adapter-github', [
         'Install the optional GitHub review-forge adapter package before selecting providers.review.kind=github.',
         'Authenticate gh for the target repository before running mutating PR review commands.',
+      ]);
+    },
+  }),
+  Object.freeze({
+    id: 'gitlab',
+    packageName: '@tjalve/qube-adapter-gitlab',
+    installed: true,
+    capabilities: GITLAB_CAPABILITIES,
+    setup: Object.freeze([
+      'GitLab review-forge support is available through the optional GitLab adapter package.',
+      'Set GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL before reading or mutating GitLab merge request review state.',
+    ]),
+    create: async (options: ReviewForgeAdapterOptions) => {
+      const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-gitlab', 'createGitLabReviewForgeProvider');
+      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedReviewForgeProvider);
+      return new MissingReviewForgeProvider('gitlab', '@tjalve/qube-adapter-gitlab', [
+        'Install the optional GitLab adapter package before selecting providers.review.kind=gitlab.',
+        'Set GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL before running GitLab merge request review commands.',
       ]);
     },
   }),
@@ -110,8 +140,8 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
   return adapterFor(id).packageName;
 }
 
-interface LoadedGitHubReviewForgeProvider {
-  readonly id: 'github';
+interface LoadedReviewForgeProvider {
+  readonly id: ReviewForgeProviderId;
   capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; resolveReviewThreads?: boolean };
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
@@ -134,9 +164,9 @@ function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
   };
 }
 
-function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvider): ReviewForgeProvider {
+function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): ReviewForgeProvider {
   return {
-    id: 'github',
+    id: provider.id,
     capabilities: () => ({
       loadReview: provider.capabilities().loadReview,
       findCurrentBranchReview: provider.capabilities().findCurrentBranchReview,
@@ -146,6 +176,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
       publishLaneReviewInline: provider.capabilities().publishLaneReviewInline ?? false,
       publishLocalReview: true,
       resolveReviewThreads: provider.capabilities().resolveReviewThreads ?? false,
+      ciDiagnostics: true,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),

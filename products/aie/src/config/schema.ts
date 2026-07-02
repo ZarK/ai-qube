@@ -500,7 +500,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
   rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'capabilities'], 'providers', errors);
   return {
     work: readWorkProviderSelection(value, defaultValue.work, errors),
-    review: readProviderSelection(value, 'review', defaultValue.review, ['github'], errors),
+    review: readProviderSelection(value, 'review', defaultValue.review, ['github', 'gitlab'], errors),
     repository: readProviderSelection(value, 'repository', defaultValue.repository, ['local-git'], errors),
     ci: readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors),
     layout: readProviderSelection(value, 'layout', defaultValue.layout, ['local'], errors),

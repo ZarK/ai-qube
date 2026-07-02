@@ -100,6 +100,7 @@ describe('schema command', () => {
     assert.equal(parsed.bin, 'aie');
     assert.deepEqual(parsed.sections.config.shape, ['version', 'providers', 'policy']);
     assert.deepEqual(parsed.sections.config.supportedProviders.work, ['github', 'gitlab', 'linear', 'jira']);
+    assert.deepEqual(parsed.sections.config.supportedProviders.review, ['github', 'gitlab']);
     assert.deepEqual(parsed.sections.config.supportedProviders.repository, ['local-git']);
     assert.equal(parsed.sections.config.agentDescriptors.runnerAvailability, 'unavailable');
     assert.ok(parsed.sections.config.agentDescriptors.categories.some(category => category.id === 'review'));
