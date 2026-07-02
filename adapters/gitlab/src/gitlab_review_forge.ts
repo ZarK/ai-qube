@@ -133,9 +133,33 @@ function laneRunId(input: ReviewLaneReviewPublishInput): string {
   return ["gitlab", input.prNumber, input.headSha, input.lane, input.profile, input.host, input.issueNumber, input.recommendation, input.status].join(":");
 }
 
+const TOKEN_PATTERNS: RegExp[] = [
+  /\b(ghp_[A-Za-z0-9_]{10,})\b/g,
+  /\b(github_pat_[A-Za-z0-9_]{10,})\b/g,
+  /\b(ghs_[A-Za-z0-9_]{10,})\b/g,
+  /\b(gho_[A-Za-z0-9_]{10,})\b/g,
+  /\b(ghu_[A-Za-z0-9_]{10,})\b/g,
+];
+
+function redact(value: string): string {
+  let redacted = value;
+  for (const pattern of TOKEN_PATTERNS) redacted = redacted.replace(pattern, "[REDACTED]");
+  return redacted
+    .replace(/\b([A-Za-z0-9_-]{40,})\b/g, match => /[A-Z]/.test(match) && /[a-z]/.test(match) && /[0-9]/.test(match) ? "[REDACTED]" : match)
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, "[REDACTED PRIVATE KEY]")
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED]")
+    .replace(/\b(sk-[A-Za-z0-9_-]{20,})\b/g, "[REDACTED]")
+    .replace(/(authorization\s*:\s*bearer\s+)[^\s'"`]+/gi, "$1[REDACTED]")
+    .replace(/\b([A-Za-z0-9_.-]*(?:api[_-]?key|secret|token|password|passwd|pwd|client[_-]?secret|access[_-]?token)[A-Za-z0-9_.-]*)\b(\s*[:=]\s*)("[^"]*"|'[^']*'|`[^`]*`|[^\s,;&)]+)/gi, "$1$2[REDACTED]")
+    .replace(/\\\\[A-Za-z0-9._$-]+\\[^\r\n)<>]+/g, "[local-path]")
+    .replace(/\b[A-Za-z]:[\\/][^\r\n)<>]+/g, "[local-path]")
+    .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, "$1[local-path]");
+}
+
 function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: string; runId: string; bodyFindingCount: number } {
-  const findings = input.findings.map(finding => typeof finding === "string" ? finding : normalizeReviewFinding(finding).message);
+  const findings = input.findings.map(finding => redact(typeof finding === "string" ? finding : normalizeReviewFinding(finding).message));
   const runId = laneRunId(input);
+  const summary = redact(input.summary);
   const metadata: GitLabMetadata = {
     version: 1,
     kind: "lane-review",
@@ -148,17 +172,17 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     host: input.host,
     recommendation: input.recommendation,
     status: input.status,
-    summary: input.summary,
+    summary,
     inline: "gitlab-note",
     bodyFindingCount: findings.length,
     inlineCommentCount: 0,
   };
   const body = [
     metadataLine(metadata),
-    `QUBE ${input.lane} review: ${input.recommendation}`,
-    input.summary,
+    `QUBE ${redact(input.lane)} review: ${input.recommendation}`,
+    summary,
     ...findings.map(finding => `- ${finding}`),
-    input.evidencePath ? `Evidence: ${input.evidencePath}` : "",
+    input.evidencePath ? `Evidence: ${redact(input.evidencePath)}` : "",
   ].filter(line => line !== "").join("\n");
   return { body, marker: JSON.stringify(metadata), runId, bodyFindingCount: findings.length };
 }

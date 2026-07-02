@@ -579,4 +579,125 @@ describe("GitLab review forge adapter", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("surfaces truncation diagnostics when GitLab review reads exceed item bounds", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname.endsWith("/merge_requests/12")) {
+          return new Response(JSON.stringify(makeGitLabMergeRequest()), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/notes")) {
+          return new Response(JSON.stringify([
+            { id: 1, body: "First note.", author: { username: "reviewer" } },
+            { id: 2, body: "Second note.", author: { username: "reviewer" } },
+          ]), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/discussions")) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/user")) {
+          return new Response(JSON.stringify({ username: "executor" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "missing fixture" }), { status: 404 });
+      };
+      const provider = createGitLabReviewForgeProvider({
+        token: "gitlab-token",
+        projectId: "acme/qube",
+        maxReviewItems: 1,
+      });
+
+      const snapshot = await provider.loadPullRequestReview(12);
+
+      assert.equal(snapshot.commentsCount, 0);
+      assert.equal(snapshot.unavailable.some(message => message.includes("exceeded maxReviewItems=1")), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("surfaces truncation diagnostics when GitLab review responses exceed byte bounds", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname.endsWith("/merge_requests/12")) {
+          return new Response(JSON.stringify(makeGitLabMergeRequest()), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/notes")) {
+          const body = JSON.stringify([{ id: 1, body: "x".repeat(2_000), author: { username: "reviewer" } }]);
+          return new Response(body, { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/discussions")) {
+          return new Response(JSON.stringify([]), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/user")) {
+          return new Response(JSON.stringify({ username: "executor" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "missing fixture" }), { status: 404 });
+      };
+      const provider = createGitLabReviewForgeProvider({
+        token: "gitlab-token",
+        projectId: "acme/qube",
+        maxResponseBytes: 1_000,
+      });
+
+      const snapshot = await provider.loadPullRequestReview(12);
+
+      assert.equal(snapshot.commentsCount, 0);
+      assert.equal(snapshot.unavailable.some(message => message.includes("exceeded maxResponseBytes=1000")), true);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("redacts secrets and local paths from provider-visible GitLab lane review notes", async () => {
+    let publishedBody = "";
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          publishedBody = body;
+          return { id: 1, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" };
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "security",
+      profile: "focused",
+      status: "complete",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Found token=ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+      findings: ["Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456 and C:\\Users\\person\\secret.txt"],
+      evidencePath: "C:\\code\\ai\\ai-qube\\.qube\\aie\\reviews\\185\\12\\head-sha\\security.json",
+    });
+
+    assert.equal(result.status, "published");
+    assert.equal(publishedBody.includes("ghp_abcdefghijklmnopqrstuvwxyz1234567890"), false);
+    assert.equal(publishedBody.includes("sk-abcdefghijklmnopqrstuvwxyz123456"), false);
+    assert.equal(publishedBody.includes("C:\\Users\\person\\secret.txt"), false);
+    assert.equal(publishedBody.includes("C:\\code\\ai\\ai-qube"), false);
+    assert.equal(publishedBody.includes("[REDACTED]"), true);
+    assert.equal(publishedBody.includes("[local-path]"), true);
+  });
 });

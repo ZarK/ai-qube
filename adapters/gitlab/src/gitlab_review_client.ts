@@ -153,10 +153,25 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   private async readJson<T>(response: Response, path: string): Promise<T> {
-    const body = await response.text();
-    if (body.length > this.maxResponseBytes) {
-      throw new Error(`GitLab API response for ${path} exceeded maxResponseBytes=${this.maxResponseBytes}. Next action: raise the configured bound only after confirming the provider payload size is expected, or narrow the merge request review history before rerunning.`);
+    const chunks: string[] = [];
+    const decoder = new TextDecoder();
+    let bytesRead = 0;
+    if (!response.body) {
+      throw new Error(`GitLab API response for ${path} had no readable body. Next action: retry the request, then verify GitLab API compatibility if the response remains empty.`);
     }
+    const reader = response.body.getReader();
+    for (;;) {
+      const result = await reader.read();
+      if (result.done) break;
+      bytesRead += result.value.byteLength;
+      if (bytesRead > this.maxResponseBytes) {
+        await reader.cancel();
+        throw new Error(`GitLab API response for ${path} exceeded maxResponseBytes=${this.maxResponseBytes}. Next action: raise the configured bound only after confirming the provider payload size is expected, or narrow the merge request review history before rerunning.`);
+      }
+      chunks.push(decoder.decode(result.value, { stream: true }));
+    }
+    chunks.push(decoder.decode());
+    const body = chunks.join("");
     return JSON.parse(body) as T;
   }
 }
