@@ -3,6 +3,7 @@ import type { ReviewAgentAdapter } from '@tjalve/qube-core';
 import {
   MARKER_PREFIX,
   QUBE_REVIEW_SERVICE_NAME,
+  canonicalReviewAgentHandle,
   commentBodyFor,
   markerFor,
   normalizeHandle,
@@ -19,6 +20,7 @@ import { createQubeReviewAgent } from './github_review_agent_qube.js';
 export {
   MARKER_PREFIX,
   QUBE_REVIEW_SERVICE_NAME,
+  canonicalReviewAgentHandle,
   commentBodyFor,
   isCopilotOverview,
   markerFor,
@@ -46,6 +48,8 @@ const AGENT_FACTORIES: readonly GitHubReviewAgentFactory[] = Object.freeze([
   Object.freeze({ id: 'qubereview', aliases: Object.freeze(['qubereview']), create: createQubeReviewAgent }),
 ]);
 
+const AGENT_CACHE = new Map<string, readonly ReviewAgentAdapter[]>();
+
 function normalizedInstallSet(options: GitHubReviewAgentListOptions = {}): Set<string> | null {
   if (!options.agents) return null;
   const ids = options.agents.map(reviewerId).filter(id => id !== '');
@@ -59,9 +63,14 @@ function factoryMatches(factory: GitHubReviewAgentFactory, installSet: Set<strin
 
 export function listGitHubReviewAgents(options: GitHubReviewAgentListOptions = {}): ReviewAgentAdapter[] {
   const installSet = normalizedInstallSet(options);
-  return AGENT_FACTORIES
+  const cacheKey = installSet === null ? '*' : [...installSet].sort().join(',');
+  const cached = AGENT_CACHE.get(cacheKey);
+  if (cached) return [...cached];
+  const agents = AGENT_FACTORIES
     .filter(factory => factoryMatches(factory, installSet))
     .map(factory => factory.create());
+  AGENT_CACHE.set(cacheKey, Object.freeze([...agents]));
+  return [...agents];
 }
 
 export function resolveReviewAgent(name: string, options: GitHubReviewAgentListOptions = {}): ReviewAgentAdapter | null {

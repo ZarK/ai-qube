@@ -111,10 +111,13 @@ describe("github adapter contract", () => {
     assert.equal(coderabbit.id, "coderabbit");
     assert.equal(coderabbit.triggerFor("@coderabbitai"), "comment");
     assert.equal(coderabbit.commentBodyFor("@coderabbitai", { adapter: "github", reviewers: ["@coderabbitai"], requestText: "Review ghp_abcdefghijklmnopqrstuvwxyz123456" }, "abc123").body.includes("ghp_abcdefghijklmnopqrstuvwxyz123456"), false);
+    assert.match(coderabbit.commentBodyFor("coderabbit", { adapter: "github", reviewers: ["coderabbit"], requestText: "" }, "abc123").body, /@coderabbitai review/);
+    assert.match(coderabbit.commentBodyFor("coderabbit", { adapter: "github", reviewers: ["coderabbit"], requestText: "" }, "abc123").marker, /aie:pr-gate:coderabbit:abc123/);
 
     const cubic = resolveReviewAgent("@cubic-dev-ai");
     assert.equal(cubic.id, "cubic");
     assert.equal(cubic.triggerFor("@cubic-dev-ai"), "comment");
+    assert.match(cubic.commentBodyFor("cubic", { adapter: "github", reviewers: ["cubic"], requestText: "" }, "abc123").body, /@cubic-dev-ai review this PR/);
   });
 
   it("filters optional review-agent modules by configured install set", () => {

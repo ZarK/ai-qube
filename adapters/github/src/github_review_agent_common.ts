@@ -15,6 +15,14 @@ export function normalizeHandle(name: string): string {
   return trimmed.startsWith('@') ? trimmed : `@${trimmed}`;
 }
 
+export function canonicalReviewAgentHandle(name: string): string {
+  const id = reviewerId(name);
+  if (id === 'coderabbit') return '@coderabbitai';
+  if (id === 'cubic') return '@cubic-dev-ai';
+  if (id === 'qubereview') return '@QUBEReview';
+  return normalizeHandle(name);
+}
+
 export function markerFor(reviewer: string, headSha: string): string {
   return `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:${headSha} -->`;
 }
@@ -40,7 +48,7 @@ export function emptyOrPromptOnlyFeedback(text: string | undefined): boolean {
 }
 
 export function commentBodyFor(name: string, policy: ReviewForgePolicy, headSha: string): { body: string; marker: string } {
-  const handle = normalizeHandle(name);
+  const handle = canonicalReviewAgentHandle(name);
   const marker = markerFor(name, headSha);
   const requestText = policy.requestText.replace(/\s+/g, ' ').trim();
   const id = reviewerId(name);
