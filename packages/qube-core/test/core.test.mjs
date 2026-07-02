@@ -28,7 +28,7 @@ describe("qube core contracts", () => {
     const surfaces = new Map(qubeProductContracts.map((product) => [product.id, product.surfaces]));
 
     assert.deepEqual(surfaces.get("bootstrap"), ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"]);
-    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "codex", "opencode", "claude-code", "grok-build"]);
+    assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build"]);
     assert.deepEqual(surfaces.get("quality"), ["cli"]);
     assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
   });

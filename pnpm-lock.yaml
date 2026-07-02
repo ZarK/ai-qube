@@ -66,6 +66,19 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  adapters/jenkins:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   adapters/linear:
     dependencies:
       '@tjalve/qube-core':
