@@ -1093,7 +1093,7 @@ function latestThreadComment(thread: RawThreadNode) {
   return threadComments(thread).at(-1) ?? null;
 }
 
-function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string }): ReviewFeedback[] {
+function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string; reviewAgents?: readonly string[] }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
   for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
     if (localReview.stale) continue;
@@ -1122,13 +1122,13 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
     if (raw.trustedMarkerAuthor !== null && authorMatches(review.author?.login ?? '', raw.trustedMarkerAuthor) && parseLaneReviewMetadata(review.body)) continue;
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
     if (raw.unresolvedThreads.length === 0 && isResolvedProviderReviewSummary(review.body)) continue;
-    if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body, review.author?.login))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
+    if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body, review.author?.login, { agents: raw.reviewAgents }))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
   }
   for (const comment of raw.comments) {
     const body = comment.body ?? '';
     if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
     if (trustedLaneReviewComment(comment, raw.trustedMarkerAuthor)) continue;
-    if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login)) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
+    if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login, { agents: raw.reviewAgents })) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
     const latest = latestThreadComment(thread);
@@ -1340,8 +1340,8 @@ function redactReviewKeyId(id: string): string {
   return redact(id).replace(/\b([A-Za-z0-9_-]{20,})\b/g, '[REDACTED]');
 }
 
-function makeRequestAction(input: { item: ReviewItem; name: string; requestedForHead: boolean; staleRequest: boolean; pending: boolean; policy: ReviewForgePolicy }): Action {
-  const agent = resolveReviewAgent(input.name);
+function makeRequestAction(input: { item: ReviewItem; name: string; requestedForHead: boolean; staleRequest: boolean; pending: boolean; policy: ReviewForgePolicy; installedAgents?: readonly string[] }): Action {
+  const agent = resolveReviewAgent(input.name, { agents: input.installedAgents });
   const trigger = agent?.triggerFor(input.name) ?? triggerFor(input.name);
   const handle = normalizeHandle(input.name);
   const id = reviewerId(input.name);
@@ -1485,13 +1485,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     const trustedMarkerAuthor = getJsonString(item.trustedMetadata.trustedMarkerAuthor);
     const comments = commentsFromMetadata(item);
     const latestReviews = latestReviewsFromMetadata(item);
-    const actions = configuredReviewerNames(policy, options.activeLanes ?? []).map(name => {
-      const trigger = triggerFor(name);
+    const names = configuredReviewerNames(policy, options.activeLanes ?? []);
+    const actions = names.map(name => {
+      const agent = resolveReviewAgent(name, { agents: names });
+      const trigger = agent?.triggerFor(name) ?? triggerFor(name);
       const handle = normalizeHandle(name);
       const requestedForHead = trigger === 'github-reviewer' ? hasMarker(comments, name, headSha, trustedMarkerAuthor) || isCurrentReview(latestReviews, handle, headSha) : hasMarker(comments, name, headSha, trustedMarkerAuthor);
       const pending = isPendingRequest(reviewRequests, handle);
       const staleRequest = trigger === 'github-reviewer' ? !requestedForHead && !pending && (hasStaleMarker(comments, name, headSha, trustedMarkerAuthor) || hasStaleReview(latestReviews, handle, headSha)) : !requestedForHead && hasStaleMarker(comments, name, headSha, trustedMarkerAuthor);
-      return makeRequestAction({ item, name, requestedForHead, staleRequest, pending, policy });
+      return makeRequestAction({ item, name, requestedForHead, staleRequest, pending, policy, installedAgents: names });
     });
     return createActionPlan({ id: `github:review-request:${item.key.id}`, purpose: `Request configured PR reviewers for ${item.displayId}.`, dryRun: true, actions });
   }
@@ -2021,7 +2023,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       state: mapReviewState(rawPr),
       reviewDecision: mapReviewDecision(rawPr.reviewDecision),
       mergeability: mapMergeability(rawPr),
-      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid }),
+      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid, reviewAgents: this.options.reviewAgents }),
       mergeBlockers: blockers,
       conversations,
       checks: normalizedChecks,

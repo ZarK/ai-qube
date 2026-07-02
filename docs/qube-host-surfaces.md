@@ -57,6 +57,21 @@ Product packages still own GitHub-specific side effects:
 - QUBE composes and dispatches product commands; it does not hide GitHub side effects behind a separate adapter command.
 - AIQ exposes GitHub behavior only through its standalone GitHub Action package, not as a QUBE-facing GitHub provider surface.
 
+## Review-Agent Adapter Surface
+
+AIE treats `policy.reviews.agents` / `reviewAgents` values as configured review-agent adapter handles. The current GitHub adapter ships these focused review-agent modules until the package interfaces are stable enough for separate installable packages:
+
+| Config value | Adapter id | Transport | Package boundary |
+| --- | --- | --- | --- |
+| `copilot`, `@copilot` | `copilot` | GitHub reviewer request plus idempotency marker comment | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-github-copilot` |
+| `coderabbit`, `coderabbitai`, `@coderabbitai` | `coderabbit` | Provider-visible PR comment trigger | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-coderabbit` |
+| `cubic`, `cubic-dev-ai`, `@cubic-dev-ai` | `cubic` | Provider-visible PR comment trigger | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-cubic` |
+| `QUBEReview`, `qubereview`, `@QUBEReview` | `qubereview` | Provider-visible PR comment trigger for host lane reviews | `@tjalve/qube-adapter-github` now; future `@tjalve/qube-adapter-review-qube` |
+| `local-command` | `local-command` | Local evidence runner | built into `@tjalve/aie` |
+| `codex` | `codex` | Local-host fresh-context lane reviewer | built into `@tjalve/aie` |
+
+`listReviewAgentAdapters()` reports installed adapters with forge affinity, package name, trigger, and external-service metadata. Forge adapters must plan review requests through these adapter interfaces so removing an adapter handle from the installed set removes its trigger template and output classifier from that runtime path.
+
 ## Jenkins CI Provider Surface
 
 Jenkins support is an optional CI-provider adapter package boundary, not a work-provider or review-forge surface. `@tjalve/qube-adapter-jenkins` owns Jenkins API access, credential diagnostics, classic and folder job path handling, build-state mapping, artifact/log pointers, and unsupported CI mutation reporting.

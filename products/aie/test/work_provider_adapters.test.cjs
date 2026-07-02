@@ -96,6 +96,31 @@ describe('work provider adapter boundary', () => {
     }
   });
 
+  it('lists installed review-agent adapters with forge affinity metadata', async () => {
+    const { listReviewAgentAdapters, resolveReviewAgent } = require('../dist/providers/review_agent_adapters.js');
+    const adapters = await listReviewAgentAdapters('github', ['@copilot', '@coderabbitai']);
+    const byId = Object.fromEntries(adapters.map(adapter => [adapter.id, adapter]));
+
+    assert.deepEqual(adapters.map(adapter => adapter.id), ['copilot', 'coderabbit']);
+    assert.equal(byId.copilot.trigger, 'github-reviewer');
+    assert.deepEqual(byId.copilot.forgeAffinity, ['github']);
+    assert.equal(byId.copilot.packageName, '@tjalve/qube-adapter-github');
+    assert.equal(byId.copilot.installed, true);
+    assert.equal(byId.coderabbit.trigger, 'comment');
+    assert.deepEqual(byId.coderabbit.aliases, ['coderabbit', 'coderabbitai']);
+    assert.equal((await resolveReviewAgent('@coderabbitai', 'github', ['@coderabbitai'])).id, 'coderabbit');
+    assert.equal(await resolveReviewAgent('@cubic-dev-ai', 'github', ['@copilot']), null);
+  });
+
+  it('lists built-in local review-agent adapters separately from remote forge agents', async () => {
+    const { listReviewAgentAdapters } = require('../dist/providers/review_agent_adapters.js');
+    const adapters = await listReviewAgentAdapters('local');
+
+    assert.deepEqual(adapters.map(adapter => adapter.id), ['local-command', 'codex']);
+    assert.deepEqual(adapters.map(adapter => adapter.forgeAffinity), [['local'], ['local']]);
+    assert.equal(adapters.every(adapter => adapter.installed), true);
+  });
+
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
     const provider = await createWorkProvider('linear');
