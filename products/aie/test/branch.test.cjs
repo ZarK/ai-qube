@@ -42,7 +42,7 @@ function success(args, stdout = '') {
 function makeExec(number, title = 'Add branch command') {
   return async args => {
     const key = args.join(' ');
-    if (key === `issue view ${number} --json number,title,state,labels,assignees,body,milestone,url`) {
+    if (key === `issue view ${number} --json number,title,state,labels,body,milestone,url`) {
       return success(args, JSON.stringify(issue(number, title)));
     }
     return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${key}` };

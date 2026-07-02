@@ -1,4 +1,4 @@
-import { runGh, GhExec, parseGhJson } from './gh.js';
+import { runGh, GhExec, parseGhJson } from '@tjalve/qube-adapter-github';
 import { Config } from './config/index.js';
 
 export interface LabelSpec {

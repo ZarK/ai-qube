@@ -1,21 +1,25 @@
-import { createAction, createActionPlan, type Action, type ActionPlan, type ActionResult } from '../../core/action_plan.js';
-import type { ExecutorPolicy } from '../../core/policy.js';
-import type { WorkItem, WorkItemKey } from '../../core/work_item.js';
-import { buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, workItemIsInProgress, type WorkDependencyGraph, type WorkQueuePolicy } from '../../core/queue_rules.js';
-import { getIssue, listOpenIssues } from '../../github.js';
-import { GhExec, GhExecutionError, GhRunResult, parseGhJson, runGh } from '../../gh.js';
-import type { WorkProvider, WorkProviderCapabilities } from '../work_provider.js';
+import { createAction, createActionPlan, buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, workItemIsInProgress, type Action, type ActionPlan, type ActionResult, type WorkDependencyGraph, type WorkItem, type WorkItemKey, type WorkProviderCapabilities, type WorkQueuePolicy } from "@tjalve/qube-core";
+import { getIssue, listOpenIssues } from './github_issue_api.js';
+import { type GhExec, GhExecutionError, type GhRunResult, parseGhJson, runGh } from './gh.js';
 import { attachBlockedBy, githubIssueNumber, githubIssueToWorkItem } from './github_work_codec.js';
 
 interface LoginResponse {
   login: string;
 }
 
-interface GitHubWorkProviderOptions {
+export interface GitHubWorkProviderOptions {
   exec?: GhExec;
   cwd?: string;
   limit?: number;
   includeAssignees?: boolean;
+}
+
+export interface GitHubWorkProviderPolicy {
+  labels: {
+    priorities: readonly { name: string }[];
+    statuses: readonly { name: string }[];
+  };
+  milestoneOrdering: WorkQueuePolicy['milestoneOrdering'];
 }
 
 function isLoginResponse(value: unknown): value is LoginResponse {
@@ -38,12 +42,12 @@ function ensureGhSuccess(operation: string, result: GhRunResult): void {
   }
 }
 
-function statusLabels(item: WorkItem, policy: ExecutorPolicy): string[] {
+function statusLabels(item: WorkItem, policy: GitHubWorkProviderPolicy): string[] {
   const configured = new Set(policy.labels.statuses.map(label => label.name));
   return item.tags.filter(label => configured.has(label));
 }
 
-function policyToWorkQueuePolicy(policy: ExecutorPolicy): WorkQueuePolicy {
+function policyToWorkQueuePolicy(policy: GitHubWorkProviderPolicy): WorkQueuePolicy {
   return {
     priorityLabels: policy.labels.priorities.map(label => label.name),
     statusLabels: policy.labels.statuses.map(label => label.name),
@@ -84,7 +88,7 @@ function actionResult(action: Action, status: ActionResult['status'], failure: A
   return { actionId: action.id, status, failure, details: action.details };
 }
 
-export class GitHubWorkProvider implements WorkProvider {
+export class GitHubWorkProvider {
   readonly id = 'github' as const;
 
   constructor(private readonly options: GitHubWorkProviderOptions = {}) {}
@@ -122,7 +126,7 @@ export class GitHubWorkProvider implements WorkProvider {
     return githubIssueToWorkItem(await getIssue(issueNumber, { ...this.options, includeAssignees: this.includeAssignees() }));
   }
 
-  planStatusSync(items: WorkItem[], policy: ExecutorPolicy): ActionPlan {
+  planStatusSync(items: WorkItem[], policy: GitHubWorkProviderPolicy): ActionPlan {
     const corePlan = createWorkStatusSyncActionPlan(items, policyToWorkQueuePolicy(policy));
     const actions = corePlan.actions.map((action): Action => {
       const item = items.find(candidate => candidate.key.providerId === action.details.providerId && candidate.key.id === action.target.id);
@@ -143,14 +147,14 @@ export class GitHubWorkProvider implements WorkProvider {
     return createActionPlan({ id: 'github:status-sync', purpose: 'Synchronize GitHub issue status labels from provider-neutral work state.', dryRun: true, actions });
   }
 
-  planStart(item: WorkItem, policy: ExecutorPolicy): ActionPlan {
+  planStart(item: WorkItem, policy: GitHubWorkProviderPolicy): ActionPlan {
     const removeLabels = statusLabels(item, policy).filter(label => label !== 'S-InProgress' && label !== 'S-Blocking');
     const addLabels = item.tags.includes('S-InProgress') ? [] : ['S-InProgress'];
     const action = makeStatusAction(item, addLabels, removeLabels, `Start ${item.displayId}`);
     return createActionPlan({ id: `github:start:${item.key.id}`, purpose: `Start ${item.displayId}.`, dryRun: true, actions: action ? [action] : [] });
   }
 
-  planPause(item: WorkItem, openItems: WorkItem[], policy: ExecutorPolicy): ActionPlan {
+  planPause(item: WorkItem, openItems: WorkItem[], policy: GitHubWorkProviderPolicy): ActionPlan {
     const openKeys = getOpenWorkItemKeys(openItems);
     const addLabels: string[] = [];
     const removeLabels: string[] = [];
@@ -167,7 +171,7 @@ export class GitHubWorkProvider implements WorkProvider {
     return createActionPlan({ id: `github:pause:${item.key.id}`, purpose: `Pause ${item.displayId}.`, dryRun: true, actions: action ? [action] : [] });
   }
 
-  planComplete(item: WorkItem, dependents: WorkItem[], policy: ExecutorPolicy): ActionPlan {
+  planComplete(item: WorkItem, dependents: WorkItem[], policy: GitHubWorkProviderPolicy): ActionPlan {
     const actions: Action[] = [];
     const removeLabels = statusLabels(item, policy);
     const cleanup = makeStatusAction(item, [], removeLabels, `Remove lifecycle status labels from ${item.displayId}`);

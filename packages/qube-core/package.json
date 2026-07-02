@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-core",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Shared QUBE product, provider, review, and adapter contracts.",
   "type": "module",
   "license": "MIT",

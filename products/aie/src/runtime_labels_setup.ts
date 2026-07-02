@@ -1,6 +1,6 @@
 import type { RuntimeCommandContext, RuntimeCommandResult } from '@tjalve/qube-cli/runtime';
 import { getDefaults, loadConfig } from './config/index.js';
-import { runGh } from './gh.js';
+import { runGh } from '@tjalve/qube-adapter-github';
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, parseGhLabelList, type LabelSpec } from './labels.js';
 import { commandFailure, readBooleanFlag, outputJson } from './runtime_result.js';
 

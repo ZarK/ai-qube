@@ -1,5 +1,5 @@
 import { getDefaults, loadConfig, type Config } from '../config/index.js';
-import type { GhExec } from '../gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import { createLifecycleContext } from '../app/lifecycle_services.js';
 import { runCompleteService, type CompletionChecklist, type CompletionChecklistItem, type CompletionMilestoneContext, type CompletionState } from '../app/complete_work.js';
 import type { StartIssueSummary } from '../start/index.js';

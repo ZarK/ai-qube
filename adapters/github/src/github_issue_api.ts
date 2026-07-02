@@ -1,4 +1,4 @@
-import { runGh, parseGhJson, GhExec, GhMalformedOutputError, GhExecutionError } from './gh.js';
+import { runGh, parseGhJson, type GhExec, GhMalformedOutputError, GhExecutionError } from './gh.js';
 
 function isRawGhLabel(v: unknown): v is RawGhLabel {
   return !!v && typeof v === 'object' && 'name' in (v as object);
@@ -95,10 +95,11 @@ export function parseDeclaredBlockers(body: string): number[] {
   if (!body) return [];
   const nums: number[] = [];
   for (const line of body.split(/\r?\n/)) {
-    // True line-based: optional leading list bullet + whitespace, then exact "Blocked by: #N"
-    const m = line.match(/^\s*(?:[-*+]\s*)?Blocked by: #(\d+)/i);
-    if (m) {
-      const n = parseInt(m[1], 10);
+    // True line-based: optional leading list bullet + whitespace, then exact "Blocked by:" prefix.
+    const m = line.match(/^\s*(?:[-*+]\s*)?Blocked by:\s+(.+)$/i);
+    if (!m) continue;
+    for (const blocker of m[1].matchAll(/#(\d+)/g)) {
+      const n = parseInt(blocker[1], 10);
       if (n > 0) nums.push(n);
     }
   }

@@ -3,7 +3,7 @@ import { configToExecutorPolicy } from '../config_policy.js';
 import { evaluatePreStartBranchChecks, type PreStartBranchCheck as CorePreStartBranchCheck } from '../core/branch_rules.js';
 import type { BranchPolicy } from '../core/policy.js';
 import type { RepoState } from '../core/repo_state.js';
-import type { GhExec } from '../gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import {
   getPreStartNextActions,
   makePreStartPolicyCheck,

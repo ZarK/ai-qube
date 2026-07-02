@@ -3,7 +3,7 @@ import { basename, join } from 'path';
 import { homedir } from 'os';
 import { Config } from './config/index.js';
 import { normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from './core/gate_evidence.js';
-import { redact } from './gh.js';
+import { redact } from '@tjalve/qube-adapter-github';
 
 export type UiAuditEvidenceState =
   | 'disabled'

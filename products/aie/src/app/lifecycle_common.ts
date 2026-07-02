@@ -7,7 +7,7 @@ import { computeWorkQueue, type WorkQueueState } from '../core/queue_rules.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { WorkItem } from '../core/work_item.js';
 import { workItemNumber } from '../core/work_item.js';
-import type { GhExec } from '../gh.js';
+import type { GhExec } from '@tjalve/qube-adapter-github';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle.js';
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
 import type { WorkProviderAdapterOptions } from '../providers/work_provider_adapters.js';
