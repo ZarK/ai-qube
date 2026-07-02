@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -126,6 +127,13 @@ describe("github adapter contract", () => {
     assert.equal(resolveReviewAgent("@coderabbitai", { agents: ["@copilot"] }), null);
     assert.equal(isNonActionableSummary("No actionable comments were generated.", "coderabbitai", { agents: ["@copilot"] }), false);
     assert.equal(isNonActionableSummary("## Pull request overview\n### Reviewed Changes\nCopilot reviewed 2 out of 2 changed files in this pull request.", "copilot-pull-request-reviewer", { agents: ["@copilot"] }), true);
+  });
+
+  it("keeps optional review-agent implementations off the static registry load path", () => {
+    const registrySource = readFileSync(new URL("../dist/github_review_agents.js", import.meta.url), "utf8");
+    assert.doesNotMatch(registrySource, /import\s+.*github_review_agent_coderabbit/u);
+    assert.doesNotMatch(registrySource, /import\s+.*github_review_agent_cubic/u);
+    assert.match(registrySource, /requireAgentModule\('\.\/github_review_agent_coderabbit\.js'\)/u);
   });
 
   it("classifies non-actionable feedback per installed review agent", () => {

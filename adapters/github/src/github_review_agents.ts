@@ -1,3 +1,5 @@
+import { createRequire } from 'node:module';
+
 import type { ReviewAgentAdapter } from '@tjalve/qube-core';
 
 import {
@@ -12,17 +14,12 @@ import {
   sanitizeFeedbackText,
   triggerFor,
 } from './github_review_agent_common.js';
-import { createCoderabbitReviewAgent } from './github_review_agent_coderabbit.js';
-import { createCopilotReviewAgent, isCopilotOverview } from './github_review_agent_copilot.js';
-import { createCubicReviewAgent } from './github_review_agent_cubic.js';
-import { createQubeReviewAgent } from './github_review_agent_qube.js';
 
 export {
   MARKER_PREFIX,
   QUBE_REVIEW_SERVICE_NAME,
   canonicalReviewAgentHandle,
   commentBodyFor,
-  isCopilotOverview,
   markerFor,
   normalizeHandle,
   reviewerId,
@@ -41,11 +38,29 @@ interface GitHubReviewAgentFactory {
   create(): ReviewAgentAdapter;
 }
 
+const requireAgentModule = createRequire(import.meta.url);
+
+function copilotModule(): typeof import('./github_review_agent_copilot.js') {
+  return requireAgentModule('./github_review_agent_copilot.js') as typeof import('./github_review_agent_copilot.js');
+}
+
+function coderabbitModule(): typeof import('./github_review_agent_coderabbit.js') {
+  return requireAgentModule('./github_review_agent_coderabbit.js') as typeof import('./github_review_agent_coderabbit.js');
+}
+
+function cubicModule(): typeof import('./github_review_agent_cubic.js') {
+  return requireAgentModule('./github_review_agent_cubic.js') as typeof import('./github_review_agent_cubic.js');
+}
+
+function qubeReviewModule(): typeof import('./github_review_agent_qube.js') {
+  return requireAgentModule('./github_review_agent_qube.js') as typeof import('./github_review_agent_qube.js');
+}
+
 const AGENT_FACTORIES: readonly GitHubReviewAgentFactory[] = Object.freeze([
-  Object.freeze({ id: 'copilot', aliases: Object.freeze(['copilot']), create: createCopilotReviewAgent }),
-  Object.freeze({ id: 'coderabbit', aliases: Object.freeze(['coderabbit', 'coderabbitai']), create: createCoderabbitReviewAgent }),
-  Object.freeze({ id: 'cubic', aliases: Object.freeze(['cubic', 'cubic-dev-ai']), create: createCubicReviewAgent }),
-  Object.freeze({ id: 'qubereview', aliases: Object.freeze(['qubereview']), create: createQubeReviewAgent }),
+  Object.freeze({ id: 'copilot', aliases: Object.freeze(['copilot']), create: () => copilotModule().createCopilotReviewAgent() }),
+  Object.freeze({ id: 'coderabbit', aliases: Object.freeze(['coderabbit', 'coderabbitai']), create: () => coderabbitModule().createCoderabbitReviewAgent() }),
+  Object.freeze({ id: 'cubic', aliases: Object.freeze(['cubic', 'cubic-dev-ai']), create: () => cubicModule().createCubicReviewAgent() }),
+  Object.freeze({ id: 'qubereview', aliases: Object.freeze(['qubereview']), create: () => qubeReviewModule().createQubeReviewAgent() }),
 ]);
 
 const AGENT_CACHE = new Map<string, readonly ReviewAgentAdapter[]>();
@@ -75,6 +90,10 @@ export function listGitHubReviewAgents(options: GitHubReviewAgentListOptions = {
 
 export function resolveReviewAgent(name: string, options: GitHubReviewAgentListOptions = {}): ReviewAgentAdapter | null {
   return listGitHubReviewAgents(options).find(agent => agent.matches(name)) ?? null;
+}
+
+export function isCopilotOverview(normalizedText: string, authorLogin?: string | null): boolean {
+  return copilotModule().isCopilotOverview(normalizedText, authorLogin);
 }
 
 export function isNonActionableSummary(text: string | undefined, authorLogin?: string | null, options: GitHubReviewAgentListOptions = {}): boolean {
