@@ -77,13 +77,14 @@ describe("GitHub issue API", () => {
   it("parseDeclaredBlockers extracts line-based blockers only", () => {
     const body = [
       "Blocked by: #10",
-      "- Blocked by: #11",
+      "- Blocked by: #11 #13",
+      "Blocked by: #14, #15",
       "Text Blocked by: #12",
       "Blocked by: not-a-number",
       "Blocked by: #10",
     ].join("\n");
 
-    assert.deepEqual(parseDeclaredBlockers(body), [10, 11]);
+    assert.deepEqual(parseDeclaredBlockers(body), [10, 11, 13, 14, 15]);
   });
 
   it("surfaces non-zero custom exec exits as execution errors", async () => {
