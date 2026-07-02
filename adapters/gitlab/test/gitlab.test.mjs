@@ -307,7 +307,7 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.displayId, "!12");
     assert.equal(snapshot.item.sourceRef, "head-sha");
     assert.equal(snapshot.item.targetRef, "main");
-    assert.equal(snapshot.item.reviewDecision, "review-required");
+    assert.equal(snapshot.item.reviewDecision, "none");
     assert.equal(snapshot.item.mergeability, "blocked");
     assert.deepEqual(snapshot.closingIssueNumbers, [185]);
     assert.equal(snapshot.ciDiagnostics[0].status, "pending-current-head-run");
@@ -460,6 +460,42 @@ describe("GitLab review forge adapter", () => {
     assert.match(posted[0], /"kind":"review-request"/);
     assert.match(posted[0], /@codereviewer review/);
     assert.match(posted[1], /@QUBEReview review/);
+  });
+
+  it("does not treat assigned GitLab reviewers as QUBE review request markers", async () => {
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [{ id: 3, name: "Code Reviewer", username: "codereviewer" }] });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const plan = provider.planReviewRequest(snapshot.item, {
+      adapter: "mixed",
+      reviewers: ["codereviewer"],
+      requestText: "Review the merge request.",
+    });
+
+    assert.equal(snapshot.item.reviewDecision, "none");
+    assert.deepEqual(snapshot.reviewRequests, []);
+    assert.deepEqual(snapshot.item.trustedMetadata.reviewRequests, []);
+    assert.deepEqual(snapshot.item.trustedMetadata.gitlabReviewers, ["codereviewer"]);
+    assert.equal(plan.actions[0].status, "planned");
   });
 
   it("publishes lane review feedback as GitLab merge request notes and observes the published lane", async () => {

@@ -138,11 +138,12 @@ export const gitLabAdapterContract = defineQubeAdapter({
     "gitlab-merge-request-review-forge",
     "gitlab-pipeline-status",
     "gitlab-review-notes",
+    "gitlab-discussion-resolution",
     "self-managed-url-handling",
     "unsupported-lifecycle-reporting",
     "credential-diagnostics",
   ],
-  boundary: "GitLab API access, issue mapping, draft rendering, merge request review state, pipeline diagnostics, provider-visible review-note publishing, capability flags, credential diagnostics, self-managed URL handling, and unsupported lifecycle reporting live in this optional adapter package.",
+  boundary: "GitLab API access, issue mapping, draft rendering, merge request review state, discussion resolution, pipeline diagnostics, provider-visible review-note publishing, capability flags, credential diagnostics, self-managed URL handling, and unsupported lifecycle reporting live in this optional adapter package.",
   capabilities: Object.freeze([
     adapterCapability("map-work-item", "supported", "@tjalve/qube-adapter-gitlab", "Map GitLab issues, labels, milestones, assignees, task completion, issue links, blockers, and source metadata into QUBE work items."),
     adapterCapability("work-item-queue", "supported", "@tjalve/qube-adapter-gitlab", "Read paginated GitLab project issues through GitLab.com or self-managed GitLab REST APIs and normalize reverse blocker links for queue ordering."),
@@ -152,7 +153,8 @@ export const gitLabAdapterContract = defineQubeAdapter({
     adapterCapability("read-ci-status", "supported", "@tjalve/qube-adapter-gitlab", "Normalize GitLab merge request head pipeline status into trusted provider gate evidence."),
     adapterCapability("diagnose-ci-status", "supported", "@tjalve/qube-adapter-gitlab", "Report whether GitLab merge request pipeline evidence maps to the current head, failed, skipped, pending, or unknown status."),
     adapterCapability("publish-lane-review", "supported", "@tjalve/qube-adapter-gitlab", "Publish local review lane feedback as provider-visible GitLab merge request notes with stable trusted metadata."),
-    adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-gitlab", "GitLab issue lifecycle, merge request approval, merge, discussion resolution, and pipeline mutation behavior require explicit mutation adapters and are reported as unsupported."),
+    adapterCapability("resolve-review-threads", "supported", "@tjalve/qube-adapter-gitlab", "Resolve GitLab merge request discussions selected from provider-visible review-thread state."),
+    adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-gitlab", "GitLab issue lifecycle, merge request approval, merge, and pipeline mutation behavior require explicit mutation adapters and are reported as unsupported."),
   ]),
   contractOnly: false,
 } satisfies QubeAdapterContract);

@@ -25,6 +25,8 @@ Supported now:
   lane review feedback with stable QUBE metadata.
 - GitLab merge request discussions are read as code conversation feedback and
   unresolved discussions are exposed as merge blockers.
+- AIE can resolve addressed GitLab merge request discussions through
+  `aie pr thread resolve` when the GitLab review provider is selected.
 - GitLab merge request `head_pipeline` status is exposed as provider gate
   evidence and concise CI diagnostics for `aie pr view` and `aie pr gate`.
 - QUBE install notes can target `--work-provider gitlab` and name the required
@@ -37,7 +39,6 @@ Explicitly unsupported now:
 - AIE does not mutate GitLab issue states, labels, comments, assignees, or
   completion state yet.
 - AIE does not create, update, approve, merge, or close GitLab merge requests.
-- AIE does not resolve GitLab merge request discussions yet.
 - AIE does not trigger or rerun GitLab pipelines yet.
 - AIE does not silently fall back to GitHub labels, pull requests, or Actions
   when GitLab lifecycle, review, or CI behavior is requested.
@@ -150,9 +151,10 @@ request notes. Local review lane publication writes provider-visible GitLab
 notes with stable QUBE metadata, and those notes are read back as trusted lane
 review records for the current merge request head.
 
-GitLab merge request approval, merge, discussion resolution, and pipeline
-triggering are mutation gaps. They remain unsupported until each mutation path
-has a tested adapter contract.
+GitLab merge request approval, merge, and pipeline triggering are mutation
+gaps. They remain unsupported until each mutation path has a tested adapter
+contract. GitLab discussion resolution is supported through the review-thread
+resolution command.
 
 ## Known Differences From GitHub
 

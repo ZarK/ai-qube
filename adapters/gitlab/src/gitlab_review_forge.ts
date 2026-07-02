@@ -105,13 +105,14 @@ function gitLabMergeStatusBlocker(status: string): Omit<ReviewMergeBlock, "url">
 }
 
 function normalizePr(mr: GitLabMergeRequest): GitLabReviewPullRequest {
+  const mergeStatus = (mr.detailed_merge_status ?? mr.merge_status ?? "").toLowerCase();
   return {
     number: mr.iid,
     title: mr.title,
     state: mr.state.toUpperCase(),
     url: mr.web_url,
     headRefOid: headSha(mr),
-    reviewDecision: (mr.reviewers ?? []).length > 0 ? "REVIEW_REQUIRED" : "UNKNOWN",
+    reviewDecision: mergeStatus === "not_approved" ? "REVIEW_REQUIRED" : mergeStatus === "requested_changes" ? "CHANGES_REQUESTED" : "UNKNOWN",
     mergeStateStatus: (mr.detailed_merge_status ?? mr.merge_status ?? "UNKNOWN").toUpperCase(),
     mergeable: mapMergeability(mr) === "mergeable" ? "MERGEABLE" : mapMergeability(mr) === "conflicting" ? "CONFLICTING" : "UNKNOWN",
     isDraft: mr.draft === true || mr.work_in_progress === true,
@@ -343,7 +344,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       pr,
       ciDiagnostics,
       closingIssueNumbers: closingIssueNumbers(mr),
-      reviewRequests: (mr.reviewers ?? []).map(userName),
+      reviewRequests: [],
       commentsCount: notes.length,
       reviewsCount: 0,
       reviewCommentsCount: discussions.flatMap(discussion => discussion.notes ?? []).length,
@@ -624,11 +625,12 @@ function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedM
     provider: "gitlab",
     headRefOid: head,
     mergeStatus: input.mr.detailed_merge_status ?? input.mr.merge_status ?? null,
-    reviewRequests: (input.mr.reviewers ?? []).map(userName),
+    reviewRequests: [],
     trustedMarkerAuthor: input.trustedMarkerAuthor,
     comments: syntheticComments,
     trustedLaneReviews: laneReviews,
     reviewRequestMarkers: requestMarkers,
+    gitlabReviewers: (input.mr.reviewers ?? []).map(userName),
     unavailable: input.unavailable,
     ciDiagnostics: input.ciDiagnostics.map(diagnostic => jsonValue(diagnostic)),
   };
