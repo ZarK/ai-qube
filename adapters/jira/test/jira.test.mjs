@@ -287,6 +287,7 @@ describe("Jira work provider adapter", () => {
       assert.deepEqual(requests.map((request) => request.url.searchParams.get("maxResults")), ["100", "50"]);
       assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10020"));
       assert.ok(requests[0].url.searchParams.get("fields").includes("customfield_10014"));
+      assert.ok(!requests[0].url.searchParams.get("fields").split(",").includes("comment"));
       assert.match(requests[0].options.headers.Authorization, /^Basic /);
     } finally {
       globalThis.fetch = originalFetch;
@@ -343,6 +344,7 @@ describe("Jira work provider adapter", () => {
         assert.equal(requestUrl.pathname, "/rest/api/3/issue/ENG-123");
         const fields = requestUrl.searchParams.get("fields");
         assert.ok(fields.includes("summary"));
+        assert.ok(fields.includes("comment"));
         assert.ok(fields.includes("customfield_10020"));
         assert.ok(!fields.includes("*all"));
         return {

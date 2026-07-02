@@ -56,7 +56,8 @@ class FetchJiraRestClient implements JiraRestClient {
   private readonly email: string;
   private readonly apiToken: string;
   private readonly requestTimeoutMs: number;
-  private readonly fields: readonly string[];
+  private readonly listFields: readonly string[];
+  private readonly issueFields: readonly string[];
 
   constructor(options: JiraWorkProviderOptions) {
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL"));
@@ -65,12 +66,13 @@ class FetchJiraRestClient implements JiraRestClient {
     this.email = required(options.email ?? process.env[emailEnv], emailEnv);
     this.apiToken = required(options.apiToken ?? process.env[apiTokenEnv], apiTokenEnv);
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
-    this.fields = searchFields(options.workflowSchema);
+    this.listFields = searchFields(options.workflowSchema);
+    this.issueFields = issueFields(options.workflowSchema);
   }
 
   async listIssues(input: { jql: string; limit: number; fields?: readonly string[] }): Promise<JiraIssue[]> {
     const issues: JiraIssue[] = [];
-    const fields = input.fields ?? this.fields;
+    const fields = input.fields ?? this.listFields;
     let startAt = 0;
     while (issues.length < input.limit) {
       const maxResults = Math.min(DEFAULT_SEARCH_PAGE_SIZE, input.limit - issues.length);
@@ -97,7 +99,7 @@ class FetchJiraRestClient implements JiraRestClient {
 
   async getIssue(key: string): Promise<JiraIssue> {
     const url = new URL(`${this.baseUrl}/rest/api/3/issue/${encodeURIComponent(key)}`);
-    url.searchParams.set("fields", this.fields.join(","));
+    url.searchParams.set("fields", this.issueFields.join(","));
     return this.request<JiraIssue>(url);
   }
 
@@ -144,13 +146,18 @@ function searchFields(schema: JiraWorkflowSchema | undefined): readonly string[]
     "components",
     "assignee",
     "project",
-    "comment",
     "issuelinks",
     "parent",
   ];
   for (const field of [schema?.sprintField, schema?.epicField]) {
     if (field && !fields.includes(field)) fields.push(field);
   }
+  return fields;
+}
+
+function issueFields(schema: JiraWorkflowSchema | undefined): readonly string[] {
+  const fields = [...searchFields(schema)];
+  fields.push("comment");
   return fields;
 }
 
