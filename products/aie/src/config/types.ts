@@ -33,6 +33,12 @@ export interface JiraWorkflowSchemaConfig {
 }
 
 export interface JiraWorkProviderConfig {
+  baseUrl?: string;
+  projectKey?: string;
+  jql?: string;
+  emailEnv?: string;
+  apiTokenEnv?: string;
+  requestTimeoutMs?: number;
   workflowSchema?: JiraWorkflowSchemaConfig;
 }
 

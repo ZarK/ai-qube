@@ -164,4 +164,33 @@ describe('lifecycle provider support', () => {
       /qube aie view.*providers\.work\.kind=github/s,
     );
   });
+
+  it('passes Jira live-read config into provider adapter options', () => {
+    const { workProviderOptions } = require('../dist/app/lifecycle_common.js');
+    const testContext = context([jiraItem('ENG-123')]);
+    testContext.config.providers.work = {
+      kind: 'jira',
+      jira: {
+        baseUrl: 'https://jira.example.com',
+        projectKey: 'ENG',
+        emailEnv: 'AIE_JIRA_EMAIL',
+        apiTokenEnv: 'AIE_JIRA_TOKEN',
+        requestTimeoutMs: 20000,
+        workflowSchema: { sprintField: 'customfield_10020' },
+      },
+    };
+
+    const options = workProviderOptions(testContext.config, { cwd: 'repo', limit: 25 });
+
+    assert.equal(options.cwd, 'repo');
+    assert.equal(options.limit, 25);
+    assert.equal(options.baseUrl, 'https://jira.example.com');
+    assert.equal(options.projectKey, 'ENG');
+    assert.equal(options.emailEnv, 'AIE_JIRA_EMAIL');
+    assert.equal(options.apiTokenEnv, 'AIE_JIRA_TOKEN');
+    assert.equal(options.requestTimeoutMs, 20000);
+    assert.equal(options.workflowSchema.sprintField, 'customfield_10020');
+    assert.equal(Object.hasOwn(options, 'email'), false);
+    assert.equal(Object.hasOwn(options, 'apiToken'), false);
+  });
 });

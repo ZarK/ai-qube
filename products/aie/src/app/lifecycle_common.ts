@@ -49,14 +49,19 @@ export async function createLifecycleContext(options: { config?: Config; cwd?: s
   };
 }
 
-function workProviderOptions(config: Config, options: { cwd?: string; exec?: GhExec; limit?: number }): WorkProviderAdapterOptions {
+export function workProviderOptions(config: Config, options: { cwd?: string; exec?: GhExec; limit?: number }): WorkProviderAdapterOptions {
+  const jira = config.providers.work.kind === 'jira' ? config.providers.work.jira : undefined;
   return {
     exec: options.exec,
     cwd: options.cwd,
     limit: options.limit,
-    ...(config.providers.work.kind === 'jira' && config.providers.work.jira?.workflowSchema
-      ? { workflowSchema: config.providers.work.jira.workflowSchema }
-      : {}),
+    ...(jira?.baseUrl ? { baseUrl: jira.baseUrl } : {}),
+    ...(jira?.projectKey ? { projectKey: jira.projectKey } : {}),
+    ...(jira?.jql ? { jql: jira.jql } : {}),
+    ...(jira?.emailEnv ? { emailEnv: jira.emailEnv } : {}),
+    ...(jira?.apiTokenEnv ? { apiTokenEnv: jira.apiTokenEnv } : {}),
+    ...(jira?.requestTimeoutMs ? { requestTimeoutMs: jira.requestTimeoutMs } : {}),
+    ...(jira?.workflowSchema ? { workflowSchema: jira.workflowSchema } : {}),
   };
 }
 

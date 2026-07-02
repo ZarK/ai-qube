@@ -452,9 +452,23 @@ function readJiraWorkProviderConfig(value: unknown, path: string, errors: Valida
     errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
     return undefined;
   }
-  rejectUnknownKeys(value, ['workflowSchema'], path, errors);
+  rejectUnknownKeys(value, ['baseUrl', 'projectKey', 'jql', 'emailEnv', 'apiTokenEnv', 'requestTimeoutMs', 'workflowSchema'], path, errors);
+  const baseUrl = readOptionalNonEmptyString(value, 'baseUrl', `${path}.baseUrl`, errors);
+  const projectKey = readOptionalNonEmptyString(value, 'projectKey', `${path}.projectKey`, errors);
+  const jql = readOptionalNonEmptyString(value, 'jql', `${path}.jql`, errors);
+  const emailEnv = readOptionalNonEmptyString(value, 'emailEnv', `${path}.emailEnv`, errors);
+  const apiTokenEnv = readOptionalNonEmptyString(value, 'apiTokenEnv', `${path}.apiTokenEnv`, errors);
+  const requestTimeoutMs = 'requestTimeoutMs' in value ? readBoundedInteger(value, 'requestTimeoutMs', 15_000, 1, 300_000, path, errors) : undefined;
   const workflowSchema = readJiraWorkflowSchema(value.workflowSchema, `${path}.workflowSchema`, errors);
-  return workflowSchema ? { workflowSchema } : {};
+  return {
+    ...(baseUrl ? { baseUrl } : {}),
+    ...(projectKey ? { projectKey } : {}),
+    ...(jql ? { jql } : {}),
+    ...(emailEnv ? { emailEnv } : {}),
+    ...(apiTokenEnv ? { apiTokenEnv } : {}),
+    ...(requestTimeoutMs ? { requestTimeoutMs } : {}),
+    ...(workflowSchema ? { workflowSchema } : {}),
+  };
 }
 
 function readWorkProviderSelection(input: Record<string, unknown>, defaultValue: WorkProviderSelection, errors: ValidationError[]): WorkProviderSelection {

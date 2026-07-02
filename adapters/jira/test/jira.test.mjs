@@ -367,4 +367,39 @@ describe("Jira work provider adapter", () => {
       globalThis.fetch = originalFetch;
     }
   });
+
+  it("reads credentials from configured Jira environment variable names", async () => {
+    const originalFetch = globalThis.fetch;
+    const originalEmail = process.env.AIE_JIRA_EMAIL;
+    const originalToken = process.env.AIE_JIRA_TOKEN;
+    process.env.AIE_JIRA_EMAIL = "user@example.com";
+    process.env.AIE_JIRA_TOKEN = "token";
+    try {
+      globalThis.fetch = async (_url, options) => {
+        assert.match(options.headers.Authorization, /^Basic /);
+        return {
+          ok: true,
+          async json() {
+            return { startAt: 0, maxResults: 100, total: 0, issues: [] };
+          },
+        };
+      };
+      const provider = createJiraWorkProvider({
+        baseUrl: "https://jira.example.com/",
+        emailEnv: "AIE_JIRA_EMAIL",
+        apiTokenEnv: "AIE_JIRA_TOKEN",
+        projectKey: "ENG",
+      });
+
+      const items = await provider.listOpenWorkItems();
+
+      assert.deepEqual(items, []);
+    } finally {
+      globalThis.fetch = originalFetch;
+      if (originalEmail === undefined) delete process.env.AIE_JIRA_EMAIL;
+      else process.env.AIE_JIRA_EMAIL = originalEmail;
+      if (originalToken === undefined) delete process.env.AIE_JIRA_TOKEN;
+      else process.env.AIE_JIRA_TOKEN = originalToken;
+    }
+  });
 });

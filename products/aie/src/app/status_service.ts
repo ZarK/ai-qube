@@ -10,7 +10,6 @@ import type { ExecutorPolicy } from '../core/policy.js';
 import type { RepoState } from '../core/repo_state.js';
 import type { ReviewItem } from '../core/review_item.js';
 import type { WorkItem } from '../core/work_item.js';
-import { githubIssueNumber } from '../providers/github/github_work_codec.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { CurrentReviewForge } from '../providers/review_forge_provider.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
@@ -18,6 +17,8 @@ import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabiliti
 import type { ReviewProvider, ReviewProviderCapabilities } from '../providers/review_provider.js';
 import type { WorkProvider, WorkProviderCapabilities } from '../providers/work_provider.js';
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
+import { maybeWorkItemKeyNumber } from '../core/work_item.js';
+import { workProviderOptions } from './lifecycle_common.js';
 
 export type StatusDecisionState = 'continue' | 'stop' | 'wait' | 'unknown';
 export type StatusReasonCode =
@@ -35,6 +36,7 @@ export type StatusReasonCode =
   | 'ready-to-ship'
   | 'continue-active-work'
   | 'start-next-work'
+  | 'read-only-work-provider'
   | 'no-ready-work';
 
 export interface ProviderStatus {
@@ -155,12 +157,7 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const configLoad = await loadConfigFile(options.cwd);
   const config = configLoad.ok && configLoad.config ? configLoad.config : getDefaults();
   const policy = configToExecutorPolicy(config);
-  const workProvider = await createWorkProvider(config.providers.work.kind, {
-    cwd: options.cwd,
-    ...(config.providers.work.kind === 'jira' && config.providers.work.jira?.workflowSchema
-      ? { workflowSchema: config.providers.work.jira.workflowSchema }
-      : {}),
-  });
+  const workProvider = await createWorkProvider(config.providers.work.kind, workProviderOptions(config, { cwd: options.cwd }));
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
   const reviewForgeProvider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.cwd });
   return {
@@ -186,7 +183,8 @@ export async function buildStatus(context: StatusServiceContext): Promise<Status
   const expectedBranch = selectedItem ? await inspectExpectedBranch(context, selectedItem.workItem) : null;
   const review = await inspectReview(context);
   const gates = summarizeGates(buildGateStatus(context.config, { evidenceRoot: repository?.root ?? context.configLoad.root }));
-  const reviewGate = activeItems.length === 1 ? runReviewGate(context.config, { issueNumber: githubIssueNumber(activeItems[0].workItem), repoRoot: repository?.root ?? context.configLoad.root }) : null;
+  const activeIssueNumber = activeItems.length === 1 ? maybeWorkItemKeyNumber(activeItems[0].workItem.key) : null;
+  const reviewGate = activeIssueNumber !== null ? runReviewGate(context.config, { issueNumber: activeIssueNumber, repoRoot: repository?.root ?? context.configLoad.root }) : null;
   const decision = decideStatus({ context, repository, queueState, activeItems, nextItem, review, gates, reviewGate });
 
   return {
@@ -283,8 +281,7 @@ function queueSummary(queue: Queue): StatusQueueSummary {
 }
 
 function workSummary(item: QueueItem): StatusWorkSummary {
-  let number: number | null = null;
-  try { number = githubIssueNumber(item.workItem); } catch { number = null; }
+  const number = maybeWorkItemKeyNumber(item.workItem.key);
   return { key: item.workItem.key, displayId: item.workItem.displayId, number, title: item.workItem.title, url: item.workItem.url, state: item.workItem.state, effectiveStatus: item.effectiveStatus, openBlockers: item.openBlockers, priority: item.workItem.priority, checklist: item.workItem.checklist };
 }
 
@@ -306,17 +303,35 @@ function decideStatus(input: { context: StatusServiceContext; repository: RepoSt
   }
 
   if (input.activeItems.length === 1) return decideActiveWork(input.activeItems[0], input);
+  if (input.nextItem && !canApplyLifecycle(input.context.workProvider)) return readOnlyProviderDecision(input.context.workProvider.id, `Inspect ready work ${input.nextItem.workItem.displayId} from the configured ${input.context.workProvider.id} provider.`);
   if (input.nextItem) return { state: 'continue', reasonCodes: ['start-next-work'], nextCommand: 'aie start next', summary: `Start ${input.nextItem.workItem.displayId}; it is the next ready work item.` };
   return { state: 'stop', reasonCodes: ['no-ready-work'], nextCommand: 'aie queue --json', summary: 'No ready work is available; the queue is empty or all open work is blocked.' };
 }
 
-function decideActiveWork(activeItem: QueueItem, input: { review: StatusReviewState; gates: StatusGateState; reviewGate: ReviewGateResult | null }): StatusDecision {
-  const issueNumber = githubIssueNumber(activeItem.workItem);
+function canApplyLifecycle(provider: WorkProvider): boolean {
+  const capabilities = provider.capabilities();
+  return capabilities.planLifecycleMutations && capabilities.applyLifecycleMutations;
+}
+
+function readOnlyProviderDecision(providerId: string, summary: string): StatusDecision {
+  return {
+    state: 'stop',
+    reasonCodes: ['read-only-work-provider'],
+    nextCommand: 'aie queue --json',
+    summary: `${summary} Lifecycle mutation commands require a provider with tested issue-number lifecycle support; ${providerId} is currently read-only.`,
+  };
+}
+
+function decideActiveWork(activeItem: QueueItem, input: { context: StatusServiceContext; review: StatusReviewState; gates: StatusGateState; reviewGate: ReviewGateResult | null }): StatusDecision {
+  const issueNumber = maybeWorkItemKeyNumber(activeItem.workItem.key);
   const review = input.review.item;
+  const lifecycleSupported = canApplyLifecycle(input.context.workProvider);
+  if (!lifecycleSupported && review?.state !== 'open' && review?.state !== 'draft') return readOnlyProviderDecision(input.context.workProvider.id, `Active work ${activeItem.workItem.displayId} uses provider-native keys.`);
   if (review?.state === 'merged') return { state: 'continue', reasonCodes: ['active-work-complete'], nextCommand: `aie complete ${issueNumber}`, summary: `Complete ${activeItem.workItem.displayId}; its pull request is merged.` };
   if (review?.reviewDecision === 'changes-requested' || review?.feedback.some(item => item.source === 'thread')) return { state: 'continue', reasonCodes: ['review-changes-requested'], nextCommand: `aie pr gate ${review.key.id} --json`, summary: 'Address requested PR feedback, then rerun the PR gate.' };
   if (review && input.gates.requiredBlocking > 0) return { state: 'continue', reasonCodes: ['pending-gates'], nextCommand: 'aie gates status --json', summary: 'Required gate evidence is missing, stale, unknown, or failed.' };
-  if (review && input.reviewGate && input.reviewGate.evidence.status !== 'passed') return { state: 'continue', reasonCodes: ['pending-review'], nextCommand: `aie review gate ${issueNumber} --json`, summary: 'Review-agent evidence is not recorded as passed.' };
+  if (review && input.reviewGate && issueNumber !== null && input.reviewGate.evidence.status !== 'passed') return { state: 'continue', reasonCodes: ['pending-review'], nextCommand: `aie review gate ${issueNumber} --json`, summary: 'Review-agent evidence is not recorded as passed.' };
   if (review && review.mergeability === 'mergeable' && review.reviewDecision === 'approved') return { state: 'continue', reasonCodes: ['ready-to-ship'], nextCommand: `aie pr gate ${review.key.id} --json`, summary: 'PR state is mergeable and approved; run the PR gate before shipping.' };
+  if (!lifecycleSupported || issueNumber === null) return readOnlyProviderDecision(input.context.workProvider.id, `Continue active work ${activeItem.workItem.displayId} outside GitHub issue lifecycle commands.`);
   return { state: 'continue', reasonCodes: ['continue-active-work'], nextCommand: `aie branch check ${issueNumber}`, summary: `Continue implementation for active work ${activeItem.workItem.displayId}.` };
 }
