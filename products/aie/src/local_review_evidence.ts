@@ -333,6 +333,18 @@ function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
   if (!Array.isArray(value)) return [];
   const stack: LocalReviewPromptStackItem[] = [];
   for (const entry of value) {
+    if (typeof entry === 'string') {
+      const id = entry.trim();
+      if (id === '') continue;
+      stack.push({
+        id: redact(id),
+        source: 'evidence',
+        path: null,
+        sha256: null,
+        trust: 'local-evidence',
+      });
+      continue;
+    }
     if (!isRecord(entry)) continue;
     const source = entry.source === 'builtin' || entry.source === 'repo-configured' || entry.source === 'command-supplied' || entry.source === 'evidence' ? entry.source : 'evidence';
     stack.push({
