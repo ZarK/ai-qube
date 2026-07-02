@@ -53,12 +53,13 @@ export interface JenkinsBuildEvidenceInput {
 
 export interface JenkinsCiProviderCapabilities {
   readonly readBuildEvidence: boolean;
-  readonly readQueuedBuilds: boolean;
+  readonly normalizeQueueItems: boolean;
   readonly triggerBuilds: false;
   readonly rerunBuilds: false;
 }
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const MAX_ARTIFACT_URLS = 50;
 
 class JenkinsRequestError extends Error {
   constructor(message: string, readonly status: number | null) {
@@ -177,7 +178,7 @@ export class JenkinsCiProvider {
   capabilities(): JenkinsCiProviderCapabilities {
     return {
       readBuildEvidence: true,
-      readQueuedBuilds: true,
+      normalizeQueueItems: true,
       triggerBuilds: false,
       rerunBuilds: false,
     };
@@ -215,6 +216,7 @@ export function jenkinsBuildToGateEvidence(input: {
   const result = mapBuildResult(build);
   const buildId = normalizeOptionalText(build.id) ?? (typeof build.number === "number" ? String(build.number) : buildSelector(input.build));
   const buildArtifactUrls = artifactUrls(build);
+  const artifactCount = Array.isArray(build.artifacts) ? build.artifacts.length : 0;
   return normalizeGateEvidence({
     key: `jenkins:${jobPath}:${buildId}`,
     name: `Jenkins ${jobPath}`,
@@ -239,7 +241,10 @@ export function jenkinsBuildToGateEvidence(input: {
       durationMs: typeof build.duration === "number" ? build.duration : null,
       logUrl: build.url ? `${build.url.replace(/\/+$/u, "")}/console` : null,
       artifactUrls: buildArtifactUrls,
+      artifactCount,
+      artifactUrlsTruncated: artifactCount > buildArtifactUrls.length,
       required: input.required === true,
+      providerTextTrust: "untrusted",
     },
   });
 }
@@ -253,7 +258,7 @@ export function jenkinsQueueItemToGateEvidence(input: {
   const queueId = typeof input.queueItem.id === "number" ? String(input.queueItem.id) : "queued";
   const summary = input.queueItem.cancelled === true
     ? `Jenkins job ${jobPath} queue item ${queueId} was cancelled.`
-    : `Jenkins job ${jobPath} is queued${input.queueItem.why ? `: ${input.queueItem.why}` : "."}`;
+    : `Jenkins job ${jobPath} is queued.`;
   return normalizeGateEvidence({
     key: `jenkins:${jobPath}:queue:${queueId}`,
     name: `Jenkins ${jobPath}`,
@@ -274,6 +279,7 @@ export function jenkinsQueueItemToGateEvidence(input: {
       cancelled: input.queueItem.cancelled === true,
       taskName: input.queueItem.task?.name ?? null,
       required: input.required === true,
+      providerTextTrust: "untrusted",
     },
   });
 }
@@ -317,6 +323,7 @@ function jenkinsReadFailureToGateEvidence(input: {
       inaccessible,
       missingCredentials: /requires JENKINS_|requires both JENKINS_/u.test(message) || (inaccessible && !hasCredentialsConfigured()),
       required: input.required === true,
+      providerTextTrust: "untrusted",
       nextAction: "Verify JENKINS_BASE_URL, optional JENKINS_USER/JENKINS_API_TOKEN, and the Jenkins job or folder path, then rerun the gate evidence read.",
     },
   });
@@ -348,6 +355,7 @@ function artifactUrls(build: JenkinsBuild): readonly string[] {
   return build.artifacts
     .map(artifact => normalizeOptionalText(artifact.relativePath))
     .filter((relativePath): relativePath is string => relativePath !== null)
+    .slice(0, MAX_ARTIFACT_URLS)
     .map(relativePath => `${base}/artifact/${relativePath.split("/").map(encodeURIComponent).join("/")}`);
 }
 

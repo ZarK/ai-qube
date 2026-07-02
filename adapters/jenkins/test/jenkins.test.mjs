@@ -51,6 +51,9 @@ describe("Jenkins CI adapter", () => {
     assert.equal(evidence.metadata.jobPath, "folder/app");
     assert.equal(evidence.metadata.logUrl, "https://jenkins.example.com/job/folder/job/app/42/console");
     assert.deepEqual(evidence.metadata.artifactUrls, ["https://jenkins.example.com/job/folder/job/app/42/artifact/reports/report.xml"]);
+    assert.equal(evidence.metadata.artifactCount, 1);
+    assert.equal(evidence.metadata.artifactUrlsTruncated, false);
+    assert.equal(evidence.metadata.providerTextTrust, "untrusted");
   });
 
   it("reports failed, unstable, queued, missing, and unknown Jenkins states", async () => {
@@ -64,11 +67,29 @@ describe("Jenkins CI adapter", () => {
       queueItem: { id: 5, why: "Waiting for next available executor", task: { name: "app", url: "https://jenkins.example.com/job/app/" } },
     });
     assert.equal(queued.result, "unknown");
-    assert.match(queued.summary, /Waiting for next available executor/);
+    assert.equal(queued.summary, "Jenkins job app is queued.");
+    assert.equal(queued.metadata.queueWhy, "Waiting for next available executor");
+    assert.equal(queued.metadata.providerTextTrust, "untrusted");
 
     const missing = await createJenkinsCiProvider().readBuildEvidence({ jobPath: "app" });
     assert.equal(missing.result, "missing");
     assert.equal(missing.metadata.missingCredentials, true);
+  });
+
+  it("bounds Jenkins artifact URLs in gate evidence metadata", () => {
+    const artifacts = Array.from({ length: 55 }, (_, index) => ({
+      fileName: `report-${index}.xml`,
+      relativePath: `reports/report-${index}.xml`,
+    }));
+    const evidence = jenkinsBuildToGateEvidence({
+      jobPath: "folder/app",
+      build: 42,
+      buildRecord: build({ artifacts }),
+    });
+
+    assert.equal(evidence.metadata.artifactCount, 55);
+    assert.equal(evidence.metadata.artifactUrls.length, 50);
+    assert.equal(evidence.metadata.artifactUrlsTruncated, true);
   });
 
   it("reads classic Jenkins and folder job paths without assuming one naming convention", async () => {
@@ -85,6 +106,9 @@ describe("Jenkins CI adapter", () => {
     const classic = await provider.readBuildEvidence({ jobPath: "classic", build: "lastCompletedBuild" });
     const folder = await provider.readBuildEvidence({ jobPath: "team/folder/app", build: 11 });
 
+    assert.equal(provider.capabilities().readBuildEvidence, true);
+    assert.equal(provider.capabilities().normalizeQueueItems, true);
+    assert.equal(provider.capabilities().triggerBuilds, false);
     assert.equal(classic.result, "passed");
     assert.equal(folder.result, "passed");
     assert.deepEqual(requests, [
