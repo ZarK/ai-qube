@@ -98,7 +98,7 @@ export class GitHubWorkProvider {
   constructor(private readonly options: GitHubWorkProviderOptions = {}) {}
 
   private includeAssignees(): boolean {
-    return this.options.includeAssignees ?? true;
+    return this.options.includeAssignees ?? false;
   }
 
   capabilities(): WorkProviderCapabilities {
