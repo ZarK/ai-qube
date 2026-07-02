@@ -119,6 +119,12 @@ function normalizePr(mr: GitLabMergeRequest): GitLabReviewPullRequest {
   };
 }
 
+function mapReviewDecision(reviewDecision: GitLabReviewPullRequest["reviewDecision"]): ReviewItem["reviewDecision"] {
+  if (reviewDecision === "REVIEW_REQUIRED") return "review-required";
+  if (reviewDecision === "CHANGES_REQUESTED") return "changes-requested";
+  return "none";
+}
+
 function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const pipeline = mr.head_pipeline;
   const sha = headSha(mr);
@@ -510,7 +516,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       sourceRef: pr.headRefOid,
       targetRef: mr.target_branch ?? "base",
       state: mapMergeState(mr),
-      reviewDecision: pr.reviewDecision === "REVIEW_REQUIRED" ? "review-required" : "none",
+      reviewDecision: mapReviewDecision(pr.reviewDecision),
       mergeability: mapMergeability(mr),
       linkedWorkItems: closingIssueNumbers(mr).map(number => ({ providerId: "gitlab", id: String(number) })),
       feedback: feedback(notes, discussions, trustedMarkerAuthor),

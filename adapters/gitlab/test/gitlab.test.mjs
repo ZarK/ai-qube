@@ -322,14 +322,14 @@ describe("GitLab review forge adapter", () => {
 
   it("surfaces documented GitLab merge status blockers", async () => {
     const cases = [
-      ["not_approved", "review-required"],
-      ["requested_changes", "changes-requested"],
-      ["discussions_not_resolved", "unresolved-review-thread"],
-      ["ci_must_pass", "checks-pending"],
-      ["status_checks_must_pass", "checks-pending"],
-      ["need_rebase", "merge-state-blocked"],
-      ["security_policy_violations", "merge-state-blocked"],
-      ["locked_paths", "merge-state-blocked"],
+      ["not_approved", "review-required", "review-required"],
+      ["requested_changes", "changes-requested", "changes-requested"],
+      ["discussions_not_resolved", "unresolved-review-thread", "none"],
+      ["ci_must_pass", "checks-pending", "none"],
+      ["status_checks_must_pass", "checks-pending", "none"],
+      ["need_rebase", "merge-state-blocked", "none"],
+      ["security_policy_violations", "merge-state-blocked", "none"],
+      ["locked_paths", "merge-state-blocked", "none"],
     ];
     let detailedMergeStatus = "not_approved";
     const provider = createGitLabReviewForgeProvider({
@@ -355,10 +355,11 @@ describe("GitLab review forge adapter", () => {
       },
     });
 
-    for (const [status, reason] of cases) {
+    for (const [status, reason, reviewDecision] of cases) {
       detailedMergeStatus = status;
       const snapshot = await provider.loadPullRequestReview(12);
       assert.equal(snapshot.item.mergeability, "blocked");
+      assert.equal(snapshot.item.reviewDecision, reviewDecision);
       assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === reason && blocker.summary.includes(status)), true);
     }
   });
