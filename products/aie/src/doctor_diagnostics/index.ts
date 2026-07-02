@@ -7,7 +7,7 @@ import type { BaseRefStatus } from '../repo/index.js';
 import type { GitHubIssue } from '@tjalve/qube-adapter-github';
 import { MANAGED_START } from '../managed_file.js';
 import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.js';
-import { redact } from '@tjalve/qube-adapter-github';
+import { redact } from '../github_adapter_runtime.js';
 import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';

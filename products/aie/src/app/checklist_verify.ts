@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { renderAgentPrompt, type RenderedAgentPrompt } from '../agent_descriptors.js';
 import { parseChecklist, planChecklistUpdate, type ChecklistItem, type ChecklistState, type ChecklistSummary } from '../checklist.js';
-import { getIssue, type GitHubIssue } from '@tjalve/qube-adapter-github';
-import { GhExecutionError, runGh, type GhExec } from '@tjalve/qube-adapter-github';
+import { getIssue, GhExecutionError, runGh, type GhExec, type GitHubIssue } from '../github_adapter_runtime.js';
 
 export interface ChecklistVerifyIssue {
   number: number;

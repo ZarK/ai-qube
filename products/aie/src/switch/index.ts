@@ -1,5 +1,5 @@
 import { getDefaults, loadConfig, Config } from '../config/index.js';
-import { GhExec } from '@tjalve/qube-adapter-github';
+import type { GhExec } from '../github_adapter_runtime.js';
 import {
   PreStartPolicyResult,
 } from '../lifecycle.js';

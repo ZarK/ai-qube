@@ -1,6 +1,5 @@
 import { parseChecklist, planChecklistUpdate, type ChecklistItem, type ChecklistSelector, type ChecklistState, type ChecklistSummary } from '../checklist.js';
-import { getIssue, type GitHubIssue } from '@tjalve/qube-adapter-github';
-import { GhExecutionError, runGh, type GhExec } from '@tjalve/qube-adapter-github';
+import { getIssue, GhExecutionError, runGh, type GhExec, type GitHubIssue } from '../github_adapter_runtime.js';
 
 export interface IssueChecklistSummary {
   issue: {

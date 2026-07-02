@@ -1,7 +1,41 @@
 const assert = require('node:assert/strict');
+const { readdirSync, readFileSync, statSync } = require('node:fs');
+const { join, relative } = require('node:path');
 const { describe, it } = require('node:test');
 
 describe('work provider adapter boundary', () => {
+  it('keeps optional GitHub adapter value imports behind provider boundaries', () => {
+    const srcRoot = join(__dirname, '..', 'src');
+    const allowed = new Set([
+      join('providers', 'review_agent_adapters.ts'),
+      join('providers', 'review_forge_adapters.ts'),
+      join('providers', 'work_provider_adapters.ts'),
+      'github_adapter_runtime.ts',
+    ]);
+    const offenders = [];
+    const visit = dir => {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) {
+          visit(path);
+          continue;
+        }
+        if (!path.endsWith('.ts')) continue;
+        const local = relative(srcRoot, path);
+        if (allowed.has(local)) continue;
+        const text = readFileSync(path, 'utf8');
+        for (const line of text.split(/\r?\n/)) {
+          if (line.includes("from '@tjalve/qube-adapter-github'") && !line.trimStart().startsWith('import type ')) {
+            offenders.push(`${local}: ${line.trim()}`);
+          }
+        }
+      }
+    };
+    visit(srcRoot);
+
+    assert.deepEqual(offenders, []);
+  });
+
   it('lists built-in and optional work provider adapter contracts', () => {
     const { listWorkProviderAdapters, workProviderAdapterPackage } = require('../dist/providers/work_provider_adapters.js');
     const adapters = listWorkProviderAdapters();
