@@ -157,4 +157,37 @@ describe("GitHub work provider", () => {
     assert.deepEqual(dependentAction.details.removeLabels, ["S-Blocked", "S-Blocking"]);
     assert.equal(plan.actions.some(action => action.details.issueNumber === 72), false);
   });
+
+  it("uses configured status labels for lifecycle plans", async () => {
+    const policy = {
+      labels: {
+        priorities: [],
+        statuses: ["Ready", "Doing", "Blocked", "Blocks"].map(name => ({ name })),
+      },
+      milestoneOrdering: { enabled: false, order: [], missingAssignment: "warn" },
+    };
+    const issueList = [
+      makeIssue(80, { labels: [{ name: "Ready" }] }),
+      makeIssue(81, { labels: [{ name: "Doing" }] }),
+      makeIssue(82, { body: "Blocked by: #81", labels: [{ name: "Blocked" }, { name: "Blocks" }] }),
+    ];
+    const exec = makeFixtureExec({
+      "issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000": success([], JSON.stringify(issueList)),
+    });
+    const provider = createGitHubWorkProvider({ exec });
+    const items = await provider.listOpenWorkItems();
+
+    const startPlan = provider.planStart(items.find(item => item.key.id === "80"), policy);
+    assert.deepEqual(startPlan.actions[0].details.addLabels, ["Doing"]);
+    assert.deepEqual(startPlan.actions[0].details.removeLabels, ["Ready"]);
+
+    const pausePlan = provider.planPause(items.find(item => item.key.id === "81"), items, policy);
+    assert.deepEqual(pausePlan.actions[0].details.addLabels, ["Ready", "Blocks"]);
+    assert.deepEqual(pausePlan.actions[0].details.removeLabels, ["Doing"]);
+
+    const completePlan = provider.planComplete(items.find(item => item.key.id === "81"), items.filter(item => item.key.id !== "81"), policy);
+    const dependentAction = completePlan.actions.find(action => action.details.issueNumber === 82);
+    assert.deepEqual(dependentAction.details.addLabels, ["Ready"]);
+    assert.deepEqual(dependentAction.details.removeLabels, ["Blocked", "Blocks"]);
+  });
 });

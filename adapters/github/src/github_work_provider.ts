@@ -1,4 +1,4 @@
-import { createAction, createActionPlan, buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, workItemIsInProgress, type Action, type ActionPlan, type ActionResult, type WorkDependencyGraph, type WorkItem, type WorkItemKey, type WorkProviderCapabilities, type WorkQueuePolicy } from "@tjalve/qube-core";
+import { createAction, createActionPlan, buildWorkDependencyGraph, createWorkStatusSyncActionPlan, getOpenBlockerKeys, getOpenWorkItemKeys, resolveWorkStatusLabels, workItemIsInProgress, type Action, type ActionPlan, type ActionResult, type WorkDependencyGraph, type WorkItem, type WorkItemKey, type WorkProviderCapabilities, type WorkQueuePolicy } from "@tjalve/qube-core";
 import { getIssue, listOpenIssues } from './github_issue_api.js';
 import { type GhExec, GhExecutionError, type GhRunResult, parseGhJson, runGh } from './gh.js';
 import { attachBlockedBy, githubIssueNumber, githubIssueToWorkItem } from './github_work_codec.js';
@@ -53,6 +53,10 @@ function policyToWorkQueuePolicy(policy: GitHubWorkProviderPolicy): WorkQueuePol
     statusLabels: policy.labels.statuses.map(label => label.name),
     milestoneOrdering: policy.milestoneOrdering,
   };
+}
+
+function lifecycleLabels(policy: GitHubWorkProviderPolicy): { ready: string; inProgress: string; blocked: string; blocking: string } {
+  return resolveWorkStatusLabels(policyToWorkQueuePolicy(policy));
 }
 
 function sameWorkItem(left: WorkItem, right: WorkItem): boolean {
@@ -148,30 +152,33 @@ export class GitHubWorkProvider {
   }
 
   planStart(item: WorkItem, policy: GitHubWorkProviderPolicy): ActionPlan {
-    const removeLabels = statusLabels(item, policy).filter(label => label !== 'S-InProgress' && label !== 'S-Blocking');
-    const addLabels = item.tags.includes('S-InProgress') ? [] : ['S-InProgress'];
+    const labels = lifecycleLabels(policy);
+    const removeLabels = statusLabels(item, policy).filter(label => label !== labels.inProgress && label !== labels.blocking);
+    const addLabels = item.tags.includes(labels.inProgress) ? [] : [labels.inProgress];
     const action = makeStatusAction(item, addLabels, removeLabels, `Start ${item.displayId}`);
     return createActionPlan({ id: `github:start:${item.key.id}`, purpose: `Start ${item.displayId}.`, dryRun: true, actions: action ? [action] : [] });
   }
 
   planPause(item: WorkItem, openItems: WorkItem[], policy: GitHubWorkProviderPolicy): ActionPlan {
+    const labels = lifecycleLabels(policy);
     const openKeys = getOpenWorkItemKeys(openItems);
     const addLabels: string[] = [];
     const removeLabels: string[] = [];
-    if (item.tags.includes('S-InProgress')) removeLabels.push('S-InProgress');
-    if (getOpenBlockerKeys(item, openKeys).length > 0) addLabels.push('S-Blocked');
-    else addLabels.push('S-Ready');
+    if (item.tags.includes(labels.inProgress)) removeLabels.push(labels.inProgress);
+    if (getOpenBlockerKeys(item, openKeys).length > 0) addLabels.push(labels.blocked);
+    else addLabels.push(labels.ready);
     for (const label of statusLabels(item, policy)) {
-      if (label !== 'S-Blocking') removeLabels.push(label);
+      if (label !== labels.blocking) removeLabels.push(label);
     }
     const blocksWork = itemBlocksOpenWork(item, openItems);
-    if (blocksWork && !item.tags.includes('S-Blocking')) addLabels.push('S-Blocking');
-    if (!blocksWork && item.tags.includes('S-Blocking')) removeLabels.push('S-Blocking');
+    if (blocksWork && !item.tags.includes(labels.blocking)) addLabels.push(labels.blocking);
+    if (!blocksWork && item.tags.includes(labels.blocking)) removeLabels.push(labels.blocking);
     const action = makeStatusAction(item, addLabels, removeLabels, `Pause ${item.displayId}`);
     return createActionPlan({ id: `github:pause:${item.key.id}`, purpose: `Pause ${item.displayId}.`, dryRun: true, actions: action ? [action] : [] });
   }
 
   planComplete(item: WorkItem, dependents: WorkItem[], policy: GitHubWorkProviderPolicy): ActionPlan {
+    const labels = lifecycleLabels(policy);
     const actions: Action[] = [];
     const removeLabels = statusLabels(item, policy);
     const cleanup = makeStatusAction(item, [], removeLabels, `Remove lifecycle status labels from ${item.displayId}`);
@@ -197,17 +204,17 @@ export class GitHubWorkProvider {
       const addLabels: string[] = [];
       const removeLabels: string[] = [];
       if (getOpenBlockerKeys(dependent, openKeys).length > 0) {
-        if (!dependent.tags.includes('S-Blocked')) addLabels.push('S-Blocked');
-        if (dependent.tags.includes('S-Ready')) removeLabels.push('S-Ready');
+        if (!dependent.tags.includes(labels.blocked)) addLabels.push(labels.blocked);
+        if (dependent.tags.includes(labels.ready)) removeLabels.push(labels.ready);
       } else {
-        if (!dependent.tags.includes('S-Ready')) addLabels.push('S-Ready');
-        if (dependent.tags.includes('S-Blocked')) removeLabels.push('S-Blocked');
+        if (!dependent.tags.includes(labels.ready)) addLabels.push(labels.ready);
+        if (dependent.tags.includes(labels.blocked)) removeLabels.push(labels.blocked);
       }
       const dependentBlocksWork = itemBlocksOpenWorkFromGraph(dependent, graphAfterCompletion);
-      if (dependentBlocksWork && !dependent.tags.includes('S-Blocking')) addLabels.push('S-Blocking');
-      if (!dependentBlocksWork && dependent.tags.includes('S-Blocking')) removeLabels.push('S-Blocking');
+      if (dependentBlocksWork && !dependent.tags.includes(labels.blocking)) addLabels.push(labels.blocking);
+      if (!dependentBlocksWork && dependent.tags.includes(labels.blocking)) removeLabels.push(labels.blocking);
       for (const label of statusLabels(dependent, policy)) {
-        if (label !== 'S-Ready' && label !== 'S-Blocked' && label !== 'S-Blocking') removeLabels.push(label);
+        if (label !== labels.ready && label !== labels.blocked && label !== labels.blocking) removeLabels.push(label);
       }
       const action = makeStatusAction(dependent, addLabels, removeLabels, `Refresh dependent status for ${dependent.displayId}`);
       if (action) actions.push(action);
