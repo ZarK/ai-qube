@@ -90,12 +90,11 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const matchesHead = pipeline.sha === sha;
   const passed = status === "success" && matchesHead;
   const failed = matchesHead && ["failed", "canceled", "manual"].includes(status);
-  const skipped = matchesHead && status === "skipped";
   const pending = matchesHead && ["created", "waiting_for_resource", "preparing", "pending", "running"].includes(status);
   return [{
     checkName: "gitlab-pipeline",
-    status: passed ? "mapped" : failed ? "failed-current-head-run" : skipped ? "skipped-current-head-run" : pending ? "pending-current-head-run" : "unknown",
-    reasonCode: passed ? "current-head-workflow-run-found" : failed ? "current-head-check-run-failed" : skipped ? "current-head-check-run-skipped" : pending ? "current-head-check-run-pending" : "ci-mapping-unknown",
+    status: passed ? "mapped" : failed ? "failed-current-head-run" : pending ? "pending-current-head-run" : "unknown",
+    reasonCode: passed ? "current-head-workflow-run-found" : failed ? "current-head-check-run-failed" : pending ? "current-head-check-run-pending" : "ci-mapping-unknown",
     currentHeadSha: sha,
     mappedToCurrentHeadCheckRun: false,
     mappedToCurrentHeadWorkflowRun: matchesHead,
