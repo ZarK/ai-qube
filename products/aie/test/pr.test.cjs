@@ -1971,7 +1971,7 @@ describe('PR gate service', () => {
         }
       : { ...lane, toolsUsed: ['codex'] });
     writeLocalEvidence(repo, evidence);
-    const pendingError = JSON.stringify({ message: 'Unprocessable Entity', errors: ['User can only have one pending review per pull request'], status: '422' });
+    const pendingError = 'gh: Unprocessable Entity (HTTP 422)';
     const fixture = makePrExec({
       prViews: [cleanLocalPr()],
       pullReviews: [{ id: 456, state: 'PENDING', user: { login: 'executor' }, commit_id: 'stale-head', html_url: 'https://github.com/example/repo/pull/12#pullrequestreview-456' }],

@@ -60,6 +60,7 @@ export interface GitLabReviewRestClient {
   findMergeRequestForBranch?(input: { projectId: string; sourceBranch: string }): Promise<GitLabMergeRequest | null>;
   listMergeRequestNotes(input: { projectId: string; iid: string }): Promise<GitLabNote[]>;
   listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]>;
+  resolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote>;
   getCurrentUser?(): Promise<GitLabUser>;
 }

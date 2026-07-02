@@ -81,6 +81,10 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions`);
   }
 
+  async resolveMergeRequestDiscussion(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion> {
+    return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions/${encodeURIComponent(input.discussionId)}`, { resolved: "true" });
+  }
+
   async createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote> {
     return this.post(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`, { body: input.body });
   }
@@ -128,6 +132,15 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+    });
+    return this.readJson(response, path);
+  }
+
+  private async put<T>(path: string, query: Record<string, string>): Promise<T> {
+    const url = new URL(`${this.apiBaseUrl}${path}`);
+    for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+    const response = await this.request(url, {
+      method: "PUT",
     });
     return this.readJson(response, path);
   }

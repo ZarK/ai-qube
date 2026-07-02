@@ -16,6 +16,8 @@ import {
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
   type ReviewForgeProvider,
+  type ResolveReviewThreadInput,
+  type ResolveReviewThreadResult,
   type ReviewItem,
   type ReviewItemKey,
   type ReviewLaneReviewPublishInput,
@@ -295,7 +297,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   capabilities(): ReviewForgeCapabilities {
-    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: false, resolveReviewThreads: false };
+    return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: false, resolveReviewThreads: true };
   }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
@@ -413,6 +415,88 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     }
   }
 
+  async resolveReviewThreads(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult> {
+    const threadIds = [...new Set(input.threadIds.map(id => id.trim()).filter(id => id !== ""))];
+    if (threadIds.length === 0) {
+      return {
+        status: "skipped",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: [],
+        nextAction: "No GitLab discussion ids were selected; rerun `aie pr view <mr> --json` to inspect unresolved reviewThreads.",
+      };
+    }
+    if (input.dryRun) {
+      return {
+        status: "planned",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: threadIds,
+        failedThreadIds: [],
+        nextAction: `Rerun without --dry-run to resolve ${threadIds.length} GitLab discussion${threadIds.length === 1 ? "" : "s"}.`,
+      };
+    }
+    if (!this.client.resolveMergeRequestDiscussion) {
+      return {
+        status: "failed",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: threadIds,
+        nextAction: "GitLab discussion resolution requires a review client with resolveMergeRequestDiscussion support.",
+      };
+    }
+    let discussions: GitLabDiscussion[];
+    try {
+      discussions = await this.client.listMergeRequestDiscussions({ projectId: this.projectId, iid: String(input.prNumber) });
+    } catch {
+      return {
+        status: "failed",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds: [],
+        failedThreadIds: threadIds,
+        nextAction: `Could not verify GitLab discussion ids against MR !${input.prNumber}. Rerun \`aie pr view ${input.prNumber} --json\` to inspect unresolved reviewThreads, then retry.`,
+      };
+    }
+    const unresolvedDiscussionIds = new Set(discussions
+      .filter(discussion => discussion.notes?.some(note => note.resolvable) && !discussion.notes.every(note => !note.resolvable || note.resolved === true))
+      .map(discussion => discussion.id));
+    const skippedThreadIds = threadIds.filter(threadId => !unresolvedDiscussionIds.has(threadId));
+    const selectedThreadIds = threadIds.filter(threadId => unresolvedDiscussionIds.has(threadId));
+    if (selectedThreadIds.length === 0) {
+      return {
+        status: "skipped",
+        prNumber: input.prNumber,
+        resolvedThreadIds: [],
+        skippedThreadIds,
+        failedThreadIds: [],
+        nextAction: `No selected GitLab discussion ids belong to unresolved discussions on MR !${input.prNumber}; rerun \`aie pr view ${input.prNumber} --json\` to inspect current reviewThreads.`,
+      };
+    }
+    const resolvedThreadIds: string[] = [];
+    const failedThreadIds: string[] = [];
+    for (const threadId of selectedThreadIds) {
+      try {
+        await this.client.resolveMergeRequestDiscussion({ projectId: this.projectId, iid: String(input.prNumber), discussionId: threadId });
+        resolvedThreadIds.push(threadId);
+      } catch {
+        failedThreadIds.push(threadId);
+      }
+    }
+    return {
+      status: failedThreadIds.length > 0 ? "failed" : "resolved",
+      prNumber: input.prNumber,
+      resolvedThreadIds,
+      skippedThreadIds,
+      failedThreadIds,
+      nextAction: failedThreadIds.length > 0
+        ? `Some GitLab discussions could not be resolved. Verify token permissions and rerun \`aie pr thread resolve ${input.prNumber} --thread <id>\` for the failed ids.`
+        : `Resolved ${resolvedThreadIds.length} GitLab discussion${resolvedThreadIds.length === 1 ? "" : "s"}${skippedThreadIds.length > 0 ? ` and skipped ${skippedThreadIds.length} id${skippedThreadIds.length === 1 ? "" : "s"} not unresolved on MR !${input.prNumber}` : ""}; rerun \`aie pr view ${input.prNumber} --json\` or \`aie pr gate ${input.prNumber}\` to confirm merge blockers cleared.`,
+    };
+  }
+
   private reviewItem(mr: GitLabMergeRequest, notes: GitLabNote[], discussions: GitLabDiscussion[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitLabCiDiagnostic[]): ReviewItem {
     const pr = normalizePr(mr);
     const checkEvidence = checks(mr, ciDiagnostics);
@@ -490,7 +574,7 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
       id: discussion.id,
       resolved: discussion.notes.every(note => !note.resolvable || note.resolved === true),
       outdated: false,
-      viewerCanResolve: false,
+      viewerCanResolve: true,
       path: anchor?.position?.new_path ?? anchor?.position?.old_path ?? null,
       line: anchor?.position?.new_line ?? null,
       originalLine: anchor?.position?.old_line ?? null,

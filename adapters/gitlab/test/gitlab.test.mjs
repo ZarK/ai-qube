@@ -566,6 +566,86 @@ describe("GitLab review forge adapter", () => {
     assert.equal(notes.length, 2);
   });
 
+  it("resolves unresolved GitLab merge request discussions", async () => {
+    const resolved = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [
+            {
+              id: "discussion-open",
+              notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: false }],
+            },
+            {
+              id: "discussion-resolved",
+              notes: [{ id: 11, body: "Done.", author: { username: "reviewer" }, resolvable: true, resolved: true }],
+            },
+          ];
+        },
+        async resolveMergeRequestDiscussion({ discussionId }) {
+          resolved.push(discussionId);
+          return { id: discussionId, notes: [{ id: 10, body: "Addressed.", author: { username: "reviewer" }, resolvable: true, resolved: true }] };
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const dryRun = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open"], dryRun: true });
+    const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open", "discussion-resolved", "missing"], dryRun: false });
+
+    assert.equal(provider.capabilities().resolveReviewThreads, true);
+    assert.equal(snapshot.item.conversations[0].viewerCanResolve, true);
+    assert.equal(dryRun.status, "planned");
+    assert.deepEqual(result.resolvedThreadIds, ["discussion-open"]);
+    assert.deepEqual(result.skippedThreadIds, ["discussion-resolved", "missing"]);
+    assert.deepEqual(result.failedThreadIds, []);
+    assert.deepEqual(resolved, ["discussion-open"]);
+  });
+
+  it("sends the GitLab discussion resolve mutation through the REST API", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    try {
+      globalThis.fetch = async (url, options) => {
+        requests.push({ url: String(url), method: options.method, body: options.body });
+        if (options.method === "GET") {
+          return new Response(JSON.stringify([{ id: "discussion-open", notes: [{ id: 10, body: "Addressed.", resolvable: true, resolved: false }] }]), { status: 200 });
+        }
+        return new Response(JSON.stringify({ id: "discussion-open", notes: [] }), { status: 200 });
+      };
+      const provider = createGitLabReviewForgeProvider({
+        token: "gitlab-token",
+        projectId: "acme/qube",
+        baseUrl: "https://gitlab.internal.example.com/",
+      });
+
+      const result = await provider.resolveReviewThreads({ prNumber: 12, threadIds: ["discussion-open"], dryRun: false });
+
+      assert.equal(result.status, "resolved");
+      assert.equal(requests.length, 2);
+      assert.equal(requests[0].method, "GET");
+      assert.match(requests[0].url, /\/merge_requests\/12\/discussions\?/);
+      assert.equal(requests[1].method, "PUT");
+      assert.match(requests[1].url, /\/merge_requests\/12\/discussions\/discussion-open\?resolved=true$/);
+      assert.equal(requests[1].body, undefined);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("ignores forged GitLab review metadata from untrusted note authors", async () => {
     const trustedMetadata = {
       version: 1,

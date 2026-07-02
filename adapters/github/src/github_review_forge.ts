@@ -727,6 +727,11 @@ function pendingReviewConflict(result: GhRunResult): boolean {
   return result.exitCode !== 0 && /one pending review per pull request/i.test(text);
 }
 
+function maybePendingReviewConflict(result: GhRunResult): boolean {
+  const text = `${result.stderr}\n${result.stdout}`;
+  return pendingReviewConflict(result) || (result.exitCode !== 0 && /\bHTTP 422\b/i.test(text) && !/\bvalidation failed\b|\bcannot approve own pull request\b/i.test(text));
+}
+
 function reviewAuthor(review: RawReview): string {
   return actorName(review.author ?? review.user);
 }
@@ -1616,7 +1621,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       return deleted;
     };
     const retryAfterPendingReview = async (result: GhRunResult, payload: JsonObject): Promise<GhRunResult> => {
-      if (!pendingReviewConflict(result)) return result;
+      if (!maybePendingReviewConflict(result)) return result;
       try {
         const deleted = await deletePendingReviews();
         return deleted > 0 ? await submitReview(payload) : result;
