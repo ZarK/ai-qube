@@ -59,7 +59,7 @@ const SUPPORTED_CAPABILITIES = Object.freeze([
   freezeCapability({
     id: "detect-host",
     support: "supported",
-    owner: "@tjalve/qube",
+    owner: "@tjalve/qube-adapter-claude-code",
     summary: "Detect Claude Code-oriented repository instructions from CLAUDE.md and .claude assets without assuming Codex or OpenCode assets.",
     nextAction: "Use inspectClaudeCodeWorkspace(cwd) before reporting Claude Code setup state.",
     paths: [CLAUDE_CODE_INSTRUCTION_PATH, CLAUDE_CODE_SETTINGS_DIRECTORY],
@@ -133,7 +133,7 @@ const UNSUPPORTED_CAPABILITIES = Object.freeze([
   freezeCapability({
     id: "install-slash-command",
     support: "unsupported",
-    owner: "@tjalve/qube",
+    owner: "@tjalve/qube-adapter-claude-code",
     summary: "QUBE composer install notes do not create Claude Code slash command or skill assets.",
     nextAction: "Use CLAUDE.md plus normal qube commands, or add a tested product command before installing .claude command assets.",
   }),
@@ -225,7 +225,7 @@ export function listClaudeCodeInstallNotes(): readonly string[] {
   const slashCommands = getClaudeCodeHostCapability("use-slash-commands");
   const unsupportedSlashCommand = getClaudeCodeHostCapability("install-slash-command");
   return Object.freeze([
-    "Claude Code host support uses CLAUDE.md for durable repository instructions and preserves repository policy precedence.",
+    "Claude Code host support uses CLAUDE.md for durable repository instructions and preserves repository policy precedence. Host metadata is owned by @tjalve/qube-adapter-claude-code; the QUBE meta-package reports these install notes without requiring that private adapter at package install time.",
     `${tasks.summary} ${tasks.nextAction}`,
     `${hooks.summary} ${hooks.nextAction}`,
     `${slashCommands.summary} ${slashCommands.nextAction}`,
@@ -237,7 +237,7 @@ function createUnsupportedCapability(capability: string): ClaudeCodeHostCapabili
   return freezeCapability({
     id: capability,
     support: "unsupported",
-    owner: "@tjalve/qube",
+    owner: "@tjalve/qube-adapter-claude-code",
     summary: "No QUBE package has registered real Claude Code behavior for this capability.",
     nextAction: "Use a documented QUBE command or add a tested Claude Code host capability before exposing this operation.",
   });

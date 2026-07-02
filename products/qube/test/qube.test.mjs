@@ -197,7 +197,7 @@ describe("qube composer CLI", () => {
       [
         ["generic", "installed", true, "local-option"],
         ["codex", "installed", false, "adapter-contract"],
-        ["claude-code", "installed", false, "host-contract"],
+        ["claude-code", "installed", false, "adapter-contract"],
         ["grok-build", "installed", false, "host-contract"],
         ["opencode", "optional", false, "adapter-contract"]
       ]
@@ -668,7 +668,7 @@ describe("qube composer CLI", () => {
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
     assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "installed"));
     assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /without installing or invoking Grok Build/);
-    assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "claude-code").capabilities.some(capability => capability.id === "use-task-state" && capability.support === "host-provided"));
+    assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "claude-code").capabilities.some(capability => capability.id === "use-task-state" && capability.support === "standalone"));
     assert.equal(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").source, "adapter-contract");
     assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").capabilities.some(capability => capability.id === "open-pull-request" && capability.support === "unsupported"));
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed" && provider.default === true));

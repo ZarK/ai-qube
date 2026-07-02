@@ -3,7 +3,6 @@ import { mkdir, writeFile } from 'fs/promises';
 import { dirname, join } from 'path';
 import { AIE_CONFIG_FILENAME, Config, formatConfigFile, getDefaults } from '../config/index.js';
 import { configToExecutorPolicy } from '../config_policy.js';
-import { getAllAgentHostProfiles } from '../agent_hosts.js';
 import { parseJsonOutput } from '../json_parse.js';
 import { listOpenIssues, runGh, type GhExec, type GitHubIssue } from '../providers/github_adapter_exports.js';
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels.js';
@@ -302,19 +301,13 @@ export function findMilestoneWarnings(issues: GitHubIssue[], config: Config): Is
 
 export function getInstructionStatus(repoRoot: string | null): InstructionStatus {
   if (!repoRoot) return { agents: false, agentsManaged: false, claude: false, claudeManaged: false, opencodeMakeItSo: false, opencodeMakeItSoManaged: false, opencodeMakeitsoAlias: false, opencodeMakeitsoAliasManaged: false, codexReviewFocusAgent: false, codexReviewFocusAgentManaged: false, targets: [] };
-  const nameByTargetId: Record<string, InstructionTargetStatusName> = {
-    'agents-instructions': 'agents',
-    'claude-instructions': 'claude',
-    'opencode-make-it-so': 'opencodeMakeItSo',
-    'opencode-makeitso-alias': 'opencodeMakeitsoAlias',
-    'codex-review-focus-agent': 'codexReviewFocusAgent',
-  };
-  const targetByPath = new Map(getAllAgentHostProfiles()
-    .flatMap(profile => [
-      ...profile.instructionTargets.map(target => ({ name: nameForTargetId(nameByTargetId, target.id), path: target.path })),
-      ...profile.commandTargets.map(target => ({ name: nameForTargetId(nameByTargetId, target.id), path: target.path })),
-    ])
-    .map(target => [target.path, target]));
+  const targetByPath = new Map([
+    { name: 'agents' as const, path: 'AGENTS.md' },
+    { name: 'claude' as const, path: 'CLAUDE.md' },
+    { name: 'opencodeMakeItSo' as const, path: join('.opencode', 'commands', 'make-it-so.md') },
+    { name: 'opencodeMakeitsoAlias' as const, path: join('.opencode', 'commands', 'makeitso.md') },
+    { name: 'codexReviewFocusAgent' as const, path: join('.codex', 'agents', 'qube-review-focus.toml') },
+  ].map(target => [target.path, target]));
   const targets = [...targetByPath.values()].map(target => instructionTarget(repoRoot, target.name, target.path));
   const byName = new Map(targets.map(target => [target.name, target]));
   const agents = byName.get('agents');
@@ -335,12 +328,6 @@ export function getInstructionStatus(repoRoot: string | null): InstructionStatus
     codexReviewFocusAgentManaged: codexReviewFocusAgent?.managed ?? false,
     targets,
   };
-}
-
-function nameForTargetId(nameByTargetId: Record<string, InstructionTargetStatusName>, id: string): InstructionTargetStatusName {
-  const name = nameByTargetId[id];
-  if (!name) throw new Error(`Unsupported instruction target id "${id}" in agent host profile.`);
-  return name;
 }
 
 function instructionTarget(repoRoot: string, name: InstructionTargetStatusName, path: string): InstructionTargetStatus {

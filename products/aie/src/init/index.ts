@@ -404,7 +404,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
 
   const configPlan = await planConfig(repoRoot, options.force, warnings, options.policy);
   const config = configPlan.config;
-  const selectedProfiles = getAgentHostProfiles(selectedTools);
+  const selectedProfiles = await getAgentHostProfiles(selectedTools);
   actions.push(configPlan.action);
   if (configPlan.write) writes.push(configPlan.write);
 

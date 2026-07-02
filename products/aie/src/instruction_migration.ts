@@ -125,10 +125,10 @@ async function buildInstructionUpdate(input: {
   }
 
   const managedSection = hasManagedSection(existingContent);
-  const hostIds = hostIdsForInstructionPath(input.path);
+  const hostIds = await hostIdsForInstructionPath(input.path);
   const replaced = replaceKnownLegacyReferences(existingContent);
   if (managedSection && hostIds) {
-    const update = planManagedUpdate({ existingContent, generatedBody: renderAgentInstructions(input.config, getAgentHostProfiles(hostIds)), allowAppend: true, force: input.force });
+    const update = planManagedUpdate({ existingContent, generatedBody: renderAgentInstructions(input.config, await getAgentHostProfiles(hostIds)), allowAppend: true, force: input.force });
     const operation: MigrationInstructionOperation = update.operation === 'replace-managed' ? 'replace-managed' : update.operation === 'unchanged' ? 'unchanged' : 'blocked';
     const status: MigrationInstructionStatus = !update.ok ? 'blocked' : operation === 'unchanged' ? 'skipped' : 'planned';
     const instructionUpdate: MigrationInstructionUpdate = {
@@ -211,7 +211,7 @@ export async function collectInstructionUpdates(input: {
   selectedPaths: string[];
 }): Promise<{ updates: MigrationInstructionUpdate[]; writes: PlannedWrite[] }> {
   const paths = new Set(input.selectedPaths);
-  for (const candidatePath of getInstructionTargetPaths()) {
+  for (const candidatePath of await getInstructionTargetPaths()) {
     try {
       const content = await readTextIfPresent(join(input.repoRoot, candidatePath));
       if (content && hasManagedSection(content) && hasLegacyInstructionReference(content)) paths.add(candidatePath);

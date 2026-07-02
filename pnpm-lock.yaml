@@ -14,6 +14,19 @@ importers:
 
   .: {}
 
+  adapters/claude-code:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../../packages/qube-core
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   adapters/codex:
     dependencies:
       '@tjalve/qube-core':
@@ -168,6 +181,9 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
     optionalDependencies:
+      '@tjalve/qube-adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../adapters/claude-code
       '@tjalve/qube-adapter-codex':
         specifier: workspace:*
         version: link:../../adapters/codex

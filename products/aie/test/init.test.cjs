@@ -628,7 +628,7 @@ describe('init service', () => {
     writeFileSync(join(repo, 'scripts', 'gh-issue-start.sh'), '#!/bin/sh\n');
 
     const { getAllAgentHostProfiles, hostIdsForInstructionPath } = require('../dist/agent_hosts.js');
-    const profiles = getAllAgentHostProfiles();
+    const profiles = await getAllAgentHostProfiles();
     const opencode = profiles.find(profile => profile.id === 'opencode');
     const codex = profiles.find(profile => profile.id === 'codex');
     const claude = profiles.find(profile => profile.id === 'claude-code');
@@ -643,7 +643,7 @@ describe('init service', () => {
     assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
-    const agentsHosts = hostIdsForInstructionPath('AGENTS.md');
+    const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');
     assert.deepEqual(agentsHosts, ['opencode', 'codex']);
 
     const wrapperPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { legacyScripts: 'install-wrappers' } } });

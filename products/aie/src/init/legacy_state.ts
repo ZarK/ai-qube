@@ -82,7 +82,7 @@ export async function detectLegacyState(repoRoot: string, config: Config = getDe
     add(categorizeLegacyPath(path), path);
   }
 
-  for (const path of getInstructionTargetPaths()) {
+  for (const path of await getInstructionTargetPaths()) {
     const content = await readTextIfPresent(join(repoRoot, path));
     if (content && categorizeLegacyInstruction(content)) add('instructions', path);
   }
