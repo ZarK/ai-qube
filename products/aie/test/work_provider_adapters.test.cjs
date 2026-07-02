@@ -46,6 +46,37 @@ describe('work provider adapter boundary', () => {
     );
   });
 
+  it('passes GitHub assignee reads through the optional adapter boundary', async () => {
+    const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
+    const calls = [];
+    const provider = await createWorkProvider('github', {
+      includeAssignees: true,
+      exec: async args => {
+        calls.push(args);
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify([{
+            number: 93,
+            title: 'Assigned work',
+            body: '',
+            state: 'OPEN',
+            labels: [],
+            assignees: [{ login: 'octo' }],
+            milestone: null,
+            url: 'https://github.com/example/repo/issues/93',
+          }]),
+          stderr: '',
+        };
+      },
+    });
+
+    const items = await provider.listOpenWorkItems();
+
+    assert.deepEqual(items[0].assignees, ['octo']);
+    assert.ok(calls.some(args => args.includes('number,title,state,labels,assignees,body,milestone,url')));
+  });
+
   it('passes Jira workflow schema through the optional adapter boundary', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
     let requestedFields = [];

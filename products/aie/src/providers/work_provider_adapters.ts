@@ -81,7 +81,7 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
       return loaded ? loaded({
         exec: options.exec,
         cwd: options.cwd,
-        includeAssignees: false,
+        includeAssignees: options.includeAssignees,
         limit: options.limit,
       }) : new MissingWorkProvider('github', '@tjalve/qube-adapter-github', [
         'Install the optional GitHub work-provider adapter package before selecting providers.work.kind=github.',
