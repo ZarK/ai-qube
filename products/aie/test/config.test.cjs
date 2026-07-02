@@ -82,8 +82,6 @@ describe('config validation', () => {
       jira: {
         baseUrl: 'https://jira.example.com',
         projectKey: 'ENG',
-        emailEnv: 'AIE_JIRA_EMAIL',
-        apiTokenEnv: 'AIE_JIRA_TOKEN',
         requestTimeoutMs: 20000,
         workflowSchema: {
           statusMap: { Queued: 'ready', Blocked: 'blocked' },
@@ -109,8 +107,6 @@ describe('config validation', () => {
     assert.equal(result.config.providers.work.kind, 'jira');
     assert.equal(result.config.providers.work.jira.baseUrl, 'https://jira.example.com');
     assert.equal(result.config.providers.work.jira.projectKey, 'ENG');
-    assert.equal(result.config.providers.work.jira.emailEnv, 'AIE_JIRA_EMAIL');
-    assert.equal(result.config.providers.work.jira.apiTokenEnv, 'AIE_JIRA_TOKEN');
     assert.equal(result.config.providers.work.jira.requestTimeoutMs, 20000);
     assert.equal(result.config.providers.work.jira.workflowSchema.statusMap.Queued, 'ready');
     assert.equal(result.config.providers.work.jira.workflowSchema.priorityMap.P0, 'critical');
@@ -152,8 +148,6 @@ describe('config validation', () => {
       jira: {
         baseUrl: 'https://jira.example.com',
         jql: 'project = ENG AND resolution = Unresolved ORDER BY updated DESC',
-        emailEnv: 'AIE_JIRA_EMAIL',
-        apiTokenEnv: 'AIE_JIRA_TOKEN',
       },
     };
 
@@ -162,6 +156,27 @@ describe('config validation', () => {
     assert.equal(result.ok, true);
     assert.equal(result.config.providers.work.jira.jql, 'project = ENG AND resolution = Unresolved ORDER BY updated DESC');
     assert.equal(Object.hasOwn(result.config.providers.work.jira, 'workflowSchema'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'email'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'apiToken'), false);
+  });
+
+  it('rejects Jira credential environment indirection in config', () => {
+    const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        baseUrl: 'https://jira.example.com',
+        projectKey: 'ENG',
+        emailEnv: 'AIE_JIRA_EMAIL',
+        apiTokenEnv: 'AIE_JIRA_TOKEN',
+      },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.emailEnv' && error.kind === 'unknown'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.apiTokenEnv' && error.kind === 'unknown'));
   });
 
   it('normalizes structured and legacy gate policy consistently', () => {

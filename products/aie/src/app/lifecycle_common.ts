@@ -58,8 +58,6 @@ export function workProviderOptions(config: Config, options: { cwd?: string; exe
     ...(jira?.baseUrl ? { baseUrl: jira.baseUrl } : {}),
     ...(jira?.projectKey ? { projectKey: jira.projectKey } : {}),
     ...(jira?.jql ? { jql: jira.jql } : {}),
-    ...(jira?.emailEnv ? { emailEnv: jira.emailEnv } : {}),
-    ...(jira?.apiTokenEnv ? { apiTokenEnv: jira.apiTokenEnv } : {}),
     ...(jira?.requestTimeoutMs ? { requestTimeoutMs: jira.requestTimeoutMs } : {}),
     ...(jira?.workflowSchema ? { workflowSchema: jira.workflowSchema } : {}),
   };

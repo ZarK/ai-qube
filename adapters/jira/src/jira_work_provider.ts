@@ -10,9 +10,7 @@ export interface JiraWorkProviderOptions {
   readonly client?: JiraRestClient;
   readonly baseUrl?: string;
   readonly email?: string;
-  readonly emailEnv?: string;
   readonly apiToken?: string;
-  readonly apiTokenEnv?: string;
   readonly projectKey?: string;
   readonly jql?: string;
   readonly limit?: number;
@@ -61,10 +59,8 @@ class FetchJiraRestClient implements JiraRestClient {
 
   constructor(options: JiraWorkProviderOptions) {
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL"));
-    const emailEnv = options.emailEnv ?? "JIRA_EMAIL";
-    const apiTokenEnv = options.apiTokenEnv ?? "JIRA_API_TOKEN";
-    this.email = required(options.email ?? process.env[emailEnv], emailEnv);
-    this.apiToken = required(options.apiToken ?? process.env[apiTokenEnv], apiTokenEnv);
+    this.email = required(options.email ?? process.env.JIRA_EMAIL, "JIRA_EMAIL");
+    this.apiToken = required(options.apiToken ?? process.env.JIRA_API_TOKEN, "JIRA_API_TOKEN");
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
     this.listFields = searchFields(options.workflowSchema);
     this.issueFields = issueFields(options.workflowSchema);

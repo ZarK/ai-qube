@@ -136,8 +136,6 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
         ...(input.jira.baseUrl ? { baseUrl: input.jira.baseUrl } : {}),
         ...(input.jira.projectKey ? { projectKey: input.jira.projectKey } : {}),
         ...(input.jira.jql ? { jql: input.jira.jql } : {}),
-        ...(input.jira.emailEnv ? { emailEnv: input.jira.emailEnv } : {}),
-        ...(input.jira.apiTokenEnv ? { apiTokenEnv: input.jira.apiTokenEnv } : {}),
         ...(input.jira.requestTimeoutMs ? { requestTimeoutMs: input.jira.requestTimeoutMs } : {}),
         ...(input.jira.workflowSchema ? {
           workflowSchema: {

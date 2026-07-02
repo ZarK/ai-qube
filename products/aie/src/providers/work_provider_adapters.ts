@@ -14,9 +14,7 @@ export interface WorkProviderAdapterOptions {
   readonly workflowSchema?: unknown;
   readonly baseUrl?: string;
   readonly email?: string;
-  readonly emailEnv?: string;
   readonly apiToken?: string;
-  readonly apiTokenEnv?: string;
   readonly projectKey?: string;
   readonly jql?: string;
   readonly requestTimeoutMs?: number;

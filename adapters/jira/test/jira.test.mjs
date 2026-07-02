@@ -370,15 +370,20 @@ describe("Jira work provider adapter", () => {
     }
   });
 
-  it("reads credentials from configured Jira environment variable names", async () => {
+  it("reads credentials only from documented Jira environment variable names", async () => {
     const originalFetch = globalThis.fetch;
-    const originalEmail = process.env.AIE_JIRA_EMAIL;
-    const originalToken = process.env.AIE_JIRA_TOKEN;
-    process.env.AIE_JIRA_EMAIL = "user@example.com";
-    process.env.AIE_JIRA_TOKEN = "token";
+    const originalEmail = process.env.JIRA_EMAIL;
+    const originalToken = process.env.JIRA_API_TOKEN;
+    const originalOtherEmail = process.env.AIE_JIRA_EMAIL;
+    const originalOtherToken = process.env.AIE_JIRA_TOKEN;
+    process.env.JIRA_EMAIL = "user@example.com";
+    process.env.JIRA_API_TOKEN = "token";
+    process.env.AIE_JIRA_EMAIL = "attacker@example.com";
+    process.env.AIE_JIRA_TOKEN = "wrong-token";
     try {
       globalThis.fetch = async (_url, options) => {
-        assert.match(options.headers.Authorization, /^Basic /);
+        const encoded = options.headers.Authorization.replace(/^Basic /, "");
+        assert.equal(Buffer.from(encoded, "base64").toString("utf8"), "user@example.com:token");
         return {
           ok: true,
           async json() {
@@ -388,8 +393,6 @@ describe("Jira work provider adapter", () => {
       };
       const provider = createJiraWorkProvider({
         baseUrl: "https://jira.example.com/",
-        emailEnv: "AIE_JIRA_EMAIL",
-        apiTokenEnv: "AIE_JIRA_TOKEN",
         projectKey: "ENG",
       });
 
@@ -398,10 +401,14 @@ describe("Jira work provider adapter", () => {
       assert.deepEqual(items, []);
     } finally {
       globalThis.fetch = originalFetch;
-      if (originalEmail === undefined) delete process.env.AIE_JIRA_EMAIL;
-      else process.env.AIE_JIRA_EMAIL = originalEmail;
-      if (originalToken === undefined) delete process.env.AIE_JIRA_TOKEN;
-      else process.env.AIE_JIRA_TOKEN = originalToken;
+      if (originalEmail === undefined) delete process.env.JIRA_EMAIL;
+      else process.env.JIRA_EMAIL = originalEmail;
+      if (originalToken === undefined) delete process.env.JIRA_API_TOKEN;
+      else process.env.JIRA_API_TOKEN = originalToken;
+      if (originalOtherEmail === undefined) delete process.env.AIE_JIRA_EMAIL;
+      else process.env.AIE_JIRA_EMAIL = originalOtherEmail;
+      if (originalOtherToken === undefined) delete process.env.AIE_JIRA_TOKEN;
+      else process.env.AIE_JIRA_TOKEN = originalOtherToken;
     }
   });
 });
