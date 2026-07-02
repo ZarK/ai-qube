@@ -97,6 +97,9 @@ function normalizeJobPath(value: string): string {
   if (segments.length === 0) {
     throw new Error("Jenkins jobPath must include at least one job or folder segment.");
   }
+  if (segments.some(segment => segment === "." || segment === "..")) {
+    throw new Error("Jenkins jobPath must not include dot path segments.");
+  }
   return segments.join("/");
 }
 
@@ -187,9 +190,9 @@ export class JenkinsCiProvider {
   }
 
   async readBuildEvidence(input: JenkinsBuildEvidenceInput): Promise<GateEvidence> {
-    const jobPath = normalizeJobPath(input.jobPath);
     const build = input.build ?? "lastBuild";
     try {
+      const jobPath = normalizeJobPath(input.jobPath);
       const client = this.options.client ?? new FetchJenkinsRestClient(this.options);
       return jenkinsBuildToGateEvidence({
         jobPath,
@@ -198,7 +201,13 @@ export class JenkinsCiProvider {
         required: input.required,
       });
     } catch (error) {
-      return jenkinsReadFailureToGateEvidence({ jobPath, build, error, required: input.required });
+      return jenkinsReadFailureToGateEvidence({
+        jobPath: input.jobPath,
+        build,
+        error,
+        required: input.required,
+        credentialsConfigured: hasCredentialsConfigured(this.options),
+      });
     }
   }
 }
@@ -291,6 +300,7 @@ function jenkinsReadFailureToGateEvidence(input: {
   readonly build: JenkinsBuildSelector;
   readonly error: unknown;
   readonly required?: boolean;
+  readonly credentialsConfigured?: boolean;
 }): GateEvidence {
   const status = input.error instanceof JenkinsRequestError
     ? input.error.status
@@ -299,7 +309,7 @@ function jenkinsReadFailureToGateEvidence(input: {
       : null;
   const message = input.error instanceof Error ? input.error.message : String(input.error);
   const inaccessible = status === 401 || status === 403;
-  const missing = status === 404 || /requires JENKINS_|requires both JENKINS_/u.test(message);
+  const missing = status === 404 || /requires JENKINS_|requires both JENKINS_|Jenkins jobPath/u.test(message);
   const summary = inaccessible
     ? `Jenkins job ${input.jobPath} is inaccessible; verify credentials and job permissions.`
     : missing
@@ -323,7 +333,7 @@ function jenkinsReadFailureToGateEvidence(input: {
       build: buildSelector(input.build),
       httpStatus: status,
       inaccessible,
-      missingCredentials: /requires JENKINS_|requires both JENKINS_/u.test(message) || (inaccessible && !hasCredentialsConfigured()),
+      missingCredentials: /requires JENKINS_|requires both JENKINS_/u.test(message) || (inaccessible && input.credentialsConfigured !== true),
       required: input.required === true,
       providerTextTrust: "untrusted",
       nextAction: "Verify JENKINS_BASE_URL, optional JENKINS_USER/JENKINS_API_TOKEN, and the Jenkins job or folder path, then rerun the gate evidence read.",
@@ -372,8 +382,10 @@ function normalizeOptionalText(value: string | null | undefined): string | null 
   return trimmed.length > 0 ? trimmed : null;
 }
 
-function hasCredentialsConfigured(): boolean {
-  return typeof process.env.JENKINS_USER === "string" && process.env.JENKINS_USER !== "" && typeof process.env.JENKINS_API_TOKEN === "string" && process.env.JENKINS_API_TOKEN !== "";
+function hasCredentialsConfigured(options: JenkinsCiProviderOptions = {}): boolean {
+  const user = options.user ?? process.env.JENKINS_USER;
+  const apiToken = options.apiToken ?? process.env.JENKINS_API_TOKEN;
+  return typeof user === "string" && user !== "" && typeof apiToken === "string" && apiToken !== "";
 }
 
 export function unsupportedJenkinsMutation(operation: string): JsonObject {

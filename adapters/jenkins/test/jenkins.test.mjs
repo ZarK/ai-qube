@@ -154,6 +154,45 @@ describe("Jenkins CI adapter", () => {
     assert.equal(evidence.metadata.nextAction.includes("JENKINS_BASE_URL"), true);
   });
 
+  it("does not report configured option credentials as missing on inaccessible Jenkins jobs", async () => {
+    const provider = createJenkinsCiProvider({
+      user: "build-user",
+      apiToken: "secret-token",
+      client: {
+        async getBuild() {
+          const error = new Error("Jenkins REST request failed with HTTP 403.");
+          error.status = 403;
+          throw error;
+        },
+      },
+    });
+
+    const evidence = await provider.readBuildEvidence({ jobPath: "private/app", build: "lastBuild" });
+
+    assert.equal(evidence.result, "unknown");
+    assert.equal(evidence.metadata.inaccessible, true);
+    assert.equal(evidence.metadata.missingCredentials, false);
+  });
+
+  it("rejects dot segments before building Jenkins job URLs", async () => {
+    const requests = [];
+    const provider = createJenkinsCiProvider({
+      client: {
+        async getBuild(input) {
+          requests.push(input);
+          return build();
+        },
+      },
+    });
+
+    const evidence = await provider.readBuildEvidence({ jobPath: "folder/../admin", build: "lastBuild" });
+
+    assert.equal(evidence.result, "missing");
+    assert.match(evidence.summary, /evidence is missing/);
+    assert.equal(evidence.metadata.jobPath, "folder/../admin");
+    assert.deepEqual(requests, []);
+  });
+
   it("uses environment credentials when Jenkins URL is supplied in options", async () => {
     restoreEnv();
     process.env.JENKINS_USER = "build-user";
