@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -12,7 +13,16 @@ import {
   qubeRepoArtifactContracts
 } from "../dist/index.js";
 
+const require = createRequire(import.meta.url);
+
 describe("qube core contracts", () => {
+  it("is publishable because public products depend on it at runtime", () => {
+    const manifest = require("../package.json");
+    assert.equal(manifest.private, undefined);
+    assert.equal(manifest.publishConfig?.access, "public");
+    assert.equal(manifest.publishConfig?.registry, "https://registry.npmjs.org/");
+  });
+
   it("keeps product contracts standalone and provider-neutral", () => {
     assert.deepEqual(qubeProductContracts.map((product) => product.id), [
       "bootstrap",

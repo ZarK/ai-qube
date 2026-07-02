@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli");
+const qubeCoreRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-core");
 const tempRoots = [];
 
 const fakeComponents = [
@@ -33,6 +34,7 @@ describe("packed QUBE install smoke", () => {
 
     const qubeTarball = await packPackage(packageRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
+    const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
     const componentTarballs = new Map();
     for (const component of fakeComponents) {
       componentTarballs.set(component.name, await createFakeComponentTarball(component, root, packDir));
@@ -63,6 +65,7 @@ describe("packed QUBE install smoke", () => {
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(target, qubeCliTarball))},`,
+        `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
           `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(target, componentTarballs.get(component.name)))},`
         ),
@@ -98,6 +101,9 @@ describe("packed QUBE install smoke", () => {
     assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"));
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
+    assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
+    assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
 
     const dispatched = await runPnpm(["exec", "qube", "run", "aib", "--", "status", "--json"], target);
     assert.equal(dispatched.stdout.trim(), "aib 0.1.1 status --json");

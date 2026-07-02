@@ -17,6 +17,17 @@ body:
     validations:
       required: true
   - type: textarea
+    id: discovery-install
+    attributes:
+      label: CLI Discovery And Install Impact
+      description: If this adds or changes an adapter, host, provider, or CI surface, include acceptance criteria for `qube components --json`, `qube install --help`, and `qube install --yes --dry-run --json`. Otherwise state "Not applicable."
+      placeholder: |
+        - qube components --json reports ...
+        - qube install --help shows ...
+        - qube install --yes --dry-run --json includes ...
+    validations:
+      required: true
+  - type: textarea
     id: alternatives
     attributes:
       label: Alternatives Considered

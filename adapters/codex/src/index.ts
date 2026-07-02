@@ -1,6 +1,6 @@
 import { posix as pathPosix } from "node:path";
 
-import { defineQubeAdapter, type QubeAdapterCapability, type QubeAdapterContract } from "@tjalve/qube-core";
+import { codexAdapterContract } from "@tjalve/qube-core";
 
 export type CodexOperation =
   | "detect-host"
@@ -121,56 +121,40 @@ export const codexHostProfile: AgentHostProfile = Object.freeze({
   supportsProjectCommands: true,
 });
 
-const SUPPORTED_OPERATIONS = Object.freeze([
-  freezeOperation({
+interface CodexOperationExtra {
+  readonly id: CodexOperation;
+  readonly nextAction: string;
+  readonly paths?: readonly string[];
+  readonly tools?: readonly string[];
+}
+
+const CODEX_OPERATION_EXTRAS: readonly CodexOperationExtra[] = Object.freeze([
+  {
     id: "detect-host",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-codex",
-    summary: "Detect Codex repository affordances from AGENTS.md and .codex/agents.",
     nextAction: "Use codexHostProfile before claiming installed Codex review support.",
     paths: ["AGENTS.md", ".codex/agents"],
-  }),
-  freezeOperation({
+  },
+  {
     id: "probe-local-review-runner",
-    support: "supported",
-    owner: "@tjalve/aie",
-    summary: "Probe whether Codex can run independent fresh-context local review lanes.",
     nextAction: "Use probeCodexReviewCapability before requiring local-host review lanes.",
-  }),
-  freezeOperation({
+  },
+  {
     id: "spawn-review-subagent",
-    support: "supported",
-    owner: "Codex host",
-    summary: "Codex can spawn independent qube-review-focus subagents from rendered lane spawnPrompt.",
     nextAction: "Use pr gate --dry-run --json --local-review-prompts and spawn one subagent per lane.",
-  }),
-]);
-
-const UNSUPPORTED_OPERATIONS = Object.freeze([
-  freezeOperation({
+  },
+  {
     id: "install-review-focus-agent",
-    support: "unsupported",
-    owner: "@tjalve/aie",
-    summary: "Codex review-focus agent installation is owned by Executor init, not the adapter runtime.",
     nextAction: "Use qube aie init . --tool codex for managed review-focus agent files.",
     paths: [CODEX_REVIEW_FOCUS_AGENT.path],
-  }),
+  },
 ]);
 
-const CODEX_OPERATIONS = Object.freeze([...SUPPORTED_OPERATIONS, ...UNSUPPORTED_OPERATIONS]);
+const CODEX_OPERATIONS = Object.freeze(CODEX_OPERATION_EXTRAS.map(codexOperationFromContract));
 const CODEX_OPERATION_MAP = new Map<string, CodexOperationSupport>(
   CODEX_OPERATIONS.map((operation) => [operation.id, operation]),
 );
 
-export const codexAdapter = defineQubeAdapter({
-  id: "codex",
-  packageName: "@tjalve/qube-adapter-codex",
-  surface: "codex",
-  owns: ["host-detection", "instruction-targets", "review-subagents", "local-review-probes", "unsupported-capability-reporting"],
-  boundary: "Codex host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
-  capabilities: Object.freeze(CODEX_OPERATIONS.map(toQubeCapability)),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
+export const codexAdapter = codexAdapterContract;
 
 export function probeCodexReviewCapability(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
   const commandConfigured = typeof independentReviewerCommand === "string" && independentReviewerCommand.trim() !== "";
@@ -225,12 +209,19 @@ function unsupportedOperation(operation: string): CodexOperationSupport {
   });
 }
 
-function toQubeCapability(operation: CodexOperationSupport): QubeAdapterCapability {
-  return Object.freeze({
-    id: operation.id,
-    support: operation.support,
-    owner: operation.owner,
-    summary: operation.summary,
+function codexOperationFromContract(extra: CodexOperationExtra): CodexOperationSupport {
+  const capability = codexAdapterContract.capabilities?.find((candidate) => candidate.id === extra.id);
+  if (!capability) {
+    throw new Error(`Codex adapter contract is missing capability "${extra.id}".`);
+  }
+  return freezeOperation({
+    id: extra.id,
+    support: capability.support,
+    owner: capability.owner,
+    summary: capability.summary,
+    nextAction: extra.nextAction,
+    ...(extra.paths ? { paths: extra.paths } : {}),
+    ...(extra.tools ? { tools: extra.tools } : {}),
   });
 }
 

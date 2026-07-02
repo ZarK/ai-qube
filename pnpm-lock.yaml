@@ -342,6 +342,9 @@ importers:
       '@tjalve/qube-cli':
         specifier: 0.1.2
         version: link:../../packages/qube-cli
+      '@tjalve/qube-core':
+        specifier: 0.1.0
+        version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
         specifier: 24.12.2

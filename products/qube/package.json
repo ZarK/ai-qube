@@ -51,7 +51,8 @@
     "@tjalve/aie": "0.1.4",
     "@tjalve/aiq": "0.2.2",
     "@tjalve/aiu": "0.0.4",
-    "@tjalve/qube-cli": "0.1.2"
+    "@tjalve/qube-cli": "0.1.2",
+    "@tjalve/qube-core": "0.1.0"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
