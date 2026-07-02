@@ -70,7 +70,22 @@ function normalizePr(mr: GitLabMergeRequest): GitLabReviewPullRequest {
 function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const pipeline = mr.head_pipeline;
   const sha = headSha(mr);
-  if (!pipeline) return [];
+  if (!pipeline) {
+    return [{
+      checkName: "gitlab-pipeline",
+      status: "unknown",
+      reasonCode: "ci-mapping-unknown",
+      currentHeadSha: sha,
+      mappedToCurrentHeadCheckRun: false,
+      mappedToCurrentHeadWorkflowRun: false,
+      currentHeadSuiteIds: [],
+      currentHeadRunIds: [],
+      staleRunIds: [],
+      workflowDispatchSupported: null,
+      summary: "GitLab merge request has no head pipeline state.",
+      nextAction: "Inspect the GitLab merge request pipeline configuration, then rerun `aie pr view <mr> --json`.",
+    }];
+  }
   const status = pipeline.status.toLowerCase();
   const matchesHead = pipeline.sha === sha;
   const passed = status === "success" && matchesHead;

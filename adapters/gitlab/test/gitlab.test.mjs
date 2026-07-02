@@ -341,6 +341,8 @@ describe("GitLab review forge adapter", () => {
     const missingShaSnapshot = await provider.loadPullRequestReview(12);
     pipeline = { id: 505, status: "skipped", sha: "old-head", web_url: "https://gitlab.example.com/pipelines/505" };
     const staleSkippedSnapshot = await provider.loadPullRequestReview(12);
+    pipeline = null;
+    const missingPipelineSnapshot = await provider.loadPullRequestReview(12);
 
     assert.equal(snapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(snapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
@@ -354,6 +356,10 @@ describe("GitLab review forge adapter", () => {
     assert.equal(staleSkippedSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
     assert.equal(staleSkippedSnapshot.item.checks[0].result, "unknown");
     assert.equal(staleSkippedSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
+    assert.equal(missingPipelineSnapshot.ciDiagnostics[0].status, "unknown");
+    assert.equal(missingPipelineSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.equal(missingPipelineSnapshot.item.checks[0].result, "unknown");
+    assert.equal(missingPipelineSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
   });
 
   it("plans and posts provider-visible review request notes with trusted metadata", async () => {
