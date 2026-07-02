@@ -82,12 +82,21 @@ describe("Jenkins CI adapter", () => {
 
     const queued = jenkinsQueueItemToGateEvidence({
       jobPath: "app",
-      queueItem: { id: 5, why: "Waiting for next available executor", task: { name: "app", url: "https://jenkins.example.com/job/app/" } },
+      queueItem: {
+        id: 5,
+        why: "Waiting for next available executor",
+        task: {
+          name: "app",
+          url: "https://queue-user:secret-token@jenkins.example.com/job/app/?token=secret-token&view=queue",
+        },
+      },
     });
     assert.equal(queued.result, "unknown");
+    assert.equal(queued.path, "https://jenkins.example.com/job/app/?token=%5Bredacted%5D&view=queue");
     assert.equal(queued.summary, "Jenkins job app is queued.");
     assert.equal(queued.metadata.queueWhy, "Waiting for next available executor");
     assert.equal(queued.metadata.providerTextTrust, "untrusted");
+    assert.doesNotMatch(JSON.stringify(queued), /queue-user|secret-token/);
 
     const missing = await createJenkinsCiProvider().readBuildEvidence({ jobPath: "app" });
     assert.equal(missing.result, "missing");
@@ -206,6 +215,25 @@ describe("Jenkins CI adapter", () => {
     assert.match(evidence.summary, /evidence is missing/);
     assert.equal(evidence.metadata.jobPath, "folder/../admin");
     assert.deepEqual(requests, []);
+  });
+
+  it("returns bounded evidence for malformed Jenkins build selectors", async () => {
+    const provider = createJenkinsCiProvider({
+      client: {
+        async getBuild() {
+          const error = new Error("Jenkins REST request failed with HTTP 404.");
+          error.status = 404;
+          throw error;
+        },
+      },
+    });
+
+    const evidence = await provider.readBuildEvidence({ jobPath: "app", build: " " });
+
+    assert.equal(evidence.result, "missing");
+    assert.equal(evidence.key, "jenkins:app:invalid:read");
+    assert.equal(evidence.metadata.build, "invalid");
+    assert.equal(evidence.metadata.providerTextTrust, "untrusted");
   });
 
   it("uses environment credentials when Jenkins URL is supplied in options", async () => {

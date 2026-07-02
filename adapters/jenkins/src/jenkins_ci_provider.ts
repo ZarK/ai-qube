@@ -115,6 +115,14 @@ function buildSelector(value: JenkinsBuildSelector): string {
   return normalized;
 }
 
+function evidenceBuildSelector(value: JenkinsBuildSelector): string {
+  try {
+    return buildSelector(value);
+  } catch {
+    return "invalid";
+  }
+}
+
 function isAbortTimeout(error: unknown): boolean {
   return error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError");
 }
@@ -281,7 +289,7 @@ export function jenkinsQueueItemToGateEvidence(input: {
     trust: "trusted-provider",
     command: null,
     providerRunId: queueId,
-    path: normalizeOptionalText(input.queueItem.task?.url),
+    path: sanitizeEvidenceUrl(input.queueItem.task?.url),
     summary,
     recordedAt: recordedAt(input.queueItem.inQueueSince),
     metadata: {
@@ -310,6 +318,7 @@ function jenkinsReadFailureToGateEvidence(input: {
       ? input.error.status
       : null;
   const message = input.error instanceof Error ? input.error.message : String(input.error);
+  const buildLabel = evidenceBuildSelector(input.build);
   const inaccessible = status === 401 || status === 403;
   const missing = status === 404 || /requires JENKINS_|requires both JENKINS_|Jenkins jobPath/u.test(message);
   const summary = inaccessible
@@ -318,7 +327,7 @@ function jenkinsReadFailureToGateEvidence(input: {
       ? `Jenkins job ${input.jobPath} evidence is missing; verify Jenkins configuration, credentials, and job path.`
       : `Jenkins job ${input.jobPath} could not be read; verify Jenkins configuration, credentials, job path, and network reachability.`;
   return normalizeGateEvidence({
-    key: `jenkins:${input.jobPath}:${buildSelector(input.build)}:read`,
+    key: `jenkins:${input.jobPath}:${buildLabel}:read`,
     name: `Jenkins ${input.jobPath}`,
     stage: "pre-merge",
     result: missing ? "missing" : "unknown",
@@ -332,7 +341,7 @@ function jenkinsReadFailureToGateEvidence(input: {
     metadata: {
       provider: "jenkins",
       jobPath: input.jobPath,
-      build: buildSelector(input.build),
+      build: buildLabel,
       httpStatus: status,
       inaccessible,
       missingCredentials: /requires JENKINS_|requires both JENKINS_/u.test(message) || (inaccessible && input.credentialsConfigured !== true),
