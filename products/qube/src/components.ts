@@ -23,6 +23,12 @@ export interface QubeComponent {
       readonly support: "installed" | "optional" | "unsupported";
       readonly summary: string;
     }[];
+    readonly ciProviders?: readonly {
+      readonly id: string;
+      readonly support: "installed" | "optional" | "unsupported";
+      readonly packageName: string;
+      readonly summary: string;
+    }[];
   };
 }
 
@@ -48,6 +54,21 @@ const executorHostSurfaces: readonly QubeHostSurface[] = Object.freeze([
     id: "opencode",
     support: "optional",
     summary: "OpenCode host capability reporting lives in @tjalve/qube-adapter-opencode."
+  }
+]);
+
+const executorCiProviders: NonNullable<NonNullable<QubeComponent["capabilities"]>["ciProviders"]> = Object.freeze([
+  {
+    id: "github",
+    support: "installed",
+    packageName: "@tjalve/qube-adapter-github",
+    summary: "GitHub status checks and check runs are normalized through the GitHub review-forge adapter."
+  },
+  {
+    id: "jenkins",
+    support: "optional",
+    packageName: "@tjalve/qube-adapter-jenkins",
+    summary: "Jenkins classic and folder job build state is normalized into QUBE gate evidence without triggering or rerunning jobs."
   }
 ]);
 
@@ -81,7 +102,8 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
         hostProvenancePathPattern: ".git/qube/aie/host-provenance/<issue>/<pr>/<head>/<lane>.json",
         nextAction: "Use qube aie pr gate <pr> --dry-run --json --local-review-prompts to render explicit lane bundles. The active Codex host must spawn independent subagents and record matching local-host provenance before required gates can pass."
       },
-      hostSurfaces: executorHostSurfaces
+      hostSurfaces: executorHostSurfaces,
+      ciProviders: executorCiProviders
     }
   },
   {

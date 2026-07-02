@@ -13,6 +13,9 @@ export interface GitHubReviewPullRequest {
   mergeStateStatus: string;
   mergeable: string;
   isDraft: boolean;
+  mergeUiHeadline: string | null;
+  mergeUiBody: string | null;
+  viewerCannotUpdateReasons: string[];
 }
 
 export type GitHubCiDiagnosticStatus =
@@ -130,5 +133,11 @@ export interface RawThreadNode {
 }
 export interface RawThreadPage { nodes?: RawThreadNode[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
 export interface RawThreadResponse { data?: { repository?: { pullRequest?: { reviewThreads?: RawThreadPage } | null } | null } }
+export interface RawMergeUiState {
+  viewerMergeHeadlineText?: string | null;
+  viewerMergeBodyText?: string | null;
+  viewerCannotUpdateReasons?: string[] | null;
+}
+export interface RawMergeUiStateResponse { data?: { repository?: { pullRequest?: RawMergeUiState | null } | null } }
 export interface LoginResponse { login: string }
 export interface GitHubReviewProviderOptions { exec?: GhExec; cwd?: string }

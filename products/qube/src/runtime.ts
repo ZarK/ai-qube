@@ -68,6 +68,7 @@ type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build";
 type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
+type InstallCiProvider = "github" | "jenkins" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
@@ -77,6 +78,7 @@ interface InstallSelections {
   readonly packageManager: InstallPackageManager;
   readonly host: InstallHost;
   readonly workProvider: InstallWorkProvider;
+  readonly ciProvider: InstallCiProvider;
   readonly lifecycleScripts: InstallLifecycleScripts;
   readonly docs: boolean;
   readonly migration: InstallMigration;
@@ -386,6 +388,29 @@ const workProviderChoices = defineInstallerChoiceGroup({
     }
   ]
 });
+const ciProviderChoices = defineInstallerChoiceGroup({
+  name: "ci provider",
+  message: "Which CI provider should the notes target?",
+  defaultValue: "github",
+  choices: [
+    {
+      value: "github",
+      label: "GitHub",
+      description: "Use GitHub status checks and check runs as provider gate evidence.",
+      recommended: true
+    },
+    {
+      value: "jenkins",
+      label: "Jenkins",
+      description: "Use Jenkins build reads as provider gate evidence without triggering jobs."
+    },
+    {
+      value: "local",
+      label: "Local only",
+      description: "Install QUBE without assuming a forge-backed or Jenkins-backed CI provider."
+    }
+  ]
+});
 const lifecycleChoices = defineInstallerChoiceGroup({
   name: "lifecycle scripts",
   message: "How should package lifecycle scripts be handled?",
@@ -472,6 +497,12 @@ const installCommand = defineCommand({
       description: "Work provider to mention in setup notes.",
       type: "option",
       options: ["github", "gitlab", "linear", "jira", "local"]
+    }),
+    defineFlag({
+      name: "ci-provider",
+      description: "CI provider to mention in setup notes.",
+      type: "option",
+      options: ["github", "jenkins", "local"]
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -3202,6 +3233,7 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
   const packageManager = await resolveInstallChoice(packageManagerChoices, readOption<InstallPackageManager>(flags, "package-manager"), flags);
   const host = await resolveInstallChoice(hostChoices, readOption<InstallHost>(flags, "host"), flags);
   const workProvider = await resolveInstallChoice(workProviderChoices, readOption<InstallWorkProvider>(flags, "work-provider"), flags);
+  const ciProvider = await resolveInstallChoice(ciProviderChoices, readOption<InstallCiProvider>(flags, "ci-provider"), flags);
   const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
   const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
   const migration = await resolveInstallChoice(migrationChoices, readOption<InstallMigration>(flags, "migration"), flags);
@@ -3210,6 +3242,7 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
     packageManager,
     host,
     workProvider,
+    ciProvider,
     lifecycleScripts,
     docs: docsValue === "yes",
     migration
@@ -3240,6 +3273,7 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
     packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? "pnpm",
     host: readOption<InstallHost>(flags, "host") ?? "generic",
     workProvider: readOption<InstallWorkProvider>(flags, "work-provider") ?? "github",
+    ciProvider: readOption<InstallCiProvider>(flags, "ci-provider") ?? "github",
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
     migration: readOption<InstallMigration>(flags, "migration") ?? "none"
@@ -3331,6 +3365,9 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.workProvider === "github" || selections.workProvider === "gitlab" || selections.workProvider === "linear" || selections.workProvider === "jira") {
     files.push(".qube/aie/config.json provider notes");
   }
+  if (selections.ciProvider === "jenkins") {
+    files.push(".qube/aie/gates/jenkins gate evidence notes");
+  }
   return files;
 }
 
@@ -3356,6 +3393,13 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   } else {
     notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
   }
+  if (selections.ciProvider === "github") {
+    notes.push("GitHub CI evidence uses provider status checks and check runs through the GitHub review-forge adapter.");
+  } else if (selections.ciProvider === "jenkins") {
+    notes.push("Jenkins CI evidence requires the optional @tjalve/qube-adapter-jenkins package; it uses JENKINS_BASE_URL and optional JENKINS_USER/JENKINS_API_TOKEN to read classic or folder job builds, report missing credentials, inaccessible jobs, queued builds, unstable builds, and unknown states, and never triggers or reruns Jenkins jobs.");
+  } else {
+    notes.push("Local-only CI setup does not configure provider-backed CI evidence.");
+  }
   if (selections.host === "codex") {
     notes.push(...listCodexInstallNotes());
   }
@@ -3380,6 +3424,7 @@ function renderInstallPlan(plan: InstallPlan): string {
     `Package manager: ${plan.selections.packageManager}`,
     `Host surface: ${plan.selections.host}`,
     `Work provider: ${plan.selections.workProvider}`,
+    `CI provider: ${plan.selections.ciProvider}`,
     `Lifecycle scripts: ${plan.selections.lifecycleScripts}`,
     `Docs/config notes: ${plan.selections.docs ? "included" : "omitted"}`,
     `Migration path: ${plan.selections.migration}`,
@@ -3409,6 +3454,7 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
     { key: "package-manager", choices: packageManagerChoices.choices },
     { key: "host", choices: hostChoices.choices },
     { key: "work-provider", choices: workProviderChoices.choices },
+    { key: "ci-provider", choices: ciProviderChoices.choices },
     { key: "lifecycle-scripts", choices: lifecycleChoices.choices },
     { key: "migration", choices: migrationChoices.choices }
   ];
@@ -3445,7 +3491,7 @@ function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefin
 }
 
 function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>): boolean {
-  return ["scope", "package-manager", "host", "work-provider", "lifecycle-scripts", "migration"].every(key => typeof flags[key] === "string")
+  return ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "migration"].every(key => typeof flags[key] === "string")
     && typeof flags.docs === "boolean";
 }
 
@@ -3515,7 +3561,7 @@ function parseOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "lifecycle-scripts", "migration"]) {
+  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "migration"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -3541,6 +3587,8 @@ function installOptionValues(key: string): readonly string[] {
       return hostChoices.choices.map(choice => choice.value);
     case "work-provider":
       return workProviderChoices.choices.map(choice => choice.value);
+    case "ci-provider":
+      return ciProviderChoices.choices.map(choice => choice.value);
     case "lifecycle-scripts":
       return lifecycleChoices.choices.map(choice => choice.value);
     case "migration":

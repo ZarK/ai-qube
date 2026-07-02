@@ -171,6 +171,7 @@ describe("qube composer CLI", () => {
     assert.deepEqual(parsed.installPlan.selections, {
       docs: true,
       host: "generic",
+      ciProvider: "github",
       lifecycleScripts: "disabled",
       migration: "none",
       packageManager: "pnpm",
@@ -195,6 +196,8 @@ describe("qube composer CLI", () => {
       "--host",
       "codex",
       "--work-provider",
+      "github",
+      "--ci-provider",
       "github",
       "--lifecycle-scripts",
       "disabled",
@@ -226,6 +229,8 @@ describe("qube composer CLI", () => {
       "codex",
       "--work-provider",
       "linear",
+      "--ci-provider",
+      "github",
       "--lifecycle-scripts",
       "disabled",
       "--docs",
@@ -257,6 +262,8 @@ describe("qube composer CLI", () => {
       "codex",
       "--work-provider",
       "gitlab",
+      "--ci-provider",
+      "github",
       "--lifecycle-scripts",
       "disabled",
       "--docs",
@@ -288,6 +295,8 @@ describe("qube composer CLI", () => {
       "codex",
       "--work-provider",
       "jira",
+      "--ci-provider",
+      "github",
       "--lifecycle-scripts",
       "disabled",
       "--docs",
@@ -308,6 +317,39 @@ describe("qube composer CLI", () => {
     assert.match(parsed.installPlan.notes.join("\n"), /Jira transition IDs/);
   });
 
+  it("renders Jenkins CI provider install notes without prompting", () => {
+    const result = runCli([
+      "install",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "codex",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "jenkins",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none",
+      "--yes",
+      "--dry-run",
+      "--json"
+    ]);
+
+    assert.equal(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(parsed.installPlan.selections.ciProvider, "jenkins");
+    assert.ok(parsed.installPlan.files.includes(".qube/aie/gates/jenkins gate evidence notes"));
+    assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-jenkins/);
+    assert.match(parsed.installPlan.notes.join("\n"), /JENKINS_BASE_URL/);
+    assert.match(parsed.installPlan.notes.join("\n"), /never triggers or reruns Jenkins jobs/);
+  });
+
   it("renders Claude Code install notes without prompting", () => {
     const result = runCli([
       "install",
@@ -318,6 +360,8 @@ describe("qube composer CLI", () => {
       "--host",
       "claude-code",
       "--work-provider",
+      "github",
+      "--ci-provider",
       "github",
       "--lifecycle-scripts",
       "disabled",
@@ -574,6 +618,8 @@ describe("qube composer CLI", () => {
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
     assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "installed"));
     assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /without installing or invoking Grok Build/);
+    assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
+    assert.match(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").summary, /without triggering or rerunning jobs/);
   });
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {

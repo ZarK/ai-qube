@@ -57,6 +57,18 @@ Product packages still own GitHub-specific side effects:
 - QUBE composes and dispatches product commands; it does not hide GitHub side effects behind a separate adapter command.
 - AIQ exposes GitHub behavior only through its standalone GitHub Action package, not as a QUBE-facing GitHub provider surface.
 
+## Jenkins CI Provider Surface
+
+Jenkins support is an optional CI-provider adapter package boundary, not a work-provider or review-forge surface. `@tjalve/qube-adapter-jenkins` owns Jenkins API access, credential diagnostics, classic and folder job path handling, build-state mapping, artifact/log pointers, and unsupported CI mutation reporting.
+
+Product boundaries:
+
+- AIE can consume Jenkins build reads as provider gate evidence when a repository explicitly configures Jenkins CI evidence.
+- Jenkins build state maps to QUBE gate evidence with build URL, build id, result, timestamp, console log URL, and artifact URLs where Jenkins exposes them.
+- Missing `JENKINS_BASE_URL`, missing or incomplete credentials, inaccessible jobs, queued/running builds, unstable builds, failed builds, and unknown build results are explicit evidence states.
+- Jenkins trigger and rerun behavior is unsupported until a separate mutation capability is designed and tested.
+- Jenkins CI does not imply GitHub work items, GitHub pull requests, or provider-visible review communication.
+
 ## Linear Provider Surface
 
 Linear support is an optional work-provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-linear` owns Linear API access, credential diagnostics, issue mapping, AIB issue-preview rendering, capability flags, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.

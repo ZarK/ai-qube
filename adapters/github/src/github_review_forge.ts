@@ -47,7 +47,7 @@ import {
   sanitizeFeedbackText,
   triggerFor,
 } from './github_review_agents.js';
-import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawMergeUiState, RawMergeUiStateResponse, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
 import { GhExecutionError, parseGhJson, redact, runGh, type GhRunResult } from './gh.js';
 
 export type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot } from './github_review_types.js';
@@ -196,6 +196,8 @@ function isRawPrCommentsView(value: unknown): value is { comments?: RawComment[]
 
 function isRawThreadResponse(value: unknown): value is RawThreadResponse { return isRecord(value); }
 
+function isRawMergeUiStateResponse(value: unknown): value is RawMergeUiStateResponse { return isRecord(value); }
+
 function isLoginResponse(value: unknown): value is LoginResponse { return isRecord(value) && typeof value.login === 'string' && value.login !== ''; }
 
 function isRawCheckRunArray(value: unknown): value is RawCheckRunsResponse {
@@ -231,6 +233,13 @@ function summarize(text: string | undefined): string {
   const normalized = redact(sanitizeFeedbackText(text).replace(/\s+/g, ' ').trim());
   if (normalized === '') return 'No body text supplied.';
   return normalized.length > 180 ? `${normalized.slice(0, 177)}...` : normalized;
+}
+
+function normalizeProviderText(value: string | null | undefined): string | null {
+  if (typeof value !== 'string') return null;
+  const normalized = redact(sanitizeFeedbackText(value).replace(/\s+/g, ' ').trim());
+  if (normalized === '') return null;
+  return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
 function trustedMarkerComment(comment: RawComment, trustedAuthor: string | null): boolean {
@@ -829,7 +838,7 @@ function mapMergeability(raw: RawPrView): ReviewItem['mergeability'] {
   return 'unknown';
 }
 
-function normalizePr(raw: RawPrView): GitHubReviewPullRequest {
+function normalizePr(raw: RawPrView, mergeUiState: RawMergeUiState | null = null): GitHubReviewPullRequest {
   return {
     number: raw.number,
     title: redact(raw.title),
@@ -840,6 +849,9 @@ function normalizePr(raw: RawPrView): GitHubReviewPullRequest {
     mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
     mergeable: raw.mergeable ?? 'UNKNOWN',
     isDraft: raw.isDraft ?? false,
+    mergeUiHeadline: normalizeProviderText(mergeUiState?.viewerMergeHeadlineText),
+    mergeUiBody: normalizeProviderText(mergeUiState?.viewerMergeBodyText),
+    viewerCannotUpdateReasons: (mergeUiState?.viewerCannotUpdateReasons ?? []).map(reason => normalizeProviderText(reason)).filter((reason): reason is string => reason !== null),
   };
 }
 
@@ -1120,12 +1132,35 @@ function reviewConversations(threads: RawThreadNode[]): ReviewConversation[] {
   });
 }
 
+function mergeUiReason(pr: GitHubReviewPullRequest): string | null {
+  const parts = [pr.mergeUiHeadline, pr.mergeUiBody, ...pr.viewerCannotUpdateReasons].filter((part): part is string => typeof part === 'string' && part.trim() !== '');
+  if (parts.length === 0) return null;
+  return parts.join(' ');
+}
+
+function mergeUiMentionsReviewConversation(pr: GitHubReviewPullRequest): boolean {
+  const text = mergeUiReason(pr)?.toLowerCase() ?? '';
+  return /\bconversation\b/.test(text) && /\b(resolve|resolved|unresolved)\b/.test(text);
+}
+
+function mergeBlockerSummary(pr: GitHubReviewPullRequest, fallback: string): string {
+  const reason = mergeUiReason(pr);
+  return reason ? `GitHub reports merge is blocked: ${reason}.` : fallback;
+}
+
 function mergeBlockers(raw: { pr: GitHubReviewPullRequest; unresolvedThreads: RawThreadNode[]; checks: GateEvidence[] }): ReviewMergeBlock[] {
   const blockers: ReviewMergeBlock[] = [];
   if (raw.unresolvedThreads.length > 0) {
     blockers.push({
       reason: 'unresolved-review-thread',
-      summary: `GitHub merge is blocked by ${raw.unresolvedThreads.length} unresolved code conversation${raw.unresolvedThreads.length === 1 ? '' : 's'}.`,
+      summary: mergeBlockerSummary(raw.pr, `GitHub merge is blocked by ${raw.unresolvedThreads.length} unresolved code conversation${raw.unresolvedThreads.length === 1 ? '' : 's'}.`),
+      url: raw.pr.url,
+    });
+  }
+  if (raw.unresolvedThreads.length === 0 && raw.pr.mergeStateStatus === 'BLOCKED' && mergeUiMentionsReviewConversation(raw.pr)) {
+    blockers.push({
+      reason: 'unresolved-review-thread',
+      summary: mergeBlockerSummary(raw.pr, 'GitHub merge is blocked by an unresolved code conversation.'),
       url: raw.pr.url,
     });
   }
@@ -1135,7 +1170,7 @@ function mergeBlockers(raw: { pr: GitHubReviewPullRequest; unresolvedThreads: Ra
   if (raw.checks.some(check => check.result === 'unknown')) blockers.push({ reason: 'checks-pending', summary: 'One or more GitHub checks are still pending or unknown.', url: raw.pr.url });
   if (raw.checks.some(check => check.result === 'failed')) blockers.push({ reason: 'checks-failed', summary: 'One or more GitHub checks failed.', url: raw.pr.url });
   if (raw.pr.mergeable === 'CONFLICTING') blockers.push({ reason: 'conflict', summary: 'GitHub reports merge conflicts.', url: raw.pr.url });
-  if (raw.pr.mergeStateStatus === 'BLOCKED' && blockers.length === 0) blockers.push({ reason: 'merge-state-blocked', summary: 'GitHub reports mergeStateStatus=BLOCKED; inspect provider details for repository rules.', url: raw.pr.url });
+  if (raw.pr.mergeStateStatus === 'BLOCKED' && blockers.length === 0) blockers.push({ reason: 'merge-state-blocked', summary: mergeBlockerSummary(raw.pr, 'GitHub reports mergeStateStatus=BLOCKED; inspect provider details for repository rules.'), url: raw.pr.url });
   return blockers;
 }
 
@@ -1193,6 +1228,9 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     number: raw.pr.number,
     headRefOid: raw.pr.headRefOid,
     mergeStateStatus: raw.pr.mergeStateStatus,
+    mergeUiHeadline: raw.pr.mergeUiHeadline,
+    mergeUiBody: raw.pr.mergeUiBody,
+    viewerCannotUpdateReasons: raw.pr.viewerCannotUpdateReasons,
     rawReviewDecision: raw.pr.reviewDecision,
     rawMergeable: raw.pr.mergeable,
     mergeBlockers: blockers.map(blocker => ({ reason: blocker.reason, summary: blocker.summary, url: blocker.url })),
@@ -1333,7 +1371,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     try {
       const raw = parseGhJson<RawPrView>(result.stdout, 'gh pr view current branch', isRawPrView);
       const pr = normalizePr(raw);
-      return { item: this.reviewItem(raw, [], [], [], [], [], [], [], null, []), pr, warning: null };
+      return { item: this.reviewItem(raw, [], [], [], [], [], [], [], null, [], null), pr, warning: null };
     } catch (error: unknown) {
       const detail = error instanceof Error ? error.message : String(error);
       return { item: null, pr: null, warning: `Current-branch PR state unavailable: ${redact(detail)}` };
@@ -1360,9 +1398,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     let ciDiagnostics: GitHubCiDiagnostic[] = [];
     let reviewComments: RawReviewComment[] = [];
     let unresolvedThreads: RawThreadNode[] = [];
+    let mergeUiState: RawMergeUiState | null = null;
     try {
       const repository = await this.getRepositoryIdentity();
       ciDiagnostics = await this.loadCiDiagnostics(repository.nameWithOwner, rawPr);
+      try {
+        mergeUiState = await this.getMergeUiState(repository.nameWithOwner, prNumber);
+      } catch (error: unknown) {
+        unavailable.push(`Merge UI state unavailable: ${error instanceof Error ? error.message : String(error)}`);
+      }
       try {
         rawPr.comments = await this.getIssueComments(repository.nameWithOwner, prNumber);
       } catch (error: unknown) {
@@ -1387,9 +1431,10 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     const latestReviews = rawPr.latestReviews ?? [];
     const laneReviews = laneMarkerReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
+    const pr = normalizePr(rawPr, mergeUiState);
     return {
-      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, laneReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics),
-      pr: normalizePr(rawPr),
+      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, laneReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics, mergeUiState),
+      pr,
       ciDiagnostics,
       closingIssueNumbers: closingIssueNumbers(rawPr),
       reviewRequests,
@@ -1788,6 +1833,15 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     return nodes.filter(thread => thread.isResolved === false);
   }
 
+  private async getMergeUiState(repoName: string, prNumber: number): Promise<RawMergeUiState | null> {
+    const [owner, repo] = repoName.split('/');
+    if (!owner || !repo) return null;
+    const query = 'query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { viewerMergeHeadlineText viewerMergeBodyText viewerCannotUpdateReasons } } }';
+    const result = await runGh(['api', 'graphql', '-F', `owner=${owner}`, '-F', `repo=${repo}`, '-F', `pr=${prNumber}`, '-f', `query=${query}`], this.options);
+    ensureGhSuccess(`gh api graphql merge UI state for PR ${prNumber}`, result);
+    return parseGhJson<RawMergeUiStateResponse>(result.stdout, `gh api graphql merge UI state for PR ${prNumber}`, isRawMergeUiStateResponse).data?.repository?.pullRequest ?? null;
+  }
+
   private async resolveReviewThread(threadId: string): Promise<boolean> {
     const query = 'mutation($threadId: ID!) { resolveReviewThread(input: { threadId: $threadId }) { thread { id isResolved } } }';
     try {
@@ -1880,8 +1934,8 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     }
   }
 
-  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], laneReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[]): ReviewItem {
-    const pr = normalizePr(rawPr);
+  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], laneReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[], mergeUiState: RawMergeUiState | null): ReviewItem {
+    const pr = normalizePr(rawPr, mergeUiState);
     const source = normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(rawPr.number), url: pr.url });
     const normalizedChecks = checks(rawPr.statusCheckRollup, ciDiagnostics);
     const conversations = reviewConversations(unresolvedThreads);

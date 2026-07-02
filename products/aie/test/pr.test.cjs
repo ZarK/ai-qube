@@ -583,6 +583,9 @@ function makePrExec(options = {}) {
         if (queuedResult) return { args, exitCode: queuedResult.exitCode ?? 1, stdout: queuedResult.stdout ?? '', stderr: queuedResult.stderr ?? '' };
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { resolveReviewThread: { thread: { id: threadIdArg?.slice('threadId='.length) ?? 'thread-1', isResolved: true } } } }), stderr: '' };
       }
+      if (queryArg && queryArg.includes('viewerMergeHeadlineText')) {
+        return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: options.mergeUiState || {} } } }), stderr: '' };
+      }
       return { args, exitCode: 0, stdout: JSON.stringify(threadResponse(threads)), stderr: '' };
     }
     if (args[0] === 'review-fixture') {
@@ -3152,6 +3155,9 @@ describe('PR gate service', () => {
       if (args[0] === 'api' && args[1] === 'graphql') {
         const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
         if (queryArg) graphqlQueries.push(queryArg);
+        if (queryArg && queryArg.includes('viewerMergeHeadlineText')) {
+          return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: {} } } }), stderr: '' };
+        }
         const after = args.find(arg => arg.startsWith('after='));
         const nodes = after ? [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer-b' }, body: 'Second thread.', url: 'https://github.com/example/repo/pull/12#discussion_r4' }] } }] : [{ isResolved: false, comments: { nodes: [{ author: { login: 'reviewer-a' }, body: 'First thread.', url: 'https://github.com/example/repo/pull/12#discussion_r3' }] } }];
         return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { reviewThreads: { nodes, pageInfo: { hasNextPage: !after, endCursor: after ? null : 'cursor-1' } } } } } }), stderr: '' };
@@ -3164,7 +3170,7 @@ describe('PR gate service', () => {
     assert.equal(result.counts.reviewComments, 2);
     assert.equal(result.counts.unresolvedThreads, 2);
     assert.equal(result.status, 'failed');
-    assert.ok(graphqlQueries.every(query => query.includes('comments(last: 1)')));
+    assert.ok(graphqlQueries.filter(query => query.includes('reviewThreads')).every(query => query.includes('comments(last: 1)')));
   });
 });
 
@@ -3210,6 +3216,28 @@ describe('PR body service', () => {
     assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
     assert.equal(result.reviewThreads[0].id, 'PRRT_view_1');
     assert.equal(result.reviewThreads[0].path, 'src/review.ts');
+    assert.match(result.nextAction, /pr thread resolve/);
+  });
+
+  it('cites GitHub merge UI conversation blockers even when thread reads are empty', async () => {
+    const pr = basePr({
+      reviewDecision: '',
+      mergeStateStatus: 'BLOCKED',
+      mergeable: 'MERGEABLE',
+    });
+    const mergeUiState = {
+      viewerMergeHeadlineText: 'Merging is blocked',
+      viewerMergeBodyText: 'A conversation must be resolved before this pull request can be merged.',
+      viewerCannotUpdateReasons: [],
+    };
+    const { exec } = makePrExec({ prViews: [pr], threads: [], mergeUiState });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.equal(result.mergeability, 'blocked');
+    assert.equal(result.counts.reviewThreads, 0);
+    assert.equal(result.mergeBlockers[0].reason, 'unresolved-review-thread');
+    assert.match(result.mergeBlockers[0].summary, /A conversation must be resolved before this pull request can be merged/);
     assert.match(result.nextAction, /pr thread resolve/);
   });
 
