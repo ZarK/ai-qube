@@ -7,6 +7,7 @@ export type GitHubOperation =
   | "render-work-items"
   | "load-pull-request"
   | "request-review-gate"
+  | "read-merge-blockers"
   | "read-ci-status"
   | "diagnose-ci-status"
   | "read-review-threads"
@@ -103,6 +104,13 @@ const SUPPORTED_OPERATIONS = Object.freeze([
     owner: "@tjalve/qube-adapter-github",
     summary: "Request configured GitHub review agents and record trusted review-gate markers for the current PR head.",
     nextAction: "Use qube aie pr gate <pr> to request reviewers and inspect gate state.",
+  }),
+  freezeOperation({
+    id: "read-merge-blockers",
+    support: "supported",
+    owner: "@tjalve/qube-adapter-github",
+    summary: "Read GitHub mergeability, merge-state status, provider merge UI reasons, branch protection blockers, unresolved conversation blockers, and check blockers.",
+    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> to cite provider merge blockers before merge.",
   }),
   freezeOperation({
     id: "read-ci-status",
