@@ -98,6 +98,9 @@ describe("packed QUBE install smoke", () => {
     assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
     assert.ok(executor.capabilities.localReview.provenanceRequired.includes("providerPublishStatus"));
     assert.deepEqual(executor.capabilities.localReview.provenanceAlternatives[0].anyOf, ["taskId", "sessionId", "threadId"]);
+    assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
+    assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
 
     const dispatched = await runPnpm(["exec", "qube", "run", "aib", "--", "status", "--json"], target);
     assert.equal(dispatched.stdout.trim(), "aib 0.1.1 status --json");

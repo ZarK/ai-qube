@@ -4,7 +4,7 @@ import { appendFileSync, copyFileSync, existsSync, mkdirSync, realpathSync, read
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
+import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
@@ -12,7 +12,7 @@ import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, 
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
-import { findQubeComponent, qubeComponents, type QubeComponent } from "./components.js";
+import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
@@ -89,12 +89,30 @@ interface InstallCommandStep {
   readonly command: string;
 }
 
+interface InstallOptionSummary {
+  readonly value: string;
+  readonly label: string;
+  readonly support: QubeDiscoveryOption["support"];
+  readonly default: boolean;
+  readonly packageName: string | null;
+  readonly source: QubeDiscoveryOption["source"];
+  readonly summary: string;
+  readonly capabilities: QubeDiscoveryOption["capabilities"];
+}
+
+interface InstallOptionGroups {
+  readonly hosts: readonly InstallOptionSummary[];
+  readonly workProviders: readonly InstallOptionSummary[];
+  readonly ciProviders: readonly InstallOptionSummary[];
+}
+
 interface InstallPlan {
   readonly package: {
     readonly name: string;
     readonly version: string;
   };
   readonly selections: InstallSelections;
+  readonly options: InstallOptionGroups;
   readonly mode: "copy-commands";
   readonly dryRun: boolean;
   readonly commands: readonly InstallCommandStep[];
@@ -322,94 +340,51 @@ const packageManagerChoices = defineInstallerChoiceGroup({
     }
   ]
 });
+
+const installOptionLabels: Readonly<Record<string, string>> = Object.freeze({
+  "generic": "Generic terminal",
+  "codex": "Codex",
+  "opencode": "OpenCode",
+  "claude-code": "Claude Code",
+  "grok-build": "Grok Build",
+  "github": "GitHub",
+  "gitlab": "GitLab",
+  "linear": "Linear",
+  "jira": "Jira",
+  "jenkins": "Jenkins",
+  "local": "Local only",
+});
+
+function discoveryChoices<Value extends string>(options: readonly QubeDiscoveryOption[]): readonly InstallerChoice<Value>[] {
+  return Object.freeze(options.map(option => Object.freeze({
+    value: option.id as Value,
+    label: installOptionLabels[option.id] ?? option.id,
+    description: `${option.support}: ${option.summary}`,
+    ...(option.default ? { recommended: true } : {}),
+  })));
+}
+
+function discoveryOptionValues(options: readonly QubeDiscoveryOption[]): string[] {
+  return options.map(option => option.id);
+}
+
 const hostChoices = defineInstallerChoiceGroup({
   name: "host surface",
   message: "Which host surface should the install notes target?",
   defaultValue: "generic",
-  choices: [
-    {
-      value: "generic",
-      label: "Generic terminal",
-      description: "No host-specific setup assumptions.",
-      recommended: true
-    },
-    {
-      value: "codex",
-      label: "Codex",
-      description: "Preserve AGENTS.md policy precedence and local todo expectations."
-    },
-    {
-      value: "opencode",
-      label: "OpenCode",
-      description: "Use OpenCode commands and instruction files when a component init creates them."
-    },
-    {
-      value: "claude-code",
-      label: "Claude Code",
-      description: "Keep Claude Code behavior separate from OpenCode and Codex."
-    },
-    {
-      value: "grok-build",
-      label: "Grok Build",
-      description: "Report terminal CLI/TUI, headless, ACP, and subagent capabilities without installing Grok Build."
-    }
-  ]
+  choices: discoveryChoices<InstallHost>(executorHostSurfaces)
 });
 const workProviderChoices = defineInstallerChoiceGroup({
   name: "work provider",
   message: "Which work provider should the notes target?",
   defaultValue: "github",
-  choices: [
-    {
-      value: "github",
-      label: "GitHub",
-      description: "Use GitHub issues, pull requests, and checks for issue-driven work.",
-      recommended: true
-    },
-    {
-      value: "gitlab",
-      label: "GitLab",
-      description: "Use GitLab issues as the planning/work queue while keeping merge request and CI provider limits explicit."
-    },
-    {
-      value: "linear",
-      label: "Linear",
-      description: "Use Linear issues as the planning/work queue while keeping review and CI provider limits explicit."
-    },
-    {
-      value: "jira",
-      label: "Jira",
-      description: "Use Jira issues as the planning/work queue while keeping workflow mapping and mutation limits explicit."
-    },
-    {
-      value: "local",
-      label: "Local only",
-      description: "Install QUBE without assuming a forge-backed work provider."
-    }
-  ]
+  choices: discoveryChoices<InstallWorkProvider>(executorWorkProviders)
 });
 const ciProviderChoices = defineInstallerChoiceGroup({
   name: "ci provider",
   message: "Which CI provider should the notes target?",
   defaultValue: "github",
-  choices: [
-    {
-      value: "github",
-      label: "GitHub",
-      description: "Use GitHub status checks and check runs as provider gate evidence.",
-      recommended: true
-    },
-    {
-      value: "jenkins",
-      label: "Jenkins",
-      description: "Use Jenkins build reads as provider gate evidence without triggering jobs."
-    },
-    {
-      value: "local",
-      label: "Local only",
-      description: "Install QUBE without assuming a forge-backed or Jenkins-backed CI provider."
-    }
-  ]
+  choices: discoveryChoices<InstallCiProvider>(executorCiProviders)
 });
 const lifecycleChoices = defineInstallerChoiceGroup({
   name: "lifecycle scripts",
@@ -488,21 +463,21 @@ const installCommand = defineCommand({
     }),
     defineFlag({
       name: "host",
-      description: "Host surface to mention in setup notes.",
+      description: "Host surface to mention in setup notes. Default: generic.",
       type: "option",
-      options: ["generic", "codex", "opencode", "claude-code", "grok-build"]
+      options: discoveryOptionValues(executorHostSurfaces)
     }),
     defineFlag({
       name: "work-provider",
-      description: "Work provider to mention in setup notes.",
+      description: "Work provider to mention in setup notes. Default: github.",
       type: "option",
-      options: ["github", "gitlab", "linear", "jira", "local"]
+      options: discoveryOptionValues(executorWorkProviders)
     }),
     defineFlag({
       name: "ci-provider",
-      description: "CI provider to mention in setup notes.",
+      description: "CI provider to mention in setup notes. Default: github.",
       type: "option",
-      options: ["github", "jenkins", "local"]
+      options: discoveryOptionValues(executorCiProviders)
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -3287,12 +3262,34 @@ function createInstallPlan(selections: InstallSelections, dryRun: boolean): Inst
       version: packageVersion
     },
     selections,
+    options: createInstallOptionGroups(),
     mode: "copy-commands",
     dryRun,
     commands: createInstallCommands(selections),
     files: createInstallFiles(selections),
     notes: createInstallNotes(selections)
   };
+}
+
+function createInstallOptionGroups(): InstallOptionGroups {
+  return Object.freeze({
+    hosts: summarizeDiscoveryOptions(executorHostSurfaces),
+    workProviders: summarizeDiscoveryOptions(executorWorkProviders),
+    ciProviders: summarizeDiscoveryOptions(executorCiProviders),
+  });
+}
+
+function summarizeDiscoveryOptions(options: readonly QubeDiscoveryOption[]): readonly InstallOptionSummary[] {
+  return Object.freeze(options.map(option => Object.freeze({
+    value: option.id,
+    label: installOptionLabels[option.id] ?? option.id,
+    support: option.support,
+    default: option.default,
+    packageName: option.packageName,
+    source: option.source,
+    summary: option.summary,
+    capabilities: option.capabilities,
+  })));
 }
 
 function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
@@ -3382,24 +3379,8 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   if (selections.scope === "global") {
     notes.push("Prefer project-local installs for automation; global installs are for manual shell use.");
   }
-  if (selections.workProvider === "github") {
-    notes.push("GitHub-backed issue work remains owned by Executor commands after installation.");
-  } else if (selections.workProvider === "gitlab") {
-    notes.push("GitLab-backed work requires the optional @tjalve/qube-adapter-gitlab package; it uses GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL for read mapping while lifecycle mutations, merge request mutations, and merge request pipeline status for CI gates stay unsupported until tested GitLab adapters exist.");
-  } else if (selections.workProvider === "linear") {
-    notes.push("Linear-backed work requires the optional @tjalve/qube-adapter-linear package; it uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping while lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
-  } else if (selections.workProvider === "jira") {
-    notes.push("Jira-backed work requires the optional @tjalve/qube-adapter-jira package; it uses JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and either JIRA_PROJECT_KEY or configured JQL for read mapping while lifecycle mutations stay explicit until configured Jira transition IDs exist.");
-  } else {
-    notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
-  }
-  if (selections.ciProvider === "github") {
-    notes.push("GitHub CI evidence uses provider status checks and check runs through the GitHub review-forge adapter.");
-  } else if (selections.ciProvider === "jenkins") {
-    notes.push("Jenkins CI evidence requires the optional @tjalve/qube-adapter-jenkins package; it uses JENKINS_BASE_URL and optional JENKINS_USER/JENKINS_API_TOKEN to read classic or folder job builds, report missing credentials, inaccessible jobs, queued builds, unstable builds, and unknown states, and never triggers or reruns Jenkins jobs.");
-  } else {
-    notes.push("Local-only CI setup does not configure provider-backed CI evidence.");
-  }
+  notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
+  notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
   if (selections.host === "codex") {
     notes.push(...listCodexInstallNotes());
   }
@@ -3413,6 +3394,19 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
     notes.push("After QUBE is verified, remove stale standalone global commands only after confirming no workflow still depends on them.");
   }
   return notes;
+}
+
+function installOptionNote(label: string, options: readonly QubeDiscoveryOption[], selected: string): string {
+  const option = options.find(candidate => candidate.id === selected);
+  if (!option) {
+    return `${label}: ${selected} is not a known current QUBE option.`;
+  }
+  const packageText = option.packageName ? ` Package: ${option.packageName}.` : "";
+  const supported = option.capabilities.filter(capability => capability.support !== "unsupported").map(capability => capability.id);
+  const unsupported = option.capabilities.filter(capability => capability.support === "unsupported").map(capability => capability.id);
+  const supportedText = supported.length > 0 ? ` Supported capabilities: ${supported.join(", ")}.` : "";
+  const unsupportedText = unsupported.length > 0 ? ` Unsupported capabilities: ${unsupported.join(", ")}.` : "";
+  return `${label}: ${option.id} (${option.support}, ${option.source}). ${option.summary}${packageText}${supportedText}${unsupportedText}`;
 }
 
 function renderInstallPlan(plan: InstallPlan): string {
@@ -3432,6 +3426,11 @@ function renderInstallPlan(plan: InstallPlan): string {
     "Commands to run:",
     ...plan.commands.flatMap((step, index) => [`${index + 1}. ${step.label}`, `   ${step.command}`]),
     "",
+    "Current options:",
+    renderOptionSummary("Host surfaces", plan.options.hosts),
+    renderOptionSummary("Work providers", plan.options.workProviders),
+    renderOptionSummary("CI providers", plan.options.ciProviders),
+    "",
     "Notes:",
     ...plan.notes.map(note => `- ${note}`),
     ...(plan.files.length > 0 ? ["", "Docs/config notes to add:", ...plan.files.map(file => `- ${file}`)] : []),
@@ -3439,6 +3438,10 @@ function renderInstallPlan(plan: InstallPlan): string {
     "No commands were run.",
     ""
   ].join("\n");
+}
+
+function renderOptionSummary(label: string, options: readonly InstallOptionSummary[]): string {
+  return `${label}: ${options.map(option => `${option.value}${option.default ? " (default)" : ""}:${option.support}`).join(", ")}`;
 }
 
 function lifecycleFlag(selections: InstallSelections): string {

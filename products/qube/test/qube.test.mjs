@@ -89,6 +89,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /doctor\s+Run Quality Control diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
+
     assert.match(help.stdout, /evidence\s+Emit structured AIQ quality evidence\./);
     assert.match(help.stdout, /status\s+Show Umpire continuation status\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
@@ -103,6 +104,14 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /Usage:\n  qube install/);
     assert.match(installHelp.stdout, /Dry run: supported/);
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
+    assert.match(installHelp.stdout, /--host <value>/);
+    assert.match(installHelp.stdout, /Default: generic/);
+    assert.match(installHelp.stdout, /generic, codex, claude-code, grok-build, opencode/);
+    assert.match(installHelp.stdout, /--work-provider <value>/);
+    assert.match(installHelp.stdout, /Default: github/);
+    assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
+    assert.match(installHelp.stdout, /--ci-provider <value>/);
+    assert.match(installHelp.stdout, /github, jenkins, local/);
 
     const makeItSoHelp = runCli(["make-it-so", "--help"]);
     assert.equal(makeItSoHelp.status, 0);
@@ -183,7 +192,41 @@ describe("qube composer CLI", () => {
       "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
       "pnpm exec qube components"
     ]);
+    assert.deepEqual(
+      parsed.installPlan.options.hosts.map(option => [option.value, option.support, option.default, option.source]),
+      [
+        ["generic", "installed", true, "local-option"],
+        ["codex", "installed", false, "adapter-contract"],
+        ["claude-code", "installed", false, "host-contract"],
+        ["grok-build", "installed", false, "host-contract"],
+        ["opencode", "optional", false, "adapter-contract"]
+      ]
+    );
+    assert.deepEqual(
+      parsed.installPlan.options.workProviders.map(option => [option.value, option.support, option.default, option.source]),
+      [
+        ["github", "installed", true, "adapter-contract"],
+        ["gitlab", "optional", false, "adapter-contract"],
+        ["linear", "optional", false, "adapter-contract"],
+        ["jira", "optional", false, "adapter-contract"],
+        ["local", "unsupported", false, "local-option"]
+      ]
+    );
+    assert.deepEqual(
+      parsed.installPlan.options.ciProviders.map(option => [option.value, option.support, option.default, option.source]),
+      [
+        ["github", "installed", true, "adapter-contract"],
+        ["jenkins", "optional", false, "adapter-contract"],
+        ["local", "unsupported", false, "local-option"]
+      ]
+    );
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
     assert.match(parsed.installPlan.notes.join("\n"), /No package-manager command is executed/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Work provider: github \(installed, adapter-contract\)/);
+    assert.match(parsed.installPlan.notes.join("\n"), /read-merge-blockers/);
   });
 
   it("renders explicit global npm install commands without prompting", () => {
@@ -247,8 +290,8 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.selections.workProvider, "linear");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
     assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-linear/);
-    assert.match(parsed.installPlan.notes.join("\n"), /LINEAR_API_KEY and LINEAR_TEAM_ID/);
-    assert.match(parsed.installPlan.notes.join("\n"), /workflow-state mutations/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Work provider: linear \(optional, adapter-contract\)/);
+    assert.match(parsed.installPlan.notes.join("\n"), /sync-issue-status/);
   });
 
   it("renders GitLab work provider install notes without prompting", () => {
@@ -280,8 +323,8 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.selections.workProvider, "gitlab");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
     assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-gitlab/);
-    assert.match(parsed.installPlan.notes.join("\n"), /GITLAB_TOKEN, GITLAB_PROJECT_ID/);
-    assert.match(parsed.installPlan.notes.join("\n"), /merge request pipeline status for CI gates stay unsupported/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Work provider: gitlab \(optional, adapter-contract\)/);
+    assert.match(parsed.installPlan.notes.join("\n"), /sync-issue-status/);
   });
 
   it("renders Jira work provider install notes without prompting", () => {
@@ -313,8 +356,9 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.selections.workProvider, "jira");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/config.json provider notes"));
     assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-jira/);
-    assert.match(parsed.installPlan.notes.join("\n"), /JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN/);
-    assert.match(parsed.installPlan.notes.join("\n"), /Jira transition IDs/);
+    assert.match(parsed.installPlan.notes.join("\n"), /Work provider: jira \(optional, adapter-contract\)/);
+    assert.match(parsed.installPlan.notes.join("\n"), /workflow-schema/);
+    assert.match(parsed.installPlan.notes.join("\n"), /sync-issue-status/);
   });
 
   it("renders Jenkins CI provider install notes without prompting", () => {
@@ -346,8 +390,9 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.selections.ciProvider, "jenkins");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/gates/jenkins gate evidence notes"));
     assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-jenkins/);
-    assert.match(parsed.installPlan.notes.join("\n"), /JENKINS_BASE_URL/);
-    assert.match(parsed.installPlan.notes.join("\n"), /never triggers or reruns Jenkins jobs/);
+    assert.match(parsed.installPlan.notes.join("\n"), /CI provider: jenkins \(optional, adapter-contract\)/);
+    assert.match(parsed.installPlan.notes.join("\n"), /read-ci-artifacts/);
+    assert.match(parsed.installPlan.notes.join("\n"), /trigger-ci-run/);
   });
 
   it("renders Claude Code install notes without prompting", () => {
@@ -618,8 +663,17 @@ describe("qube composer CLI", () => {
     assert.match(executor.capabilities.localReview.hostProvenancePathPattern, /\.git\/qube\/aie\/host-provenance/);
     assert.ok(executor.capabilities.hostSurfaces.some(surface => surface.id === "grok-build" && surface.support === "installed"));
     assert.match(executor.capabilities.hostSurfaces.find(surface => surface.id === "grok-build").summary, /without installing or invoking Grok Build/);
+    assert.equal(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").source, "adapter-contract");
+    assert.ok(executor.capabilities.hostSurfaces.find(surface => surface.id === "opencode").capabilities.some(capability => capability.id === "open-pull-request" && capability.support === "unsupported"));
+    assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "github" && provider.support === "installed" && provider.default === true));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
+    assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "local" && provider.support === "unsupported"));
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
     assert.match(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").summary, /without triggering or rerunning jobs/);
+    assert.ok(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").capabilities.some(capability => capability.id === "trigger-ci-run" && capability.support === "unsupported"));
   });
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {
