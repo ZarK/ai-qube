@@ -458,6 +458,38 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.feedback.some(item => item.author === "attacker" && item.trust === "untrusted"), true);
   });
 
+  it("does not trust GitLab review metadata when current user lookup is unavailable", async () => {
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return [{
+            id: 1,
+            body: "QUBE_REVIEW_METADATA {\"version\":1,\"kind\":\"lane-review\",\"head\":\"head-sha\",\"lane\":\"security\",\"profile\":\"focused\",\"runId\":\"run\",\"recommendation\":\"approve\",\"status\":\"complete\",\"summary\":\"Looks good.\"}\nQUBE security review: approve",
+            author: { username: "executor" },
+            web_url: "https://gitlab.example.com/note/1",
+          }];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    assert.equal(snapshot.item.trustedMetadata.trustedMarkerAuthor, null);
+    assert.deepEqual(snapshot.item.trustedMetadata.trustedLaneReviews, []);
+    assert.equal(snapshot.item.feedback[0].author, "executor");
+    assert.equal(snapshot.item.feedback[0].trust, "untrusted");
+  });
+
   it("follows paginated GitLab merge request note and discussion reads", async () => {
     const originalFetch = globalThis.fetch;
     const urls = [];
@@ -510,6 +542,39 @@ describe("GitLab review forge adapter", () => {
       assert.equal(snapshot.conversationsCount, 2);
       assert.deepEqual(notesPages, ["1", "2"]);
       assert.deepEqual(discussionPages, ["1", "2"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  it("surfaces truncation diagnostics when GitLab review reads exceed configured bounds", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      globalThis.fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        if (requestUrl.pathname.endsWith("/merge_requests/12")) {
+          return new Response(JSON.stringify(makeGitLabMergeRequest()), { status: 200 });
+        }
+        if (requestUrl.pathname.endsWith("/notes") || requestUrl.pathname.endsWith("/discussions")) {
+          const headers = new Headers({ "x-next-page": "2" });
+          return new Response(JSON.stringify([]), { status: 200, headers });
+        }
+        if (requestUrl.pathname.endsWith("/user")) {
+          return new Response(JSON.stringify({ username: "executor" }), { status: 200 });
+        }
+        return new Response(JSON.stringify({ message: "missing fixture" }), { status: 404 });
+      };
+      const provider = createGitLabReviewForgeProvider({
+        token: "gitlab-token",
+        projectId: "acme/qube",
+        maxReviewPages: 1,
+      });
+
+      const snapshot = await provider.loadPullRequestReview(12);
+
+      assert.equal(snapshot.commentsCount, 0);
+      assert.equal(snapshot.conversationsCount, 0);
+      assert.equal(snapshot.unavailable.some(message => message.includes("exceeded maxReviewPages=1")), true);
     } finally {
       globalThis.fetch = originalFetch;
     }

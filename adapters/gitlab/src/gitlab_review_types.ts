@@ -71,6 +71,9 @@ export interface GitLabReviewProviderOptions {
   readonly baseUrl?: string;
   readonly requestTimeoutMs?: number;
   readonly currentBranch?: string;
+  readonly maxReviewPages?: number;
+  readonly maxReviewItems?: number;
+  readonly maxResponseBytes?: number;
 }
 
 export interface GitLabReviewPullRequest {

@@ -142,7 +142,7 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
 
 interface LoadedReviewForgeProvider {
   readonly id: ReviewForgeProviderId;
-  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; resolveReviewThreads?: boolean };
+  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; publishLocalReview?: boolean; resolveReviewThreads?: boolean };
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
@@ -150,7 +150,7 @@ interface LoadedReviewForgeProvider {
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
-  publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
+  publishLocalReviewFeedback?(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
@@ -165,17 +165,18 @@ function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
 }
 
 function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): ReviewForgeProvider {
+  const capabilities = provider.capabilities();
   return {
     id: provider.id,
     capabilities: () => ({
-      loadReview: provider.capabilities().loadReview,
-      findCurrentBranchReview: provider.capabilities().findCurrentBranchReview,
-      planReviewRequests: provider.capabilities().planReviewRequests,
-      applyReviewRequests: provider.capabilities().applyReviewRequests,
-      publishLaneReview: provider.capabilities().publishLaneReview ?? true,
-      publishLaneReviewInline: provider.capabilities().publishLaneReviewInline ?? false,
-      publishLocalReview: true,
-      resolveReviewThreads: provider.capabilities().resolveReviewThreads ?? false,
+      loadReview: capabilities.loadReview,
+      findCurrentBranchReview: capabilities.findCurrentBranchReview,
+      planReviewRequests: capabilities.planReviewRequests,
+      applyReviewRequests: capabilities.applyReviewRequests,
+      publishLaneReview: capabilities.publishLaneReview ?? true,
+      publishLaneReviewInline: capabilities.publishLaneReviewInline ?? false,
+      publishLocalReview: capabilities.publishLocalReview ?? typeof provider.publishLocalReviewFeedback === 'function',
+      resolveReviewThreads: capabilities.resolveReviewThreads ?? false,
       ciDiagnostics: true,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
@@ -187,7 +188,18 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
       : undefined,
     planReviewRequest: (item, policy, options) => provider.planReviewRequest(item, toReviewForgePolicy(policy), options),
     apply: async (plan) => [...await provider.apply(plan)],
-    publishLocalReviewFeedback: (item, input) => provider.publishLocalReviewFeedback(item, input),
+    publishLocalReviewFeedback: (item, input) => {
+      if (provider.publishLocalReviewFeedback) return provider.publishLocalReviewFeedback(item, input);
+      return Promise.resolve({
+        status: 'disabled',
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        failure: `${provider.id} review forge does not support local review feedback publishing.`,
+        nextAction: 'Use per-lane review publishing when the adapter supports publishLaneReview, or select a review provider with publishLocalReview support.',
+      });
+    },
     publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
     publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
       ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)

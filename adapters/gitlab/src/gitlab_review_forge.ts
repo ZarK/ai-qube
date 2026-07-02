@@ -350,7 +350,7 @@ function feedback(notes: readonly GitLabNote[], discussions: readonly GitLabDisc
 }
 
 function trustedMetadataNote(note: GitLabNote, trustedMarkerAuthor: string | null): GitLabMetadata | null {
-  if (trustedMarkerAuthor !== null && userName(note.author) !== trustedMarkerAuthor) return null;
+  if (trustedMarkerAuthor === null || userName(note.author) !== trustedMarkerAuthor) return null;
   return noteMetadata(note);
 }
 

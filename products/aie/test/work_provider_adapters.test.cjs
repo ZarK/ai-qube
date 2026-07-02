@@ -83,9 +83,11 @@ describe('work provider adapter boundary', () => {
       assert.equal(byId.gitlab.capabilities.planReviewRequests, true);
       assert.equal(byId.gitlab.capabilities.publishLaneReview, true);
       assert.equal(byId.gitlab.capabilities.publishLaneReviewInline, false);
+      assert.equal(byId.gitlab.capabilities.publishLocalReview, false);
       assert.equal(byId.gitlab.capabilities.ciDiagnostics, true);
       assert.equal(reviewForgeAdapterPackage('gitlab'), '@tjalve/qube-adapter-gitlab');
       assert.equal(provider.id, 'gitlab');
+      assert.equal(provider.capabilities().publishLocalReview, false);
     } finally {
       if (previousToken === undefined) delete process.env.GITLAB_TOKEN;
       else process.env.GITLAB_TOKEN = previousToken;
