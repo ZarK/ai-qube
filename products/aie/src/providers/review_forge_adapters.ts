@@ -58,7 +58,7 @@ const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   publishLaneReview: true,
   publishLaneReviewInline: false,
   publishLocalReview: false,
-  resolveReviewThreads: false,
+  resolveReviewThreads: true,
   ciDiagnostics: true,
 });
 
