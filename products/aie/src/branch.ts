@@ -4,12 +4,11 @@ import type { RepoState } from './core/repo_state.js';
 import type { WorkItem } from './core/work_item.js';
 import { Config, getDefaults, loadConfig } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
-import type { GitHubIssue } from './github.js';
-import type { GhExec } from './gh.js';
+import type { GhExec, GitHubIssue } from './providers/github_adapter_exports.js';
 import { createLocalGitRepositoryProvider, actionPlanWithResults, type GitExec, type GitRunResult } from './providers/local/local_git_provider.js';
-import { createGitHubWorkProvider } from './providers/github/github_work_provider.js';
-import { githubIssueNumber, githubIssueToWorkItem } from './providers/github/github_work_codec.js';
-import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, validateBranchPattern } from './core/branch_rules.js';
+import { maybeWorkItemKeyNumber } from './core/work_item.js';
+import { createWorkProvider } from './providers/work_provider_adapters.js';
+import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, suggestBranchNameFromParts, validateBranchPattern } from './core/branch_rules.js';
 
 export type { GitExec, GitRunResult };
 
@@ -78,13 +77,17 @@ export function parseBranchIssueNumber(input: string): number {
 }
 
 export function suggestBranchName(issue: GitHubIssue, config: Config = getDefaults()): string {
-  return suggestWorkItemBranchName(githubIssueToWorkItem(issue), configToExecutorPolicy(config).branch).branchName;
+  return suggestBranchNameFromParts({ id: String(issue.number), title: issue.title }, configToExecutorPolicy(config).branch).branchName;
 }
 
 export { validateBranchPattern };
 
 function issueSummary(item: WorkItem): BranchIssueSummary {
-  return { number: githubIssueNumber(item), title: item.title, state: item.state === 'open' ? 'OPEN' : 'CLOSED', url: item.url ?? '' };
+  const number = maybeWorkItemKeyNumber(item.key);
+  if (number === null) {
+    throw new Error(`Branch command expected numeric work item key, got ${item.key.providerId}:${item.key.id}.`);
+  }
+  return { number, title: item.title, state: item.state === 'open' ? 'OPEN' : 'CLOSED', url: item.url ?? '' };
 }
 
 function branchStatus(input: {
@@ -165,8 +168,11 @@ export async function runBranchCommand(input: {
 }): Promise<BranchResult> {
   const config = input.config ?? (await loadConfig(input.cwd)) ?? getDefaults();
   const policy = configToExecutorPolicy(config);
-  const workProvider = createGitHubWorkProvider({ exec: input.exec, cwd: input.cwd });
-  const item = await workProvider.getWorkItem({ providerId: 'github', id: String(input.issueNumber) });
+  if (config.providers.work.kind !== 'github') {
+    throw new Error(`Work provider ${config.providers.work.kind} can be inspected through read-only queue commands, but \`qube aie ${input.command}\` uses GitHub issue-number branch semantics and is unsupported for provider-native work item keys. Use \`qube aie queue --json\` or \`qube aie next --json\` to inspect configured ${config.providers.work.kind} work, or configure providers.work.kind=github before running branch commands.`);
+  }
+  const workProvider = await createWorkProvider(config.providers.work.kind, { exec: input.exec, cwd: input.cwd, includeAssignees: false });
+  const item = await workProvider.getWorkItem({ providerId: config.providers.work.kind, id: String(input.issueNumber) });
   const repository = createLocalGitRepositoryProvider({ cwd: input.cwd, git: input.git });
   const inspection = await repository.inspectBranch(item, policy);
   const status = branchStatus({ ...inspection, policy });

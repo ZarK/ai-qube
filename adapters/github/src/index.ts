@@ -322,6 +322,36 @@ export {
 } from "./gh.js";
 
 export {
+  extractComponentLabels,
+  extractPriorityLabel,
+  extractStatusLabel,
+  getIssue,
+  listOpenIssues,
+  parseDeclaredBlockers,
+  type GitHubIssue,
+  type GitHubLabel,
+  type GitHubMilestone,
+} from "./github_issue_api.js";
+
+export {
+  attachBlockedBy,
+  githubIssueNumber,
+  githubIssueToWorkItem,
+  parseWorkChecklist,
+  parseWorkChecklistItems,
+  parseWorkSequence,
+} from "./github_work_codec.js";
+
+export type { WorkChecklistItem } from "./github_work_codec.js";
+
+export {
+  GitHubWorkProvider,
+  createGitHubWorkProvider,
+  type GitHubWorkProviderOptions,
+  type GitHubWorkProviderPolicy,
+} from "./github_work_provider.js";
+
+export {
   MARKER_PREFIX,
   QUBE_REVIEW_SERVICE_NAME,
   commentBodyFor,

@@ -1,5 +1,6 @@
-import { runGh, GhExec, parseGhJson } from './gh.js';
 import { Config } from './config/index.js';
+import { parseJsonOutput } from './json_parse.js';
+import { runGh, type GhExec } from './providers/github_adapter_exports.js';
 
 export interface LabelSpec {
   name: string;
@@ -114,7 +115,7 @@ function isRawGhLabelArray(v: unknown): v is RawGhLabel[] {
 }
 
 export function parseGhLabelList(stdout: string): Array<{name: string; color: string; description: string}> {
-  const raw = parseGhJson<RawGhLabel[]>(stdout, 'gh label list', isRawGhLabelArray);
+  const raw = parseJsonOutput<RawGhLabel[]>(stdout, 'gh label list', isRawGhLabelArray);
   return raw.map(r => ({
     name: r.name,
     color: r.color,

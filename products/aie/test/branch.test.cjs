@@ -42,7 +42,7 @@ function success(args, stdout = '') {
 function makeExec(number, title = 'Add branch command') {
   return async args => {
     const key = args.join(' ');
-    if (key === `issue view ${number} --json number,title,state,labels,assignees,body,milestone,url`) {
+    if (key === `issue view ${number} --json number,title,state,labels,body,milestone,url`) {
       return success(args, JSON.stringify(issue(number, title)));
     }
     return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${key}` };
@@ -209,6 +209,19 @@ describe('branch service', () => {
     assert.equal(result.branch.current, 'issue/94-other-change');
     assert.equal(result.branch.matches, false);
     assert.equal(result.plan.actions[0].mutation, 'none');
+  });
+
+  it('blocks provider-native work providers before branch lifecycle reads or git mutation', async () => {
+    const repo = makeGitRepo();
+    const config = { ...getDefaults(), providers: { ...getDefaults().providers, work: { kind: 'jira' } } };
+    const calls = [];
+
+    await assert.rejects(
+      () => runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, git: makeGit(calls), cwd: repo, config }),
+      /qube aie branch create.*providers\.work\.kind=github/s,
+    );
+
+    assert.equal(calls.some(args => args[0] === 'switch' || args[0] === 'checkout'), false);
   });
 
   it('plans branch creation in dry-run without switching branches', async () => {

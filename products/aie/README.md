@@ -8,15 +8,14 @@ Executor is intentionally repository-centered. It works from the target checkout
 and uses the repository's own scripts, policy, branch state, configured work
 provider, and pull requests as the source of truth.
 
-GitHub work support is available through the built-in Executor adapter boundary.
-Non-default work providers such as Linear and GitLab are optional adapter
-package boundaries: AIE core keeps provider-neutral lifecycle behavior, while
-adapter packages own provider API clients, credentials, mapping, capability
-flags, and unsupported-operation diagnostics. The GitLab adapter lives in
-`@tjalve/qube-adapter-gitlab`, and the Linear adapter lives in
-`@tjalve/qube-adapter-linear`. Selecting an optional provider without its
-adapter installed fails with setup guidance instead of falling back to GitHub
-semantics.
+GitHub work support is owned by the optional adapter package
+`@tjalve/qube-adapter-github`. AIE core keeps provider-neutral lifecycle
+behavior, while adapter packages own provider API clients, credentials, mapping,
+capability flags, merge and review-thread reads, and unsupported-operation
+diagnostics. Other work providers follow the same package boundary: the GitLab
+adapter lives in `@tjalve/qube-adapter-gitlab`, and the Linear adapter lives in
+`@tjalve/qube-adapter-linear`. Selecting a provider without its adapter
+installed fails with setup guidance instead of falling back to GitHub semantics.
 
 For the full QUBE package family and command deck, see
 https://zark.github.io/ai-qube/ or the repository landing-page artifact at

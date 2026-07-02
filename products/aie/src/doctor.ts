@@ -6,11 +6,11 @@ import { cwd } from 'process';
 import { Config, displayConfigPath, getDefaults, loadConfig, selectConfigPath, validateConfig, ValidationError } from './config/index.js';
 import { detectLegacyState } from './init/index.js';
 import { getDesiredLabels, computeLabelPlan, parseGhLabelList } from './labels.js';
-import { runGh } from './gh.js';
+import { runGh } from './providers/github_adapter_exports.js';
 import { buildMigrationPlan } from './migrate/index.js';
 import { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 import { computeQueue } from './queue/index.js';
-import type { GitHubIssue } from './github.js';
+import type { GitHubIssue } from './providers/github_adapter_exports.js';
 import {
   findMilestoneWarnings,
   getBaseRefStatus,

@@ -107,9 +107,9 @@ export const githubAdapterContract = defineQubeAdapter({
   ],
   boundary: "GitHub-specific state stays at the adapter edge; product packages consume explicit capability records and keep package-owned side effects.",
   capabilities: Object.freeze([
-    adapterCapability("map-work-item", "supported", "@tjalve/aie", "Map GitHub issues into provider-neutral Executor work-item keys, labels, blockers, checklist state, and metadata."),
-    adapterCapability("work-item-queue", "supported", "@tjalve/aie", "Read GitHub issue queues through Executor work-provider rules."),
-    adapterCapability("sync-issue-status", "supported", "@tjalve/aie", "Synchronize GitHub status labels with Executor work lifecycle state."),
+    adapterCapability("map-work-item", "supported", "@tjalve/qube-adapter-github", "Map GitHub issues into provider-neutral Executor work-item keys, labels, blockers, checklist state, and metadata."),
+    adapterCapability("work-item-queue", "supported", "@tjalve/qube-adapter-github", "Read GitHub issue queues through Executor work-provider rules."),
+    adapterCapability("sync-issue-status", "supported", "@tjalve/qube-adapter-github", "Synchronize GitHub status labels with Executor work lifecycle state."),
     adapterCapability("render-work-items", "supported", "@tjalve/aib", "Render provider-neutral work-item drafts into GitHub issue text without mutating GitHub."),
     adapterCapability("load-pull-request", "supported", "@tjalve/qube-adapter-github", "Read pull request review, mergeability, linked issue, and check state through the GitHub review-forge adapter."),
     adapterCapability("request-review-gate", "supported", "@tjalve/qube-adapter-github", "Request configured GitHub review agents and record trusted review-gate markers for the current PR head."),
@@ -290,6 +290,11 @@ export interface WorkProject {
 export interface WorkChecklist {
   readonly total: number;
   readonly completed: number;
+}
+
+export interface WorkChecklistItem {
+  readonly text: string;
+  readonly checked: boolean;
 }
 
 export interface WorkItem {
@@ -661,6 +666,21 @@ export function workItemNumber(item: WorkItem): number {
   return workItemKeyNumber(item.key, item.displayId);
 }
 
+export function parseWorkChecklistItems(body: string): WorkChecklistItem[] {
+  const items: WorkChecklistItem[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[-*+]\s*)?\[( |x|X)\]\s+(.+?)\s*$/);
+    if (!match) continue;
+    items.push({ checked: match[1].toLowerCase() === "x", text: match[2] });
+  }
+  return items;
+}
+
+export function parseWorkChecklist(body: string): WorkChecklist {
+  const items = parseWorkChecklistItems(body);
+  return { total: items.length, completed: items.filter(item => item.checked).length };
+}
+
 export function sourceKey(source: ProviderSource): string {
   return JSON.stringify([source.providerId, source.resourceKind, source.resourceId]);
 }
@@ -756,3 +776,5 @@ export function defineQubeAdapter<T extends QubeAdapterContract>(adapter: T): Re
 }
 
 export * from "./review.js";
+
+export * from "./work_queue.js";

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { redact } from './gh.js';
+import { redact } from './redact.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
 export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
@@ -333,6 +333,18 @@ function readPromptStack(value: unknown): LocalReviewPromptStackItem[] {
   if (!Array.isArray(value)) return [];
   const stack: LocalReviewPromptStackItem[] = [];
   for (const entry of value) {
+    if (typeof entry === 'string') {
+      const id = entry.trim();
+      if (id === '') continue;
+      stack.push({
+        id: redact(id),
+        source: 'evidence',
+        path: null,
+        sha256: null,
+        trust: 'local-evidence',
+      });
+      continue;
+    }
     if (!isRecord(entry)) continue;
     const source = entry.source === 'builtin' || entry.source === 'repo-configured' || entry.source === 'command-supplied' || entry.source === 'evidence' ? entry.source : 'evidence';
     stack.push({

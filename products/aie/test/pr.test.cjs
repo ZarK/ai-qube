@@ -1021,6 +1021,24 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
   });
 
+  it('accepts id-only prompt stack entries in split lane evidence', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const evidence = localEvidence();
+    const codeQuality = evidence.lanes.find(lane => lane.id === 'code-quality');
+    assert.ok(codeQuality);
+    codeQuality.promptStack = ['review-lanes/code-quality', 'review-lanes/final-gate'];
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [approvedLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'complete');
+    assert.equal(result.localReview.status, 'passed');
+    assert.ok(result.localReview.evidence[0].promptStack.some(item => item.id === 'review-lanes/code-quality' && item.source === 'evidence'));
+    assert.equal(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('code-quality passed without promptStack coverage')), false);
+  });
+
   it('keeps required local gates inconclusive for manual evidence without runner provenance', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();

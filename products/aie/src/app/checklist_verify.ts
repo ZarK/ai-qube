@@ -2,8 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 import { renderAgentPrompt, type RenderedAgentPrompt } from '../agent_descriptors.js';
 import { parseChecklist, planChecklistUpdate, type ChecklistItem, type ChecklistState, type ChecklistSummary } from '../checklist.js';
-import { getIssue, type GitHubIssue } from '../github.js';
-import { GhExecutionError, runGh, type GhExec } from '../gh.js';
+import { getIssue, ghFailureMessage, isGhExecutionError, runGh, type GhExec, type GitHubIssue } from '../providers/github_adapter_exports.js';
 
 export interface ChecklistVerifyIssue {
   number: number;
@@ -62,7 +61,7 @@ function issueSummary(issue: GitHubIssue): ChecklistVerifyIssue {
 }
 
 function ensureGhSuccess(operation: string, result: Awaited<ReturnType<typeof runGh>>): void {
-  if (result.exitCode !== 0) throw new GhExecutionError(operation, result.exitCode, result.stderr || result.stdout);
+  if (result.exitCode !== 0) throw new Error(ghFailureMessage(operation, result.exitCode, result.stderr || result.stdout));
 }
 
 function selectCriterion(summary: ChecklistSummary, index: number | undefined): ChecklistItem {
@@ -85,13 +84,13 @@ async function currentPrContext(cwd?: string, exec?: GhExec): Promise<ChecklistV
   try {
     result = await runGh(['pr', 'view', '--json', 'number,title,url,headRefOid'], { cwd, exec });
   } catch (err: unknown) {
-    if (err instanceof GhExecutionError && isNoPrForBranch(`${err.stderr} ${err.message}`)) return null;
+    if (isGhExecutionError(err) && isNoPrForBranch(`${err.stderr ?? ''} ${err.message}`)) return null;
     throw err;
   }
   if (result.exitCode !== 0) {
     const details = result.stderr || result.stdout;
     if (isNoPrForBranch(details)) return null;
-    throw new GhExecutionError('gh pr view --json number,title,url,headRefOid', result.exitCode, details);
+    throw new Error(ghFailureMessage('gh pr view --json number,title,url,headRefOid', result.exitCode, details));
   }
   let parsed: unknown;
   try {

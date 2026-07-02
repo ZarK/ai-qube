@@ -46,7 +46,7 @@
   ],
   "dependencies": {
     "@tjalve/qube-cli": "0.1.2",
-    "@tjalve/qube-core": "0.1.0"
+    "@tjalve/qube-core": "0.1.1"
   },
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",
@@ -56,12 +56,13 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-github run build",
     "build": "pnpm run clean && tsc",
     "typecheck": "tsc --noEmit",
     "lint": "pnpm run typecheck",
-    "test": "pnpm run build && node test/run-node-tests.mjs",
+    "test": "pnpm run build:deps && pnpm run build && node test/run-node-tests.mjs",
     "prepack": "pnpm run build",
-    "pack:check": "pnpm run build && pnpm pack --dry-run --json",
+    "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json",
     "verify": "pnpm run lint && pnpm run test && pnpm run pack:check"
   },
   "devDependencies": {

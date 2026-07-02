@@ -1,14 +1,55 @@
 const assert = require('node:assert/strict');
+const { readdirSync, readFileSync, statSync } = require('node:fs');
+const { join, relative } = require('node:path');
 const { describe, it } = require('node:test');
 
 describe('work provider adapter boundary', () => {
+  it('keeps optional GitHub adapter value imports behind provider boundaries', () => {
+    const srcRoot = join(__dirname, '..', 'src');
+    const allowed = new Set([
+      join('providers', 'github_adapter_exports.ts'),
+      join('providers', 'review_agent_adapters.ts'),
+      join('providers', 'review_forge_adapters.ts'),
+      join('providers', 'work_provider_adapters.ts'),
+    ]);
+    const offenders = [];
+    const visit = dir => {
+      for (const entry of readdirSync(dir)) {
+        const path = join(dir, entry);
+        if (statSync(path).isDirectory()) {
+          visit(path);
+          continue;
+        }
+        if (!path.endsWith('.ts')) continue;
+        const local = relative(srcRoot, path);
+        if (allowed.has(local)) continue;
+        const text = readFileSync(path, 'utf8');
+        for (const line of text.split(/\r?\n/)) {
+          if (line.includes("from '@tjalve/qube-adapter-github'") && !line.trimStart().startsWith('import type ')) {
+            offenders.push(`${local}: ${line.trim()}`);
+          }
+        }
+      }
+    };
+    visit(srcRoot);
+
+    assert.deepEqual(offenders, []);
+  });
+
+  it('does not keep a copied GitHub runtime inside AIE', () => {
+    const srcRoot = join(__dirname, '..', 'src');
+    const runtimePath = join(srcRoot, 'github_adapter_runtime.ts');
+
+    assert.throws(() => statSync(runtimePath), /ENOENT/);
+  });
+
   it('lists built-in and optional work provider adapter contracts', () => {
     const { listWorkProviderAdapters, workProviderAdapterPackage } = require('../dist/providers/work_provider_adapters.js');
     const adapters = listWorkProviderAdapters();
     const byId = Object.fromEntries(adapters.map(adapter => [adapter.id, adapter]));
 
     assert.deepEqual(adapters.map(adapter => adapter.id), ['github', 'gitlab', 'linear', 'jira']);
-    assert.equal(byId.github.installed, true);
+    assert.equal(byId.github.installed, false);
     assert.equal(byId.github.capabilities.commentMutations, true);
     assert.equal(byId.github.capabilities.reviewIntegration, true);
     assert.equal(byId.github.capabilities.ciMergeStatus, true);
@@ -22,6 +63,7 @@ describe('work provider adapter boundary', () => {
     assert.equal(byId.jira.packageName, '@tjalve/qube-adapter-jira');
     assert.equal(workProviderAdapterPackage('linear'), '@tjalve/qube-adapter-linear');
     assert.equal(workProviderAdapterPackage('jira'), '@tjalve/qube-adapter-jira');
+    assert.equal(workProviderAdapterPackage('github'), '@tjalve/qube-adapter-github');
   });
 
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
@@ -43,6 +85,37 @@ describe('work provider adapter boundary', () => {
       () => provider.listOpenWorkItems(),
       /@tjalve\/qube-adapter-linear.*LINEAR_API_KEY.*qube install --work-provider linear/s,
     );
+  });
+
+  it('passes GitHub assignee reads through the optional adapter boundary', async () => {
+    const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
+    const calls = [];
+    const provider = await createWorkProvider('github', {
+      includeAssignees: true,
+      exec: async args => {
+        calls.push(args);
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify([{
+            number: 93,
+            title: 'Assigned work',
+            body: '',
+            state: 'OPEN',
+            labels: [],
+            assignees: [{ login: 'octo' }],
+            milestone: null,
+            url: 'https://github.com/example/repo/issues/93',
+          }]),
+          stderr: '',
+        };
+      },
+    });
+
+    const items = await provider.listOpenWorkItems();
+
+    assert.deepEqual(items[0].assignees, ['octo']);
+    assert.ok(calls.some(args => args.includes('number,title,state,labels,assignees,body,milestone,url')));
   });
 
   it('passes Jira workflow schema through the optional adapter boundary', async () => {

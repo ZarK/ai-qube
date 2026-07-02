@@ -1,6 +1,5 @@
 import { parseChecklist, planChecklistUpdate, type ChecklistItem, type ChecklistSelector, type ChecklistState, type ChecklistSummary } from '../checklist.js';
-import { getIssue, type GitHubIssue } from '../github.js';
-import { GhExecutionError, runGh, type GhExec } from '../gh.js';
+import { getIssue, ghFailureMessage, runGh, type GhExec, type GitHubIssue } from '../providers/github_adapter_exports.js';
 
 export interface IssueChecklistSummary {
   issue: {
@@ -44,7 +43,7 @@ function issueSummary(issue: GitHubIssue): IssueChecklistSummary['issue'] {
 }
 
 function ensureGhSuccess(operation: string, result: Awaited<ReturnType<typeof runGh>>): void {
-  if (result.exitCode !== 0) throw new GhExecutionError(operation, result.exitCode, result.stderr || result.stdout);
+  if (result.exitCode !== 0) throw new Error(ghFailureMessage(operation, result.exitCode, result.stderr || result.stdout));
 }
 
 export function summarizeIssueChecklist(issue: GitHubIssue): IssueChecklistSummary {

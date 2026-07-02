@@ -4,8 +4,8 @@ import { dirname, join } from 'path';
 import { AIE_CONFIG_FILENAME, Config, formatConfigFile, getDefaults } from '../config/index.js';
 import { configToExecutorPolicy } from '../config_policy.js';
 import { getAllAgentHostProfiles } from '../agent_hosts.js';
-import { GhExec, parseGhJson, runGh } from '../gh.js';
-import { GitHubIssue, listOpenIssues } from '../github.js';
+import { parseJsonOutput } from '../json_parse.js';
+import { listOpenIssues, runGh, type GhExec, type GitHubIssue } from '../providers/github_adapter_exports.js';
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels.js';
 import { getManagedSectionHealth } from '../managed_file.js';
 import { inspectBaseRef, inspectRepoRoot, inspectWorktree } from '../providers/local/local_git_provider.js';
@@ -201,12 +201,12 @@ export function getBaseRefStatus(config: Config, repoRoot: string | null): BaseR
 
 export async function getRepositoryIdentity(options: { exec?: GhExec; cwd?: string } = {}): Promise<RepositoryIdentity> {
   const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], options);
-  return parseGhJson<RawRepoView>(result.stdout, 'gh repo view', isRawRepoView);
+  return parseJsonOutput<RawRepoView>(result.stdout, 'gh repo view', isRawRepoView);
 }
 
 export async function listOpenPullRequests(config: Config, options: { exec?: GhExec; cwd?: string } = {}): Promise<PullRequestSummary[]> {
   const result = await runGh(['pr', 'list', '--state', 'open', '--json', 'number,title,author,isDraft,url,headRefName', '--limit', '1000'], options);
-  const raw = parseGhJson<RawPr[]>(result.stdout, 'gh pr list', isRawPrArray);
+  const raw = parseJsonOutput<RawPr[]>(result.stdout, 'gh pr list', isRawPrArray);
   return raw.map(pr => ({
     number: pr.number,
     title: pr.title,
@@ -220,7 +220,7 @@ export async function listOpenPullRequests(config: Config, options: { exec?: GhE
 
 export async function listMilestones(repository: RepositoryIdentity, options: { exec?: GhExec; cwd?: string } = {}): Promise<MilestoneSummary[]> {
   const result = await runGh(['api', `repos/${repository.nameWithOwner}/milestones`, '--method', 'GET', '-F', 'state=all', '-F', 'per_page=100'], options);
-  const raw = parseGhJson<RawMilestone[]>(result.stdout, 'gh api milestones', isRawMilestoneArray);
+  const raw = parseJsonOutput<RawMilestone[]>(result.stdout, 'gh api milestones', isRawMilestoneArray);
   return raw.map(milestone => ({
     number: milestone.number,
     title: milestone.title,

@@ -58,12 +58,16 @@ export function validateBranchPattern(pattern: string): string | null {
   return null;
 }
 
-export function suggestBranchName(item: WorkItem, policy: BranchPolicy): BranchNameResult {
+export function suggestBranchNameFromParts(input: { id: string; title: string }, policy: BranchPolicy): BranchNameResult {
   const patternError = validateBranchPattern(policy.pattern);
   const branchName = policy.pattern
-    .replaceAll('<number>', item.key.id)
-    .replaceAll('<slug>', makeSlug(item.title));
+    .replaceAll('<number>', input.id)
+    .replaceAll('<slug>', makeSlug(input.title));
   return { branchName, patternError };
+}
+
+export function suggestBranchName(item: WorkItem, policy: BranchPolicy): BranchNameResult {
+  return suggestBranchNameFromParts({ id: item.key.id, title: item.title }, policy);
 }
 
 export function evaluateBranchPlanStatus(inspection: BranchPlanInspection, policy: BranchPolicy): BranchPlanStatus {
