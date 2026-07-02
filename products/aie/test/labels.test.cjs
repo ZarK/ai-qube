@@ -82,7 +82,7 @@ describe('labels command behavior (apply decision + doctor error surfacing)', ()
   it('rejects malformed label list output before planning label changes', () => {
     assert.throws(
       () => parseGhLabelList(JSON.stringify([{ name: 'S-Ready', description: 'missing color' }])),
-      /malformed or unexpected output/
+      /Failed to parse gh label list/
     );
   });
 

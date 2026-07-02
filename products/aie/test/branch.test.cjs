@@ -211,6 +211,19 @@ describe('branch service', () => {
     assert.equal(result.plan.actions[0].mutation, 'none');
   });
 
+  it('blocks provider-native work providers before branch lifecycle reads or git mutation', async () => {
+    const repo = makeGitRepo();
+    const config = { ...getDefaults(), providers: { ...getDefaults().providers, work: { kind: 'jira' } } };
+    const calls = [];
+
+    await assert.rejects(
+      () => runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, git: makeGit(calls), cwd: repo, config }),
+      /qube aie branch create.*providers\.work\.kind=github/s,
+    );
+
+    assert.equal(calls.some(args => args[0] === 'switch' || args[0] === 'checkout'), false);
+  });
+
   it('plans branch creation in dry-run without switching branches', async () => {
     const repo = makeGitRepo();
     const calls = [];

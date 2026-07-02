@@ -168,6 +168,9 @@ export async function runBranchCommand(input: {
 }): Promise<BranchResult> {
   const config = input.config ?? (await loadConfig(input.cwd)) ?? getDefaults();
   const policy = configToExecutorPolicy(config);
+  if (config.providers.work.kind !== 'github') {
+    throw new Error(`Work provider ${config.providers.work.kind} can be inspected through read-only queue commands, but \`qube aie ${input.command}\` uses GitHub issue-number branch semantics and is unsupported for provider-native work item keys. Use \`qube aie queue --json\` or \`qube aie next --json\` to inspect configured ${config.providers.work.kind} work, or configure providers.work.kind=github before running branch commands.`);
+  }
   const workProvider = await createWorkProvider(config.providers.work.kind, { exec: input.exec, cwd: input.cwd, includeAssignees: false });
   const item = await workProvider.getWorkItem({ providerId: config.providers.work.kind, id: String(input.issueNumber) });
   const repository = createLocalGitRepositoryProvider({ cwd: input.cwd, git: input.git });
