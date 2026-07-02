@@ -21,6 +21,7 @@ import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } fro
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
   ReviewForgeLocalReviewPublishInput,
@@ -734,16 +735,17 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = reviewRequestPolicy(config);
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents });
   const repoRoot = options.repoRoot ?? process.cwd();
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const localRequired = localReviewRequired(config);
   const localShadow = localReviewShadow(config);
   const activeFocuses = activeLocalReviewFocusesForConfig(config, changedPaths);
   const hostReviewLanes = localRequired ? activeFocuses : [];
+  const remoteReviewAgentAdapters = await listReviewAgentAdapters(config.providers.review.kind, config.reviewAgents);
   const firstSnapshot = await provider.loadPullRequestReview(options.prNumber);
   const firstPlan = provider.planReviewRequest(firstSnapshot.item, policy, { activeLanes: hostReviewLanes });
-  const firstParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes });
+  const firstParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const firstParticipantObservations = observeReviewParticipants(firstSnapshot.item, firstParticipants, firstSnapshot.pr.headRefOid);
   const firstReviewers = reviewersFromParticipants(firstParticipantObservations);
   let actions = actionsFromPlan(firstPlan);
@@ -801,7 +803,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   });
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
-  const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes });
+  const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);

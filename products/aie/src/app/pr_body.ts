@@ -133,7 +133,7 @@ function gateLines(result: GateStatusResult): PrBodyGateLine[] {
 }
 
 async function getCurrentPullRequest(config: Config, options: PrBodyOptions): Promise<{ pr: PrBodyPullRequest | null; warning: string | null }> {
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.repoRoot, exec: options.exec });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.repoRoot, exec: options.exec, reviewAgents: config.reviewAgents });
   const current = await provider.findCurrentReview();
   return { pr: current.pr, warning: current.warning };
 }

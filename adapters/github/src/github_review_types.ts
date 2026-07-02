@@ -140,4 +140,4 @@ export interface RawMergeUiState {
 }
 export interface RawMergeUiStateResponse { data?: { repository?: { pullRequest?: RawMergeUiState | null } | null } }
 export interface LoginResponse { login: string }
-export interface GitHubReviewProviderOptions { exec?: GhExec; cwd?: string }
+export interface GitHubReviewProviderOptions { exec?: GhExec; cwd?: string; reviewAgents?: readonly string[] }

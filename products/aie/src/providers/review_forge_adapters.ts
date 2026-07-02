@@ -24,6 +24,7 @@ import {
 export interface ReviewForgeAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
+  readonly reviewAgents?: readonly string[];
 }
 
 export interface ReviewForgeAdapterMetadata {

@@ -367,6 +367,8 @@ export {
   triggerFor,
 } from "./github_review_agents.js";
 
+export type { GitHubReviewAgentListOptions } from "./github_review_agents.js";
+
 export type {
   CurrentGitHubReview,
   GitHubCiDiagnostic,

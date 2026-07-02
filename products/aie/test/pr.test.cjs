@@ -910,7 +910,8 @@ describe('PR gate service', () => {
 
   it('omits non-actionable provider summaries from PR gate feedback', async () => {
     const config = getDefaults();
-    config.reviewAgents = [];
+    config.reviewAgents = ['@coderabbitai', '@cubic-dev-ai'];
+    config.reviewWaitMinutes = 0;
     const pr = basePr({
       reviewDecision: 'APPROVED',
       mergeStateStatus: 'CLEAN',
@@ -924,17 +925,17 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
 
-    assert.equal(result.status, 'complete');
+    assert.equal(result.status, 'pending');
     assert.equal(result.feedback.length, 0);
     assert.equal(result.counts.comments, 2);
     assert.equal(result.counts.reviews, 1);
     assert.equal(result.actions.find(action => action.kind === 'wait').status, 'skipped');
-    assert.match(result.nextAction, /no detected blockers/);
   });
 
   it('omits resolved Copilot overview reviews from PR gate feedback', async () => {
     const config = getDefaults();
-    config.reviewAgents = [];
+    config.reviewAgents = ['@copilot'];
+    config.reviewWaitMinutes = 0;
     const pr = basePr({
       reviewDecision: 'APPROVED',
       mergeStateStatus: 'CLEAN',
@@ -950,10 +951,30 @@ describe('PR gate service', () => {
 
     const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
 
-    assert.equal(result.status, 'complete');
+    assert.equal(result.status, 'pending');
     assert.equal(result.feedback.length, 0);
     assert.equal(result.counts.reviews, 1);
     assert.equal(result.counts.unresolvedThreads, 0);
+  });
+
+  it('surfaces feedback for removed review-agent adapters instead of using their classifiers', async () => {
+    const config = getDefaults();
+    config.reviewAgents = ['@copilot'];
+    config.reviewWaitMinutes = 0;
+    const pr = basePr({
+      reviewDecision: 'APPROVED',
+      mergeStateStatus: 'CLEAN',
+      comments: [
+        { author: { login: 'coderabbitai' }, body: 'No actionable comments were generated.', url: 'https://github.com/example/repo/pull/12#issuecomment-1' },
+      ],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.feedback.length, 1);
+    assert.equal(result.feedback[0].author, 'coderabbitai');
   });
 
   it('keeps non-Copilot overview-shaped reviews as actionable feedback', async () => {
@@ -3258,6 +3279,10 @@ describe('PR gate service', () => {
 
 describe('PR body service', () => {
   it('emits concise PR view state with sanitized feedback', async () => {
+    const repo = makeGitRepo();
+    const config = JSON.parse(readFileSync(join(__dirname, '..', '..', '..', '.qube', 'aie', 'config.json'), 'utf8'));
+    config.policy.reviews.agents = ['coderabbitai'];
+    writeConfig(repo, config);
     const pr = basePr({
       reviewDecision: 'CHANGES_REQUESTED',
       mergeStateStatus: 'BLOCKED',
@@ -3266,7 +3291,7 @@ describe('PR body service', () => {
     });
     const { exec } = makePrExec({ prViews: [pr] });
 
-    const result = await runPrViewService({ prNumber: 12, exec });
+    const result = await runPrViewService({ prNumber: 12, exec, repoRoot: repo });
 
     assert.equal(result.command, 'pr view');
     assert.equal(result.pr.number, 12);

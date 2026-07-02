@@ -434,6 +434,12 @@ export interface ReviewParticipantRollup {
   readonly pendingSummary: string | null;
 }
 
+export interface ReviewParticipantAgentAdapter {
+  readonly id: string;
+  readonly aliases: readonly string[];
+  readonly trigger: "github-reviewer" | "comment" | "local-host" | "local-command";
+}
+
 function nonEmpty(value: string, field: string): string {
   const normalized = value.trim();
   if (normalized === "") throw new Error(`${field} must be a non-empty string.`);
@@ -555,14 +561,18 @@ function remoteReviewAdapter(adapter: ReviewAdapterKind): boolean {
   return adapter === "github" || adapter === "remote" || adapter === "mixed";
 }
 
-function remoteTriggerIsReviewer(name: string): boolean {
-  return participantReviewerId(name) === "copilot";
+function remoteTriggerIsReviewer(name: string, adapters: readonly ReviewParticipantAgentAdapter[] = []): boolean {
+  const id = participantReviewerId(name);
+  const adapter = adapters.find(candidate => candidate.id === id || candidate.aliases.includes(id));
+  if (adapter) return adapter.trigger === "github-reviewer";
+  return id === "copilot";
 }
 
 export function resolveReviewParticipants(input: {
   adapter: ReviewAdapterKind;
   remoteReviewers: readonly string[];
   activeLanes: readonly string[];
+  remoteReviewAgentAdapters?: readonly ReviewParticipantAgentAdapter[];
 }): ReviewParticipant[] {
   const participants: ReviewParticipant[] = [];
   const seen = new Set<string>();
@@ -578,7 +588,7 @@ export function resolveReviewParticipants(input: {
         id,
         handle: normalizeHandle(name),
         kind: "remote-service",
-        transport: remoteTriggerIsReviewer(name) ? "provider-reviewer" : "provider-comment",
+        transport: remoteTriggerIsReviewer(name, input.remoteReviewAgentAdapters) ? "provider-reviewer" : "provider-comment",
         externalService: true,
         laneId: null,
       });

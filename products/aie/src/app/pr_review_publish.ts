@@ -179,7 +179,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
 
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
   const target = options.headSha && options.issueNumber
     ? null
     : provider.loadPullRequestReviewTarget

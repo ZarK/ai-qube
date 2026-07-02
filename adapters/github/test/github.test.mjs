@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -10,8 +11,11 @@ import {
   githubReviewItemKey,
   githubReviewRequestMarker,
   githubWorkItemKey,
+  isNonActionableSummary,
+  listGitHubReviewAgents,
   listGitHubOperationSupport,
   mapGitHubCheckStatus,
+  resolveReviewAgent,
 } from "../dist/index.js";
 
 describe("github adapter contract", () => {
@@ -94,6 +98,54 @@ describe("github adapter contract", () => {
     assert.throws(() => githubReviewRequestMarker("some:bot", "abcdef1"), /whitespace or colon/);
     assert.throws(() => githubReviewRequestMarker("some bot", "abcdef1"), /whitespace or colon/);
     assert.throws(() => githubReviewRequestMarker("coderabbitai", "not-a-sha"), /hexadecimal/);
+  });
+
+  it("plans GitHub review-agent matching and triggers through adapter modules", () => {
+    const agents = listGitHubReviewAgents();
+    assert.deepEqual(agents.map(agent => agent.id), ["copilot", "coderabbit", "cubic", "qubereview"]);
+
+    const copilot = resolveReviewAgent("@copilot");
+    assert.equal(copilot.triggerFor("@copilot"), "github-reviewer");
+    assert.equal(copilot.matches("copilot"), true);
+
+    const coderabbit = resolveReviewAgent("@coderabbitai");
+    assert.equal(coderabbit.id, "coderabbit");
+    assert.equal(coderabbit.triggerFor("@coderabbitai"), "comment");
+    assert.equal(coderabbit.commentBodyFor("@coderabbitai", { adapter: "github", reviewers: ["@coderabbitai"], requestText: "Review ghp_abcdefghijklmnopqrstuvwxyz123456" }, "abc123").body.includes("ghp_abcdefghijklmnopqrstuvwxyz123456"), false);
+    assert.match(coderabbit.commentBodyFor("coderabbit", { adapter: "github", reviewers: ["coderabbit"], requestText: "" }, "abc123").body, /@coderabbitai review/);
+    assert.match(coderabbit.commentBodyFor("coderabbit", { adapter: "github", reviewers: ["coderabbit"], requestText: "" }, "abc123").marker, /aie:pr-gate:coderabbit:abc123/);
+
+    const cubic = resolveReviewAgent("@cubic-dev-ai");
+    assert.equal(cubic.id, "cubic");
+    assert.equal(cubic.triggerFor("@cubic-dev-ai"), "comment");
+    assert.match(cubic.commentBodyFor("cubic", { adapter: "github", reviewers: ["cubic"], requestText: "" }, "abc123").body, /@cubic-dev-ai review this PR/);
+  });
+
+  it("filters optional review-agent modules by configured install set", () => {
+    const agents = listGitHubReviewAgents({ agents: ["@copilot"] });
+    assert.deepEqual(agents.map(agent => agent.id), ["copilot"]);
+    assert.equal(resolveReviewAgent("@coderabbitai", { agents: ["@copilot"] }), null);
+    assert.equal(isNonActionableSummary("No actionable comments were generated.", "coderabbitai", { agents: ["@copilot"] }), false);
+    assert.equal(isNonActionableSummary("## Pull request overview\n### Reviewed Changes\nCopilot reviewed 2 out of 2 changed files in this pull request.", "copilot-pull-request-reviewer", { agents: ["@copilot"] }), true);
+  });
+
+  it("keeps optional review-agent implementations off the static registry load path", () => {
+    const registrySource = readFileSync(new URL("../dist/github_review_agents.js", import.meta.url), "utf8");
+    assert.doesNotMatch(registrySource, /import\s+.*github_review_agent_coderabbit/u);
+    assert.doesNotMatch(registrySource, /import\s+.*github_review_agent_cubic/u);
+    assert.match(registrySource, /requireAgentModule\('\.\/github_review_agent_coderabbit\.js'\)/u);
+  });
+
+  it("classifies non-actionable feedback per installed review agent", () => {
+    const coderabbit = resolveReviewAgent("@coderabbitai");
+    const cubic = resolveReviewAgent("@cubic-dev-ai");
+    const copilot = resolveReviewAgent("@copilot");
+
+    assert.equal(coderabbit.isNonActionableSummary("No actionable comments were generated.", "coderabbitai"), true);
+    assert.equal(coderabbit.isNonActionableSummary("Actionable comments posted: 1", "coderabbitai"), false);
+    assert.equal(cubic.isNonActionableSummary("No issues found", "cubic-dev-ai"), true);
+    assert.equal(cubic.isNonActionableSummary("1 issue found", "cubic-dev-ai"), false);
+    assert.equal(copilot.isNonActionableSummary("## Pull request overview\n### Reviewed Changes\nCopilot reviewed 1 out of 1 changed files in this pull request.", "copilot-pull-request-reviewer"), true);
   });
 
   it("maps GitHub check status into stable provider evidence fields", () => {
