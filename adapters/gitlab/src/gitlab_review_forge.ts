@@ -72,7 +72,7 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const sha = headSha(mr);
   if (!pipeline) return [];
   const status = pipeline.status.toLowerCase();
-  const matchesHead = pipeline.sha === undefined || pipeline.sha === sha;
+  const matchesHead = pipeline.sha === sha;
   const passed = status === "success" && matchesHead;
   const failed = ["failed", "canceled", "manual"].includes(status);
   const skipped = status === "skipped";

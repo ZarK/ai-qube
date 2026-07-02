@@ -310,14 +310,15 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.feedback.some(item => item.source === "thread" && item.state === "unresolved"), true);
   });
 
-  it("does not pass GitLab pipeline evidence when the pipeline sha is stale", async () => {
+  it("does not pass GitLab pipeline evidence when the pipeline sha is stale or missing", async () => {
+    let pipeline = { id: 503, status: "success", sha: "old-head", web_url: "https://gitlab.example.com/pipelines/503" };
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
       client: {
         async getMergeRequest() {
           return makeGitLabMergeRequest({
             sha: "current-head",
-            head_pipeline: { id: 503, status: "success", sha: "old-head", web_url: "https://gitlab.example.com/pipelines/503" },
+            head_pipeline: pipeline,
           });
         },
         async listMergeRequestNotes() {
@@ -336,11 +337,17 @@ describe("GitLab review forge adapter", () => {
     });
 
     const snapshot = await provider.loadPullRequestReview(12);
+    pipeline = { id: 504, status: "success", web_url: "https://gitlab.example.com/pipelines/504" };
+    const missingShaSnapshot = await provider.loadPullRequestReview(12);
 
     assert.equal(snapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(snapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
     assert.equal(snapshot.item.checks[0].result, "unknown");
     assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
+    assert.equal(missingShaSnapshot.ciDiagnostics[0].status, "unknown");
+    assert.equal(missingShaSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.equal(missingShaSnapshot.item.checks[0].result, "unknown");
+    assert.equal(missingShaSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
   });
 
   it("plans and posts provider-visible review request notes with trusted metadata", async () => {
