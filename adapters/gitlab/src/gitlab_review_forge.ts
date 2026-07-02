@@ -228,6 +228,22 @@ function redact(value: string): string {
     .replace(/(^|[\s(:`"'])\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/[^\r\n)<>]+/g, "$1[local-path]");
 }
 
+function sanitizeFeedbackText(value: string | undefined): string {
+  return redact(value ?? "")
+    .replace(/<!--\s*internal state start\s*-->[\s\S]*?<!--\s*internal state end\s*-->/gi, "")
+    .replace(/<details>\s*<summary>\s*Prompt for AI Agents[\s\S]*?<\/details>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/Prompt for AI Agents[\s\S]*$/i, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function feedbackSummary(value: string | undefined, fallback: string): string {
+  const sanitized = sanitizeFeedbackText(value);
+  const summary = sanitized === "" ? fallback : sanitized;
+  return summary.length > 500 ? summary.slice(0, 500) : summary;
+}
+
 function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: string; runId: string; bodyFindingCount: number } {
   const findings = input.findings.map(finding => redact(typeof finding === "string" ? finding : normalizeReviewFinding(finding).message));
   const runId = laneRunId(input);
@@ -449,12 +465,12 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
 function feedback(notes: readonly GitLabNote[], discussions: readonly GitLabDiscussion[], trustedMarkerAuthor: string | null): ReviewFeedback[] {
   const noteFeedback = notes
     .filter(note => !note.system && trustedMetadataNote(note, trustedMarkerAuthor) === null)
-    .map(note => ({ source: "comment" as const, author: userName(note.author), summary: note.body.trim().slice(0, 500), url: note.web_url ?? null, state: null, trust: "untrusted" as const }));
+    .map(note => ({ source: "comment" as const, author: userName(note.author), summary: feedbackSummary(note.body, "GitLab merge request note"), url: note.web_url ?? null, state: null, trust: "untrusted" as const }));
   const discussionFeedback = discussions
     .filter(discussion => discussion.notes?.some(note => note.resolvable && !note.resolved))
     .flatMap(discussion => {
       const latest = discussion.notes?.at(-1);
-      return latest ? [{ source: "thread" as const, author: userName(latest.author), summary: latest.body.trim().slice(0, 500), url: latest.web_url ?? null, state: "unresolved", trust: "untrusted" as const }] : [];
+      return latest ? [{ source: "thread" as const, author: userName(latest.author), summary: feedbackSummary(latest.body, "GitLab discussion comment"), url: latest.web_url ?? null, state: "unresolved", trust: "untrusted" as const }] : [];
     });
   return [...noteFeedback, ...discussionFeedback].filter(item => item.summary !== "");
 }
@@ -479,7 +495,7 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
       line: anchor?.position?.new_line ?? null,
       originalLine: anchor?.position?.old_line ?? null,
       author: userName(latest.author),
-      summary: latest.body.trim().slice(0, 500) || "GitLab discussion comment",
+      summary: feedbackSummary(latest.body, "GitLab discussion comment"),
       url: latest.web_url ?? null,
     }];
   });

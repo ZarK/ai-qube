@@ -442,6 +442,24 @@ function laneReviewReviews(reviews: RawReview[], trustedAuthor: string | null, h
   return [...latest.values()];
 }
 
+function isQubeLaneReviewDraft(review: RawReview, headSha: string): boolean {
+  const metadata = parseLaneReviewMetadata(review.body);
+  return metadata !== null && metadata.head === headSha;
+}
+
+function hasReviewComments(reviewComments: readonly RawReviewComment[], reviewId: string | number): boolean {
+  const normalizedId = String(reviewId);
+  return reviewComments.some(comment => comment.pull_request_review_id !== undefined && comment.pull_request_review_id !== null && String(comment.pull_request_review_id) === normalizedId);
+}
+
+function isEmptyStaleDraftReview(review: RawReview, headSha: string, reviewComments: readonly RawReviewComment[]): boolean {
+  if (review.id === undefined || review.id === null) return false;
+  if ((review.body ?? '').trim() !== '') return false;
+  const commit = review.commit?.oid ?? review.commit_id ?? null;
+  if (commit === headSha) return false;
+  return !hasReviewComments(reviewComments, review.id);
+}
+
 function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: string | null; headSha: string }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
   for (const comment of laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha)) {
@@ -1583,7 +1601,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     };
     const deletePendingReviews = async (): Promise<number> => {
       const reviews = await this.getPullRequestReviews(repositoryName, input.prNumber);
-      const pendingReviews = reviews.filter(review => review.state === 'PENDING' && reviewAuthor(review) === trustedMarkerAuthor && review.id !== undefined && review.id !== null);
+      const reviewComments = await this.getReviewComments(repositoryName, input.prNumber);
+      const pendingReviews = reviews.filter(review => review.state === 'PENDING'
+        && reviewAuthor(review) === trustedMarkerAuthor
+        && review.id !== undefined
+        && review.id !== null
+        && (isQubeLaneReviewDraft(review, input.headSha) || isEmptyStaleDraftReview(review, input.headSha, reviewComments)));
       let deleted = 0;
       for (const review of pendingReviews) {
         const result = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(review.id)}`, '--method', 'DELETE'], this.options);
