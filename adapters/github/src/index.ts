@@ -1,4 +1,4 @@
-import { defineQubeAdapter, type QubeAdapterCapability, type QubeAdapterContract } from "@tjalve/qube-core";
+import { githubAdapterContract } from "@tjalve/qube-core";
 
 export type GitHubOperation =
   | "map-work-item"
@@ -62,129 +62,81 @@ export interface GitHubCheckStatus {
   readonly workflowName: string | null;
 }
 
-const SUPPORTED_OPERATIONS = Object.freeze([
-  freezeOperation({
-    id: "map-work-item",
-    support: "supported",
-    owner: "@tjalve/aie",
-    summary: "Map GitHub issues into provider-neutral Executor work-item keys, labels, blockers, checklist state, and metadata.",
-    nextAction: "Use the AIE GitHub work provider for live issue reads and label mutation.",
-  }),
-  freezeOperation({
-    id: "work-item-queue",
-    support: "supported",
-    owner: "@tjalve/aie",
-    summary: "Read GitHub issue queues through Executor work-provider rules.",
-    nextAction: "Use qube aie queue --json or qube aie next --json for queue selection.",
-  }),
-  freezeOperation({
-    id: "sync-issue-status",
-    support: "supported",
-    owner: "@tjalve/aie",
-    summary: "Synchronize GitHub status labels with Executor work lifecycle state.",
-    nextAction: "Use the AIE lifecycle command that owns the issue state transition.",
-  }),
-  freezeOperation({
-    id: "render-work-items",
-    support: "supported",
-    owner: "@tjalve/aib",
-    summary: "Render provider-neutral work-item drafts into GitHub issue text without mutating GitHub.",
-    nextAction: "Use qube aib work-items render --provider github for safe draft output.",
-  }),
-  freezeOperation({
-    id: "load-pull-request",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Read pull request review, mergeability, linked issue, and check state through the GitHub review-forge adapter.",
-    nextAction: "Use qube aie pr view <pr> --json for current PR state.",
-  }),
-  freezeOperation({
-    id: "request-review-gate",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Request configured GitHub review agents and record trusted review-gate markers for the current PR head.",
-    nextAction: "Use qube aie pr gate <pr> to request reviewers and inspect gate state.",
-  }),
-  freezeOperation({
-    id: "read-merge-blockers",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Read GitHub mergeability, merge-state status, provider merge UI reasons, branch protection blockers, unresolved conversation blockers, and check blockers.",
-    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> to cite provider merge blockers before merge.",
-  }),
-  freezeOperation({
-    id: "read-ci-status",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Normalize GitHub status checks and check runs into trusted provider gate evidence.",
-    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> before merge.",
-  }),
-  freezeOperation({
-    id: "diagnose-ci-status",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Report whether PR checks map to the current head, stale workflow runs, failed runs, skipped runs, or pending runs.",
-    nextAction: "Use the CI diagnostics in qube aie pr view <pr> --json to decide whether to wait, fix, or trigger fresh CI.",
-  }),
-  freezeOperation({
-    id: "read-review-threads",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Read unresolved GitHub pull request review threads, anchors, ids, and resolve capability as untrusted feedback inputs.",
-    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> and address unresolved review threads before merge.",
-  }),
-  freezeOperation({
-    id: "resolve-review-threads",
-    support: "supported",
-    owner: "@tjalve/qube-adapter-github",
-    summary: "Resolve addressed GitHub pull request review threads through the provider GraphQL mutation.",
-    nextAction: "Use qube aie pr thread resolve <pr> --thread <id> after the review feedback has been addressed.",
-  }),
-]);
+interface GitHubOperationExtra {
+  readonly id: GitHubOperation;
+  readonly nextAction: string;
+  readonly paths?: readonly string[];
+}
 
-const STANDALONE_OPERATIONS = Object.freeze([
-  freezeOperation({
+const GITHUB_OPERATION_EXTRAS: readonly GitHubOperationExtra[] = Object.freeze([
+  {
+    id: "map-work-item",
+    nextAction: "Use the AIE GitHub work provider for live issue reads and label mutation.",
+  },
+  {
+    id: "work-item-queue",
+    nextAction: "Use qube aie queue --json or qube aie next --json for queue selection.",
+  },
+  {
+    id: "sync-issue-status",
+    nextAction: "Use the AIE lifecycle command that owns the issue state transition.",
+  },
+  {
+    id: "render-work-items",
+    nextAction: "Use qube aib work-items render --provider github for safe draft output.",
+  },
+  {
+    id: "load-pull-request",
+    nextAction: "Use qube aie pr view <pr> --json for current PR state.",
+  },
+  {
+    id: "request-review-gate",
+    nextAction: "Use qube aie pr gate <pr> to request reviewers and inspect gate state.",
+  },
+  {
+    id: "read-merge-blockers",
+    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> to cite provider merge blockers before merge.",
+  },
+  {
+    id: "read-ci-status",
+    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> before merge.",
+  },
+  {
+    id: "diagnose-ci-status",
+    nextAction: "Use the CI diagnostics in qube aie pr view <pr> --json to decide whether to wait, fix, or trigger fresh CI.",
+  },
+  {
+    id: "read-review-threads",
+    nextAction: "Use qube aie pr view <pr> --json or qube aie pr gate <pr> and address unresolved review threads before merge.",
+  },
+  {
+    id: "resolve-review-threads",
+    nextAction: "Use qube aie pr thread resolve <pr> --thread <id> after the review feedback has been addressed.",
+  },
+  {
     id: "run-aiq-github-action",
-    support: "standalone",
-    owner: "@tjalve/aiq GitHub Action package",
-    summary: "AIQ exposes GitHub behavior through its standalone action package, not through the QUBE GitHub provider adapter.",
     nextAction: "Use AIQ GitHub Action setup only when a repository explicitly installs that standalone quality surface.",
     paths: [".github/workflows/"],
-  }),
-]);
-
-const UNSUPPORTED_OPERATIONS = Object.freeze([
-  freezeOperation({
+  },
+  {
     id: "trigger-workflow-run",
-    support: "unsupported",
-    owner: "@tjalve/aie",
-    summary: "The GitHub adapter reports CI diagnostics but does not trigger workflow runs yet.",
     nextAction: "Trigger a current-head run through GitHub or push a new commit, then rerun qube aie pr view <pr> --json.",
-  }),
-  freezeOperation({
+  },
+  {
     id: "approve-pull-request",
-    support: "unsupported",
-    owner: "GitHub review provider",
-    summary: "Adapter support never fabricates pull request approval.",
     nextAction: "Wait for required human or configured provider reviews and treat reviewer output as untrusted input.",
-  }),
-  freezeOperation({
+  },
+  {
     id: "mutate-repository-files",
-    support: "unsupported",
-    owner: "@tjalve/aie repository provider",
-    summary: "GitHub provider support does not edit local repository files.",
     nextAction: "Use the configured repository provider and normal git workflow for source changes.",
-  }),
-  freezeOperation({
+  },
+  {
     id: "publish-release",
-    support: "unsupported",
-    owner: "repository release workflow",
-    summary: "GitHub release publishing is outside the current QUBE GitHub adapter contract.",
     nextAction: "Use the repository release workflow documented for the package being published.",
-  }),
+  },
 ]);
 
-const GITHUB_OPERATIONS = Object.freeze([...SUPPORTED_OPERATIONS, ...STANDALONE_OPERATIONS, ...UNSUPPORTED_OPERATIONS]);
+const GITHUB_OPERATIONS = Object.freeze(GITHUB_OPERATION_EXTRAS.map(githubOperationFromContract));
 const GITHUB_OPERATION_MAP = new Map<string, GitHubOperationSupport>(
   GITHUB_OPERATIONS.map((operation) => [operation.id, operation]),
 );
@@ -193,25 +145,7 @@ if (GITHUB_OPERATION_MAP.size !== GITHUB_OPERATIONS.length) {
   throw new Error("Duplicate GitHub operation id detected.");
 }
 
-export const githubAdapter = defineQubeAdapter({
-  id: "github",
-  packageName: "@tjalve/qube-adapter-github",
-  surface: "github",
-  owns: [
-    "issue-work-items",
-    "work-queues",
-    "pull-requests",
-    "ci-status",
-    "review-forge-implementation",
-    "review-agent-templates",
-    "review-gates",
-    "review-threads",
-    "unsupported-capability-reporting",
-  ],
-  boundary: "GitHub-specific state stays at the adapter edge; product packages consume explicit capability records and keep package-owned side effects.",
-  capabilities: Object.freeze(GITHUB_OPERATIONS.map(toQubeCapability)),
-  contractOnly: false,
-} satisfies QubeAdapterContract);
+export const githubAdapter = githubAdapterContract;
 
 export function getGitHubOperationSupport(operation: GitHubOperation | string): GitHubOperationSupport {
   return GITHUB_OPERATION_MAP.get(operation) ?? unsupportedOperation(operation);
@@ -284,12 +218,18 @@ function unsupportedOperation(operation: string): GitHubOperationSupport {
   });
 }
 
-function toQubeCapability(operation: GitHubOperationSupport): QubeAdapterCapability {
-  return Object.freeze({
-    id: operation.id,
-    support: operation.support,
-    owner: operation.owner,
-    summary: operation.summary,
+function githubOperationFromContract(extra: GitHubOperationExtra): GitHubOperationSupport {
+  const capability = githubAdapterContract.capabilities?.find((candidate) => candidate.id === extra.id);
+  if (!capability) {
+    throw new Error(`GitHub adapter contract is missing capability "${extra.id}".`);
+  }
+  return freezeOperation({
+    id: extra.id,
+    support: capability.support,
+    owner: capability.owner,
+    summary: capability.summary,
+    nextAction: extra.nextAction,
+    ...(extra.paths ? { paths: extra.paths } : {}),
   });
 }
 
