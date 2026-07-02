@@ -134,4 +134,5 @@ export interface GitLabMetadata {
   readonly inline?: "gitlab-note";
   readonly bodyFindingCount?: number;
   readonly inlineCommentCount?: number;
+  readonly findingDigest?: string;
 }

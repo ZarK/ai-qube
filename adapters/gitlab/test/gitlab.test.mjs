@@ -310,6 +310,39 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.feedback.some(item => item.source === "thread" && item.state === "unresolved"), true);
   });
 
+  it("does not pass GitLab pipeline evidence when the pipeline sha is stale", async () => {
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({
+            sha: "current-head",
+            head_pipeline: { id: 503, status: "success", sha: "old-head", web_url: "https://gitlab.example.com/pipelines/503" },
+          });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    assert.equal(snapshot.ciDiagnostics[0].status, "unknown");
+    assert.equal(snapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.equal(snapshot.item.checks[0].result, "unknown");
+    assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
+  });
+
   it("plans and posts provider-visible review request notes with trusted metadata", async () => {
     const posted = [];
     const provider = createGitLabReviewForgeProvider({
@@ -397,6 +430,62 @@ describe("GitLab review forge adapter", () => {
     assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].lane, "code-quality");
     assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].inline, "gitlab-note");
     assert.equal(updated.item.trustedMetadata.trustedLaneReviews[0].stale, false);
+    assert.match(updated.item.trustedMetadata.trustedLaneReviews[0].findingDigest, /^[a-f0-9]{16}$/);
+  });
+
+  it("publishes updated GitLab lane feedback when the same head has changed findings", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      profile: "focused",
+      status: "complete",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "First review.",
+      findings: ["Fix the first issue."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    const first = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const second = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      summary: "Second review.",
+      findings: ["Fix the second issue."],
+    });
+    const duplicate = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      summary: "Second review.",
+      findings: ["Fix the second issue."],
+    });
+
+    assert.equal(first.status, "published");
+    assert.equal(second.status, "published");
+    assert.equal(duplicate.status, "skipped");
+    assert.equal(notes.length, 2);
   });
 
   it("ignores forged GitLab review metadata from untrusted note authors", async () => {
@@ -687,13 +776,14 @@ describe("GitLab review forge adapter", () => {
       recommendation: "request-changes",
       host: "codex",
       issueNumber: 185,
-      summary: "Found token=ghp_abcdefghijklmnopqrstuvwxyz1234567890",
+      summary: "Found token=ghp_abcdefghijklmnopqrstuvwxyz1234567890 and glpat-abcdefghijklmnopqrstuvwxyz",
       findings: ["Authorization: Bearer sk-abcdefghijklmnopqrstuvwxyz123456 and C:\\Users\\person\\secret.txt"],
       evidencePath: "C:\\code\\ai\\ai-qube\\.qube\\aie\\reviews\\185\\12\\head-sha\\security.json",
     });
 
     assert.equal(result.status, "published");
     assert.equal(publishedBody.includes("ghp_abcdefghijklmnopqrstuvwxyz1234567890"), false);
+    assert.equal(publishedBody.includes("glpat-abcdefghijklmnopqrstuvwxyz"), false);
     assert.equal(publishedBody.includes("sk-abcdefghijklmnopqrstuvwxyz123456"), false);
     assert.equal(publishedBody.includes("C:\\Users\\person\\secret.txt"), false);
     assert.equal(publishedBody.includes("C:\\code\\ai\\ai-qube"), false);

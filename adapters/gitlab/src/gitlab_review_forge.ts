@@ -22,6 +22,7 @@ import {
   type ReviewLaneReviewPublishResult,
   type ReviewMergeBlock,
 } from "@tjalve/qube-core";
+import { createHash } from "node:crypto";
 import { FetchGitLabReviewRestClient, normalizeMergeRequestIid, required } from "./gitlab_review_client.js";
 import { displayId, headSha, jsonValue, metadataLine, normalizeHandle, noteMetadata, reviewerId, userName } from "./gitlab_review_metadata.js";
 import type {
@@ -71,7 +72,8 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const sha = headSha(mr);
   if (!pipeline) return [];
   const status = pipeline.status.toLowerCase();
-  const passed = status === "success";
+  const matchesHead = pipeline.sha === undefined || pipeline.sha === sha;
+  const passed = status === "success" && matchesHead;
   const failed = ["failed", "canceled", "manual"].includes(status);
   const skipped = status === "skipped";
   const pending = ["created", "waiting_for_resource", "preparing", "pending", "running"].includes(status);
@@ -81,12 +83,12 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
     reasonCode: passed ? "current-head-workflow-run-found" : failed ? "current-head-check-run-failed" : skipped ? "current-head-check-run-skipped" : pending ? "current-head-check-run-pending" : "ci-mapping-unknown",
     currentHeadSha: sha,
     mappedToCurrentHeadCheckRun: false,
-    mappedToCurrentHeadWorkflowRun: pipeline.sha === undefined || pipeline.sha === sha,
+    mappedToCurrentHeadWorkflowRun: matchesHead,
     currentHeadSuiteIds: [],
     currentHeadRunIds: [String(pipeline.id)],
     staleRunIds: [],
     workflowDispatchSupported: null,
-    summary: `GitLab pipeline status=${pipeline.status}.`,
+    summary: matchesHead ? `GitLab pipeline status=${pipeline.status}.` : `GitLab pipeline status=${pipeline.status}, but pipeline sha ${pipeline.sha} does not match merge request head ${sha}.`,
     nextAction: passed ? "No CI retrigger needed for this pipeline." : "Inspect the GitLab merge request pipeline, then rerun `aie pr view <mr> --json`.",
   }];
 }
@@ -130,7 +132,10 @@ function reviewRequestBody(handle: string, head: string, requestText: string): s
 }
 
 function laneRunId(input: ReviewLaneReviewPublishInput): string {
-  return ["gitlab", input.prNumber, input.headSha, input.lane, input.profile, input.host, input.issueNumber, input.recommendation, input.status].join(":");
+  return createHash("sha256")
+    .update(JSON.stringify({ head: input.headSha, lane: input.lane, issueNumber: input.issueNumber, prNumber: input.prNumber }))
+    .digest("hex")
+    .slice(0, 16);
 }
 
 const TOKEN_PATTERNS: RegExp[] = [
@@ -139,6 +144,7 @@ const TOKEN_PATTERNS: RegExp[] = [
   /\b(ghs_[A-Za-z0-9_]{10,})\b/g,
   /\b(gho_[A-Za-z0-9_]{10,})\b/g,
   /\b(ghu_[A-Za-z0-9_]{10,})\b/g,
+  /\b(glpat-[A-Za-z0-9_-]{10,})\b/g,
 ];
 
 function redact(value: string): string {
@@ -160,6 +166,10 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
   const findings = input.findings.map(finding => redact(typeof finding === "string" ? finding : normalizeReviewFinding(finding).message));
   const runId = laneRunId(input);
   const summary = redact(input.summary);
+  const findingDigest = createHash("sha256")
+    .update(JSON.stringify({ summary, findings }))
+    .digest("hex")
+    .slice(0, 16);
   const metadata: GitLabMetadata = {
     version: 1,
     kind: "lane-review",
@@ -176,6 +186,7 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     inline: "gitlab-note",
     bodyFindingCount: findings.length,
     inlineCommentCount: 0,
+    findingDigest,
   };
   const body = [
     metadataLine(metadata),
@@ -354,9 +365,18 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   private hasMatchingLaneReview(item: ReviewItem, input: ReviewLaneReviewPublishInput, runId: string): boolean {
+    const planned = laneBody(input);
+    const plannedMetadata = JSON.parse(planned.marker) as GitLabMetadata;
     const records = Array.isArray(item.trustedMetadata.trustedLaneReviews) ? item.trustedMetadata.trustedLaneReviews : [];
     return records.some(record => record !== null && typeof record === "object" && !Array.isArray(record)
-      && record.head === input.headSha && record.lane === input.lane && record.runId === runId && record.stale !== true);
+      && record.head === input.headSha
+      && record.lane === input.lane
+      && record.runId === runId
+      && record.recommendation === input.recommendation
+      && record.status === input.status
+      && record.summary === redact(input.summary)
+      && record.findingDigest === plannedMetadata.findingDigest
+      && record.stale !== true);
   }
 }
 
@@ -417,6 +437,7 @@ function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedM
       inline: "gitlab-note",
       inlineCommentCount: parsed.inlineCommentCount ?? 0,
       bodyFindingCount: parsed.bodyFindingCount ?? 0,
+      findingDigest: parsed.findingDigest ?? null,
       url: note.web_url ?? null,
       author: userName(note.author),
       stale: parsed.head !== head,
