@@ -10,6 +10,7 @@ import { workItemNumber } from '../core/work_item.js';
 import type { GhExec } from '../gh.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type LifecyclePlan } from '../lifecycle.js';
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
+import type { WorkProviderAdapterOptions } from '../providers/work_provider_adapters.js';
 import type { WorkProvider } from '../providers/work_provider.js';
 
 export interface LifecycleServiceContext {
@@ -38,13 +39,26 @@ export interface ApplyResult {
 
 export async function createLifecycleContext(options: { config?: Config; cwd?: string; exec?: GhExec; limit?: number }): Promise<LifecycleServiceContext> {
   const config = options.config ?? (await loadConfig(options.cwd)) ?? getDefaults();
-  const provider = await createWorkProvider(config.providers.work.kind, { exec: options.exec, cwd: options.cwd, limit: options.limit });
+  const provider = await createWorkProvider(config.providers.work.kind, workProviderOptions(config, options));
   return {
     config,
     policy: configToExecutorPolicy(config),
     provider,
     exec: options.exec,
     cwd: options.cwd,
+  };
+}
+
+export function workProviderOptions(config: Config, options: { cwd?: string; exec?: GhExec; limit?: number }): WorkProviderAdapterOptions {
+  const jira = config.providers.work.kind === 'jira' ? config.providers.work.jira : undefined;
+  return {
+    exec: options.exec,
+    cwd: options.cwd,
+    limit: options.limit,
+    ...(jira?.projectKey ? { projectKey: jira.projectKey } : {}),
+    ...(jira?.jql ? { jql: jira.jql } : {}),
+    ...(jira?.requestTimeoutMs ? { requestTimeoutMs: jira.requestTimeoutMs } : {}),
+    ...(jira?.workflowSchema ? { workflowSchema: jira.workflowSchema } : {}),
   };
 }
 
@@ -64,6 +78,11 @@ export function activeWorkState(queue: WorkQueueState): ActiveWorkState {
 }
 
 export { workItemNumber };
+
+export function githubIssueLifecycleUnsupportedReason(context: LifecycleServiceContext, command: string): string | null {
+  if (context.provider.id === 'github') return null;
+  return `Work provider ${context.provider.id} can be inspected through read-only queue commands, but \`qube aie ${command}\` uses GitHub issue-number lifecycle semantics and is unsupported for provider-native work item keys. Use \`qube aie queue --json\` or \`qube aie next --json\` to inspect configured ${context.provider.id} work, or configure providers.work.kind=github before running lifecycle mutation commands.`;
+}
 
 export async function applyProviderPlan(provider: WorkProvider, plan: ActionPlan, dryRun: boolean, checkOnly = false): Promise<ApplyResult[]> {
   if (dryRun || checkOnly) return plan.actions.map(() => ({ status: 'planned', failure: null }));

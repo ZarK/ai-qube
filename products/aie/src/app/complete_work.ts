@@ -3,7 +3,7 @@ import { githubIssueNumber, parseWorkChecklistItems } from '../providers/github/
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import type { Action } from '../core/action_plan.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
-import { actionToLifecycle, applyProviderPlan, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { actionToLifecycle, applyProviderPlan, githubIssueLifecycleUnsupportedReason, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface CompletionChecklistItem { text: string; checked: boolean }
 export interface CompletionChecklist { total: number; checked: number; unchecked: number; items: CompletionChecklistItem[] }
@@ -100,6 +100,8 @@ function blocked(item: WorkItem, state: CompletionState, list: CompletionCheckli
 
 export async function runCompleteService(options: { issueNumber: number; dryRun: boolean; checkOnly: boolean; force: boolean; context: LifecycleServiceContext }): Promise<CompleteServiceResult> {
   const { issueNumber, dryRun, checkOnly, force, context } = options;
+  const unsupportedProvider = githubIssueLifecycleUnsupportedReason(context, 'complete');
+  if (unsupportedProvider) throw new Error(unsupportedProvider);
   const item = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(issueNumber) });
   const list = checklist(item.body);
   const allOpenItems = await context.provider.listOpenWorkItems();

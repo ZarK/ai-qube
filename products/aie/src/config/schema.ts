@@ -1,7 +1,7 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
-import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError } from './types.js';
+import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -107,6 +107,24 @@ function readStringRecord(value: unknown, path: string, errors: ValidationError[
   if (isPlainObject(value) && Object.values(value).every(entry => typeof entry === 'string')) return Object.fromEntries(Object.entries(value).map(([key, entry]) => [key, String(entry)]));
   errors.push({ kind: 'invalid', path, message: `${path} must be an object with string values` });
   return {};
+}
+
+function readEnumRecord<T extends string>(value: unknown, path: string, allowed: readonly T[], errors: ValidationError[]): Record<string, T> {
+  if (value === undefined) return {};
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object with string values` });
+    return {};
+  }
+  const allowedSet = new Set<string>(allowed);
+  const result: Record<string, T> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry !== 'string' || !allowedSet.has(entry)) {
+      errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must be ${allowed.join(' or ')}` });
+      continue;
+    }
+    result[key] = entry as T;
+  }
+  return result;
 }
 
 function readMissingMilestonePolicy(value: unknown, defaultValue: MissingMilestonePolicy, path: string, errors: ValidationError[]): MissingMilestonePolicy {
@@ -355,11 +373,11 @@ function readGateConfigs(value: unknown, path: string, errors: ValidationError[]
   return gates;
 }
 
-function readProviderSelection<K extends string>(input: Record<string, unknown>, field: string, defaultValue: ProviderSelection<K>, supportedKinds: readonly K[], errors: ValidationError[]): ProviderSelection<K> {
+function readProviderSelection<K extends string>(input: Record<string, unknown>, field: string, defaultValue: ProviderSelection<K>, supportedKinds: readonly K[], errors: ValidationError[], allowedKeys: readonly string[] = ['kind']): ProviderSelection<K> {
   const path = `providers.${field}`;
   const section = readPlainObject(input, field, 'providers', errors);
   if (!section) return { ...defaultValue };
-  rejectUnknownKeys(section, ['kind'], path, errors);
+  rejectUnknownKeys(section, allowedKeys, path, errors);
   const value = section.kind;
   if (supportedKinds.includes(value as K)) return { kind: value as K };
   if (typeof value !== 'string') {
@@ -373,6 +391,91 @@ function readProviderSelection<K extends string>(input: Record<string, unknown>,
     });
   }
   return { ...defaultValue };
+}
+
+function readJiraLinkRelation(value: unknown, path: string, errors: ValidationError[]): JiraLinkRelation | undefined {
+  if (value === 'blocker' || value === 'blockedBy' || value === 'ignore') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be blocker, blockedBy, or ignore` });
+  return undefined;
+}
+
+function readJiraLinkRules(value: unknown, path: string, errors: ValidationError[]): JiraIssueLinkRuleConfig[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an array of Jira link rule objects` });
+    return [];
+  }
+  const rules: JiraIssueLinkRuleConfig[] = [];
+  value.forEach((entry, index) => {
+    const rulePath = `${path}[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push({ kind: 'invalid', path: rulePath, message: `${rulePath} must be an object` });
+      return;
+    }
+    rejectUnknownKeys(entry, ['typeName', 'inward', 'outward'], rulePath, errors);
+    const typeName = readString(entry, 'typeName', '', rulePath, errors);
+    const inward = readJiraLinkRelation(entry.inward, `${rulePath}.inward`, errors);
+    const outward = readJiraLinkRelation(entry.outward, `${rulePath}.outward`, errors);
+    if (typeName && inward && outward) rules.push({ typeName, inward, outward });
+  });
+  return rules;
+}
+
+function readJiraWorkflowSchema(value: unknown, path: string, errors: ValidationError[]): JiraWorkflowSchemaConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return undefined;
+  }
+  rejectUnknownKeys(value, ['statusMap', 'openStatusNames', 'closedStatusNames', 'priorityMap', 'linkRules', 'sprintField', 'epicField'], path, errors);
+  const sprintField = readOptionalNonEmptyString(value, 'sprintField', `${path}.sprintField`, errors);
+  const epicField = readOptionalNonEmptyString(value, 'epicField', `${path}.epicField`, errors);
+  const statusMap = readEnumRecord<JiraWorkStatus>(value.statusMap, `${path}.statusMap`, ['in-progress', 'ready', 'blocked', 'unknown'], errors);
+  const openStatusNames = 'openStatusNames' in value ? readStringArray(value, 'openStatusNames', [], path, errors) : undefined;
+  const closedStatusNames = 'closedStatusNames' in value ? readStringArray(value, 'closedStatusNames', [], path, errors) : undefined;
+  const priorityMap = readEnumRecord<JiraWorkPriority>(value.priorityMap, `${path}.priorityMap`, ['critical', 'high', 'medium', 'low', 'none'], errors);
+  const linkRules = 'linkRules' in value ? readJiraLinkRules(value.linkRules, `${path}.linkRules`, errors) : undefined;
+  return {
+    ...(Object.keys(statusMap).length > 0 ? { statusMap } : {}),
+    ...(openStatusNames ? { openStatusNames } : {}),
+    ...(closedStatusNames ? { closedStatusNames } : {}),
+    ...(Object.keys(priorityMap).length > 0 ? { priorityMap } : {}),
+    ...(linkRules ? { linkRules } : {}),
+    ...(sprintField ? { sprintField } : {}),
+    ...(epicField ? { epicField } : {}),
+  };
+}
+
+function readJiraWorkProviderConfig(value: unknown, path: string, errors: ValidationError[]): JiraWorkProviderConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return undefined;
+  }
+  rejectUnknownKeys(value, ['projectKey', 'jql', 'requestTimeoutMs', 'workflowSchema'], path, errors);
+  const projectKey = readOptionalNonEmptyString(value, 'projectKey', `${path}.projectKey`, errors);
+  const jql = readOptionalNonEmptyString(value, 'jql', `${path}.jql`, errors);
+  const requestTimeoutMs = 'requestTimeoutMs' in value ? readBoundedInteger(value, 'requestTimeoutMs', 15_000, 1, 300_000, path, errors) : undefined;
+  const workflowSchema = readJiraWorkflowSchema(value.workflowSchema, `${path}.workflowSchema`, errors);
+  return {
+    ...(projectKey ? { projectKey } : {}),
+    ...(jql ? { jql } : {}),
+    ...(requestTimeoutMs ? { requestTimeoutMs } : {}),
+    ...(workflowSchema ? { workflowSchema } : {}),
+  };
+}
+
+function readWorkProviderSelection(input: Record<string, unknown>, defaultValue: WorkProviderSelection, errors: ValidationError[]): WorkProviderSelection {
+  const path = 'providers.work';
+  const section = readPlainObject(input, 'work', 'providers', errors);
+  if (!section) return { ...defaultValue };
+  rejectUnknownKeys(section, ['kind', 'jira'], path, errors);
+  const selection = readProviderSelection(input, 'work', defaultValue, ['github', 'gitlab', 'linear', 'jira'], errors, ['kind', 'jira']) as WorkProviderSelection;
+  const jira = readJiraWorkProviderConfig(section.jira, `${path}.jira`, errors);
+  return {
+    ...selection,
+    ...(jira ? { jira } : {}),
+  };
 }
 
 function readProviderCapabilities(input: Record<string, unknown>, defaultValue: ProviderCapabilityPolicy, errors: ValidationError[]): ProviderCapabilityPolicy {
@@ -396,7 +499,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
   }
   rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'capabilities'], 'providers', errors);
   return {
-    work: readProviderSelection(value, 'work', defaultValue.work, ['github', 'gitlab', 'linear'], errors),
+    work: readWorkProviderSelection(value, defaultValue.work, errors),
     review: readProviderSelection(value, 'review', defaultValue.review, ['github'], errors),
     repository: readProviderSelection(value, 'repository', defaultValue.repository, ['local-git'], errors),
     ci: readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors),

@@ -3,7 +3,7 @@ import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
 import { githubIssueNumber, parseWorkChecklist, parseWorkChecklistItems } from '../providers/github/github_work_codec.js';
-import type { LifecycleServiceContext } from './lifecycle_common.js';
+import { githubIssueLifecycleUnsupportedReason, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface ViewServiceResult {
   ok: boolean;
@@ -32,6 +32,8 @@ function recommendedAction(issueNumber: number, status: ViewServiceResult['effec
 
 export async function runViewService(options: { issueNumber: number; context: LifecycleServiceContext; currentBranch: string | null }): Promise<ViewServiceResult> {
   const { issueNumber, context, currentBranch } = options;
+  const unsupportedProvider = githubIssueLifecycleUnsupportedReason(context, 'view');
+  if (unsupportedProvider) throw new Error(unsupportedProvider);
   const item = await context.provider.getWorkItem({ providerId: 'github', id: String(issueNumber) });
   const blockerNumbers = item.blockers.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null);
   const blockers = await resolveBlockerDetails(blockerNumbers, { exec: context.exec, cwd: context.cwd });

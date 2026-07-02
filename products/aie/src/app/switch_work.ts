@@ -2,7 +2,7 @@ import { createAction, createActionPlan, type Action } from '../core/action_plan
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle.js';
-import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 import { buildPreStartPolicy } from './pre_start_policy.js';
 
 export interface SwitchServiceResult {
@@ -28,6 +28,10 @@ function emptyBlocked(input: { action: SwitchServiceResult['action']; reason: st
   return blockedSwitch({ action: input.action, reason: input.reason, sourceItem: input.sourceItem, targetItem: input.targetItem, blockers: input.blockers ?? [], activeIssueState: input.activeIssueState, branchName: input.branchName, plan: emptyLifecyclePlan('switch', input.dryRun), warnings: [], errors: [input.reason] });
 }
 
+function emptyActiveWorkState(): ActiveWorkState {
+  return { inProgressCount: 0, activeIssues: [], multipleInProgress: false };
+}
+
 function switchPlan(input: { actions: Action[]; results: ApplyResult[]; pauseCount: number; source: WorkItem; target: WorkItem; branchName: string; preStartPolicy: PreStartPolicyResult; dryRun: boolean }): LifecyclePlan {
   const sourceNumber = workItemNumber(input.source);
   const targetNumber = workItemNumber(input.target);
@@ -43,6 +47,8 @@ function switchPlan(input: { actions: Action[]; results: ApplyResult[]; pauseCou
 
 export async function runSwitchService(options: { targetIssueNumber: number; fromIssueNumber?: number; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<SwitchServiceResult> {
   const { targetIssueNumber, fromIssueNumber, dryRun, assign, comment, context } = options;
+  const unsupportedProvider = githubIssueLifecycleUnsupportedReason(context, 'switch');
+  if (unsupportedProvider) return emptyBlocked({ action: 'blocked', reason: unsupportedProvider, sourceItem: null, targetItem: null, activeIssueState: emptyActiveWorkState(), dryRun, branchName: '' });
   const { workItems, queue } = await loadQueueState(context);
   const activeState = activeWorkState(queue);
   const target = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(targetIssueNumber) });

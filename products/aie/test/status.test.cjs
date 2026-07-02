@@ -48,6 +48,28 @@ function makeWork(number, title, labels, options = {}) {
   });
 }
 
+function makeJiraWork(id, title, status) {
+  return normalizeWorkItem({
+    key: { providerId: 'jira', id },
+    displayId: id,
+    title,
+    body: '',
+    url: `https://jira.example.com/browse/${id}`,
+    state: 'open',
+    status,
+    priority: 'none',
+    tags: [],
+    assignees: [],
+    project: null,
+    blockers: [],
+    blockedBy: [],
+    sequence: null,
+    checklist: { total: 0, completed: 0 },
+    trustedMetadata: { jiraKey: id },
+    source: { providerId: 'jira', resourceKind: 'work-item', resourceId: id, url: `https://jira.example.com/browse/${id}`, metadata: { jiraKey: id } },
+  });
+}
+
 function makeReview(number, options = {}) {
   return normalizeReviewItem({
     key: { providerId: 'github', id: String(number) },
@@ -95,8 +117,8 @@ function makeContext(input = {}) {
     config,
     policy,
     workProvider: {
-      id: 'github',
-      capabilities: () => ({ listOpenWork: true, loadWork: true, planStatusSync: true, planLifecycleMutations: true, applyLifecycleMutations: true, commentMutations: true, reviewIntegration: true, ciMergeStatus: true }),
+      id: input.workProviderId ?? 'github',
+      capabilities: () => input.workProviderCapabilities ?? ({ listOpenWork: true, loadWork: true, planStatusSync: true, planLifecycleMutations: true, applyLifecycleMutations: true, commentMutations: true, reviewIntegration: true, ciMergeStatus: true }),
       listOpenWorkItems: async () => workItems,
     },
     repositoryProvider: {
@@ -125,6 +147,34 @@ describe('status service', () => {
     assert.equal(result.queue.nextWork.number, 76);
     assert.equal(result.providers.work.id, 'github');
     assert.equal(result.providers.repository.id, 'local-git');
+  });
+
+  it('reports ready Jira work without suggesting unsupported lifecycle start', async () => {
+    const result = await buildStatus(makeContext({
+      workProviderId: 'jira',
+      workProviderCapabilities: { listOpenWork: true, loadWork: true, planStatusSync: false, planLifecycleMutations: false, applyLifecycleMutations: false, commentMutations: false, reviewIntegration: false, ciMergeStatus: false },
+      workItems: [makeJiraWork('ENG-123', 'Jira status command', 'ready')],
+    }));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.decision.reasonCodes, ['read-only-work-provider']);
+    assert.equal(result.decision.nextCommand, 'aie queue --json');
+    assert.equal(result.queue.nextWork.displayId, 'ENG-123');
+    assert.equal(result.queue.nextWork.number, null);
+  });
+
+  it('reports active Jira work without GitHub issue-number review gate conversion', async () => {
+    const result = await buildStatus(makeContext({
+      workProviderId: 'jira',
+      workProviderCapabilities: { listOpenWork: true, loadWork: true, planStatusSync: false, planLifecycleMutations: false, applyLifecycleMutations: false, commentMutations: false, reviewIntegration: false, ciMergeStatus: false },
+      workItems: [makeJiraWork('ENG-123', 'Jira active work', 'in-progress')],
+    }));
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.decision.reasonCodes, ['read-only-work-provider']);
+    assert.equal(result.queue.activeWork[0].displayId, 'ENG-123');
+    assert.equal(result.queue.activeWork[0].number, null);
+    assert.equal(result.reviewGate, null);
   });
 
   it('reports active work and recommends continuing implementation when no PR is available', async () => {

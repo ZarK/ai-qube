@@ -10,6 +10,13 @@ export interface WorkProviderAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
   readonly limit?: number;
+  readonly client?: unknown;
+  readonly workflowSchema?: unknown;
+  readonly email?: string;
+  readonly apiToken?: string;
+  readonly projectKey?: string;
+  readonly jql?: string;
+  readonly requestTimeoutMs?: number;
 }
 
 export interface WorkProviderAdapterMetadata {
@@ -83,6 +90,10 @@ const ADAPTERS: readonly WorkProviderAdapter[] = Object.freeze([
   missingOptionalAdapter('linear', '@tjalve/qube-adapter-linear', [
     'Install the optional Linear work-provider adapter package before selecting providers.work.kind=linear.',
     'Configure LINEAR_API_KEY and LINEAR_TEAM_ID for Linear issue reads.',
+  ]),
+  missingOptionalAdapter('jira', '@tjalve/qube-adapter-jira', [
+    'Install the optional Jira work-provider adapter package before selecting providers.work.kind=jira.',
+    'Configure JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and either JIRA_PROJECT_KEY or provider JQL for Jira issue reads.',
   ]),
 ]);
 

@@ -43,6 +43,7 @@
   ],
   "dependencies": {
     "@tjalve/qube-adapter-gitlab": "workspace:*",
+    "@tjalve/qube-adapter-jira": "workspace:*",
     "@tjalve/qube-adapter-linear": "workspace:*",
     "@tjalve/qube-cli": "0.1.2"
   },

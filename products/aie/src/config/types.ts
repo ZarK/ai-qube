@@ -2,7 +2,7 @@ import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextS
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
-export type WorkProviderKind = 'github' | 'gitlab' | 'linear';
+export type WorkProviderKind = 'github' | 'gitlab' | 'linear' | 'jira';
 export type ReviewProviderKind = 'github';
 export type RepositoryProviderKind = 'local-git';
 export type CiProviderKind = 'github';
@@ -10,6 +10,37 @@ export type LayoutProviderKind = 'local';
 
 export interface ProviderSelection<K extends string> {
   kind: K;
+}
+
+export type JiraWorkStatus = 'in-progress' | 'ready' | 'blocked' | 'unknown';
+export type JiraWorkPriority = 'critical' | 'high' | 'medium' | 'low' | 'none';
+export type JiraLinkRelation = 'blocker' | 'blockedBy' | 'ignore';
+
+export interface JiraIssueLinkRuleConfig {
+  typeName: string;
+  inward: JiraLinkRelation;
+  outward: JiraLinkRelation;
+}
+
+export interface JiraWorkflowSchemaConfig {
+  statusMap?: Record<string, JiraWorkStatus>;
+  openStatusNames?: string[];
+  closedStatusNames?: string[];
+  priorityMap?: Record<string, JiraWorkPriority>;
+  linkRules?: JiraIssueLinkRuleConfig[];
+  sprintField?: string;
+  epicField?: string;
+}
+
+export interface JiraWorkProviderConfig {
+  projectKey?: string;
+  jql?: string;
+  requestTimeoutMs?: number;
+  workflowSchema?: JiraWorkflowSchemaConfig;
+}
+
+export interface WorkProviderSelection extends ProviderSelection<WorkProviderKind> {
+  jira?: JiraWorkProviderConfig;
 }
 
 export interface ProviderCapabilityPolicy {
@@ -21,7 +52,7 @@ export interface ProviderCapabilityPolicy {
 }
 
 export interface ProviderSelections {
-  work: ProviderSelection<WorkProviderKind>;
+  work: WorkProviderSelection;
   review: ProviderSelection<ReviewProviderKind>;
   repository: ProviderSelection<RepositoryProviderKind>;
   ci: ProviderSelection<CiProviderKind>;

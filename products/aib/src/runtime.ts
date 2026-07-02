@@ -536,20 +536,20 @@ export const aibCli = createCli({
       try {
         const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const projectRoot = projectRootForState(envelope.statePath);
-        const provider = flags.provider === "github" || flags.provider === "gitlab" || flags.provider === "linear" || flags.provider === "markdown" ? flags.provider : undefined;
+        const provider = flags.provider === "github" || flags.provider === "gitlab" || flags.provider === "linear" || flags.provider === "jira" || flags.provider === "markdown" ? flags.provider : undefined;
         if (!provider) {
           throw createCliError({
             command: "work-items render",
             kind: "work-item-render-failed",
             operation: "select work-item render provider",
-            likelyCause: "Provider must be one of github, gitlab, linear, or markdown.",
-            suggestedNextAction: "Pass --provider github, --provider gitlab, --provider linear, or --provider markdown.",
+            likelyCause: "Provider must be one of github, gitlab, linear, jira, or markdown.",
+            suggestedNextAction: "Pass --provider github, --provider gitlab, --provider linear, --provider jira, or --provider markdown.",
             category: "validation",
             exitCode: 3
           });
         }
         const outputDir = typeof flags["output-dir"] === "string" ? flags["output-dir"] : undefined;
-        if ((provider === "github" || provider === "gitlab" || provider === "linear") && flags["dry-run"] !== true) {
+        if ((provider === "github" || provider === "gitlab" || provider === "linear" || provider === "jira") && flags["dry-run"] !== true) {
           throw createCliError({
             command: "work-items render",
             kind: "provider-mutation-unsupported",
@@ -563,7 +563,7 @@ export const aibCli = createCli({
 
         let result: WorkItemRenderResult;
         try {
-          result = flags["dry-run"] === true || provider === "github" || provider === "gitlab" || provider === "linear"
+          result = flags["dry-run"] === true || provider === "github" || provider === "gitlab" || provider === "linear" || provider === "jira"
             ? renderWorkItemDrafts(envelope.state, provider, { outputDir })
             : writeRenderedMarkdownWorkItems(envelope.state, { outputDir, baseDir: projectRoot });
         } catch (error) {
@@ -592,7 +592,7 @@ export const aibCli = createCli({
           });
         }
 
-        if (flags["dry-run"] === true || provider === "github" || provider === "gitlab" || provider === "linear") {
+        if (flags["dry-run"] === true || provider === "github" || provider === "gitlab" || provider === "linear" || provider === "jira") {
           return {
             json: renderWorkItemJson(result, false, envelope.statePath),
             human: `Dry run: rendered ${result.rendered.length} work items for ${provider}.\n`
@@ -850,6 +850,7 @@ function renderWorkItemJson(result: WorkItemRenderResult, mutated: boolean, stat
   readonly rendered: readonly unknown[];
   readonly plannedIssues?: readonly unknown[];
   readonly plannedGitLabIssues?: readonly unknown[];
+  readonly plannedJiraIssues?: readonly unknown[];
   readonly plannedWrites?: readonly unknown[];
   readonly written?: readonly unknown[];
 } {
@@ -857,6 +858,7 @@ function renderWorkItemJson(result: WorkItemRenderResult, mutated: boolean, stat
   const github = result.provider === "github" ? result.rendered : [];
   const gitlab = result.provider === "gitlab" ? result.rendered : [];
   const linear = result.provider === "linear" ? result.rendered : [];
+  const jira = result.provider === "jira" ? result.rendered : [];
   return {
     mutated,
     dryRun: !mutated,
@@ -868,6 +870,7 @@ function renderWorkItemJson(result: WorkItemRenderResult, mutated: boolean, stat
     ...(github.length > 0 && result.provider === "github" ? { plannedIssues: github } : {}),
     ...(gitlab.length > 0 && result.provider === "gitlab" ? { plannedGitLabIssues: gitlab } : {}),
     ...(linear.length > 0 ? { plannedLinearIssues: linear } : {}),
+    ...(jira.length > 0 ? { plannedJiraIssues: jira } : {}),
     ...(markdown.length > 0 && !mutated ? { plannedWrites: markdown.map((item) => ({ path: item.path })) } : {}),
     ...(markdown.length > 0 && mutated ? { written: markdown.map((item) => ({ path: item.path })) } : {})
   };

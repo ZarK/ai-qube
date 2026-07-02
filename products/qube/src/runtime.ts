@@ -67,7 +67,7 @@ const yesFlag = defineFlag({
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build";
-type InstallWorkProvider = "github" | "gitlab" | "linear" | "local";
+type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
@@ -375,6 +375,11 @@ const workProviderChoices = defineInstallerChoiceGroup({
       description: "Use Linear issues as the planning/work queue while keeping review and CI provider limits explicit."
     },
     {
+      value: "jira",
+      label: "Jira",
+      description: "Use Jira issues as the planning/work queue while keeping workflow mapping and mutation limits explicit."
+    },
+    {
       value: "local",
       label: "Local only",
       description: "Install QUBE without assuming a forge-backed work provider."
@@ -466,7 +471,7 @@ const installCommand = defineCommand({
       name: "work-provider",
       description: "Work provider to mention in setup notes.",
       type: "option",
-      options: ["github", "gitlab", "linear", "local"]
+      options: ["github", "gitlab", "linear", "jira", "local"]
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -3323,7 +3328,7 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
   if (selections.host === "opencode") {
     files.push(".opencode command notes");
   }
-  if (selections.workProvider === "github" || selections.workProvider === "gitlab" || selections.workProvider === "linear") {
+  if (selections.workProvider === "github" || selections.workProvider === "gitlab" || selections.workProvider === "linear" || selections.workProvider === "jira") {
     files.push(".qube/aie/config.json provider notes");
   }
   return files;
@@ -3346,6 +3351,8 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
     notes.push("GitLab-backed work requires the optional @tjalve/qube-adapter-gitlab package; it uses GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL for read mapping while lifecycle mutations, merge request mutations, and merge request pipeline status for CI gates stay unsupported until tested GitLab adapters exist.");
   } else if (selections.workProvider === "linear") {
     notes.push("Linear-backed work requires the optional @tjalve/qube-adapter-linear package; it uses LINEAR_API_KEY and LINEAR_TEAM_ID for read mapping while lifecycle mutations stay explicit until configured Linear workflow-state mutations exist.");
+  } else if (selections.workProvider === "jira") {
+    notes.push("Jira-backed work requires the optional @tjalve/qube-adapter-jira package; it uses JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN, and either JIRA_PROJECT_KEY or configured JQL for read mapping while lifecycle mutations stay explicit until configured Jira transition IDs exist.");
   } else {
     notes.push("Local-only setup does not configure forge-backed issue or pull request workflows.");
   }

@@ -728,6 +728,22 @@ test("milestones generate writes planning-depth docs before work items", async (
   assert.match(gitlabPreview.plannedGitLabIssues[0].description, /^Sequence: \d+/m);
   assert.deepEqual(gitlabPreview.plannedGitLabIssues[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
 
+  const jiraPreview = parseJsonStdout(runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "jira",
+    "--dry-run",
+    "--json"
+  ]));
+  assert.equal(jiraPreview.mutated, false);
+  assert.equal(jiraPreview.provider, "jira");
+  assert.equal(jiraPreview.plannedJiraIssues.length, 3);
+  assert.match(jiraPreview.plannedJiraIssues[0].description, /^Sequence: \d+/m);
+  assert.equal(jiraPreview.plannedJiraIssues[0].priorityName, "High");
+
   const blockedGitlabApply = runAib([
     "work-items",
     "render",
@@ -751,6 +767,18 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]);
   assert.equal(blockedLinearApply.status, 5);
   assert.equal(JSON.parse(blockedLinearApply.stdout).error.kind, "provider-mutation-unsupported");
+
+  const blockedJiraApply = runAib([
+    "work-items",
+    "render",
+    "--state",
+    init.statePath,
+    "--provider",
+    "jira",
+    "--json"
+  ]);
+  assert.equal(blockedJiraApply.status, 5);
+  assert.equal(JSON.parse(blockedJiraApply.stdout).error.kind, "provider-mutation-unsupported");
 
   const blockedGithubApply = runAib([
     "work-items",

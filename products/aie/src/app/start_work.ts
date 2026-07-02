@@ -3,7 +3,7 @@ import { selectNextWork } from '../core/queue_rules.js';
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleIssueSelection, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle.js';
-import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 import { buildPreStartPolicy } from './pre_start_policy.js';
 
 export interface StartServiceResult {
@@ -22,6 +22,10 @@ export interface StartServiceResult {
 
 function blocked(input: Omit<StartServiceResult, 'ok'>): StartServiceResult {
   return { ok: false, ...input };
+}
+
+function emptyActiveWorkState(): ActiveWorkState {
+  return { inProgressCount: 0, activeIssues: [], multipleInProgress: false };
 }
 
 function blockedStart(input: {
@@ -91,9 +95,11 @@ function selectedWorkLabel(item: WorkItem): string {
 
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
   const { selection, dryRun, assign, comment, context } = options;
+  if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun, warnings: ['Use command help output for usage.'] });
+  const unsupportedIssueSelection = selection.kind !== 'next' ? githubIssueLifecycleUnsupportedReason(context, 'start') : null;
+  if (unsupportedIssueSelection) return blockedStart({ action: 'blocked', reason: unsupportedIssueSelection, selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun });
   const { workItems, queue } = await loadQueueState(context);
   const activeState = activeWorkState(queue);
-  if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: activeState, dryRun, warnings: ['Use command help output for usage.'] });
 
   let selectedItem: WorkItem | null = null;
   let action: 'started' | 'resumed' = 'started';
@@ -132,7 +138,7 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!capabilities.planLifecycleMutations || !capabilities.applyLifecycleMutations) {
     return blockedStart({
       action: 'blocked',
-      reason: `Work provider ${context.provider.id} can read ${selectedWorkLabel(selectedItem)}, but start/resume lifecycle mutations are unsupported. Use \`qube aie queue --json\` and \`qube aie next --json\` for read-only provider inspection, or configure a provider with tested lifecycle mutations before starting work.`,
+      reason: githubIssueLifecycleUnsupportedReason(context, 'start') ?? `Work provider ${context.provider.id} can read ${selectedWorkLabel(selectedItem)}, but start/resume lifecycle mutations are unsupported. Use \`qube aie queue --json\` and \`qube aie next --json\` for read-only provider inspection, or configure a provider with tested lifecycle mutations before starting work.`,
       selectedItem,
       activeIssueState: activeState,
       dryRun,

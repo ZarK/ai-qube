@@ -77,6 +77,22 @@ describe('config validation', () => {
 
   it('accepts explicit provider selections and nested policy values', () => {
     const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        projectKey: 'ENG',
+        requestTimeoutMs: 20000,
+        workflowSchema: {
+          statusMap: { Queued: 'ready', Blocked: 'blocked' },
+          openStatusNames: ['Queued', 'Blocked'],
+          closedStatusNames: ['Done'],
+          priorityMap: { P0: 'critical' },
+          linkRules: [{ typeName: 'Dependency', inward: 'blocker', outward: 'blockedBy' }],
+          sprintField: 'customfield_10020',
+          epicField: 'customfield_10014',
+        },
+      },
+    };
     input.policy.labels.priorities = ['P1', 'P2'];
     input.policy.branch.noWorktree = false;
     input.policy.reviews.adapter = 'mixed';
@@ -87,12 +103,79 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, true);
+    assert.equal(result.config.providers.work.kind, 'jira');
+    assert.equal(result.config.providers.work.jira.projectKey, 'ENG');
+    assert.equal(result.config.providers.work.jira.requestTimeoutMs, 20000);
+    assert.equal(result.config.providers.work.jira.workflowSchema.statusMap.Queued, 'ready');
+    assert.equal(result.config.providers.work.jira.workflowSchema.priorityMap.P0, 'critical');
+    assert.equal(result.config.providers.work.jira.workflowSchema.linkRules[0].inward, 'blocker');
+    assert.equal(result.config.providers.work.jira.workflowSchema.sprintField, 'customfield_10020');
     assert.deepEqual(result.config.priorityLabels, ['P1', 'P2']);
     assert.equal(result.config.noWorktree, false);
     assert.equal(result.config.reviewAdapter, 'mixed');
     assert.equal(result.config.reviewWaitMinutes, 15);
     assert.deepEqual(result.config.localReviewAgents, ['local-check']);
     assert.equal(result.config.opencodeCommandAlias, true);
+  });
+
+  it('preserves omitted Jira workflow schema fields so adapter defaults still apply', () => {
+    const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        workflowSchema: {
+          sprintField: 'customfield_10020',
+        },
+      },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.providers.work.kind, 'jira');
+    assert.equal(result.config.providers.work.jira.workflowSchema.sprintField, 'customfield_10020');
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'linkRules'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'openStatusNames'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'closedStatusNames'), false);
+  });
+
+  it('accepts Jira JQL live-read configuration without credential values', () => {
+    const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        jql: 'project = ENG AND resolution = Unresolved ORDER BY updated DESC',
+      },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.providers.work.jira.jql, 'project = ENG AND resolution = Unresolved ORDER BY updated DESC');
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'baseUrl'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'workflowSchema'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'email'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'apiToken'), false);
+  });
+
+  it('rejects Jira credential environment indirection in config', () => {
+    const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        baseUrl: 'https://jira.example.com',
+        projectKey: 'ENG',
+        emailEnv: 'AIE_JIRA_EMAIL',
+        apiTokenEnv: 'AIE_JIRA_TOKEN',
+      },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.baseUrl' && error.kind === 'unknown'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.emailEnv' && error.kind === 'unknown'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.apiTokenEnv' && error.kind === 'unknown'));
   });
 
   it('normalizes structured and legacy gate policy consistently', () => {
@@ -204,7 +287,7 @@ describe('config validation', () => {
   it('rejects unknown fields and unsupported provider kinds with actionable paths', () => {
     const input = defaultFile();
     input.legacyFlatField = true;
-    input.providers.work = { kind: 'jira' };
+    input.providers.work = { kind: 'azure-devops' };
     input.providers.repository = { kind: 'github' };
     input.policy.labels.priorityLabels = ['old-shape'];
 
@@ -219,6 +302,17 @@ describe('config validation', () => {
 
   it('rejects unsupported nested policy values with actionable paths', () => {
     const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        workflowSchema: {
+          statusMap: { Queued: 'queued' },
+          priorityMap: { P0: 'urgent' },
+          linkRules: [{ typeName: 'Dependency', inward: 'waits-on', outward: 'blockedBy' }],
+        },
+        requestTimeoutMs: 0,
+      },
+    };
     input.policy.reviews.waitMinutes = '15';
     input.policy.reviews.adapter = 'unsupported';
     input.policy.milestoneOrdering.missingAssignment = 'required';
@@ -228,6 +322,10 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.statusMap.Queued'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.priorityMap.P0'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.workflowSchema.linkRules[0].inward'));
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.requestTimeoutMs'));
     assert.ok(result.errors.some((error) => error.path === 'policy.reviews.waitMinutes'));
     assert.ok(result.errors.some((error) => error.path === 'policy.reviews.adapter'));
     assert.ok(result.errors.some((error) => error.path === 'policy.milestoneOrdering.missingAssignment'));

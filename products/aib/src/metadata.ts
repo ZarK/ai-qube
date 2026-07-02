@@ -599,7 +599,7 @@ export const workItemsRenderCommand = defineCommand({
       name: "provider",
       description: "Work item render target.",
       type: "option",
-      options: ["github", "gitlab", "linear", "markdown"],
+      options: ["github", "gitlab", "linear", "jira", "markdown"],
       required: true
     }),
     defineFlag({
@@ -621,6 +621,10 @@ export const workItemsRenderCommand = defineCommand({
     defineExample({
       description: "Preview Linear issues from recorded work item drafts.",
       command: "aib work-items render --provider linear --dry-run --json"
+    }),
+    defineExample({
+      description: "Preview Jira issues from recorded work item drafts.",
+      command: "aib work-items render --provider jira --dry-run --json"
     }),
     defineExample({
       description: "Preview GitLab issues from recorded work item drafts.",
