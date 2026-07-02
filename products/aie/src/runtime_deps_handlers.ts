@@ -1,7 +1,5 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
-import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
-import { githubIssueNumber } from '@tjalve/qube-adapter-github';
-import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
+import { getAllBlockedIssues, getDependencyChain, getDependencyGraph, getDependencyIssueDetail, getDirectBlockers, getIssuesBlockedBy, getReadyIssues } from './deps.js';
 import { commandFailure, commandResult, stringArg } from './runtime_result.js';
 
 function lineOutput(lines: string[]): string {
@@ -42,8 +40,7 @@ export const handleDepsBlockers: RuntimeCommandHandler = async context => {
     return commandFailure(context, { ok: false, command: 'deps blockers', error: message }, message);
   }
   try {
-    const workItem = await createGitHubWorkProvider().getWorkItem({ providerId: 'github', id: String(issueNumber) });
-    const issue = { number: githubIssueNumber(workItem), title: workItem.title, state: workItem.state === 'open' ? 'OPEN' : 'CLOSED' };
+    const issue = await getDependencyIssueDetail(issueNumber);
     const blockers = await getDirectBlockers(issueNumber);
     return commandResult(context, { ok: true, command: 'deps blockers', issue, blockers }, lineOutput([`Direct blockers for #${issue.number} "${issue.title}" (${issue.state}):`, ...(blockers.length === 0 ? ['  None declared.'] : blockers.map(blocker => `  #${blocker.number} "${blocker.title}" (${blocker.state})`))]));
   } catch (err: unknown) {

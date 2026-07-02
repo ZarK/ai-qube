@@ -3,7 +3,7 @@ import type { ActionPlan, ActionResult } from './core/action_plan.js';
 import { getDefaults, loadConfig } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
 import { computeStatusFixPlanFromWorkItems, configToWorkQueuePolicy, type StatusFixPlan } from './deps.js';
-import { createGitHubWorkProvider } from '@tjalve/qube-adapter-github';
+import { createWorkProvider } from './providers/work_provider_adapters.js';
 import { commandFailure, readBooleanFlag, outputJson } from './runtime_result.js';
 
 export interface StatusFixResult {
@@ -70,7 +70,7 @@ export async function handleDepsFix(context: RuntimeCommandContext): Promise<Run
   const dryRun = readBooleanFlag(context, 'dry-run');
   try {
     const config = (await loadConfig()) ?? getDefaults();
-    const provider = createGitHubWorkProvider();
+    const provider = await createWorkProvider(config.providers.work.kind, { includeAssignees: false });
     const openItems = await provider.listOpenWorkItems();
     const actionPlan = provider.planStatusSync(openItems, configToExecutorPolicy(config));
     const plans = mergeStatusFixPlanActions(computeStatusFixPlanFromWorkItems(openItems, configToWorkQueuePolicy(config)), actionPlan);
