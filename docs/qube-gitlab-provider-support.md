@@ -19,6 +19,16 @@ Supported now:
 - GitLab issue `iid`, state, labels, assignees, milestones, task-completion
   status, native issue links, and source metadata are normalized into the
   shared work item contract.
+- AIE reads GitLab merge request review state through the same optional adapter
+  when `providers.review.kind` is `gitlab`.
+- GitLab merge request notes can carry configured review requests and local
+  lane review feedback with stable QUBE metadata.
+- GitLab merge request discussions are read as code conversation feedback and
+  unresolved discussions are exposed as merge blockers.
+- AIE can resolve addressed GitLab merge request discussions through
+  `aie pr thread resolve` when the GitLab review provider is selected.
+- GitLab merge request `head_pipeline` status is exposed as provider gate
+  evidence and concise CI diagnostics for `aie pr view` and `aie pr gate`.
 - QUBE install notes can target `--work-provider gitlab` and name the required
   optional adapter package.
 
@@ -29,8 +39,7 @@ Explicitly unsupported now:
 - AIE does not mutate GitLab issue states, labels, comments, assignees, or
   completion state yet.
 - AIE does not create, update, approve, merge, or close GitLab merge requests.
-- AIE does not read GitLab merge request pipeline status as the configured CI
-  gate yet.
+- AIE does not trigger or rerun GitLab pipelines yet.
 - AIE does not silently fall back to GitHub labels, pull requests, or Actions
   when GitLab lifecycle, review, or CI behavior is requested.
 
@@ -47,14 +56,15 @@ GITLAB_BASE_URL=https://gitlab.com
 `GITLAB_BASE_URL` is optional and defaults to GitLab.com. Set it for
 self-managed GitLab instances.
 
-The Executor config can select GitLab as the work provider:
+The Executor config can select GitLab as both the work provider and the review
+provider:
 
 ```json
 {
   "version": 1,
   "providers": {
     "work": { "kind": "gitlab" },
-    "review": { "kind": "github" },
+    "review": { "kind": "gitlab" },
     "repository": { "kind": "local-git" },
     "ci": { "kind": "github" },
     "layout": { "kind": "local" },
@@ -128,11 +138,23 @@ variables present, AIE can read GitLab issues through the provider contract.
 Lifecycle mutation commands report unsupported operations when they would need
 to change GitLab issue state, labels, comments, assignees, or completion state.
 
-GitLab merge requests, approvals, and pipelines are named explicitly in this
-contract because they are not GitHub pull requests or GitHub Actions under a
-different label. A future GitLab review or CI provider must read merge request
-`detailed_merge_status`, approval state, and `head_pipeline` status directly
-before enabling merge or CI gates.
+## AIE Merge Request Review Flow
+
+With `providers.review.kind` set to `gitlab` and the documented environment
+variables present, AIE can read GitLab merge requests through the review-forge
+provider contract. `aie pr view <mr> --json` accepts a GitLab merge request
+`iid` and returns provider-native mergeability, code conversations, merge
+blockers, provider-visible note feedback, and head-pipeline diagnostics.
+
+`aie pr gate <mr>` plans configured review participants through GitLab merge
+request notes. Local review lane publication writes provider-visible GitLab
+notes with stable QUBE metadata, and those notes are read back as trusted lane
+review records for the current merge request head.
+
+GitLab merge request approval, merge, and pipeline triggering are mutation
+gaps. They remain unsupported until each mutation path has a tested adapter
+contract. GitLab discussion resolution is supported through the review-thread
+resolution command.
 
 ## Known Differences From GitHub
 

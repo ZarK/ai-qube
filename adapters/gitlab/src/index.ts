@@ -6,5 +6,23 @@ export { attachGitLabBlockedBy, gitLabIssueToWorkItem, gitLabWorkItemKey } from 
 export type { GitLabIssue, GitLabIssueLink, GitLabLinkedIssue, GitLabMilestone, GitLabUser } from "./gitlab_work_codec.js";
 export { createGitLabWorkProvider, GitLabWorkProvider } from "./gitlab_work_provider.js";
 export type { GitLabRestClient, GitLabWorkProviderOptions } from "./gitlab_work_provider.js";
+export {
+  createGitLabReviewForgeProvider,
+  createGitLabReviewProvider,
+  GitLabReviewForgeProvider,
+} from "./gitlab_review_forge.js";
+export type {
+  GitLabReviewProvider,
+} from "./gitlab_review_forge.js";
+export type {
+  GitLabCiDiagnostic,
+  GitLabDiscussion,
+  GitLabMergeRequest,
+  GitLabNote,
+  GitLabReviewProviderOptions,
+  GitLabReviewPullRequest,
+  GitLabReviewRestClient,
+  GitLabReviewSnapshot,
+} from "./gitlab_review_types.js";
 
 export const gitLabAdapter = gitLabAdapterContract;

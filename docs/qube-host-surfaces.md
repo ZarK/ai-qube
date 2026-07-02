@@ -82,13 +82,17 @@ Product boundaries:
 
 ## GitLab Provider Surface
 
-GitLab support is an optional work-provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-gitlab` owns GitLab API access, credential diagnostics, issue mapping, AIB issue-preview rendering, capability flags, self-managed URL handling, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
+GitLab support is an optional provider adapter package boundary, not bundled AIE core behavior. `@tjalve/qube-adapter-gitlab` owns GitLab API access, credential diagnostics, issue mapping, AIB issue-preview rendering, merge request review-forge reads, provider-visible review notes, review discussion resolution, head-pipeline diagnostics, capability flags, self-managed URL handling, and unsupported-operation reporting. AIE core owns provider-neutral lifecycle orchestration and refuses to fall back to GitHub semantics when the optional adapter is missing.
 
 Product boundaries:
 
 - AIB renders provider-neutral work item drafts into GitLab issue previews through the GitLab adapter package and `work-items render --provider gitlab --dry-run`.
 - AIE reads GitLab issues only when `providers.work.kind` is `gitlab`, the optional GitLab adapter package is installed, and the documented GitLab credentials are present.
-- AIE lifecycle mutations for GitLab issue state, labels, comments, assignees, completion, merge requests, approvals, and CI pipelines are explicitly unsupported until tested GitLab mutation/review/CI adapters exist.
-- Review and CI behavior remain separate provider choices; GitLab work does not imply GitHub pull requests or GitHub Actions.
+- AIE reads GitLab merge request review state only when `providers.review.kind` is `gitlab`, the optional GitLab adapter package is installed, and the documented GitLab project credentials are present.
+- AIE can request configured review participants and publish local review lane feedback by writing provider-visible GitLab merge request notes with trusted QUBE metadata.
+- AIE can resolve addressed GitLab merge request discussions when the GitLab review provider is selected.
+- AIE maps GitLab merge request `head_pipeline` status into review gate diagnostics when the GitLab review provider is selected.
+- AIE lifecycle mutations for GitLab issue state, labels, comments, assignees, completion, merge request approval, merge, and pipeline triggering are explicitly unsupported until tested mutation adapters exist.
+- Work, review, and CI behavior remain separate provider choices; GitLab work does not imply GitHub pull requests or GitHub Actions.
 
 `packages/qube-core` is the checked source of truth for this table. Tests fail if `qubeProductContracts` drifts from the documented ownership decisions.

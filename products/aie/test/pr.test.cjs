@@ -536,6 +536,9 @@ function makePrExec(options = {}) {
       return { args, exitCode: 0, stdout: JSON.stringify(options.issueComments || issueCommentsFromPr(currentPr)), stderr: '' };
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews') {
+      if (args.includes('--method') && args[args.indexOf('--method') + 1] === 'GET') {
+        return { args, exitCode: 0, stdout: JSON.stringify(options.pullReviews || currentPr.reviews || []), stderr: '' };
+      }
       const inputIndex = args.indexOf('--input');
       const payloadPath = inputIndex >= 0 ? args[inputIndex + 1] : null;
       const payload = payloadPath ? JSON.parse(readFileSync(payloadPath, 'utf8')) : {};
@@ -560,6 +563,9 @@ function makePrExec(options = {}) {
         if (prViews.length > 0) prViews[0] = currentPr;
       }
       return { args, exitCode: 0, stdout: JSON.stringify({ id: 123, html_url: url }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
+      return { args, exitCode: 0, stdout: '', stderr: '' };
     }
     if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
       return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };
@@ -1951,6 +1957,64 @@ describe('PR gate service', () => {
     assert.match(result.publish.body ?? '', /1 finding\(s\) were published as inline review comments/);
   });
 
+  it('deletes an empty stale pending GitHub review and retries lane review publish', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          summary: 'code quality found structured findings',
+          findings: [{ id: 'body-1', severity: 'advisory', message: 'Publish this after clearing the pending review.' }],
+          contextReviewed: [{ kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' }],
+          toolsUsed: ['codex'],
+        }
+      : { ...lane, toolsUsed: ['codex'] });
+    writeLocalEvidence(repo, evidence);
+    const pendingError = 'gh: Unprocessable Entity (HTTP 422)';
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      pullReviews: [{ id: 456, state: 'PENDING', user: { login: 'executor' }, commit_id: 'stale-head', html_url: 'https://github.com/example/repo/pull/12#pullrequestreview-456' }],
+      reviewApiResults: [{ exitCode: 1, stderr: pendingError }],
+    });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
+
+    assert.equal(result.publish.status, 'published');
+    assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call.includes('--input')).length, 2);
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews/456 --method DELETE'));
+  });
+
+  it('does not delete an unrelated pending GitHub review draft', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? {
+          ...lane,
+          summary: 'code quality found structured findings',
+          findings: [{ id: 'body-1', severity: 'advisory', message: 'Publish this after leaving human drafts alone.' }],
+          contextReviewed: [{ kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' }],
+          toolsUsed: ['codex'],
+        }
+      : { ...lane, toolsUsed: ['codex'] });
+    writeLocalEvidence(repo, evidence);
+    const pendingError = JSON.stringify({ message: 'Unprocessable Entity', errors: ['User can only have one pending review per pull request'], status: '422' });
+    const fixture = makePrExec({
+      prViews: [cleanLocalPr()],
+      pullReviews: [{ id: 456, state: 'PENDING', user: { login: 'executor' }, body: 'Still reviewing this by hand.', commit_id: 'stale-head', html_url: 'https://github.com/example/repo/pull/12#pullrequestreview-456' }],
+      reviewApiResults: [{ exitCode: 1, stderr: pendingError }, { exitCode: 1, stderr: pendingError }, { exitCode: 1, stderr: pendingError }],
+    });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
+
+    assert.equal(result.publish.status, 'failed');
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.equal(fixture.calls.some(call => /^api repos\/example\/repo\/pulls\/12\/reviews\/456 --method DELETE$/.test(call.join(' '))), false);
+  });
+
   it('fails lane review publish when structured findings are malformed', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -3157,7 +3221,7 @@ describe('PR gate service', () => {
 
     assert.equal(result.status, 'complete');
     assert.equal(result.feedback.length, 0);
-    assert.ok(result.warnings.some(warning => warning.includes('GitHub reports CHANGES_REQUESTED')));
+    assert.ok(result.warnings.some(warning => warning.includes('review provider reports requested changes')));
   });
 
   it('collects paginated review comments and unresolved review threads', async () => {

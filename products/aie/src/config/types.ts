@@ -3,7 +3,7 @@ import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextS
 export const DEFAULT_CONFIG_VERSION = 1;
 
 export type WorkProviderKind = 'github' | 'gitlab' | 'linear' | 'jira';
-export type ReviewProviderKind = 'github';
+export type ReviewProviderKind = 'github' | 'gitlab';
 export type RepositoryProviderKind = 'local-git';
 export type CiProviderKind = 'github';
 export type LayoutProviderKind = 'local';

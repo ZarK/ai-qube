@@ -117,7 +117,7 @@ export function buildProviderHealthDiagnostics(config: Config): ProviderHealthDi
   const warnings: string[] = [];
   const providers = {
     work: { kind: config.providers.work.kind, supported: config.providers.work.kind === 'github' || config.providers.work.kind === 'gitlab' || config.providers.work.kind === 'linear' || config.providers.work.kind === 'jira', required: config.providers.capabilities.work },
-    review: { kind: config.providers.review.kind, supported: config.providers.review.kind === 'github', required: config.providers.capabilities.review },
+    review: { kind: config.providers.review.kind, supported: config.providers.review.kind === 'github' || config.providers.review.kind === 'gitlab', required: config.providers.capabilities.review },
     repository: { kind: config.providers.repository.kind, supported: config.providers.repository.kind === 'local-git', required: config.providers.capabilities.repository },
     ci: { kind: config.providers.ci.kind, supported: config.providers.ci.kind === 'github', required: config.providers.capabilities.ci },
     layout: { kind: config.providers.layout.kind, supported: config.providers.layout.kind === 'local', required: config.providers.capabilities.layout },

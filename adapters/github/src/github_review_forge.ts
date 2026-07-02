@@ -442,6 +442,24 @@ function laneReviewReviews(reviews: RawReview[], trustedAuthor: string | null, h
   return [...latest.values()];
 }
 
+function isQubeLaneReviewDraft(review: RawReview, headSha: string): boolean {
+  const metadata = parseLaneReviewMetadata(review.body);
+  return metadata !== null && metadata.head === headSha;
+}
+
+function hasReviewComments(reviewComments: readonly RawReviewComment[], reviewId: string | number): boolean {
+  const normalizedId = String(reviewId);
+  return reviewComments.some(comment => comment.pull_request_review_id !== undefined && comment.pull_request_review_id !== null && String(comment.pull_request_review_id) === normalizedId);
+}
+
+function isEmptyStaleDraftReview(review: RawReview, headSha: string, reviewComments: readonly RawReviewComment[]): boolean {
+  if (review.id === undefined || review.id === null) return false;
+  if ((review.body ?? '').trim() !== '') return false;
+  const commit = review.commit?.oid ?? review.commit_id ?? null;
+  if (commit === headSha) return false;
+  return !hasReviewComments(reviewComments, review.id);
+}
+
 function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: string | null; headSha: string }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
   for (const comment of laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha)) {
@@ -702,6 +720,20 @@ function publishedReviewUrl(result: GhRunResult): string | null {
   } catch {
     return publishedCommentUrl(result);
   }
+}
+
+function pendingReviewConflict(result: GhRunResult): boolean {
+  const text = `${result.stderr}\n${result.stdout}`;
+  return result.exitCode !== 0 && /one pending review per pull request/i.test(text);
+}
+
+function maybePendingReviewConflict(result: GhRunResult): boolean {
+  const text = `${result.stderr}\n${result.stdout}`;
+  return pendingReviewConflict(result) || (result.exitCode !== 0 && /\bHTTP 422\b/i.test(text) && !/\bvalidation failed\b|\bcannot approve own pull request\b/i.test(text));
+}
+
+function reviewAuthor(review: RawReview): string {
+  return actorName(review.author ?? review.user);
 }
 
 function reviewEvent(recommendation: GitHubLocalReviewRecommendation): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' {
@@ -1572,22 +1604,48 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         nextAction,
       });
     };
+    const deletePendingReviews = async (): Promise<number> => {
+      const reviews = await this.getPullRequestReviews(repositoryName, input.prNumber);
+      const reviewComments = await this.getReviewComments(repositoryName, input.prNumber);
+      const pendingReviews = reviews.filter(review => review.state === 'PENDING'
+        && reviewAuthor(review) === trustedMarkerAuthor
+        && review.id !== undefined
+        && review.id !== null
+        && (isQubeLaneReviewDraft(review, input.headSha) || isEmptyStaleDraftReview(review, input.headSha, reviewComments)));
+      let deleted = 0;
+      for (const review of pendingReviews) {
+        const result = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(review.id)}`, '--method', 'DELETE'], this.options);
+        if (result.exitCode !== 0) throw new Error(result.stderr || result.stdout || `GitHub pending review ${String(review.id)} could not be deleted`);
+        deleted += 1;
+      }
+      return deleted;
+    };
+    const retryAfterPendingReview = async (result: GhRunResult, payload: JsonObject): Promise<GhRunResult> => {
+      if (!maybePendingReviewConflict(result)) return result;
+      try {
+        const deleted = await deletePendingReviews();
+        return deleted > 0 ? await submitReview(payload) : result;
+      } catch {
+        return result;
+      }
+    };
     const payload = {
       commit_id: input.headSha,
       body,
       event: reviewEvent(input.recommendation),
       comments: inlineComments,
     };
-    const result = await submitReview(payload);
+    const result = await retryAfterPendingReview(await submitReview(payload), payload);
     if (result.exitCode !== 0) {
       const fallbackBody = laneReviewBody(input, allFindings, 0);
       const intendedEvent = reviewEvent(input.recommendation);
-      const intendedBodyOnlyResult = await submitReview({
+      const bodyOnlyPayload = {
         commit_id: input.headSha,
         body: fallbackBody.body,
         event: intendedEvent,
         comments: [],
-      });
+      };
+      const intendedBodyOnlyResult = await retryAfterPendingReview(await submitReview(bodyOnlyPayload), bodyOnlyPayload);
       if (intendedBodyOnlyResult.exitCode === 0) {
         return publishReviewResult(
           intendedBodyOnlyResult,
@@ -1596,12 +1654,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         );
       }
       if (intendedEvent !== 'COMMENT') {
-        const commentFallbackResult = await submitReview({
+        const commentFallbackPayload = {
           commit_id: input.headSha,
           body: fallbackBody.body,
           event: 'COMMENT',
           comments: [],
-        });
+        };
+        const commentFallbackResult = await retryAfterPendingReview(await submitReview(commentFallbackPayload), commentFallbackPayload);
         if (commentFallbackResult.exitCode === 0) {
           return publishReviewResult(
             commentFallbackResult,
@@ -1806,6 +1865,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     ensureGhSuccess(`gh api pull review comments for PR ${prNumber}`, result);
     const parsed = parseGhJson<RawReviewComment[] | RawReviewComment[][]>(result.stdout, `gh api pull review comments for PR ${prNumber}`, isRawReviewCommentArray);
     return parsed.flat();
+  }
+
+  private async getPullRequestReviews(repoName: string, prNumber: number): Promise<RawReview[]> {
+    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews`, '--method', 'GET', '-F', 'per_page=100'], this.options);
+    ensureGhSuccess(`gh api pull reviews for PR ${prNumber}`, result);
+    const parsed = parseGhJson<RawReview[]>(result.stdout, `gh api pull reviews for PR ${prNumber}`, value => Array.isArray(value));
+    return parsed.map(review => ({
+      ...review,
+      author: review.author ?? review.user ?? null,
+      url: review.url ?? review.html_url,
+      commit: review.commit ?? (typeof review.commit_id === 'string' ? { oid: review.commit_id } : null),
+    }));
   }
 
   private async getPullRequestDiff(prNumber: number): Promise<string> {

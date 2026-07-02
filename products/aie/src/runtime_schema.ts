@@ -21,7 +21,7 @@ function schemaOptions() {
         shape: ['version', 'providers', 'policy'],
         supportedProviders: {
           work: ['github', 'gitlab', 'linear', 'jira'],
-          review: ['github'],
+          review: ['github', 'gitlab'],
           repository: ['local-git'],
           ci: ['github'],
           layout: ['local'],

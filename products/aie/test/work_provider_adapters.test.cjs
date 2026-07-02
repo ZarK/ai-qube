@@ -66,6 +66,36 @@ describe('work provider adapter boundary', () => {
     assert.equal(workProviderAdapterPackage('github'), '@tjalve/qube-adapter-github');
   });
 
+  it('lists and loads GitLab review forge through the optional adapter boundary', async () => {
+    const { createReviewForgeProvider, listReviewForgeAdapters, reviewForgeAdapterPackage } = require('../dist/providers/review_forge_adapters.js');
+    const adapters = listReviewForgeAdapters();
+    const byId = Object.fromEntries(adapters.map(adapter => [adapter.id, adapter]));
+    const previousToken = process.env.GITLAB_TOKEN;
+    const previousProject = process.env.GITLAB_PROJECT_ID;
+    try {
+      process.env.GITLAB_TOKEN = 'fixture-token';
+      process.env.GITLAB_PROJECT_ID = 'acme/qube';
+      const provider = await createReviewForgeProvider('gitlab');
+
+      assert.deepEqual(adapters.map(adapter => adapter.id), ['github', 'gitlab']);
+      assert.equal(byId.gitlab.packageName, '@tjalve/qube-adapter-gitlab');
+      assert.equal(byId.gitlab.capabilities.loadReview, true);
+      assert.equal(byId.gitlab.capabilities.planReviewRequests, true);
+      assert.equal(byId.gitlab.capabilities.publishLaneReview, true);
+      assert.equal(byId.gitlab.capabilities.publishLaneReviewInline, false);
+      assert.equal(byId.gitlab.capabilities.publishLocalReview, false);
+      assert.equal(byId.gitlab.capabilities.ciDiagnostics, true);
+      assert.equal(reviewForgeAdapterPackage('gitlab'), '@tjalve/qube-adapter-gitlab');
+      assert.equal(provider.id, 'gitlab');
+      assert.equal(provider.capabilities().publishLocalReview, false);
+    } finally {
+      if (previousToken === undefined) delete process.env.GITLAB_TOKEN;
+      else process.env.GITLAB_TOKEN = previousToken;
+      if (previousProject === undefined) delete process.env.GITLAB_PROJECT_ID;
+      else process.env.GITLAB_PROJECT_ID = previousProject;
+    }
+  });
+
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
     const provider = await createWorkProvider('linear');

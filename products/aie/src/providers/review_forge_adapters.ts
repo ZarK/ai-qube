@@ -50,6 +50,18 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   ciDiagnostics: true,
 });
 
+const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
+  loadReview: true,
+  findCurrentBranchReview: true,
+  planReviewRequests: true,
+  applyReviewRequests: true,
+  publishLaneReview: true,
+  publishLaneReviewInline: false,
+  publishLocalReview: false,
+  resolveReviewThreads: true,
+  ciDiagnostics: true,
+});
+
 const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
   Object.freeze({
     id: 'github',
@@ -62,10 +74,28 @@ const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
     ]),
     create: async (options: ReviewForgeAdapterOptions) => {
       const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-github', 'createGitHubReviewForgeProvider');
-      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedGitHubReviewForgeProvider);
+      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedReviewForgeProvider);
       return new MissingReviewForgeProvider('github', '@tjalve/qube-adapter-github', [
         'Install the optional GitHub review-forge adapter package before selecting providers.review.kind=github.',
         'Authenticate gh for the target repository before running mutating PR review commands.',
+      ]);
+    },
+  }),
+  Object.freeze({
+    id: 'gitlab',
+    packageName: '@tjalve/qube-adapter-gitlab',
+    installed: true,
+    capabilities: GITLAB_CAPABILITIES,
+    setup: Object.freeze([
+      'GitLab review-forge support is available through the optional GitLab adapter package.',
+      'Set GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL before reading or mutating GitLab merge request review state.',
+    ]),
+    create: async (options: ReviewForgeAdapterOptions) => {
+      const loaded = await loadOptionalAdapter('@tjalve/qube-adapter-gitlab', 'createGitLabReviewForgeProvider');
+      if (loaded) return wrapAdapterReviewForgeProvider(loaded(options) as unknown as LoadedReviewForgeProvider);
+      return new MissingReviewForgeProvider('gitlab', '@tjalve/qube-adapter-gitlab', [
+        'Install the optional GitLab adapter package before selecting providers.review.kind=gitlab.',
+        'Set GITLAB_TOKEN, GITLAB_PROJECT_ID, and optional GITLAB_BASE_URL before running GitLab merge request review commands.',
       ]);
     },
   }),
@@ -110,9 +140,9 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
   return adapterFor(id).packageName;
 }
 
-interface LoadedGitHubReviewForgeProvider {
-  readonly id: 'github';
-  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; resolveReviewThreads?: boolean };
+interface LoadedReviewForgeProvider {
+  readonly id: ReviewForgeProviderId;
+  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; publishLocalReview?: boolean; resolveReviewThreads?: boolean };
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
@@ -120,7 +150,7 @@ interface LoadedGitHubReviewForgeProvider {
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
-  publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
+  publishLocalReviewFeedback?(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
@@ -134,18 +164,20 @@ function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
   };
 }
 
-function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvider): ReviewForgeProvider {
+function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): ReviewForgeProvider {
+  const capabilities = provider.capabilities();
   return {
-    id: 'github',
+    id: provider.id,
     capabilities: () => ({
-      loadReview: provider.capabilities().loadReview,
-      findCurrentBranchReview: provider.capabilities().findCurrentBranchReview,
-      planReviewRequests: provider.capabilities().planReviewRequests,
-      applyReviewRequests: provider.capabilities().applyReviewRequests,
-      publishLaneReview: provider.capabilities().publishLaneReview ?? true,
-      publishLaneReviewInline: provider.capabilities().publishLaneReviewInline ?? false,
-      publishLocalReview: true,
-      resolveReviewThreads: provider.capabilities().resolveReviewThreads ?? false,
+      loadReview: capabilities.loadReview,
+      findCurrentBranchReview: capabilities.findCurrentBranchReview,
+      planReviewRequests: capabilities.planReviewRequests,
+      applyReviewRequests: capabilities.applyReviewRequests,
+      publishLaneReview: capabilities.publishLaneReview ?? true,
+      publishLaneReviewInline: capabilities.publishLaneReviewInline ?? false,
+      publishLocalReview: capabilities.publishLocalReview ?? typeof provider.publishLocalReviewFeedback === 'function',
+      resolveReviewThreads: capabilities.resolveReviewThreads ?? false,
+      ciDiagnostics: true,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),
@@ -156,7 +188,18 @@ function wrapAdapterReviewForgeProvider(provider: LoadedGitHubReviewForgeProvide
       : undefined,
     planReviewRequest: (item, policy, options) => provider.planReviewRequest(item, toReviewForgePolicy(policy), options),
     apply: async (plan) => [...await provider.apply(plan)],
-    publishLocalReviewFeedback: (item, input) => provider.publishLocalReviewFeedback(item, input),
+    publishLocalReviewFeedback: (item, input) => {
+      if (provider.publishLocalReviewFeedback) return provider.publishLocalReviewFeedback(item, input);
+      return Promise.resolve({
+        status: 'disabled',
+        runId: null,
+        marker: null,
+        body: null,
+        url: null,
+        failure: `${provider.id} review forge does not support local review feedback publishing.`,
+        nextAction: 'Use per-lane review publishing when the adapter supports publishLaneReview, or select a review provider with publishLocalReview support.',
+      });
+    },
     publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
     publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
       ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)

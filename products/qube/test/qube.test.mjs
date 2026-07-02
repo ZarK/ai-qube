@@ -224,6 +224,7 @@ describe("qube composer CLI", () => {
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "run-aiq-github-action" && capability.support === "standalone"));
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
     const notes = parsed.installPlan.notes.join("\n");
     assert.match(notes, /No package-manager command is executed/);
@@ -674,6 +675,7 @@ describe("qube composer CLI", () => {
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
+    assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "local" && provider.support === "unsupported"));
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
