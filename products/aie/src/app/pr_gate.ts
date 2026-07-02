@@ -735,7 +735,7 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = reviewRequestPolicy(config);
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents });
   const repoRoot = options.repoRoot ?? process.cwd();
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const localRequired = localReviewRequired(config);
