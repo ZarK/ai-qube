@@ -311,7 +311,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       reviewDecision: pr.reviewDecision === "REVIEW_REQUIRED" ? "review-required" : "none",
       mergeability: mapMergeability(mr),
       linkedWorkItems: closingIssueNumbers(mr).map(number => ({ providerId: "gitlab", id: String(number) })),
-      feedback: feedback(notes, discussions),
+      feedback: feedback(notes, discussions, trustedMarkerAuthor),
       mergeBlockers: mergeBlockers(mr, checkEvidence, conversations),
       conversations,
       checks: checkEvidence,
@@ -336,9 +336,9 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 }
 
-function feedback(notes: readonly GitLabNote[], discussions: readonly GitLabDiscussion[]): ReviewFeedback[] {
+function feedback(notes: readonly GitLabNote[], discussions: readonly GitLabDiscussion[], trustedMarkerAuthor: string | null): ReviewFeedback[] {
   const noteFeedback = notes
-    .filter(note => !note.system && noteMetadata(note) === null)
+    .filter(note => !note.system && trustedMetadataNote(note, trustedMarkerAuthor) === null)
     .map(note => ({ source: "comment" as const, author: userName(note.author), summary: note.body.trim().slice(0, 500), url: note.web_url ?? null, state: null, trust: "untrusted" as const }));
   const discussionFeedback = discussions
     .filter(discussion => discussion.notes?.some(note => note.resolvable && !note.resolved))
@@ -347,6 +347,11 @@ function feedback(notes: readonly GitLabNote[], discussions: readonly GitLabDisc
       return latest ? [{ source: "thread" as const, author: userName(latest.author), summary: latest.body.trim().slice(0, 500), url: latest.web_url ?? null, state: "unresolved", trust: "untrusted" as const }] : [];
     });
   return [...noteFeedback, ...discussionFeedback].filter(item => item.summary !== "");
+}
+
+function trustedMetadataNote(note: GitLabNote, trustedMarkerAuthor: string | null): GitLabMetadata | null {
+  if (trustedMarkerAuthor !== null && userName(note.author) !== trustedMarkerAuthor) return null;
+  return noteMetadata(note);
 }
 
 function reviewConversations(discussions: readonly GitLabDiscussion[]) {
@@ -372,7 +377,7 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
 function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedMarkerAuthor: string | null; unavailable: string[]; ciDiagnostics: GitLabCiDiagnostic[] }): JsonObject {
   const head = headSha(input.mr);
   const laneReviews = input.notes.flatMap(note => {
-    const parsed = noteMetadata(note);
+    const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
     if (parsed?.kind !== "lane-review" || !parsed.lane || !parsed.runId || !parsed.recommendation || !parsed.status || !parsed.summary) return [];
     return [{
       head: parsed.head,
@@ -394,7 +399,7 @@ function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedM
     }];
   });
   const requestMarkers = input.notes.flatMap(note => {
-    const parsed = noteMetadata(note);
+    const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
     if (parsed?.kind !== "review-request" || !parsed.reviewerId) return [];
     return [{ reviewerId: parsed.reviewerId, head: parsed.head, author: userName(note.author), url: note.web_url ?? null }];
   });

@@ -9,6 +9,7 @@ import type {
 
 const GITLAB_BASE_URL = "https://gitlab.com";
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
+const GITLAB_PAGE_LIMIT = 100;
 
 export function required(value: string | undefined, name: string): string {
   if (value && value.trim() !== "") return value.trim();
@@ -23,6 +24,11 @@ function requestTimeoutMs(value: number | undefined): number {
 
 function encodeProjectId(projectId: string): string {
   return encodeURIComponent(projectId);
+}
+
+function isAbortTimeout(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  return error.name === "TimeoutError" || error.name === "AbortError";
 }
 
 export function normalizeMergeRequestIid(value: string | number): string {
@@ -50,11 +56,11 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   async listMergeRequestNotes(input: { projectId: string; iid: string }): Promise<GitLabNote[]> {
-    return this.get(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`, { per_page: "100" });
+    return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`);
   }
 
   async listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]> {
-    return this.get(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions`, { per_page: "100" });
+    return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/discussions`);
   }
 
   async createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote> {
@@ -66,10 +72,28 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   private async get<T>(path: string, query: Record<string, string> = {}): Promise<T> {
+    return (await this.getPage<T>(path, query)).value;
+  }
+
+  private async getPages<T>(path: string): Promise<T[]> {
+    const values: T[] = [];
+    let page: string | null = "1";
+    while (page) {
+      const result: { value: T[]; nextPage: string | null } = await this.getPage<T[]>(path, {
+        per_page: String(GITLAB_PAGE_LIMIT),
+        page,
+      });
+      values.push(...result.value);
+      page = result.nextPage;
+    }
+    return values;
+  }
+
+  private async getPage<T>(path: string, query: Record<string, string> = {}): Promise<{ value: T; nextPage: string | null }> {
     const url = new URL(`${this.apiBaseUrl}${path}`);
     for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
     const response = await this.request(url, { method: "GET" });
-    return response.json() as Promise<T>;
+    return { value: await response.json() as T, nextPage: response.headers.get("x-next-page")?.trim() || null };
   }
 
   private async post<T>(path: string, body: Record<string, string>): Promise<T> {
@@ -82,15 +106,23 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   private async request(url: URL, init: RequestInit): Promise<Response> {
-    const response = await fetch(url, {
-      ...init,
-      headers: {
-        "PRIVATE-TOKEN": this.token,
-        Accept: "application/json",
-        ...init.headers,
-      },
-      signal: AbortSignal.timeout(this.requestTimeoutMs),
-    });
+    let response: Response;
+    try {
+      response = await fetch(url, {
+        ...init,
+        headers: {
+          "PRIVATE-TOKEN": this.token,
+          Accept: "application/json",
+          ...init.headers,
+        },
+        signal: AbortSignal.timeout(this.requestTimeoutMs),
+      });
+    } catch (error) {
+      if (isAbortTimeout(error)) {
+        throw new Error(`GitLab API request timed out after ${this.requestTimeoutMs}ms. Service may be stalling or unreachable. Verify GITLAB_TOKEN, GITLAB_BASE_URL, and GITLAB_PROJECT_ID, then retry.`);
+      }
+      throw error;
+    }
     if (!response.ok) {
       throw new Error(`GitLab API request failed while reading ${url.pathname}. Cause: HTTP ${response.status}. Next action: verify GITLAB_TOKEN, GITLAB_BASE_URL, GITLAB_PROJECT_ID, and project permissions, then retry.`);
     }
