@@ -33,7 +33,7 @@ function emptyPlan(id) {
   };
 }
 
-function jiraProvider(items = [jiraItem('ENG-123')]) {
+function jiraProvider(items = [jiraItem('ENG-123')], hooks = {}) {
   return {
     id: 'jira',
     capabilities() {
@@ -49,9 +49,11 @@ function jiraProvider(items = [jiraItem('ENG-123')]) {
       };
     },
     async listOpenWorkItems() {
+      hooks.listOpenWorkItems?.();
       return items;
     },
     async getWorkItem(key) {
+      hooks.getWorkItem?.(key);
       const item = items.find(candidate => candidate.key.id === key.id);
       if (!item) throw new Error(`unexpected Jira work item read for ${key.id}`);
       return item;
@@ -74,7 +76,7 @@ function jiraProvider(items = [jiraItem('ENG-123')]) {
   };
 }
 
-function context(items) {
+function context(items, hooks) {
   const { getDefaults } = require('../dist/config/index.js');
   const { configToExecutorPolicy } = require('../dist/config_policy.js');
   const config = getDefaults();
@@ -82,20 +84,21 @@ function context(items) {
   return {
     config,
     policy: configToExecutorPolicy(config),
-    provider: jiraProvider(items),
+    provider: jiraProvider(items, hooks),
   };
 }
 
 describe('lifecycle provider support', () => {
   it('blocks Jira start issue-number selection before GitHub issue-number conversion', async () => {
     const { runStartService } = require('../dist/app/lifecycle_services.js');
+    let queueReads = 0;
 
     const result = await runStartService({
       selection: { kind: 'issue', issueNumber: 123 },
       dryRun: true,
       assign: true,
       comment: true,
-      context: context([jiraItem('ENG-123')]),
+      context: context([jiraItem('ENG-123')], { listOpenWorkItems: () => { queueReads += 1; } }),
     });
 
     assert.equal(result.ok, false);
@@ -103,6 +106,7 @@ describe('lifecycle provider support', () => {
     assert.equal(result.selectedItem, null);
     assert.match(result.reason, /providers\.work\.kind=github/);
     assert.match(result.reason, /qube aie start/);
+    assert.equal(queueReads, 0);
   });
 
   it('blocks Jira start next with provider-native keys instead of rendering issue numbers', async () => {
@@ -125,13 +129,18 @@ describe('lifecycle provider support', () => {
 
   it('blocks Jira switch before reading numeric GitHub issue ids', async () => {
     const { runSwitchService } = require('../dist/app/lifecycle_services.js');
+    let queueReads = 0;
+    let itemReads = 0;
 
     const result = await runSwitchService({
       targetIssueNumber: 123,
       dryRun: true,
       assign: true,
       comment: true,
-      context: context([jiraItem('ENG-100', ['S-InProgress']), jiraItem('ENG-123')]),
+      context: context([jiraItem('ENG-100', ['S-InProgress']), jiraItem('ENG-123')], {
+        listOpenWorkItems: () => { queueReads += 1; },
+        getWorkItem: () => { itemReads += 1; },
+      }),
     });
 
     assert.equal(result.ok, false);
@@ -139,6 +148,8 @@ describe('lifecycle provider support', () => {
     assert.equal(result.sourceItem, null);
     assert.equal(result.targetItem, null);
     assert.match(result.reason, /qube aie switch/);
+    assert.equal(queueReads, 0);
+    assert.equal(itemReads, 0);
   });
 
   it('rejects Jira complete and view with explicit provider guidance', async () => {

@@ -76,7 +76,7 @@ class FetchJiraRestClient implements JiraRestClient {
       if (pageIssues.length === 0) break;
       const total = payload.total;
       if (typeof total === "number" && issues.length >= total) break;
-      if (pageIssues.length < maxResults) break;
+      if (typeof total !== "number" && pageIssues.length < maxResults) break;
       startAt = (payload.startAt ?? startAt) + pageIssues.length;
     }
     return issues;

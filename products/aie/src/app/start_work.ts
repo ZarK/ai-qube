@@ -24,6 +24,10 @@ function blocked(input: Omit<StartServiceResult, 'ok'>): StartServiceResult {
   return { ok: false, ...input };
 }
 
+function emptyActiveWorkState(): ActiveWorkState {
+  return { inProgressCount: 0, activeIssues: [], multipleInProgress: false };
+}
+
 function blockedStart(input: {
   action: StartServiceResult['action'];
   reason: string;
@@ -91,11 +95,11 @@ function selectedWorkLabel(item: WorkItem): string {
 
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
   const { selection, dryRun, assign, comment, context } = options;
+  if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun, warnings: ['Use command help output for usage.'] });
+  const unsupportedIssueSelection = selection.kind !== 'next' ? githubIssueLifecycleUnsupportedReason(context, 'start') : null;
+  if (unsupportedIssueSelection) return blockedStart({ action: 'blocked', reason: unsupportedIssueSelection, selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun });
   const { workItems, queue } = await loadQueueState(context);
   const activeState = activeWorkState(queue);
-  if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: activeState, dryRun, warnings: ['Use command help output for usage.'] });
-  const unsupportedIssueSelection = selection.kind !== 'next' ? githubIssueLifecycleUnsupportedReason(context, 'start') : null;
-  if (unsupportedIssueSelection) return blockedStart({ action: 'blocked', reason: unsupportedIssueSelection, selectedItem: null, activeIssueState: activeState, dryRun });
 
   let selectedItem: WorkItem | null = null;
   let action: 'started' | 'resumed' = 'started';

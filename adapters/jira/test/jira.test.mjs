@@ -293,6 +293,48 @@ describe("Jira work provider adapter", () => {
     }
   });
 
+  it("continues Jira search pagination when Jira returns a short non-final page", async () => {
+    const originalFetch = globalThis.fetch;
+    const requests = [];
+    try {
+      globalThis.fetch = async (url) => {
+        const requestUrl = new URL(String(url));
+        requests.push(requestUrl);
+        const startAt = Number(requestUrl.searchParams.get("startAt"));
+        const pageSize = startAt === 100 ? 20 : 50;
+        return {
+          ok: true,
+          async json() {
+            return {
+              startAt,
+              maxResults: pageSize,
+              total: 120,
+              issues: Array.from({ length: pageSize }, (_value, index) => makeJiraIssue({
+                id: String(startAt + index + 1),
+                key: `ENG-${startAt + index + 1}`,
+              })),
+            };
+          },
+        };
+      };
+      const provider = createJiraWorkProvider({
+        baseUrl: "https://jira.example.com/",
+        email: "user@example.com",
+        apiToken: "token",
+        projectKey: "ENG",
+        limit: 120,
+      });
+
+      const items = await provider.listOpenWorkItems();
+
+      assert.equal(items.length, 120);
+      assert.deepEqual(requests.map((request) => request.searchParams.get("startAt")), ["0", "50", "100"]);
+      assert.deepEqual(requests.map((request) => request.searchParams.get("maxResults")), ["100", "70", "20"]);
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
   it("bounds single issue Jira reads to configured fields", async () => {
     const originalFetch = globalThis.fetch;
     try {
