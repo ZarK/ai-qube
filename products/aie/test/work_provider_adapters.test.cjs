@@ -7,10 +7,10 @@ describe('work provider adapter boundary', () => {
   it('keeps optional GitHub adapter value imports behind provider boundaries', () => {
     const srcRoot = join(__dirname, '..', 'src');
     const allowed = new Set([
+      join('providers', 'github_adapter_exports.ts'),
       join('providers', 'review_agent_adapters.ts'),
       join('providers', 'review_forge_adapters.ts'),
       join('providers', 'work_provider_adapters.ts'),
-      'github_adapter_runtime.ts',
     ]);
     const offenders = [];
     const visit = dir => {
@@ -34,6 +34,13 @@ describe('work provider adapter boundary', () => {
     visit(srcRoot);
 
     assert.deepEqual(offenders, []);
+  });
+
+  it('does not keep a copied GitHub runtime inside AIE', () => {
+    const srcRoot = join(__dirname, '..', 'src');
+    const runtimePath = join(srcRoot, 'github_adapter_runtime.ts');
+
+    assert.throws(() => statSync(runtimePath), /ENOENT/);
   });
 
   it('lists built-in and optional work provider adapter contracts', () => {

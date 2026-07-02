@@ -1,6 +1,6 @@
 import { getDefaults, loadConfig, type Config } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
-import type { GhExec } from '@tjalve/qube-adapter-github';
+import type { GhExec } from './providers/github_adapter_exports.js';
 import { createLifecycleContext } from './app/lifecycle_services.js';
 import { runViewService } from './app/view_work.js';
 import { createLocalGitRepositoryProvider } from './providers/local/local_git_provider.js';

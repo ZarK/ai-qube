@@ -1,5 +1,5 @@
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import type { GhExec } from '@tjalve/qube-adapter-github';
+import type { GhExec } from '../providers/github_adapter_exports.js';
 import type { ResolveReviewThreadResult } from '../core/review_item.js';
 import { parsePrNumber } from './pr_gate.js';
 

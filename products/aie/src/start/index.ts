@@ -1,5 +1,5 @@
 import { getDefaults, loadConfig, Config } from '../config/index.js';
-import type { GhExec } from '../github_adapter_runtime.js';
+import type { GhExec } from '../providers/github_adapter_exports.js';
 import {
   LifecycleIssueSelection,
   PreStartPolicyResult,

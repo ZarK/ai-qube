@@ -1,5 +1,5 @@
 import { maybeWorkItemKeyNumber, type WorkItem, type WorkItemKey } from './core/work_item.js';
-import type { GhExec } from '@tjalve/qube-adapter-github';
+import type { GhExec } from './providers/github_adapter_exports.js';
 import { buildWorkDependencyGraph, computeWorkQueue, planStatusSyncFromWorkItems, resolveWorkStatusLabels, type WorkQueuePolicy } from './core/queue_rules.js';
 import { getDefaults, loadConfig, type Config } from './config/index.js';
 import { createWorkProvider } from './providers/work_provider_adapters.js';
