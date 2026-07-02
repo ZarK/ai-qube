@@ -430,12 +430,17 @@ function readJiraWorkflowSchema(value: unknown, path: string, errors: Validation
   rejectUnknownKeys(value, ['statusMap', 'openStatusNames', 'closedStatusNames', 'priorityMap', 'linkRules', 'sprintField', 'epicField'], path, errors);
   const sprintField = readOptionalNonEmptyString(value, 'sprintField', `${path}.sprintField`, errors);
   const epicField = readOptionalNonEmptyString(value, 'epicField', `${path}.epicField`, errors);
+  const statusMap = readEnumRecord<JiraWorkStatus>(value.statusMap, `${path}.statusMap`, ['in-progress', 'ready', 'blocked', 'unknown'], errors);
+  const openStatusNames = 'openStatusNames' in value ? readStringArray(value, 'openStatusNames', [], path, errors) : undefined;
+  const closedStatusNames = 'closedStatusNames' in value ? readStringArray(value, 'closedStatusNames', [], path, errors) : undefined;
+  const priorityMap = readEnumRecord<JiraWorkPriority>(value.priorityMap, `${path}.priorityMap`, ['critical', 'high', 'medium', 'low', 'none'], errors);
+  const linkRules = 'linkRules' in value ? readJiraLinkRules(value.linkRules, `${path}.linkRules`, errors) : undefined;
   return {
-    statusMap: readEnumRecord<JiraWorkStatus>(value.statusMap, `${path}.statusMap`, ['in-progress', 'ready', 'blocked', 'unknown'], errors),
-    openStatusNames: readStringArray(value, 'openStatusNames', [], path, errors),
-    closedStatusNames: readStringArray(value, 'closedStatusNames', [], path, errors),
-    priorityMap: readEnumRecord<JiraWorkPriority>(value.priorityMap, `${path}.priorityMap`, ['critical', 'high', 'medium', 'low', 'none'], errors),
-    linkRules: readJiraLinkRules(value.linkRules, `${path}.linkRules`, errors),
+    ...(Object.keys(statusMap).length > 0 ? { statusMap } : {}),
+    ...(openStatusNames ? { openStatusNames } : {}),
+    ...(closedStatusNames ? { closedStatusNames } : {}),
+    ...(Object.keys(priorityMap).length > 0 ? { priorityMap } : {}),
+    ...(linkRules ? { linkRules } : {}),
     ...(sprintField ? { sprintField } : {}),
     ...(epicField ? { epicField } : {}),
   };

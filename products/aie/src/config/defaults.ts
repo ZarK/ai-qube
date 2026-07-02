@@ -135,11 +135,11 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
       jira: {
         ...(input.jira.workflowSchema ? {
           workflowSchema: {
-            statusMap: { ...input.jira.workflowSchema.statusMap },
-            openStatusNames: [...input.jira.workflowSchema.openStatusNames],
-            closedStatusNames: [...input.jira.workflowSchema.closedStatusNames],
-            priorityMap: { ...input.jira.workflowSchema.priorityMap },
-            linkRules: input.jira.workflowSchema.linkRules.map(rule => ({ ...rule })),
+            ...(input.jira.workflowSchema.statusMap ? { statusMap: { ...input.jira.workflowSchema.statusMap } } : {}),
+            ...(input.jira.workflowSchema.openStatusNames ? { openStatusNames: [...input.jira.workflowSchema.openStatusNames] } : {}),
+            ...(input.jira.workflowSchema.closedStatusNames ? { closedStatusNames: [...input.jira.workflowSchema.closedStatusNames] } : {}),
+            ...(input.jira.workflowSchema.priorityMap ? { priorityMap: { ...input.jira.workflowSchema.priorityMap } } : {}),
+            ...(input.jira.workflowSchema.linkRules ? { linkRules: input.jira.workflowSchema.linkRules.map(rule => ({ ...rule })) } : {}),
             ...(input.jira.workflowSchema.sprintField ? { sprintField: input.jira.workflowSchema.sprintField } : {}),
             ...(input.jira.workflowSchema.epicField ? { epicField: input.jira.workflowSchema.epicField } : {}),
           },

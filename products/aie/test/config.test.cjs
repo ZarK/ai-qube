@@ -114,6 +114,27 @@ describe('config validation', () => {
     assert.equal(result.config.opencodeCommandAlias, true);
   });
 
+  it('preserves omitted Jira workflow schema fields so adapter defaults still apply', () => {
+    const input = defaultFile();
+    input.providers.work = {
+      kind: 'jira',
+      jira: {
+        workflowSchema: {
+          sprintField: 'customfield_10020',
+        },
+      },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.providers.work.kind, 'jira');
+    assert.equal(result.config.providers.work.jira.workflowSchema.sprintField, 'customfield_10020');
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'linkRules'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'openStatusNames'), false);
+    assert.equal(Object.hasOwn(result.config.providers.work.jira.workflowSchema, 'closedStatusNames'), false);
+  });
+
   it('normalizes structured and legacy gate policy consistently', () => {
     const input = defaultFile();
     input.policy.gates.definitions = [

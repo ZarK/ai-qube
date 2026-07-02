@@ -23,11 +23,11 @@ export interface JiraIssueLinkRuleConfig {
 }
 
 export interface JiraWorkflowSchemaConfig {
-  statusMap: Record<string, JiraWorkStatus>;
-  openStatusNames: string[];
-  closedStatusNames: string[];
-  priorityMap: Record<string, JiraWorkPriority>;
-  linkRules: JiraIssueLinkRuleConfig[];
+  statusMap?: Record<string, JiraWorkStatus>;
+  openStatusNames?: string[];
+  closedStatusNames?: string[];
+  priorityMap?: Record<string, JiraWorkPriority>;
+  linkRules?: JiraIssueLinkRuleConfig[];
   sprintField?: string;
   epicField?: string;
 }

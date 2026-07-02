@@ -77,6 +77,11 @@ export function activeWorkState(queue: WorkQueueState): ActiveWorkState {
 
 export { workItemNumber };
 
+export function githubIssueLifecycleUnsupportedReason(context: LifecycleServiceContext, command: string): string | null {
+  if (context.provider.id === 'github') return null;
+  return `Work provider ${context.provider.id} can be inspected through read-only queue commands, but \`qube aie ${command}\` uses GitHub issue-number lifecycle semantics and is unsupported for provider-native work item keys. Use \`qube aie queue --json\` or \`qube aie next --json\` to inspect configured ${context.provider.id} work, or configure providers.work.kind=github before running lifecycle mutation commands.`;
+}
+
 export async function applyProviderPlan(provider: WorkProvider, plan: ActionPlan, dryRun: boolean, checkOnly = false): Promise<ApplyResult[]> {
   if (dryRun || checkOnly) return plan.actions.map(() => ({ status: 'planned', failure: null }));
   const results: ApplyResult[] = [];
