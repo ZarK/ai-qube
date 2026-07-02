@@ -228,6 +228,8 @@ export function jenkinsBuildToGateEvidence(input: {
   const buildId = normalizeOptionalText(build.id) ?? (typeof build.number === "number" ? String(build.number) : buildSelector(input.build));
   const buildArtifactUrls = artifactUrls(build);
   const artifactCount = Array.isArray(build.artifacts) ? build.artifacts.length : 0;
+  const buildUrl = sanitizeEvidenceUrl(build.url);
+  const buildUrlBase = sanitizeEvidenceUrl(build.url, { stripQuery: true });
   return normalizeGateEvidence({
     key: `jenkins:${jobPath}:${buildId}`,
     name: `Jenkins ${jobPath}`,
@@ -237,7 +239,7 @@ export function jenkinsBuildToGateEvidence(input: {
     trust: "trusted-provider",
     command: null,
     providerRunId: buildId,
-    path: normalizeOptionalText(build.url),
+    path: buildUrl,
     summary: buildSummary(jobPath, build, result),
     recordedAt: recordedAt(build.timestamp),
     metadata: {
@@ -250,7 +252,7 @@ export function jenkinsBuildToGateEvidence(input: {
       building: build.building === true,
       queueId: typeof build.queueId === "number" ? build.queueId : null,
       durationMs: typeof build.duration === "number" ? build.duration : null,
-      logUrl: build.url ? `${build.url.replace(/\/+$/u, "")}/console` : null,
+      logUrl: buildUrlBase ? `${buildUrlBase.replace(/\/+$/u, "")}/console` : null,
       artifactUrls: buildArtifactUrls,
       artifactCount,
       artifactUrlsTruncated: artifactCount > buildArtifactUrls.length,
@@ -362,13 +364,36 @@ function buildSummary(jobPath: string, build: JenkinsBuild, result: GateResult):
 }
 
 function artifactUrls(build: JenkinsBuild): readonly string[] {
-  const base = normalizeOptionalText(build.url)?.replace(/\/+$/u, "");
+  const base = sanitizeEvidenceUrl(build.url, { stripQuery: true })?.replace(/\/+$/u, "");
   if (!base || !Array.isArray(build.artifacts)) return [];
   return build.artifacts
     .map(artifact => normalizeOptionalText(artifact.relativePath))
     .filter((relativePath): relativePath is string => relativePath !== null)
     .slice(0, MAX_ARTIFACT_URLS)
     .map(relativePath => `${base}/artifact/${relativePath.split("/").map(encodeURIComponent).join("/")}`);
+}
+
+function sanitizeEvidenceUrl(value: string | null | undefined, options: { readonly stripQuery?: boolean } = {}): string | null {
+  const text = normalizeOptionalText(value);
+  if (text === null) return null;
+  try {
+    const url = new URL(text);
+    url.username = "";
+    url.password = "";
+    if (options.stripQuery === true) {
+      url.search = "";
+      url.hash = "";
+    } else {
+      for (const key of Array.from(url.searchParams.keys())) {
+        if (/(?:token|secret|password|apikey|api_key|access_key|credential|auth)/iu.test(key)) {
+          url.searchParams.set(key, "[redacted]");
+        }
+      }
+    }
+    return url.toString();
+  } catch {
+    return null;
+  }
 }
 
 function recordedAt(timestamp: number | null | undefined): string | null {

@@ -110,6 +110,21 @@ describe("Jenkins CI adapter", () => {
     assert.equal(evidence.metadata.artifactUrlsTruncated, true);
   });
 
+  it("redacts Jenkins build URL credentials before emitting gate evidence", () => {
+    const evidence = jenkinsBuildToGateEvidence({
+      jobPath: "folder/app",
+      build: 42,
+      buildRecord: build({
+        url: "https://build-user:secret-token@jenkins.example.com/job/folder/job/app/42/?token=secret-token&view=console",
+      }),
+    });
+
+    assert.equal(evidence.path, "https://jenkins.example.com/job/folder/job/app/42/?token=%5Bredacted%5D&view=console");
+    assert.equal(evidence.metadata.logUrl, "https://jenkins.example.com/job/folder/job/app/42/console");
+    assert.deepEqual(evidence.metadata.artifactUrls, ["https://jenkins.example.com/job/folder/job/app/42/artifact/reports/report.xml"]);
+    assert.doesNotMatch(JSON.stringify(evidence), /build-user|secret-token/);
+  });
+
   it("reads classic Jenkins and folder job paths without assuming one naming convention", async () => {
     const requests = [];
     const provider = createJenkinsCiProvider({
