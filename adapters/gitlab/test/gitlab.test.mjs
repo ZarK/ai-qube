@@ -271,26 +271,40 @@ describe("GitLab review forge adapter", () => {
           ];
         },
         async listMergeRequestDiscussions() {
-          return [{
-            id: "discussion-1",
-            notes: [{
-              id: 2,
-              body: "This line needs a safer fallback.",
-              author: { username: "reviewer" },
-              resolvable: true,
-              resolved: false,
-              position: { new_path: "src/review.ts", new_line: 7 },
-              web_url: "https://gitlab.example.com/discussion/1",
+          return [
+            {
+              id: "discussion-1",
+              notes: [{
+                id: 2,
+                body: "This line needs a safer fallback.",
+                author: { username: "reviewer" },
+                resolvable: true,
+                resolved: false,
+                position: { new_path: "src/review.ts", new_line: 7 },
+                web_url: "https://gitlab.example.com/discussion/1",
+              },
+              {
+                id: 3,
+                body: "Follow-up reply keeps the discussion unresolved.",
+                author: { username: "maintainer" },
+                resolvable: false,
+                resolved: false,
+                web_url: "https://gitlab.example.com/discussion/1#note_3",
+              }],
             },
             {
-              id: 3,
-              body: "Follow-up reply keeps the discussion unresolved.",
-              author: { username: "maintainer" },
-              resolvable: false,
-              resolved: false,
-              web_url: "https://gitlab.example.com/discussion/1#note_3",
-            }],
-          }];
+              id: "discussion-outdated",
+              notes: [{
+                id: 4,
+                body: "This old diff comment is stale.",
+                author: { username: "reviewer" },
+                resolvable: true,
+                resolved: false,
+                position: { new_path: "src/old.ts", new_line: 3, line_range: { start: { outdated: true } } },
+                web_url: "https://gitlab.example.com/discussion/outdated",
+              }],
+            },
+          ];
         },
         async createMergeRequestNote() {
           throw new Error("not used");
@@ -316,7 +330,10 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "unresolved-review-thread"), true);
     assert.equal(snapshot.item.conversations[0].path, "src/review.ts");
     assert.equal(snapshot.item.conversations[0].line, 7);
+    assert.equal(snapshot.item.conversations[0].outdated, false);
     assert.equal(snapshot.item.conversations[0].summary, "Follow-up reply keeps the discussion unresolved.");
+    assert.equal(snapshot.item.conversations[1].id, "discussion-outdated");
+    assert.equal(snapshot.item.conversations[1].outdated, true);
     assert.equal(snapshot.item.feedback.some(item => item.source === "thread" && item.state === "unresolved"), true);
   });
 
@@ -402,14 +419,20 @@ describe("GitLab review forge adapter", () => {
 
     assert.equal(snapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(snapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.deepEqual(snapshot.ciDiagnostics[0].currentHeadRunIds, []);
+    assert.deepEqual(snapshot.ciDiagnostics[0].staleRunIds, ["503"]);
     assert.equal(snapshot.item.checks[0].result, "unknown");
     assert.equal(snapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
     assert.equal(missingShaSnapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(missingShaSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.deepEqual(missingShaSnapshot.ciDiagnostics[0].currentHeadRunIds, []);
+    assert.deepEqual(missingShaSnapshot.ciDiagnostics[0].staleRunIds, ["504"]);
     assert.equal(missingShaSnapshot.item.checks[0].result, "unknown");
     assert.equal(missingShaSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
     assert.equal(staleSkippedSnapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(staleSkippedSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.deepEqual(staleSkippedSnapshot.ciDiagnostics[0].currentHeadRunIds, []);
+    assert.deepEqual(staleSkippedSnapshot.ciDiagnostics[0].staleRunIds, ["505"]);
     assert.equal(staleSkippedSnapshot.item.checks[0].result, "unknown");
     assert.equal(staleSkippedSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
     assert.equal(missingPipelineSnapshot.ciDiagnostics[0].status, "unknown");
@@ -418,6 +441,8 @@ describe("GitLab review forge adapter", () => {
     assert.equal(missingPipelineSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
     assert.equal(currentSkippedSnapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(currentSkippedSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, true);
+    assert.deepEqual(currentSkippedSnapshot.ciDiagnostics[0].currentHeadRunIds, ["506"]);
+    assert.deepEqual(currentSkippedSnapshot.ciDiagnostics[0].staleRunIds, []);
     assert.equal(currentSkippedSnapshot.item.checks[0].result, "unknown");
     assert.equal(currentSkippedSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
   });

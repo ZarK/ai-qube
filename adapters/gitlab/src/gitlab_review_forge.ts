@@ -157,8 +157,8 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
     mappedToCurrentHeadCheckRun: false,
     mappedToCurrentHeadWorkflowRun: matchesHead,
     currentHeadSuiteIds: [],
-    currentHeadRunIds: [String(pipeline.id)],
-    staleRunIds: [],
+    currentHeadRunIds: matchesHead ? [String(pipeline.id)] : [],
+    staleRunIds: matchesHead ? [] : [String(pipeline.id)],
     workflowDispatchSupported: null,
     summary: matchesHead ? `GitLab pipeline status=${pipeline.status}.` : `GitLab pipeline status=${pipeline.status}, but pipeline sha ${pipeline.sha} does not match merge request head ${sha}.`,
     nextAction: passed ? "No CI retrigger needed for this pipeline." : "Inspect the GitLab merge request pipeline, then rerun `aie pr view <mr> --json`.",
@@ -612,7 +612,7 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
       providerId: "gitlab",
       id: discussion.id,
       resolved: discussion.notes.every(note => !note.resolvable || note.resolved === true),
-      outdated: false,
+      outdated: isOutdatedDiscussion(discussion),
       viewerCanResolve: true,
       path: anchor?.position?.new_path ?? anchor?.position?.old_path ?? null,
       line: anchor?.position?.new_line ?? null,
@@ -622,6 +622,12 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
       url: latest.web_url ?? null,
     }];
   });
+}
+
+function isOutdatedDiscussion(discussion: GitLabDiscussion): boolean {
+  return discussion.notes?.some(note => note.position?.outdated === true
+    || note.position?.line_range?.start?.outdated === true
+    || note.position?.line_range?.end?.outdated === true) ?? false;
 }
 
 function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedMarkerAuthor: string | null; unavailable: string[]; ciDiagnostics: GitLabCiDiagnostic[] }): JsonObject {

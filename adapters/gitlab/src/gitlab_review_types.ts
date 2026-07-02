@@ -45,7 +45,7 @@ export interface GitLabNote {
   readonly resolved?: boolean;
   readonly noteable_type?: string;
   readonly type?: string | null;
-  readonly position?: { readonly new_path?: string; readonly old_path?: string; readonly new_line?: number; readonly old_line?: number } | null;
+  readonly position?: { readonly new_path?: string; readonly old_path?: string; readonly new_line?: number; readonly old_line?: number; readonly outdated?: boolean; readonly line_range?: { readonly start?: { readonly outdated?: boolean }; readonly end?: { readonly outdated?: boolean } } } | null;
   readonly web_url?: string;
 }
 
