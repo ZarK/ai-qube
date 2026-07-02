@@ -776,7 +776,6 @@ export function defineQubeAdapter<T extends QubeAdapterContract>(adapter: T): Re
 }
 
 export * from "./review.js";
-// Provider-neutral work queue helpers moved from AIE.
 
 export interface MilestoneOrderingPolicy {
   readonly enabled: boolean;
