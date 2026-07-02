@@ -33,7 +33,6 @@ export interface JiraWorkflowSchemaConfig {
 }
 
 export interface JiraWorkProviderConfig {
-  baseUrl?: string;
   projectKey?: string;
   jql?: string;
   requestTimeoutMs?: number;

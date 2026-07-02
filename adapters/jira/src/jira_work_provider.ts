@@ -58,6 +58,10 @@ class FetchJiraRestClient implements JiraRestClient {
   private readonly issueFields: readonly string[];
 
   constructor(options: JiraWorkProviderOptions) {
+    const hasExplicitBaseUrl = options.baseUrl !== undefined;
+    if (hasExplicitBaseUrl && (options.email === undefined || options.apiToken === undefined)) {
+      throw new Error("Jira work provider baseUrl option requires explicit email and apiToken. Use JIRA_BASE_URL with JIRA_EMAIL and JIRA_API_TOKEN when reading credentials from the environment.");
+    }
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL"));
     this.email = required(options.email ?? process.env.JIRA_EMAIL, "JIRA_EMAIL");
     this.apiToken = required(options.apiToken ?? process.env.JIRA_API_TOKEN, "JIRA_API_TOKEN");

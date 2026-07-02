@@ -55,7 +55,6 @@ export function workProviderOptions(config: Config, options: { cwd?: string; exe
     exec: options.exec,
     cwd: options.cwd,
     limit: options.limit,
-    ...(jira?.baseUrl ? { baseUrl: jira.baseUrl } : {}),
     ...(jira?.projectKey ? { projectKey: jira.projectKey } : {}),
     ...(jira?.jql ? { jql: jira.jql } : {}),
     ...(jira?.requestTimeoutMs ? { requestTimeoutMs: jira.requestTimeoutMs } : {}),

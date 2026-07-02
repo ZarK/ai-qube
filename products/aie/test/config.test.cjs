@@ -80,7 +80,6 @@ describe('config validation', () => {
     input.providers.work = {
       kind: 'jira',
       jira: {
-        baseUrl: 'https://jira.example.com',
         projectKey: 'ENG',
         requestTimeoutMs: 20000,
         workflowSchema: {
@@ -105,7 +104,6 @@ describe('config validation', () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.config.providers.work.kind, 'jira');
-    assert.equal(result.config.providers.work.jira.baseUrl, 'https://jira.example.com');
     assert.equal(result.config.providers.work.jira.projectKey, 'ENG');
     assert.equal(result.config.providers.work.jira.requestTimeoutMs, 20000);
     assert.equal(result.config.providers.work.jira.workflowSchema.statusMap.Queued, 'ready');
@@ -146,7 +144,6 @@ describe('config validation', () => {
     input.providers.work = {
       kind: 'jira',
       jira: {
-        baseUrl: 'https://jira.example.com',
         jql: 'project = ENG AND resolution = Unresolved ORDER BY updated DESC',
       },
     };
@@ -155,6 +152,7 @@ describe('config validation', () => {
 
     assert.equal(result.ok, true);
     assert.equal(result.config.providers.work.jira.jql, 'project = ENG AND resolution = Unresolved ORDER BY updated DESC');
+    assert.equal(Object.hasOwn(result.config.providers.work.jira, 'baseUrl'), false);
     assert.equal(Object.hasOwn(result.config.providers.work.jira, 'workflowSchema'), false);
     assert.equal(Object.hasOwn(result.config.providers.work.jira, 'email'), false);
     assert.equal(Object.hasOwn(result.config.providers.work.jira, 'apiToken'), false);
@@ -175,6 +173,7 @@ describe('config validation', () => {
     const result = validateConfig(input);
 
     assert.equal(result.ok, false);
+    assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.baseUrl' && error.kind === 'unknown'));
     assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.emailEnv' && error.kind === 'unknown'));
     assert.ok(result.errors.some((error) => error.path === 'providers.work.jira.apiTokenEnv' && error.kind === 'unknown'));
   });

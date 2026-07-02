@@ -216,6 +216,10 @@ describe("Jira work provider adapter", () => {
       () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: "ENG", limit: 0 }),
       /limit must be an integer between 1 and 1000/,
     );
+    assert.throws(
+      () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", projectKey: "ENG" }),
+      /baseUrl option requires explicit email and apiToken/,
+    );
 
     const issue = makeJiraIssue();
     const provider = createJiraWorkProvider({
@@ -372,10 +376,12 @@ describe("Jira work provider adapter", () => {
 
   it("reads credentials only from documented Jira environment variable names", async () => {
     const originalFetch = globalThis.fetch;
+    const originalBaseUrl = process.env.JIRA_BASE_URL;
     const originalEmail = process.env.JIRA_EMAIL;
     const originalToken = process.env.JIRA_API_TOKEN;
     const originalOtherEmail = process.env.AIE_JIRA_EMAIL;
     const originalOtherToken = process.env.AIE_JIRA_TOKEN;
+    process.env.JIRA_BASE_URL = "https://jira.example.com/";
     process.env.JIRA_EMAIL = "user@example.com";
     process.env.JIRA_API_TOKEN = "token";
     process.env.AIE_JIRA_EMAIL = "attacker@example.com";
@@ -392,7 +398,6 @@ describe("Jira work provider adapter", () => {
         };
       };
       const provider = createJiraWorkProvider({
-        baseUrl: "https://jira.example.com/",
         projectKey: "ENG",
       });
 
@@ -401,6 +406,8 @@ describe("Jira work provider adapter", () => {
       assert.deepEqual(items, []);
     } finally {
       globalThis.fetch = originalFetch;
+      if (originalBaseUrl === undefined) delete process.env.JIRA_BASE_URL;
+      else process.env.JIRA_BASE_URL = originalBaseUrl;
       if (originalEmail === undefined) delete process.env.JIRA_EMAIL;
       else process.env.JIRA_EMAIL = originalEmail;
       if (originalToken === undefined) delete process.env.JIRA_API_TOKEN;

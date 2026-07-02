@@ -452,14 +452,12 @@ function readJiraWorkProviderConfig(value: unknown, path: string, errors: Valida
     errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
     return undefined;
   }
-  rejectUnknownKeys(value, ['baseUrl', 'projectKey', 'jql', 'requestTimeoutMs', 'workflowSchema'], path, errors);
-  const baseUrl = readOptionalNonEmptyString(value, 'baseUrl', `${path}.baseUrl`, errors);
+  rejectUnknownKeys(value, ['projectKey', 'jql', 'requestTimeoutMs', 'workflowSchema'], path, errors);
   const projectKey = readOptionalNonEmptyString(value, 'projectKey', `${path}.projectKey`, errors);
   const jql = readOptionalNonEmptyString(value, 'jql', `${path}.jql`, errors);
   const requestTimeoutMs = 'requestTimeoutMs' in value ? readBoundedInteger(value, 'requestTimeoutMs', 15_000, 1, 300_000, path, errors) : undefined;
   const workflowSchema = readJiraWorkflowSchema(value.workflowSchema, `${path}.workflowSchema`, errors);
   return {
-    ...(baseUrl ? { baseUrl } : {}),
     ...(projectKey ? { projectKey } : {}),
     ...(jql ? { jql } : {}),
     ...(requestTimeoutMs ? { requestTimeoutMs } : {}),

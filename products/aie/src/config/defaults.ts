@@ -133,7 +133,6 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
     kind: input.kind,
     ...(input.jira ? {
       jira: {
-        ...(input.jira.baseUrl ? { baseUrl: input.jira.baseUrl } : {}),
         ...(input.jira.projectKey ? { projectKey: input.jira.projectKey } : {}),
         ...(input.jira.jql ? { jql: input.jira.jql } : {}),
         ...(input.jira.requestTimeoutMs ? { requestTimeoutMs: input.jira.requestTimeoutMs } : {}),
