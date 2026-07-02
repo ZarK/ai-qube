@@ -223,10 +223,14 @@ describe("qube composer CLI", () => {
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-merge-blockers" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "read-review-threads" && capability.support === "supported"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
+    assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "github").capabilities.some(capability => capability.id === "run-aiq-github-action" && capability.support === "standalone"));
     assert.ok(parsed.installPlan.options.workProviders.find(option => option.value === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
-    assert.match(parsed.installPlan.notes.join("\n"), /No package-manager command is executed/);
-    assert.match(parsed.installPlan.notes.join("\n"), /Work provider: github \(installed, adapter-contract\)/);
-    assert.match(parsed.installPlan.notes.join("\n"), /read-merge-blockers/);
+    const notes = parsed.installPlan.notes.join("\n");
+    assert.match(notes, /No package-manager command is executed/);
+    assert.match(notes, /Work provider: github \(installed, adapter-contract\)/);
+    assert.match(notes, /Supported capabilities: .*read-merge-blockers/);
+    assert.doesNotMatch(notes, /Supported capabilities: [^.]*run-aiq-github-action/);
+    assert.match(notes, /Standalone capabilities: run-aiq-github-action/);
   });
 
   it("renders explicit global npm install commands without prompting", () => {

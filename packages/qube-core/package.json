@@ -1,10 +1,19 @@
 {
   "name": "@tjalve/qube-core",
   "version": "0.1.0",
-  "description": "Private QUBE product and adapter contracts shared inside the monorepo.",
-  "private": true,
+  "description": "Shared QUBE product, provider, review, and adapter contracts.",
   "type": "module",
   "license": "MIT",
+  "author": "tjalve",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "packages/qube-core"
+  },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-qube/issues"
+  },
+  "homepage": "https://github.com/ZarK/ai-qube/tree/main/packages/qube-core#readme",
   "packageManager": "pnpm@11.0.4",
   "engines": {
     "node": ">=24.0.0"
@@ -20,6 +29,11 @@
   "files": [
     "dist"
   ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
+  },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",

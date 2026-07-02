@@ -3402,11 +3402,15 @@ function installOptionNote(label: string, options: readonly QubeDiscoveryOption[
     return `${label}: ${selected} is not a known current QUBE option.`;
   }
   const packageText = option.packageName ? ` Package: ${option.packageName}.` : "";
-  const supported = option.capabilities.filter(capability => capability.support !== "unsupported").map(capability => capability.id);
+  const supported = option.capabilities.filter(capability => capability.support === "supported").map(capability => capability.id);
+  const standalone = option.capabilities.filter(capability => capability.support === "standalone").map(capability => capability.id);
+  const hostProvided = option.capabilities.filter(capability => capability.support === "host-provided").map(capability => capability.id);
   const unsupported = option.capabilities.filter(capability => capability.support === "unsupported").map(capability => capability.id);
   const supportedText = supported.length > 0 ? ` Supported capabilities: ${supported.join(", ")}.` : "";
+  const standaloneText = standalone.length > 0 ? ` Standalone capabilities: ${standalone.join(", ")}.` : "";
+  const hostProvidedText = hostProvided.length > 0 ? ` Host-provided capabilities: ${hostProvided.join(", ")}.` : "";
   const unsupportedText = unsupported.length > 0 ? ` Unsupported capabilities: ${unsupported.join(", ")}.` : "";
-  return `${label}: ${option.id} (${option.support}, ${option.source}). ${option.summary}${packageText}${supportedText}${unsupportedText}`;
+  return `${label}: ${option.id} (${option.support}, ${option.source}). ${option.summary}${packageText}${supportedText}${standaloneText}${hostProvidedText}${unsupportedText}`;
 }
 
 function renderInstallPlan(plan: InstallPlan): string {
