@@ -74,9 +74,9 @@ function pipelineDiagnostic(mr: GitLabMergeRequest): GitLabCiDiagnostic[] {
   const status = pipeline.status.toLowerCase();
   const matchesHead = pipeline.sha === sha;
   const passed = status === "success" && matchesHead;
-  const failed = ["failed", "canceled", "manual"].includes(status);
-  const skipped = status === "skipped";
-  const pending = ["created", "waiting_for_resource", "preparing", "pending", "running"].includes(status);
+  const failed = matchesHead && ["failed", "canceled", "manual"].includes(status);
+  const skipped = matchesHead && status === "skipped";
+  const pending = matchesHead && ["created", "waiting_for_resource", "preparing", "pending", "running"].includes(status);
   return [{
     checkName: "gitlab-pipeline",
     status: passed ? "mapped" : failed ? "failed-current-head-run" : skipped ? "skipped-current-head-run" : pending ? "pending-current-head-run" : "unknown",

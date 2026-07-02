@@ -339,6 +339,8 @@ describe("GitLab review forge adapter", () => {
     const snapshot = await provider.loadPullRequestReview(12);
     pipeline = { id: 504, status: "success", web_url: "https://gitlab.example.com/pipelines/504" };
     const missingShaSnapshot = await provider.loadPullRequestReview(12);
+    pipeline = { id: 505, status: "skipped", sha: "old-head", web_url: "https://gitlab.example.com/pipelines/505" };
+    const staleSkippedSnapshot = await provider.loadPullRequestReview(12);
 
     assert.equal(snapshot.ciDiagnostics[0].status, "unknown");
     assert.equal(snapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
@@ -348,6 +350,10 @@ describe("GitLab review forge adapter", () => {
     assert.equal(missingShaSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
     assert.equal(missingShaSnapshot.item.checks[0].result, "unknown");
     assert.equal(missingShaSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
+    assert.equal(staleSkippedSnapshot.ciDiagnostics[0].status, "unknown");
+    assert.equal(staleSkippedSnapshot.ciDiagnostics[0].mappedToCurrentHeadWorkflowRun, false);
+    assert.equal(staleSkippedSnapshot.item.checks[0].result, "unknown");
+    assert.equal(staleSkippedSnapshot.item.mergeBlockers.some(blocker => blocker.reason === "checks-pending"), true);
   });
 
   it("plans and posts provider-visible review request notes with trusted metadata", async () => {
@@ -632,11 +638,14 @@ describe("GitLab review forge adapter", () => {
 
       const snapshot = await provider.loadPullRequestReview(12);
       const notesPages = urls.filter(url => url.includes("/notes?")).map(url => new URL(url).searchParams.get("page"));
+      const firstNotesUrl = new URL(urls.find(url => url.includes("/notes?")));
       const discussionPages = urls.filter(url => url.includes("/discussions?")).map(url => new URL(url).searchParams.get("page"));
 
       assert.equal(snapshot.commentsCount, 2);
       assert.equal(snapshot.conversationsCount, 2);
       assert.deepEqual(notesPages, ["1", "2"]);
+      assert.equal(firstNotesUrl.searchParams.get("order_by"), "created_at");
+      assert.equal(firstNotesUrl.searchParams.get("sort"), "asc");
       assert.deepEqual(discussionPages, ["1", "2"]);
     } finally {
       globalThis.fetch = originalFetch;

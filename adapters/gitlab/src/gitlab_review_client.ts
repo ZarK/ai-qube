@@ -71,7 +71,10 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   }
 
   async listMergeRequestNotes(input: { projectId: string; iid: string }): Promise<GitLabNote[]> {
-    return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`);
+    return this.getPages(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`, {
+      order_by: "created_at",
+      sort: "asc",
+    });
   }
 
   async listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]> {
@@ -90,12 +93,13 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return (await this.getPage<T>(path, query)).value;
   }
 
-  private async getPages<T>(path: string): Promise<T[]> {
+  private async getPages<T>(path: string, query: Record<string, string> = {}): Promise<T[]> {
     const values: T[] = [];
     let page: string | null = "1";
     let pagesRead = 0;
     while (page && pagesRead < this.maxReviewPages && values.length < this.maxReviewItems) {
       const result: { value: T[]; nextPage: string | null } = await this.getPage<T[]>(path, {
+        ...query,
         per_page: String(GITLAB_PAGE_LIMIT),
         page,
       });
