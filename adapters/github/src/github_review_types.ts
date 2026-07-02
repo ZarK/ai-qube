@@ -103,7 +103,7 @@ export interface CurrentGitHubReview {
 
 export interface RawAuthor { login?: string }
 export interface RawComment { author?: RawAuthor | null; body?: string; url?: string }
-export interface RawReview { id?: string | number; author?: RawAuthor | null; body?: string; state?: string; submittedAt?: string; url?: string; commit?: { oid?: string } | null }
+export interface RawReview { id?: string | number; author?: RawAuthor | null; user?: RawAuthor | null; body?: string; state?: string; submittedAt?: string; url?: string; html_url?: string; commit_id?: string; commit?: { oid?: string } | null }
 export interface RawReviewRequest { login?: string; name?: string; slug?: string }
 export interface RawClosingIssueReference { number?: number }
 export interface RawStatusCheck { conclusion?: string; status?: string; state?: string; name?: string; context?: string; workflowName?: string; startedAt?: string; createdAt?: string; completedAt?: string; detailsUrl?: string; targetUrl?: string }
