@@ -26,6 +26,24 @@ function build(overrides = {}) {
 }
 
 describe("Jenkins CI adapter", () => {
+  const originalEnv = {
+    JENKINS_BASE_URL: process.env.JENKINS_BASE_URL,
+    JENKINS_USER: process.env.JENKINS_USER,
+    JENKINS_API_TOKEN: process.env.JENKINS_API_TOKEN,
+  };
+  const originalFetch = globalThis.fetch;
+
+  function restoreEnv() {
+    for (const [key, value] of Object.entries(originalEnv)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+    globalThis.fetch = originalFetch;
+  }
+
   it("exposes Jenkins CI capability discovery without mutation support", () => {
     assert.equal(jenkinsAdapter.id, "jenkins");
     assert.equal(jenkinsAdapter.packageName, "@tjalve/qube-adapter-jenkins");
@@ -134,5 +152,44 @@ describe("Jenkins CI adapter", () => {
     assert.match(evidence.summary, /inaccessible/);
     assert.equal(evidence.metadata.inaccessible, true);
     assert.equal(evidence.metadata.nextAction.includes("JENKINS_BASE_URL"), true);
+  });
+
+  it("uses environment credentials when Jenkins URL is supplied in options", async () => {
+    restoreEnv();
+    process.env.JENKINS_USER = "build-user";
+    process.env.JENKINS_API_TOKEN = "secret-token";
+    let authorization = null;
+    let requestedUrl = null;
+    globalThis.fetch = async (url, init) => {
+      requestedUrl = String(url);
+      authorization = init.headers.Authorization;
+      return new Response(JSON.stringify(build()), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    try {
+      const provider = createJenkinsCiProvider({ baseUrl: "https://jenkins.example.com/" });
+      const evidence = await provider.readBuildEvidence({ jobPath: "folder/app", build: 42 });
+
+      assert.equal(evidence.result, "passed");
+      assert.equal(requestedUrl, "https://jenkins.example.com/job/folder/job/app/42/api/json?tree=id%2Cnumber%2Cresult%2Cbuilding%2CqueueId%2Ctimestamp%2Cduration%2Curl%2CfullDisplayName%2Cartifacts%5BfileName%2CrelativePath%5D");
+      assert.equal(authorization, `Basic ${Buffer.from("build-user:secret-token", "utf8").toString("base64")}`);
+    } finally {
+      restoreEnv();
+    }
+  });
+
+  it("rejects credential-bearing Jenkins URLs without leaking secrets into evidence", async () => {
+    restoreEnv();
+    const provider = createJenkinsCiProvider({ baseUrl: "https://build-user:secret-token@jenkins.example.com/" });
+
+    const evidence = await provider.readBuildEvidence({ jobPath: "folder/app", build: 42 });
+
+    assert.equal(evidence.result, "missing");
+    assert.match(evidence.summary, /evidence is missing/);
+    assert.doesNotMatch(evidence.summary, /build-user|secret-token|jenkins\.example\.com/);
+    assert.equal(evidence.metadata.missingCredentials, true);
   });
 });

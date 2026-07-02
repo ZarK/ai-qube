@@ -86,6 +86,9 @@ function normalizeBaseUrl(value: string): string {
   if (url.protocol !== "https:") {
     throw new Error("Jenkins CI provider requires JENKINS_BASE_URL to use https when credentials may be sent.");
   }
+  if (url.username !== "" || url.password !== "") {
+    throw new Error("Jenkins CI provider requires JENKINS_BASE_URL to omit credentials. Set JENKINS_USER and JENKINS_API_TOKEN separately.");
+  }
   return url.toString().replace(/\/+$/u, "");
 }
 
@@ -131,10 +134,9 @@ class FetchJenkinsRestClient implements JenkinsRestClient {
   private readonly requestTimeoutMs: number;
 
   constructor(options: JenkinsCiProviderOptions) {
-    const readsEnvAuth = options.baseUrl === undefined;
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JENKINS_BASE_URL, "JENKINS_BASE_URL"));
-    this.user = options.user ?? (readsEnvAuth ? process.env.JENKINS_USER : undefined);
-    this.apiToken = options.apiToken ?? (readsEnvAuth ? process.env.JENKINS_API_TOKEN : undefined);
+    this.user = options.user ?? process.env.JENKINS_USER;
+    this.apiToken = options.apiToken ?? process.env.JENKINS_API_TOKEN;
     if ((this.user === undefined) !== (this.apiToken === undefined)) {
       throw new Error("Jenkins CI provider requires both JENKINS_USER and JENKINS_API_TOKEN when either credential is present.");
     }
@@ -302,7 +304,7 @@ function jenkinsReadFailureToGateEvidence(input: {
     ? `Jenkins job ${input.jobPath} is inaccessible; verify credentials and job permissions.`
     : missing
       ? `Jenkins job ${input.jobPath} evidence is missing; verify Jenkins configuration, credentials, and job path.`
-      : `Jenkins job ${input.jobPath} could not be read: ${message}`;
+      : `Jenkins job ${input.jobPath} could not be read; verify Jenkins configuration, credentials, job path, and network reachability.`;
   return normalizeGateEvidence({
     key: `jenkins:${input.jobPath}:${buildSelector(input.build)}:read`,
     name: `Jenkins ${input.jobPath}`,
