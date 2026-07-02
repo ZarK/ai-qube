@@ -1,7 +1,6 @@
 import { loadConfig, getDefaults, Config } from '../config/index.js';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import { maybeWorkItemKeyNumber, workItemNumber, type WorkItem } from '../core/work_item.js';
 import { computeWorkQueue, type WorkMilestoneGroup, type WorkQueuePolicy } from '../core/queue_rules.js';
-import { githubIssueNumber } from '@tjalve/qube-adapter-github';
 import { createLifecycleContext } from '../app/lifecycle_services.js';
 import { runNextWorkService } from '../app/next_work.js';
 
@@ -73,8 +72,11 @@ function milestoneNumber(item: WorkItem): number | null {
 }
 
 function workItemIssueNumber(item: WorkItem): number | null {
-  if (item.key.providerId === 'github') return githubIssueNumber(item);
-  return maybeWorkItemKeyNumber(item.key);
+  try {
+    return workItemNumber(item);
+  } catch {
+    return maybeWorkItemKeyNumber(item.key);
+  }
 }
 
 function workItemNumericOrDisplay(key: WorkItem['key']): number | string {

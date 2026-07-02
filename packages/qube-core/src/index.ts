@@ -292,6 +292,11 @@ export interface WorkChecklist {
   readonly completed: number;
 }
 
+export interface WorkChecklistItem {
+  readonly text: string;
+  readonly checked: boolean;
+}
+
 export interface WorkItem {
   readonly key: WorkItemKey;
   readonly displayId: string;
@@ -659,6 +664,21 @@ export function maybeWorkItemKeyNumber(key: WorkItemKey): number | null {
 
 export function workItemNumber(item: WorkItem): number {
   return workItemKeyNumber(item.key, item.displayId);
+}
+
+export function parseWorkChecklistItems(body: string): WorkChecklistItem[] {
+  const items: WorkChecklistItem[] = [];
+  for (const line of body.split(/\r?\n/)) {
+    const match = line.match(/^\s*(?:[-*+]\s*)?\[( |x|X)\]\s+(.+?)\s*$/);
+    if (!match) continue;
+    items.push({ checked: match[1].toLowerCase() === "x", text: match[2] });
+  }
+  return items;
+}
+
+export function parseWorkChecklist(body: string): WorkChecklist {
+  const items = parseWorkChecklistItems(body);
+  return { total: items.length, completed: items.filter(item => item.checked).length };
 }
 
 export function sourceKey(source: ProviderSource): string {

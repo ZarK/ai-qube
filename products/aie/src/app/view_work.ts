@@ -1,8 +1,7 @@
 import { suggestBranchName } from '../core/branch_rules.js';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import { maybeWorkItemKeyNumber, parseWorkChecklist, parseWorkChecklistItems, workItemNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
-import { githubIssueNumber, parseWorkChecklist, parseWorkChecklistItems } from '@tjalve/qube-adapter-github';
 import { githubIssueLifecycleUnsupportedReason, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface ViewServiceResult {
@@ -34,13 +33,13 @@ export async function runViewService(options: { issueNumber: number; context: Li
   const { issueNumber, context, currentBranch } = options;
   const unsupportedProvider = githubIssueLifecycleUnsupportedReason(context, 'view');
   if (unsupportedProvider) throw new Error(unsupportedProvider);
-  const item = await context.provider.getWorkItem({ providerId: 'github', id: String(issueNumber) });
+  const item = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(issueNumber) });
   const blockerNumbers = item.blockers.map(maybeWorkItemKeyNumber).filter((number): number is number => number !== null);
-  const blockers = await resolveBlockerDetails(blockerNumbers, { exec: context.exec, cwd: context.cwd });
+  const blockers = await resolveBlockerDetails(blockerNumbers, { exec: context.exec, cwd: context.cwd, config: context.config });
   const openBlockers = blockers.filter(blocker => blocker.state === 'OPEN');
   const unresolvedBlockers = blockers.filter(blocker => blocker.state === 'UNKNOWN');
   const openItems = await context.provider.listOpenWorkItems();
-  const dependents = openItems.filter(candidate => candidate.blockers.some(blocker => blocker.id === String(issueNumber))).map(candidate => ({ number: githubIssueNumber(candidate), title: candidate.title, state: candidate.state === 'open' ? 'OPEN' : 'CLOSED' }));
+  const dependents = openItems.filter(candidate => candidate.blockers.some(blocker => blocker.id === String(issueNumber))).map(candidate => ({ number: workItemNumber(candidate), title: candidate.title, state: candidate.state === 'open' ? 'OPEN' : 'CLOSED' }));
   const status: ViewServiceResult['effectiveStatus'] = item.state === 'closed' ? 'Closed' : item.tags.includes('S-InProgress') ? 'InProgress' : openBlockers.length > 0 || unresolvedBlockers.length > 0 ? 'Blocked' : 'Ready';
   const hasOtherInProgress = openItems.some(candidate => candidate.key.id !== String(issueNumber) && candidate.tags.includes('S-InProgress'));
   const checklist = parseWorkChecklist(item.body);

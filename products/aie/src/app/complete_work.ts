@@ -1,6 +1,5 @@
 import { buildLifecyclePlan, type LifecyclePlan } from '../lifecycle.js';
-import { githubIssueNumber, parseWorkChecklistItems } from '@tjalve/qube-adapter-github';
-import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
+import { maybeWorkItemKeyNumber, parseWorkChecklistItems, workItemNumber, type WorkItem } from '../core/work_item.js';
 import type { Action } from '../core/action_plan.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
 import { actionToLifecycle, applyProviderPlan, githubIssueLifecycleUnsupportedReason, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
@@ -54,7 +53,7 @@ async function milestoneContext(item: WorkItem, context: LifecycleServiceContext
 }
 
 function completePlan(actions: Action[], results: ApplyResult[], item: WorkItem, dryRun: boolean, checkOnly: boolean): LifecyclePlan {
-  const issueNumber = githubIssueNumber(item);
+  const issueNumber = workItemNumber(item);
   const lifecycleActions = actions.map((action, index) => {
     if (action.kind === 'close-work') return actionToLifecycle(action, results[index], `close-issue:${issueNumber}`, 'close-issue');
     const targetNumber = typeof action.details.issueNumber === 'number' ? action.details.issueNumber : Number(action.target.id);
@@ -75,7 +74,7 @@ function refreshResult(dependent: WorkItem, action: Action | undefined, allOpenI
   const removeLabels = Array.isArray(action?.details.removeLabels) ? action.details.removeLabels.filter((label): label is string => typeof label === 'string') : [];
   const status = openBlockers.length > 0 ? 'still-blocked' : addLabels.length > 0 || removeLabels.length > 0 ? 'unblocked' : 'unchanged';
   const reason = openBlockers.length > 0 ? `Dependent still has open blocker(s): ${openBlockers.map(number => `#${number}`).join(', ')}.` : 'All open blockers are resolved after completion.';
-  return { item: dependent, status, openBlockers, addLabels, removeLabels, actionId: action ? `refresh-dependent:${githubIssueNumber(dependent)}` : null, reason };
+  return { item: dependent, status, openBlockers, addLabels, removeLabels, actionId: action ? `refresh-dependent:${workItemNumber(dependent)}` : null, reason };
 }
 
 function summarize(dependents: DependentRefreshServiceResult[]): CompleteServiceResult['dependentRefresh'] {
@@ -105,13 +104,13 @@ export async function runCompleteService(options: { issueNumber: number; dryRun:
   const item = await context.provider.getWorkItem({ providerId: context.provider.id, id: String(issueNumber) });
   const list = checklist(item.body);
   const allOpenItems = await context.provider.listOpenWorkItems();
-  const dependents = directDependents(allOpenItems, item).sort((left, right) => githubIssueNumber(left) - githubIssueNumber(right));
+  const dependents = directDependents(allOpenItems, item).sort((left, right) => workItemNumber(left) - workItemNumber(right));
   const warnings: string[] = [];
   const milestone = await milestoneContext(item, context, warnings);
   const completion = { alreadyClosed: item.state === 'closed', willClose: item.state === 'open', statusLabelsToRemove: statusLabelsToRemove(item, context) };
   const providerPlan = context.provider.planComplete(item, allOpenItems.filter(candidate => candidate.key.id !== item.key.id), context.policy);
   const actionByIssue = new Map(providerPlan.actions.filter(action => action.kind === 'replace-status-labels').map(action => [String(action.details.issueNumber), action]));
-  const dependentRefresh = dependents.map(dependent => refreshResult(dependent, actionByIssue.get(String(githubIssueNumber(dependent))), allOpenItems, item));
+  const dependentRefresh = dependents.map(dependent => refreshResult(dependent, actionByIssue.get(String(workItemNumber(dependent))), allOpenItems, item));
 
   if (item.state === 'open' && !item.tags.includes('S-InProgress')) {
     const reason = `Issue #${issueNumber} is open but not S-InProgress. Complete only the active issue, or let already-closed issues refresh dependents.`;

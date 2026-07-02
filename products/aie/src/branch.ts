@@ -7,8 +7,7 @@ import { configToExecutorPolicy } from './config_policy.js';
 import type { GitHubIssue } from '@tjalve/qube-adapter-github';
 import type { GhExec } from '@tjalve/qube-adapter-github';
 import { createLocalGitRepositoryProvider, actionPlanWithResults, type GitExec, type GitRunResult } from './providers/local/local_git_provider.js';
-import { githubIssueToWorkItem } from '@tjalve/qube-adapter-github';
-import { maybeWorkItemKeyNumber } from './core/work_item.js';
+import { maybeWorkItemKeyNumber, normalizeProviderSource, normalizeWorkItem, normalizeWorkItemKey, parseWorkChecklist } from './core/work_item.js';
 import { createWorkProvider } from './providers/work_provider_adapters.js';
 import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranchSuggestion, suggestBranchName as suggestWorkItemBranchName, validateBranchPattern } from './core/branch_rules.js';
 
@@ -78,8 +77,62 @@ export function parseBranchIssueNumber(input: string): number {
   return issueNumber;
 }
 
+function statusFromLabels(labels: string[]): WorkItem['status'] {
+  if (labels.includes('S-InProgress')) return 'in-progress';
+  if (labels.includes('S-Ready')) return 'ready';
+  if (labels.includes('S-Blocked')) return 'blocked';
+  return 'unknown';
+}
+
+function priorityFromLabels(labels: string[]): WorkItem['priority'] {
+  if (labels.includes('P1-Critical')) return 'critical';
+  if (labels.includes('P2-High')) return 'high';
+  if (labels.includes('P3-Medium')) return 'medium';
+  if (labels.includes('P4-Low')) return 'low';
+  return 'none';
+}
+
+function workItemFromGitHubIssue(issue: GitHubIssue): WorkItem {
+  return normalizeWorkItem({
+    key: normalizeWorkItemKey('github', String(issue.number)),
+    displayId: `#${issue.number}`,
+    title: issue.title,
+    body: issue.body,
+    url: issue.url,
+    state: issue.state === 'OPEN' ? 'open' : 'closed',
+    status: statusFromLabels(issue.labels),
+    priority: priorityFromLabels(issue.labels),
+    tags: issue.labels,
+    assignees: issue.assignees,
+    project: issue.milestone ? {
+      id: String(issue.milestone.number),
+      title: issue.milestone.title,
+      state: issue.milestone.state.toLowerCase() === 'open' ? 'open' : issue.milestone.state.toLowerCase() === 'closed' ? 'closed' : 'unknown',
+      dueOn: issue.milestone.dueOn,
+    } : null,
+    blockers: issue.declaredBlockers.map(number => normalizeWorkItemKey('github', String(number))),
+    blockedBy: [],
+    sequence: issue.body.match(/Sequence:\s*(\S+)/i)?.[1] ?? null,
+    checklist: parseWorkChecklist(issue.body),
+    trustedMetadata: {
+      githubIssueNumber: issue.number,
+      githubLabels: issue.labels,
+      githubState: issue.state,
+      githubDeclaredBlockers: issue.declaredBlockers,
+      githubMilestoneNumber: issue.milestone?.number ?? null,
+    },
+    source: normalizeProviderSource({
+      providerId: 'github',
+      resourceKind: 'work-item',
+      resourceId: String(issue.number),
+      url: issue.url,
+      metadata: { githubIssueNumber: issue.number },
+    }),
+  });
+}
+
 export function suggestBranchName(issue: GitHubIssue, config: Config = getDefaults()): string {
-  return suggestWorkItemBranchName(githubIssueToWorkItem(issue), configToExecutorPolicy(config).branch).branchName;
+  return suggestWorkItemBranchName(workItemFromGitHubIssue(issue), configToExecutorPolicy(config).branch).branchName;
 }
 
 export { validateBranchPattern };
