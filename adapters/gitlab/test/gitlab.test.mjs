@@ -548,6 +548,53 @@ describe("GitLab review forge adapter", () => {
     assert.match(updated.item.trustedMetadata.trustedLaneReviews[0].findingDigest, /^[a-f0-9]{16}$/);
   });
 
+  it("publishes lane review feedback without loading full merge request review state", async () => {
+    const notes = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          throw new Error("full merge request read should not run");
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async listMergeRequestDiscussions() {
+          throw new Error("discussion read should not run");
+        },
+        async createMergeRequestNote({ body }) {
+          const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+          notes.push(note);
+          return note;
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "performance",
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/performance.json",
+    };
+
+    const first = await provider.publishLaneReviewFeedbackForPullRequest(input);
+    const duplicate = await provider.publishLaneReviewFeedbackForPullRequest(input);
+
+    assert.equal(first.status, "published");
+    assert.equal(duplicate.status, "skipped");
+    assert.equal(notes.length, 1);
+  });
+
   it("publishes updated GitLab lane feedback when the same head has changed findings", async () => {
     const notes = [];
     const client = {

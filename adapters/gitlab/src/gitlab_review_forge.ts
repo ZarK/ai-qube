@@ -422,6 +422,34 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     }
   }
 
+  async publishLaneReviewFeedbackForPullRequest(input: ReviewLaneReviewPublishInput): Promise<ReviewLaneReviewPublishResult> {
+    const planned = laneBody(input);
+    let notes: GitLabNote[];
+    try {
+      notes = await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
+    } catch (error) {
+      return { status: "failed", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: error instanceof Error ? error.message : String(error), nextAction: `Fix GitLab note visibility or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.` };
+    }
+    const trustedMetadata = trustedLaneReviewMetadata({
+      notes,
+      trustedMarkerAuthor: await this.trustedMarkerAuthor(),
+      head: input.headSha,
+      prNumber: input.prNumber,
+    });
+    if (this.hasMatchingLaneReviewMetadata(trustedMetadata, input, planned.runId)) {
+      return { status: "skipped", runId: planned.runId, marker: planned.marker, body: null, url: null, failure: null, nextAction: `Provider-visible GitLab lane review for ${input.lane} is already published for this MR head and run id.` };
+    }
+    if (input.dryRun) {
+      return { status: "planned", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Rerun \`aie pr review publish <mr> --lane ${input.lane}\` without --dry-run to publish provider-visible GitLab note feedback.` };
+    }
+    try {
+      const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
+      return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
+    } catch (error) {
+      return { status: "failed", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: error instanceof Error ? error.message : String(error), nextAction: `Fix GitLab note permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.` };
+    }
+  }
+
   async resolveReviewThreads(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult> {
     const threadIds = [...new Set(input.threadIds.map(id => id.trim()).filter(id => id !== ""))];
     if (threadIds.length === 0) {
@@ -538,9 +566,13 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   private hasMatchingLaneReview(item: ReviewItem, input: ReviewLaneReviewPublishInput, runId: string): boolean {
+    return this.hasMatchingLaneReviewMetadata(item.trustedMetadata, input, runId);
+  }
+
+  private hasMatchingLaneReviewMetadata(trustedMetadata: JsonObject, input: ReviewLaneReviewPublishInput, runId: string): boolean {
     const planned = laneBody(input);
     const plannedMetadata = JSON.parse(planned.marker) as GitLabMetadata;
-    const records = Array.isArray(item.trustedMetadata.trustedLaneReviews) ? item.trustedMetadata.trustedLaneReviews : [];
+    const records = Array.isArray(trustedMetadata.trustedLaneReviews) ? trustedMetadata.trustedLaneReviews : [];
     return records.some(record => record !== null && typeof record === "object" && !Array.isArray(record)
       && record.head === input.headSha
       && record.lane === input.lane
@@ -594,28 +626,11 @@ function reviewConversations(discussions: readonly GitLabDiscussion[]) {
 
 function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedMarkerAuthor: string | null; unavailable: string[]; ciDiagnostics: GitLabCiDiagnostic[] }): JsonObject {
   const head = headSha(input.mr);
-  const laneReviews = input.notes.flatMap(note => {
-    const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
-    if (parsed?.kind !== "lane-review" || !parsed.lane || !parsed.runId || !parsed.recommendation || !parsed.status || !parsed.summary) return [];
-    return [{
-      head: parsed.head,
-      lane: parsed.lane,
-      profile: parsed.profile ?? "",
-      runId: parsed.runId,
-      issueNumber: parsed.issueNumber ?? 0,
-      prNumber: parsed.prNumber ?? input.mr.iid,
-      host: parsed.host ?? "",
-      recommendation: parsed.recommendation,
-      status: parsed.status,
-      summary: parsed.summary,
-      inline: "gitlab-note",
-      inlineCommentCount: parsed.inlineCommentCount ?? 0,
-      bodyFindingCount: parsed.bodyFindingCount ?? 0,
-      findingDigest: parsed.findingDigest ?? null,
-      url: note.web_url ?? null,
-      author: userName(note.author),
-      stale: parsed.head !== head,
-    }];
+  const laneReviews = trustedLaneReviews({
+    notes: input.notes,
+    trustedMarkerAuthor: input.trustedMarkerAuthor,
+    head,
+    prNumber: input.mr.iid,
   });
   const requestMarkers = input.notes.flatMap(note => {
     const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
@@ -640,6 +655,41 @@ function metadata(input: { mr: GitLabMergeRequest; notes: GitLabNote[]; trustedM
     unavailable: input.unavailable,
     ciDiagnostics: input.ciDiagnostics.map(diagnostic => jsonValue(diagnostic)),
   };
+}
+
+function trustedLaneReviewMetadata(input: { notes: GitLabNote[]; trustedMarkerAuthor: string | null; head: string; prNumber: number }): JsonObject {
+  return {
+    provider: "gitlab",
+    headRefOid: input.head,
+    trustedMarkerAuthor: input.trustedMarkerAuthor,
+    trustedLaneReviews: trustedLaneReviews(input),
+  };
+}
+
+function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: string | null; head: string; prNumber: number }) {
+  return input.notes.flatMap(note => {
+    const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
+    if (parsed?.kind !== "lane-review" || !parsed.lane || !parsed.runId || !parsed.recommendation || !parsed.status || !parsed.summary) return [];
+    return [{
+      head: parsed.head,
+      lane: parsed.lane,
+      profile: parsed.profile ?? "",
+      runId: parsed.runId,
+      issueNumber: parsed.issueNumber ?? 0,
+      prNumber: parsed.prNumber ?? input.prNumber,
+      host: parsed.host ?? "",
+      recommendation: parsed.recommendation,
+      status: parsed.status,
+      summary: parsed.summary,
+      inline: "gitlab-note",
+      inlineCommentCount: parsed.inlineCommentCount ?? 0,
+      bodyFindingCount: parsed.bodyFindingCount ?? 0,
+      findingDigest: parsed.findingDigest ?? null,
+      url: note.web_url ?? null,
+      author: userName(note.author),
+      stale: parsed.head !== input.head,
+    }];
+  });
 }
 
 function closingIssueNumbers(mr: GitLabMergeRequest): number[] {
