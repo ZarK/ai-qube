@@ -11,6 +11,7 @@ import {
   listOpenCodeOperationSupport,
   opencodeAdapter,
   opencodeSessionTarget,
+  probeOpenCodeReviewCapability,
 } from "../dist/index.js";
 
 const tempDirs = new Set();
@@ -26,9 +27,11 @@ describe("opencode adapter contract", () => {
     assert.equal(opencodeAdapter.id, "opencode");
     assert.equal(opencodeAdapter.contractOnly, false);
     assert.ok(opencodeAdapter.owns.includes("stop-hooks"));
+    assert.ok(opencodeAdapter.owns.includes("local-review-probes"));
     assert.ok(opencodeAdapter.owns.includes("unsupported-capability-reporting"));
     assert.match(opencodeAdapter.boundary, /explicit capability records/);
     assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "install-project-command" && capability.support === "supported"));
+    assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "probe-local-review-runner" && capability.support === "unsupported"));
     assert.ok(opencodeAdapter.capabilities?.some((capability) => capability.id === "run-aiq-plugin" && capability.support === "standalone"));
   });
 
@@ -39,6 +42,11 @@ describe("opencode adapter contract", () => {
 
     const aiqPlugin = assertOpenCodeOperationSupported("run-aiq-plugin");
     assert.equal(aiqPlugin.support, "standalone");
+
+    const localReviewRunner = getOpenCodeOperationSupport("probe-local-review-runner");
+    assert.equal(localReviewRunner.support, "unsupported");
+    assert.match(localReviewRunner.nextAction, /probeOpenCodeReviewCapability/);
+    assert.throws(() => assertOpenCodeOperationSupported("probe-local-review-runner"), /Unsupported OpenCode capability/);
 
     const review = getOpenCodeOperationSupport("request-external-review");
     assert.equal(review.support, "unsupported");
@@ -92,6 +100,22 @@ describe("opencode adapter contract", () => {
   it("keeps OpenCode session targets normalized", () => {
     assert.equal(opencodeSessionTarget("ses_123"), "opencode:ses_123");
     assert.throws(() => opencodeSessionTarget(" ses_123"), /already normalized/);
+  });
+
+  it("reports explicit unsupported local review-runner capability", () => {
+    const capability = probeOpenCodeReviewCapability();
+
+    assert.equal(capability.host, "opencode");
+    assert.equal(capability.independentReviewer, false);
+    assert.equal(capability.freshContext, false);
+    assert.equal(capability.promptOnly, true);
+    assert.equal(capability.hooks, true);
+    assert.equal(capability.evidenceWriting, false);
+    assert.deepEqual(capability.missingCapabilities, ["opencode-local-review-runner-unsupported"]);
+    assert.match(capability.nextAction, /Codex local-host review lanes|local-command review runner/);
+    assert.throws(() => {
+      capability.missingCapabilities.push("mutated");
+    }, TypeError);
   });
 });
 

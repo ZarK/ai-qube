@@ -34,15 +34,15 @@ const LOCAL_COMMAND_CAPABILITY: HostReviewCapability = Object.freeze({
   nextAction: 'Run configured local-command review lanes and record current-head evidence.',
 });
 
-const MISSING_OPENCODE_CAPABILITY: HostReviewCapability = Object.freeze({
+const FALLBACK_OPENCODE_CAPABILITY: HostReviewCapability = Object.freeze({
   host: 'opencode',
   independentReviewer: false,
   freshContext: false,
   promptOnly: true,
-  hooks: false,
+  hooks: true,
   evidenceWriting: false,
-  missingCapabilities: Object.freeze(['opencode-local-review-runner-not-implemented']),
-  nextAction: 'OpenCode host review runner support is not configured. Use local-command or Codex local-host review lanes.',
+  missingCapabilities: Object.freeze(['opencode-local-review-runner-unsupported']),
+  nextAction: 'OpenCode does not currently expose a tested QUBE API for independent fresh-context review lane subagents. Use Codex local-host review lanes or a trusted local-command review runner until OpenCode host task APIs are available.',
 });
 
 async function loadCodexProbe(): Promise<((command?: string | null, hostProvided?: boolean) => HostReviewCapability) | null> {
@@ -52,6 +52,17 @@ async function loadCodexProbe(): Promise<((command?: string | null, hostProvided
     return typeof probe === 'function' ? probe as (command?: string | null, hostProvided?: boolean) => HostReviewCapability : null;
   } catch (error) {
     if (isModuleMissing(error, '@tjalve/qube-adapter-codex')) return null;
+    throw error;
+  }
+}
+
+async function loadOpenCodeProbe(): Promise<(() => HostReviewCapability) | null> {
+  try {
+    const imported = await import('@tjalve/qube-adapter-opencode');
+    const probe = (imported as Record<string, unknown>).probeOpenCodeReviewCapability;
+    return typeof probe === 'function' ? probe as () => HostReviewCapability : null;
+  } catch (error) {
+    if (isModuleMissing(error, '@tjalve/qube-adapter-opencode')) return null;
     throw error;
   }
 }
@@ -88,8 +99,13 @@ const ADAPTERS: readonly HostRunnerAdapter[] = Object.freeze([
   Object.freeze({
     id: 'opencode',
     packageName: '@tjalve/qube-adapter-opencode',
-    installed: false,
-    probe: async () => MISSING_OPENCODE_CAPABILITY,
+    installed: true,
+    probe: async () => {
+      const probe = await loadOpenCodeProbe();
+      if (!probe) return FALLBACK_OPENCODE_CAPABILITY;
+      const capability = probe();
+      return Object.freeze({ ...capability, host: 'opencode' as const });
+    },
   }),
   Object.freeze({
     id: 'local-command',
@@ -167,5 +183,5 @@ export function probeHostReviewRunnerSync(id: HostRunnerId, hints: HostRunnerPro
     }
     return LOCAL_COMMAND_CAPABILITY;
   }
-  return MISSING_OPENCODE_CAPABILITY;
+  return FALLBACK_OPENCODE_CAPABILITY;
 }

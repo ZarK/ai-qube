@@ -399,6 +399,33 @@ describe('doctor diagnostics', () => {
     assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, ['codex local review agent']);
   });
 
+  it('reports OpenCode local-host review-runner status distinctly from Codex', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.localReviewAgents = ['opencode'];
+    config.reviewLanes = [{
+      id: 'issue-compliance',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+    }];
+
+    const diagnostics = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+
+    assert.equal(diagnostics.reviewAgent.localRunner.configured, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.readiness, 'missing');
+    assert.equal(diagnostics.reviewAgent.localRunner.codex.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.opencode.independentReviewer, false);
+    assert.equal(diagnostics.reviewAgent.localRunner.opencode.promptOnly, true);
+    assert.equal(diagnostics.reviewAgent.localRunner.opencode.hooks, true);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.opencode.missingCapabilities, ['opencode-local-review-runner-unsupported']);
+    assert.deepEqual(diagnostics.reviewAgent.localRunner.missingTools, ['opencode local review runner']);
+    assert.match(diagnostics.reviewAgent.localRunner.nextAction, /OpenCode does not currently expose/);
+  });
+
   it('reports configured local-host command as Codex independent review capability', () => {
     const config = getDefaults();
     config.reviewAdapter = 'local';

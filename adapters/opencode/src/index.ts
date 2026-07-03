@@ -8,6 +8,7 @@ export type OpenCodeOperation =
   | "read-instructions"
   | "install-project-command"
   | "use-todos"
+  | "probe-local-review-runner"
   | "deliver-session-prompt"
   | "handle-stop-hook"
   | "run-aiq-plugin"
@@ -46,6 +47,17 @@ export interface OpenCodeWorkspaceInspection {
   };
   readonly commands: readonly OpenCodeCommandInspection[];
   readonly capabilities: readonly OpenCodeOperationSupport[];
+}
+
+export interface OpenCodeReviewCapability {
+  readonly host: "opencode";
+  readonly independentReviewer: boolean;
+  readonly freshContext: boolean;
+  readonly promptOnly: boolean;
+  readonly hooks: boolean;
+  readonly evidenceWriting: boolean;
+  readonly missingCapabilities: readonly string[];
+  readonly nextAction: string;
 }
 
 const OPENCODE_COMMAND_DIRECTORY = ".opencode/commands";
@@ -87,6 +99,10 @@ const OPENCODE_OPERATION_EXTRAS: readonly OpenCodeOperationExtra[] = Object.free
     tools: OPENCODE_TODO_TOOLS,
   },
   {
+    id: "probe-local-review-runner",
+    nextAction: "Use probeOpenCodeReviewCapability before requiring OpenCode local-host review lanes.",
+  },
+  {
     id: "deliver-session-prompt",
     nextAction: "Use createAiuOpenCodePlugin with a host deliverPrompt implementation.",
   },
@@ -118,6 +134,19 @@ const OPENCODE_OPERATION_MAP = new Map<string, OpenCodeOperationSupport>(
 );
 
 export const opencodeAdapter = opencodeAdapterContract;
+
+export function probeOpenCodeReviewCapability(): OpenCodeReviewCapability {
+  return Object.freeze({
+    host: "opencode",
+    independentReviewer: false,
+    freshContext: false,
+    promptOnly: true,
+    hooks: true,
+    evidenceWriting: false,
+    missingCapabilities: Object.freeze(["opencode-local-review-runner-unsupported"]),
+    nextAction: "OpenCode does not currently expose a tested QUBE API for independent fresh-context review lane subagents. Use Codex local-host review lanes or a trusted local-command review runner until OpenCode host task APIs are available.",
+  });
+}
 
 export function getOpenCodeOperationSupport(operation: OpenCodeOperation | string): OpenCodeOperationSupport {
   return OPENCODE_OPERATION_MAP.get(operation) ?? unsupportedOperation(operation);
