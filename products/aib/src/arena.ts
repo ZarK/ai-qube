@@ -235,7 +235,7 @@ function createAcceptancePolicy(objective: AutoresearchObjective, targetKind: Au
       mode: "threshold",
       direction: objective.direction,
       threshold: parseObjectiveThreshold(objective.metric),
-      promotionRequiresHuman: true,
+      promotionRequiresHuman: false,
       evidenceRequired: ["baseline threshold output", "candidate threshold output", "changed files"]
     };
   }
@@ -243,7 +243,7 @@ function createAcceptancePolicy(objective: AutoresearchObjective, targetKind: Au
     return {
       mode: "finding-reduction",
       direction: objective.direction,
-      promotionRequiresHuman: true,
+      promotionRequiresHuman: false,
       evidenceRequired: ["baseline findings", "candidate findings", "changed files"]
     };
   }
@@ -251,7 +251,7 @@ function createAcceptancePolicy(objective: AutoresearchObjective, targetKind: Au
     return {
       mode: "score-improvement",
       direction: objective.direction,
-      promotionRequiresHuman: true,
+      promotionRequiresHuman: false,
       evidenceRequired: ["baseline command output", "candidate command output", "changed files"]
     };
   }

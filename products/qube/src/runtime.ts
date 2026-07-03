@@ -1587,8 +1587,8 @@ function promoteAutoresearch(
   environment: CliEnvironment,
   dryRun: boolean
 ): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
-  if (context.evaluator.acceptancePolicy.promotionRequiresHuman && !isCommandMetricEvaluator(context.evaluator)) {
-    return { error: "Autoresearch promotion is human-gated because no trustworthy automated score exists. Use the evidence package and normal QUBE review before promoting changes." };
+  if (context.evaluator.acceptancePolicy.promotionRequiresHuman) {
+    return { error: "Autoresearch promotion is human-gated by evaluator policy. Use the evidence package and normal QUBE review before promoting changes." };
   }
   const best = context.state.currentBest;
   if (!best) {
@@ -2444,10 +2444,6 @@ function autoresearchBlockers(context: AutoresearchContext): readonly string[] {
   }
   if (context.state.baseline?.referee?.status === "rejected") {
     blockers.push(...context.state.baseline.referee.reasons);
-  }
-  const activeCandidate = context.state.attempts.at(-1);
-  if (activeCandidate?.referee.status === "rejected") {
-    blockers.push(...activeCandidate.referee.reasons);
   }
   return [...new Set(blockers)];
 }
