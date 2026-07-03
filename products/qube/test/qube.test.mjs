@@ -46,6 +46,44 @@ function runCli(args, options = {}) {
   });
 }
 
+function createAutoresearchPackageTarget(cwd, initialScore = 10) {
+  const target = path.join(cwd, "target");
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, "package.json"), `${JSON.stringify({
+    private: true,
+    packageManager: "npm@10.0.0",
+    scripts: {
+      test: "node metric.mjs"
+    }
+  }, null, 2)}\n`, "utf8");
+  writeFileSync(path.join(target, "metric.mjs"), [
+    "import { readFileSync } from 'node:fs';",
+    "const score = JSON.parse(readFileSync(new URL('./score.json', import.meta.url), 'utf8')).score;",
+    "console.log(JSON.stringify({ score }));"
+  ].join("\n"), "utf8");
+  writeFileSync(path.join(target, "score.json"), `${JSON.stringify({ score: initialScore })}\n`, "utf8");
+  return target;
+}
+
+function writeAutoresearchSandboxScore(stateDirectory, score) {
+  const scorePath = path.join(stateDirectory, "sandbox", "workspace", "score.json");
+  writeFileSync(scorePath, `${JSON.stringify({ score })}\n`, "utf8");
+  return scorePath;
+}
+
+function createAcceptedAutoresearchRun(cwd, initialScore = 10, improvedScore = 5) {
+  const target = createAutoresearchPackageTarget(cwd, initialScore);
+  const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+  assert.equal(init.status, 0);
+  const initialized = JSON.parse(init.stdout).autoresearch;
+  assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+  writeAutoresearchSandboxScore(initialized.stateDirectory, improvedScore);
+  const run = runCli(["autoresearch", "run", "--json"], { cwd });
+  assert.equal(run.status, 0);
+  assert.equal(JSON.parse(run.stdout).autoresearch.candidate.accepted, true);
+  return { target, initialized };
+}
+
 describe("qube composer CLI", () => {
   it("reports package version without invoking component tools", () => {
     const text = runCli(["--version"]);
@@ -689,11 +727,9 @@ describe("qube composer CLI", () => {
 
   it("runs a bounded local autoresearch lifecycle with explicit promotion", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-cwd-"));
-    const target = path.join(cwd, "target");
-    mkdirSync(target, { recursive: true });
-    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+    const target = createAutoresearchPackageTarget(cwd, 10);
 
-    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
     assert.equal(init.status, 0);
     const initialized = JSON.parse(init.stdout).autoresearch;
     assert.equal(initialized.action, "init");
@@ -705,7 +741,8 @@ describe("qube composer CLI", () => {
     assert.ok(existsSync(path.join(initialized.stateDirectory, "arena.md")));
     assert.ok(existsSync(path.join(initialized.stateDirectory, "evaluator.json")));
     const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
-    assert.equal(evaluator.kind, "rubric-review");
+    assert.equal(evaluator.kind, "command-metric");
+    assert.equal(evaluator.command, "npm test");
     assert.notEqual(evaluator.kind, "term-coverage");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
@@ -713,7 +750,14 @@ describe("qube composer CLI", () => {
     const baselined = JSON.parse(baseline.stdout).autoresearch;
     assert.equal(baselined.phase, "baselined");
     assert.equal(baselined.evaluation.evaluatorHash, initialized.evaluatorHash);
-    assert.ok(baselined.evaluation.score < 1);
+    assert.equal(baselined.evaluation.score, 10);
+    assert.equal(baselined.evaluation.command, "npm test");
+    assert.equal(baselined.evaluation.referee.owner, "aiq");
+    assert.equal(baselined.evaluation.referee.status, "passed");
+    assert.ok(existsSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json")));
+    assert.ok(existsSync(path.join(initialized.stateDirectory, "sandbox", "baseline", "workspace", "score.json")));
+
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 5);
 
     const run = runCli(["autoresearch", "run", "--json"], { cwd });
     assert.equal(run.status, 0);
@@ -721,9 +765,13 @@ describe("qube composer CLI", () => {
     assert.equal(ran.phase, "ran");
     assert.equal(ran.candidate.owner.execution, "aie");
     assert.equal(ran.candidate.owner.evaluation, "aiq");
-    assert.ok(ran.candidate.evaluation.score > baselined.evaluation.score);
+    assert.equal(ran.candidate.evaluation.score, 5);
+    assert.ok(ran.candidate.evaluation.score < baselined.evaluation.score);
+    assert.equal(ran.candidate.referee.status, "passed");
     assert.ok(ran.candidate.artifactPath.includes(path.join(".qube", "autoresearch")));
+    assert.ok(ran.candidate.workspacePath.includes(path.join(".qube", "autoresearch")));
     assert.ok(existsSync(ran.candidate.artifactPath));
+    assert.equal(JSON.parse(readFileSync(path.join(target, "score.json"), "utf8")).score, 10);
     assert.equal(existsSync(path.join(target, "autoresearch-result.md")), false);
 
     const status = runCli(["autoresearch", "status", "--json"], { cwd });
@@ -747,11 +795,31 @@ describe("qube composer CLI", () => {
     assert.equal(promoted.promotion.outputPath, path.join(target, "autoresearch-result.md"));
   });
 
+  it("rejects non-improving autoresearch candidates and restores the sandbox workspace", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-reject-cwd-"));
+    const target = createAutoresearchPackageTarget(cwd, 10);
+
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 15);
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 0);
+    const ran = JSON.parse(run.stdout).autoresearch;
+    assert.equal(ran.candidate.accepted, false);
+    assert.equal(ran.candidate.referee.status, "rejected");
+    assert.match(ran.candidate.referee.reasons.join("\n"), /did not improve/);
+    assert.equal(ran.currentBest, null);
+    assert.equal(JSON.parse(readFileSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json"), "utf8")).score, 10);
+    assert.equal(JSON.parse(readFileSync(path.join(target, "score.json"), "utf8")).score, 10);
+  });
+
   it("refuses autoresearch when the fixed evaluator changes", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tamper-cwd-"));
-    mkdirSync(path.join(cwd, "target"), { recursive: true });
-    writeFileSync(path.join(cwd, "target", "README.md"), "Existing notes target.\n", "utf8");
-    const init = runCli(["autoresearch", "target", "improve notes summary quality", "--json"], { cwd });
+    createAutoresearchPackageTarget(cwd, 10);
+    const init = runCli(["autoresearch", "target", "improve runtime performance", "--json"], { cwd });
     assert.equal(init.status, 0);
     const initialized = JSON.parse(init.stdout).autoresearch;
     const evaluatorPath = path.join(initialized.stateDirectory, "evaluator.json");
@@ -797,16 +865,8 @@ describe("qube composer CLI", () => {
 
   it("refuses to promote an autoresearch artifact outside the sandbox", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-promotion-cwd-"));
-    const target = path.join(cwd, "target");
-    mkdirSync(target, { recursive: true });
-    const targetReadme = path.join(target, "README.md");
-    writeFileSync(targetReadme, "Existing notes target.\n", "utf8");
-
-    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
-    assert.equal(init.status, 0);
-    const initialized = JSON.parse(init.stdout).autoresearch;
-    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
-    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+    const { target, initialized } = createAcceptedAutoresearchRun(cwd);
+    const targetReadme = path.join(target, "metric.mjs");
 
     const statePath = path.join(initialized.stateDirectory, "state.json");
     const state = JSON.parse(readFileSync(statePath, "utf8"));
@@ -825,13 +885,7 @@ describe("qube composer CLI", () => {
 
   it("refuses autoresearch promotion output outside declared mutable surfaces", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-output-surface-cwd-"));
-    const target = path.join(cwd, "target");
-    mkdirSync(target, { recursive: true });
-    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
-
-    assert.equal(runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd }).status, 0);
-    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
-    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+    createAcceptedAutoresearchRun(cwd);
 
     const promote = runCli(["autoresearch", "promote", "--output", "../outside.md", "--json"], { cwd });
     assert.equal(promote.status, 2);
@@ -843,15 +897,7 @@ describe("qube composer CLI", () => {
 
   it("refuses autoresearch promotion when arena surfaces are tampered wider than the target", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tampered-surface-cwd-"));
-    const target = path.join(cwd, "target");
-    mkdirSync(target, { recursive: true });
-    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
-
-    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
-    assert.equal(init.status, 0);
-    const initialized = JSON.parse(init.stdout).autoresearch;
-    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
-    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+    const { initialized } = createAcceptedAutoresearchRun(cwd);
 
     const arenaPath = path.join(initialized.stateDirectory, "arena.json");
     const arena = JSON.parse(readFileSync(arenaPath, "utf8"));
@@ -875,14 +921,15 @@ describe("qube composer CLI", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-symlink-surface-cwd-"));
     const target = path.join(cwd, "target");
     const outside = path.join(cwd, "outside");
-    mkdirSync(target, { recursive: true });
+    createAutoresearchPackageTarget(cwd);
     mkdirSync(outside, { recursive: true });
-    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
     symlinkSync(outside, path.join(target, "linked"), process.platform === "win32" ? "junction" : "dir");
 
-    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
     assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
     assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 5);
     assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
 
     const promote = runCli(["autoresearch", "promote", "--output", path.join("target", "linked", "escaped.md"), "--json"], { cwd });
