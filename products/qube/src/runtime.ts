@@ -170,6 +170,7 @@ interface AutoresearchEvaluation {
   readonly stderr?: string;
   readonly durationMs?: number;
   readonly workspacePath?: string;
+  readonly outputTruncated?: boolean;
   readonly referee?: AutoresearchReferee;
   readonly recordedAt: string;
 }
@@ -178,6 +179,7 @@ interface AutoresearchCandidate {
   readonly id: string;
   readonly workspacePath: string;
   readonly artifactPath: string;
+  readonly changedFiles: readonly string[];
   readonly evaluation: AutoresearchEvaluation;
   readonly accepted: boolean;
   readonly referee: AutoresearchReferee;
@@ -190,11 +192,22 @@ interface AutoresearchCandidate {
 
 interface AutoresearchReferee {
   readonly owner: "aiq";
+  readonly boundary: "aiq-fixed-evaluator";
   readonly status: "passed" | "rejected";
   readonly reasons: readonly string[];
   readonly evaluatorImmutable: boolean;
   readonly gatesPassed: boolean;
   readonly antiGamingPassed: boolean;
+  readonly provenance: {
+    readonly evaluatorHash: string;
+    readonly command?: string;
+    readonly evidenceRequired: readonly string[];
+  };
+}
+
+interface AutoresearchWorkspaceChange {
+  readonly path: string;
+  readonly kind: "added" | "modified" | "deleted" | "symlink";
 }
 
 interface AutoresearchPromotion {
@@ -1315,12 +1328,28 @@ function baselineAutoresearch(
     return { error: "Autoresearch baseline requires a command-metric evaluator synthesized from the target." };
   }
   const workspacePath = autoresearchWorkspacePath(context);
+  if (dryRun) {
+    return {
+      payload: {
+        action: "baseline",
+        runId: context.state.runId,
+        phase: context.state.phase,
+        planned: true,
+        workspacePath,
+        evaluatorProvenance: autoresearchEvaluatorProvenance(context),
+        nextAction: `Run qube autoresearch baseline --run ${context.state.runId} without --dry-run to snapshot and evaluate the baseline.`
+      }
+    };
+  }
   if (!dryRun) {
     materializeAutoresearchWorkspace(context.state.targetPath, workspacePath);
     copyAutoresearchWorkspace(workspacePath, autoresearchBaselineWorkspacePath(context));
     copyAutoresearchWorkspace(workspacePath, autoresearchCurrentBestWorkspacePath(context));
   }
   const evaluation = evaluateAutoresearchCommand(context, workspacePath);
+  if (evaluation.referee?.status !== "passed") {
+    return { error: `Autoresearch baseline evaluator was rejected: ${evaluation.referee?.reasons.join(" ") || "unknown AIQ referee rejection"}` };
+  }
   const state = updateAutoresearchState(context.state, {
     phase: "baselined",
     baseline: evaluation,
@@ -1361,19 +1390,49 @@ function runAutoresearchCandidate(
   const candidateDirectory = path.join(context.runDirectory, "sandbox", "candidates", candidateId);
   const candidateWorkspacePath = path.join(candidateDirectory, "workspace");
   const artifactPath = path.join(candidateDirectory, "artifact.md");
-  if (!dryRun) {
-    copyAutoresearchWorkspace(workspacePath, candidateWorkspacePath);
-  }
-  const evaluation = evaluateAutoresearchCommand(context, dryRun ? workspacePath : candidateWorkspacePath);
+  const baseWorkspacePath = context.state.currentBest ? autoresearchCurrentBestWorkspacePath(context) : autoresearchBaselineWorkspacePath(context);
   const currentScore = context.state.currentBest?.evaluation.score ?? context.state.baseline.score;
-  const accepted = evaluation.referee?.status === "passed" && isAutoresearchScoreImproved(context.evaluator, evaluation.score, currentScore);
-  const referee = createAutoresearchReferee(context, evaluation, accepted ? [] : [`Candidate score ${evaluation.score} did not improve current best ${currentScore}.`]);
+  const changes = collectAutoresearchWorkspaceChanges(baseWorkspacePath, workspacePath);
+  const changedFiles = changes.map(change => change.path);
+  if (dryRun) {
+    return {
+      payload: {
+        action: "run",
+        runId: context.state.runId,
+        phase: context.state.phase,
+        planned: true,
+        candidateId,
+        workspacePath,
+        candidateWorkspacePath,
+        changedFiles,
+        currentScore,
+        evaluatorProvenance: autoresearchEvaluatorProvenance(context),
+        blockers: validateAutoresearchCandidateBoundary(context, changes),
+        nextAction: `Run qube autoresearch run --run ${context.state.runId} without --dry-run to evaluate ${candidateId}.`
+      }
+    };
+  }
+  copyAutoresearchWorkspace(workspacePath, candidateWorkspacePath);
+  const boundaryReasons = validateAutoresearchCandidateBoundary(context, changes);
+  const evaluation = boundaryReasons.length > 0
+    ? createAutoresearchRejectedEvaluation(context, candidateWorkspacePath, currentScore, boundaryReasons)
+    : evaluateAutoresearchCommand(context, candidateWorkspacePath);
+  const improved = evaluation.referee?.status === "passed" && isAutoresearchScoreImproved(context.evaluator, evaluation.score, currentScore);
+  const accepted = improved && boundaryReasons.length === 0;
+  const referee = evaluation.referee?.status === "rejected"
+    ? evaluation.referee
+    : runAiqAutoresearchReferee(
+      context,
+      evaluation,
+      accepted ? [] : [`Candidate score ${evaluation.score} did not improve current best ${currentScore}.`]
+    );
   const candidateEvaluation = { ...evaluation, referee };
   const artifact = renderAutoresearchArtifact(context.state, context.evaluator, candidateId, candidateEvaluation, referee);
   const candidate: AutoresearchCandidate = {
     id: candidateId,
     workspacePath: candidateWorkspacePath,
     artifactPath,
+    changedFiles,
     evaluation: candidateEvaluation,
     accepted,
     referee,
@@ -1848,6 +1907,122 @@ function isIgnoredAutoresearchEntry(name: string): boolean {
   return name === ".git" || name === ".qube" || name === "node_modules" || name === "dist" || name === "build";
 }
 
+function collectAutoresearchWorkspaceChanges(basePath: string, candidatePath: string): readonly AutoresearchWorkspaceChange[] {
+  const baseFiles = collectAutoresearchFileHashes(basePath);
+  const candidateFiles = collectAutoresearchFileHashes(candidatePath);
+  const paths = [...new Set([...baseFiles.keys(), ...candidateFiles.keys()])].sort();
+  const changes: AutoresearchWorkspaceChange[] = [];
+  for (const relativePath of paths) {
+    const base = baseFiles.get(relativePath);
+    const candidate = candidateFiles.get(relativePath);
+    if (base === candidate) continue;
+    if (candidate === undefined) {
+      changes.push({ path: relativePath, kind: "deleted" });
+      continue;
+    }
+    if (candidate === "symlink") {
+      changes.push({ path: relativePath, kind: "symlink" });
+      continue;
+    }
+    changes.push({ path: relativePath, kind: base === undefined ? "added" : "modified" });
+  }
+  return changes;
+}
+
+function collectAutoresearchFileHashes(rootPath: string): Map<string, string> {
+  const files = new Map<string, string>();
+  if (!existsSync(rootPath)) return files;
+  const visit = (directoryPath: string): void => {
+    for (const entry of readdirSync(directoryPath, { withFileTypes: true })) {
+      if (isIgnoredAutoresearchEntry(entry.name)) continue;
+      const entryPath = path.join(directoryPath, entry.name);
+      const relativePath = path.relative(rootPath, entryPath);
+      if (entry.isSymbolicLink()) {
+        files.set(relativePath, "symlink");
+        continue;
+      }
+      if (entry.isDirectory()) {
+        visit(entryPath);
+        continue;
+      }
+      if (entry.isFile()) {
+        files.set(relativePath, createHash("sha256").update(readFileSync(entryPath)).digest("hex"));
+      }
+    }
+  };
+  visit(rootPath);
+  return files;
+}
+
+function validateAutoresearchCandidateBoundary(
+  context: AutoresearchContext,
+  changes: readonly AutoresearchWorkspaceChange[]
+): readonly string[] {
+  if (changes.length === 0) {
+    return ["Candidate workspace has no changed files to evaluate."];
+  }
+  const reasons: string[] = [];
+  const allowedSurfacePaths = allowedAutoresearchWorkspaceSurfaces(context);
+  if (allowedSurfacePaths.length === 0) {
+    reasons.push("Arena has no declared read-write mutable surfaces for candidate changes.");
+  }
+  for (const change of changes) {
+    const candidatePath = path.resolve(autoresearchWorkspacePath(context), change.path);
+    const allowed = allowedSurfacePaths.some(surfacePath => isPathInside(surfacePath, candidatePath));
+    if (!allowed) {
+      reasons.push(`Candidate change ${change.path} is outside declared mutable surfaces.`);
+    }
+    if (change.kind === "symlink") {
+      reasons.push(`Candidate change ${change.path} is a symbolic link, which is not allowed in autoresearch workspaces.`);
+    }
+  }
+  return reasons;
+}
+
+function allowedAutoresearchWorkspaceSurfaces(context: AutoresearchContext): readonly string[] {
+  const targetRoot = path.resolve(context.state.targetPath);
+  const workspaceRoot = autoresearchWorkspacePath(context);
+  const surfaces: string[] = [];
+  for (const surface of context.arena.mutableSurfaces) {
+    if (surface.kind !== "directory" || surface.permission !== "read-write") continue;
+    const surfacePath = path.resolve(surface.path);
+    if (!isPathInside(targetRoot, surfacePath)) continue;
+    surfaces.push(path.resolve(workspaceRoot, path.relative(targetRoot, surfacePath)));
+  }
+  return surfaces;
+}
+
+function createAutoresearchRejectedEvaluation(
+  context: AutoresearchContext,
+  workspacePath: string,
+  score: number,
+  reasons: readonly string[]
+): AutoresearchEvaluation {
+  const referee = runAiqAutoresearchReferee(context, {
+    exitCode: null,
+    score,
+    stdout: "",
+    stderr: ""
+  }, reasons);
+  return {
+    score,
+    matchedTerms: [],
+    missingTerms: [],
+    evaluatorHash: context.evaluator.hash,
+    summary: `Candidate rejected before evaluator command: ${referee.reasons.join(" ")}`,
+    command: context.evaluator.command,
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+    durationMs: 0,
+    workspacePath,
+    referee,
+    recordedAt: new Date().toISOString()
+  };
+}
+
+const autoresearchEvidenceOutputLimit = 16_000;
+
 function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath: string): AutoresearchEvaluation {
   const started = Date.now();
   const result = spawnSync(context.evaluator.command ?? "", [], {
@@ -1859,13 +2034,18 @@ function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath
     env: { ...process.env, QUBE_AUTORESEARCH: "1" }
   });
   const durationMs = Date.now() - started;
-  const stdout = result.stdout ?? "";
-  const stderr = result.stderr ?? "";
-  const score = parseAutoresearchScore(stdout);
+  const rawStdout = result.stdout ?? "";
+  const rawStderr = result.stderr ?? "";
+  const stdout = limitAutoresearchOutput(rawStdout);
+  const stderr = limitAutoresearchOutput(rawStderr);
+  const score = parseAutoresearchScore(rawStdout);
   const reasons: string[] = [];
   if (result.error) reasons.push(result.error.message);
   if (score === null) reasons.push("Evaluator command did not emit a scalar score.");
-  const referee = createAutoresearchReferee(context, {
+  if (rawStdout.length > autoresearchEvidenceOutputLimit || rawStderr.length > autoresearchEvidenceOutputLimit) {
+    reasons.push("Evaluator output exceeded bounded evidence limits.");
+  }
+  const referee = runAiqAutoresearchReferee(context, {
     exitCode: result.status,
     score: score ?? 0,
     stdout,
@@ -1885,9 +2065,15 @@ function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath
     stderr,
     durationMs,
     workspacePath,
+    outputTruncated: rawStdout !== stdout || rawStderr !== stderr,
     referee,
     recordedAt: new Date().toISOString()
   };
+}
+
+function limitAutoresearchOutput(text: string): string {
+  if (text.length <= autoresearchEvidenceOutputLimit) return text;
+  return `${text.slice(0, autoresearchEvidenceOutputLimit)}\n[truncated ${text.length - autoresearchEvidenceOutputLimit} bytes]\n`;
 }
 
 function parseAutoresearchScore(stdout: string): number | null {
@@ -1924,7 +2110,7 @@ function readAutoresearchScore(value: unknown): number | null {
   return null;
 }
 
-function createAutoresearchReferee(
+function runAiqAutoresearchReferee(
   context: AutoresearchContext,
   evaluation: Pick<AutoresearchEvaluation, "score" | "exitCode" | "stdout" | "stderr">,
   extraReasons: readonly string[] = []
@@ -1940,11 +2126,17 @@ function createAutoresearchReferee(
   ];
   return {
     owner: "aiq",
+    boundary: "aiq-fixed-evaluator",
     status: reasons.length === 0 ? "passed" : "rejected",
     reasons,
     evaluatorImmutable,
     gatesPassed,
-    antiGamingPassed
+    antiGamingPassed,
+    provenance: {
+      evaluatorHash: context.evaluator.hash,
+      command: context.evaluator.command,
+      evidenceRequired: context.evaluator.acceptancePolicy.evidenceRequired
+    }
   };
 }
 
@@ -1995,6 +2187,7 @@ function updateAutoresearchState(state: AutoresearchState, patch: Partial<Autore
 }
 
 function summarizeAutoresearch(context: AutoresearchContext, action: string): Readonly<Record<string, unknown>> {
+  const activeCandidate = context.state.attempts.at(-1) ?? null;
   return {
     action,
     runId: context.state.runId,
@@ -2003,13 +2196,46 @@ function summarizeAutoresearch(context: AutoresearchContext, action: string): Re
     targetPath: context.state.targetPath,
     goal: context.state.goal,
     evaluatorHash: context.state.evaluatorHash,
+    evaluatorProvenance: autoresearchEvaluatorProvenance(context),
     baseline: context.state.baseline,
     currentBest: context.state.currentBest,
+    activeCandidate,
     attempts: context.state.attempts.length,
+    blockers: autoresearchBlockers(context),
     promoted: context.state.promoted,
     stateDirectory: context.runDirectory,
     nextAction: context.state.nextAction
   };
+}
+
+function autoresearchEvaluatorProvenance(context: AutoresearchContext): Readonly<Record<string, unknown>> {
+  return {
+    owner: context.evaluator.owner,
+    kind: context.evaluator.kind,
+    command: context.evaluator.command,
+    hash: context.evaluator.hash,
+    synthesizedBy: context.evaluator.provenance.synthesizedBy,
+    targetKind: context.evaluator.provenance.targetKind,
+    acceptancePolicy: context.evaluator.acceptancePolicy,
+    aiqBoundary: "aiq-fixed-evaluator"
+  };
+}
+
+function autoresearchBlockers(context: AutoresearchContext): readonly string[] {
+  const blockers: string[] = [];
+  const evaluatorError = validateAutoresearchEvaluator(context.state, context.evaluator);
+  if (evaluatorError) blockers.push(evaluatorError);
+  if (!isCommandMetricEvaluator(context.evaluator)) {
+    blockers.push("Autoresearch requires a command-metric evaluator before baseline or run.");
+  }
+  if (context.state.baseline?.referee?.status === "rejected") {
+    blockers.push(...context.state.baseline.referee.reasons);
+  }
+  const activeCandidate = context.state.attempts.at(-1);
+  if (activeCandidate?.referee.status === "rejected") {
+    blockers.push(...activeCandidate.referee.reasons);
+  }
+  return [...new Set(blockers)];
 }
 
 function writeAutoresearchDashboard(context: AutoresearchContext): void {
