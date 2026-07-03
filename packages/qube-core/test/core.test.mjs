@@ -12,6 +12,7 @@ import {
   qubeCommandSurfaceContracts,
   qubePathContracts,
   qubeProductContracts,
+  REPO_LAYOUT_KINDS,
   qubeRepoArtifactContracts
 } from "../dist/index.js";
 
@@ -43,6 +44,14 @@ describe("qube core contracts", () => {
     assert.deepEqual(surfaces.get("executor"), ["cli", "github", "gitlab", "linear", "jira", "jenkins", "codex", "opencode", "claude-code", "grok-build"]);
     assert.deepEqual(surfaces.get("quality"), ["cli"]);
     assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
+  });
+
+  it("exports canonical repository layout kinds for provider contracts", () => {
+    assert.ok(REPO_LAYOUT_KINDS.includes("single-app-service"));
+    assert.ok(REPO_LAYOUT_KINDS.includes("javascript-typescript-workspace"));
+    assert.ok(REPO_LAYOUT_KINDS.includes("generated-vendor-heavy"));
+    assert.ok(REPO_LAYOUT_KINDS.includes("unknown"));
+    assert.equal(new Set(REPO_LAYOUT_KINDS).size, REPO_LAYOUT_KINDS.length);
   });
 
   it("classifies command, path, and repo artifact surfaces", () => {

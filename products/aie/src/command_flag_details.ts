@@ -180,6 +180,17 @@ export const RUN_STOP_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const REPO_AFFECTED_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable affected-scope output', default: false },
+  { name: '--changed', type: 'string', description: 'Changed repository path to map; repeat or comma-separate. Defaults to git diff against the configured base ref.', multiple: true },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const REPO_INSPECT_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable repository layout inspection output', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const CHECKLIST_UPDATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable issue checklist mutation output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Plan the issue checklist body update without mutating GitHub', default: false },

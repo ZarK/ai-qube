@@ -19,11 +19,11 @@ import { runInit } from './init/index.js';
 import { parseLifecycleIssueSelection } from './lifecycle.js';
 import { buildMigrationMap, formatMigrationMap, formatMigrationPlan, runMigration } from './migrate/index.js';
 import { computeQueue, getNextIssue } from './queue/index.js';
-import { buildRepoPrimePlan } from './repo/index.js';
+import { buildRepoPrimePlan, runRepoAffected, runRepoInspect } from './repo/index.js';
 import { formatDoctorHuman } from './renderers/doctor_renderer.js';
 import { formatInitHuman } from './renderers/init_renderer.js';
 import { formatCompleteHuman, formatStartHuman, formatSwitchHuman } from './renderers/lifecycle_renderer.js';
-import { formatRepoPrimeHuman } from './renderers/repo_renderer.js';
+import { formatRepoAffectedHuman, formatRepoInspectHuman, formatRepoPrimeHuman } from './renderers/repo_renderer.js';
 import { formatStatusHuman } from './renderers/status_renderer.js';
 import { formatViewHuman } from './renderers/view_renderer.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
@@ -648,7 +648,31 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     if (q.driftCount > 0) lines.push('Drift detected - labels disagree with dependency state. Run `aie deps fix --dry-run` then `aie deps fix`.');
     return commandResult(context, { ok: true, command: 'queue', ...q }, lineOutput(lines));
   },
-  repo: topic(['Use `aie repo prime --dry-run` to inspect repository readiness before issue execution.', '`aie repo prime` can create or update Executor labels and can write a minimal .qube/aie/config.json only with --yes. It never creates specs, GitHub milestones, issue batches, or agent instructions.']),
+  repo: topic(['Use `aie repo inspect --json` to inspect local repository layout metadata.', 'Use `aie repo affected --json` to map changed paths to detected projects and suggested gates.', 'Use `aie repo prime --dry-run` to inspect repository readiness before issue execution.']),
+  'repo inspect': async context => {
+    const loaded = await loadConfigFile();
+    if (!loaded.ok) return configLoadFailure(context, 'repo inspect', loaded, 'Fix the selected Executor config, then inspect repository layout again.');
+    try {
+      const result = await runRepoInspect({ config: loaded.config ?? getDefaults(), cwd: loaded.root ?? undefined });
+      return commandResult(context, result, formatRepoInspectHuman(result));
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : String(err);
+      const message = `Failed to run \`aie repo inspect\`. Likely cause: ${cause}. Next action: rerun from a readable repository checkout with valid Executor config.`;
+      return commandFailure(context, { ok: false, command: 'repo inspect', error: message }, message);
+    }
+  },
+  'repo affected': async context => {
+    const loaded = await loadConfigFile();
+    if (!loaded.ok) return configLoadFailure(context, 'repo affected', loaded, 'Fix the selected Executor config, then inspect affected scope again.');
+    try {
+      const result = await runRepoAffected({ config: loaded.config ?? getDefaults(), cwd: loaded.root ?? undefined, changedPaths: stringListFlag(context, 'changed') });
+      return commandResult(context, result, formatRepoAffectedHuman(result));
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : String(err);
+      const message = `Failed to run \`aie repo affected\`. Likely cause: ${cause}. Next action: provide --changed paths or rerun from a checkout with the configured base ref available.`;
+      return commandFailure(context, { ok: false, command: 'repo affected', error: message }, message);
+    }
+  },
   'repo prime': async context => {
     const config = (await loadConfig()) || getDefaults();
     const dryRun = readBooleanFlag(context, 'dry-run');

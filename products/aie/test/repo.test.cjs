@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { execFileSync } = require('node:child_process');
-const { existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { getDefaults } = require('../dist/config/index.js');
@@ -13,6 +13,8 @@ const {
   formatMinimalConfig,
   listMilestones,
   listOpenPullRequests,
+  runRepoAffected,
+  runRepoInspect,
 } = require('../dist/repo/index.js');
 
 function makeFixtureExec(responses, calls = []) {
@@ -35,6 +37,22 @@ function makeGitRepo() {
   const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
   execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
   return repo;
+}
+
+function makeFixtureRepo(fixtureName) {
+  const repo = makeGitRepo();
+  cpSync(join(__dirname, 'fixtures', 'layout', fixtureName), repo, { recursive: true });
+  execFileSync('git', ['add', '.'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', `fixture ${fixtureName}`], { cwd: repo, stdio: 'ignore' });
+  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
+  return repo;
+}
+
+function commitFile(repo, path, content) {
+  writeFileSync(join(repo, path), content);
+  execFileSync('git', ['add', path], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', `change ${path}`], { cwd: repo, stdio: 'ignore' });
 }
 
 function success(args, stdout) {
@@ -191,14 +209,129 @@ describe('repo data helpers', () => {
   });
 });
 
+describe('repo layout inspection and affected scope', () => {
+  it('inspects a JavaScript workspace layout with projects and local signals', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core']);
+    assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, '@fixture/core');
+    assert.deepEqual(result.lockfiles, ['pnpm-lock.yaml']);
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pnpm-workspace.yaml'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+  });
+
+  it('uses narrow git probes for layout inspection', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const calls = [];
+    const git = async (args) => {
+      calls.push(args.join(' '));
+      if (args.join(' ') === 'rev-parse --show-toplevel') return { args, exitCode: 0, stdout: repo, stderr: '' };
+      if (args.join(' ') === 'remote -v') return { args, exitCode: 0, stdout: 'origin\thttps://github.com/example/repo.git (fetch)\norigin\thttps://github.com/example/repo.git (push)\n', stderr: '' };
+      return { args, exitCode: 1, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
+    };
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo, git });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.deepEqual(calls, ['rev-parse --show-toplevel', 'remote -v']);
+  });
+
+  it('maps changed paths to affected workspace projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['packages/core/src/index.ts', 'pnpm-lock.yaml'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-root', '@fixture/core']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/core').gates.includes('typecheck'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('does not treat nested lockfiles as root project changes', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['products/aie/test/fixtures/layout/js-workspace/pnpm-lock.yaml'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand workspace projects outside the repository root', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const outside = join(repo, '..', 'outside-layout-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'package.json'), JSON.stringify({ name: 'outside-layout-leak' }));
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({
+      name: 'fixture-root',
+      private: true,
+      workspaces: ['packages/*', '../outside-*'],
+    }));
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core']);
+    assert.equal(result.projects.some(project => project.packageName === 'outside-layout-leak'), false);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('uses configured base ref when changed paths are not provided', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['branch', 'develop', base], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['update-ref', 'refs/remotes/upstream/develop', base], { cwd: repo, stdio: 'ignore' });
+    commitFile(repo, 'packages/core/src/index.ts', 'export const changed = true;\n');
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
+
+    const result = await runRepoAffected({
+      config: { ...getDefaults(), baseRemote: 'upstream', baseBranch: 'develop' },
+      cwd: repo,
+    });
+
+    assert.deepEqual(result.changedPaths, ['packages/core/src/index.ts']);
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['@fixture/core']);
+    assert.equal(result.warnings.some(warning => warning.includes('Failed to inspect changed paths')), false);
+  });
+
+  it('warns when default changed path inspection fails', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoAffected({
+      config: { ...getDefaults(), baseRemote: 'missing-remote', baseBranch: 'missing-branch' },
+      cwd: repo,
+    });
+
+    assert.deepEqual(result.changedPaths, []);
+    assert.ok(result.warnings.some(warning => warning.includes('Failed to inspect changed paths from missing-remote/missing-branch...HEAD')));
+  });
+});
+
 describe('repo command metadata and schema', () => {
   it('publishes repo topic and repo prime metadata through the shared registry', () => {
     const { getCommandMetadata } = require('../dist/command_metadata.js');
     const repo = getCommandMetadata('repo');
     const repoPrime = getCommandMetadata('repo prime');
 
-    assert.ok(repo.description.includes('Inspect and prepare repository state'));
-    assert.ok(repo.examples.some(example => example.includes('repo prime --dry-run')));
+    const inspect = getCommandMetadata('repo inspect');
+    const affected = getCommandMetadata('repo affected');
+
+    assert.ok(repo.description.includes('Inspect repository layout'));
+    assert.ok(repo.examples.some(example => example.includes('repo inspect --json')));
+    assert.ok(inspect.flags.includes('--json'));
+    assert.ok(affected.flags.includes('--changed'));
     assert.ok(repoPrime.flags.includes('--json'));
     assert.ok(repoPrime.flags.includes('--dry-run'));
     assert.ok(repoPrime.flags.includes('--yes'));
@@ -210,11 +343,17 @@ describe('repo command metadata and schema', () => {
     const commands = getImplementedCommands();
     const labels = commands.find(command => command.name === 'labels');
     const repo = commands.find(command => command.name === 'repo');
+    const inspect = commands.find(command => command.name === 'repo inspect');
+    const affected = commands.find(command => command.name === 'repo affected');
     const prime = commands.find(command => command.name === 'repo prime');
 
     assert.equal(labels.mutates, false);
     assert.equal(repo.mutates, false);
     assert.ok(repo.examples.includes('aie repo'));
+    assert.equal(inspect.mutates, false);
+    assert.equal(inspect.supportsJson, true);
+    assert.equal(affected.mutates, false);
+    assert.equal(affected.supportsJson, true);
     assert.equal(prime.mutates, true);
     assert.equal(prime.supportsJson, true);
     assert.equal(prime.supportsDryRun, true);
