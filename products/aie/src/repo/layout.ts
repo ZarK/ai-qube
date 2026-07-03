@@ -1,6 +1,6 @@
 import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { isAbsolute, join, relative, resolve } from 'path';
 import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoRootMarker } from '@tjalve/qube-core';
 import { configToExecutorPolicy } from '../config_policy.js';
 import type { Config } from '../config/index.js';
@@ -37,6 +37,13 @@ function portablePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
+function repoRelativePath(root: string, path: string): string | null {
+  const relativePath = relative(root, path);
+  if (relativePath === '') return '.';
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) return null;
+  return portablePath(relativePath);
+}
+
 function readPackageJson(root: string, path = 'package.json'): PackageJson | null {
   try {
     return JSON.parse(readFileSync(join(root, path), 'utf8')) as PackageJson;
@@ -64,16 +71,23 @@ function readWorkspacePatterns(packageJson: PackageJson | null, root: string): s
 function expandWorkspacePattern(root: string, pattern: string): string[] {
   const normalized = portablePath(pattern).replace(/\/+$/, '');
   if (normalized.includes('**') || normalized.startsWith('!')) return [];
-  if (!normalized.includes('*')) return existsSync(join(root, normalized, 'package.json')) ? [normalized] : [];
+  if (!normalized.includes('*')) {
+    const projectPath = resolve(root, normalized);
+    const relativeProjectPath = repoRelativePath(root, projectPath);
+    return relativeProjectPath !== null && existsSync(join(projectPath, 'package.json')) ? [relativeProjectPath] : [];
+  }
   const starIndex = normalized.indexOf('*');
   const prefix = normalized.slice(0, starIndex).replace(/\/+$/, '');
   const suffix = normalized.slice(starIndex + 1).replace(/^\/+/, '');
-  const base = prefix === '' ? root : join(root, prefix);
+  const base = prefix === '' ? root : resolve(root, prefix);
+  if (repoRelativePath(root, base) === null) return [];
   if (!existsSync(base)) return [];
   return readdirSync(base, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
-    .map(entry => portablePath(join(prefix, entry.name, suffix)))
-    .filter(path => existsSync(join(root, path, 'package.json')));
+    .map(entry => resolve(base, entry.name, suffix))
+    .map(path => ({ path, relativePath: repoRelativePath(root, path) }))
+    .filter(candidate => candidate.relativePath !== null && existsSync(join(candidate.path, 'package.json')))
+    .map(candidate => candidate.relativePath as string);
 }
 
 function projectId(path: string, packageName: string | null): string {

@@ -239,6 +239,24 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.suggestedGates.includes('dependency-review'));
   });
 
+  it('does not expand workspace projects outside the repository root', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const outside = join(repo, '..', 'outside-layout-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'package.json'), JSON.stringify({ name: 'outside-layout-leak' }));
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({
+      name: 'fixture-root',
+      private: true,
+      workspaces: ['packages/*', '../outside-*'],
+    }));
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core']);
+    assert.equal(result.projects.some(project => project.packageName === 'outside-layout-leak'), false);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
   it('uses configured base ref when changed paths are not provided', async () => {
     const repo = makeFixtureRepo('js-workspace');
     const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
