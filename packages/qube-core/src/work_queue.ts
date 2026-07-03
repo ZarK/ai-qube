@@ -1,4 +1,6 @@
-import { createAction, createActionPlan, maybeWorkItemKeyNumber, type Action, type ActionPlan, type WorkItem, type WorkItemKey, type WorkPriority, type WorkStatus } from "./index.js";
+import { createAction, createActionPlan, type Action, type ActionPlan } from "./action_plan.js";
+import { maybeWorkItemKeyNumber, type WorkItem, type WorkPriority, type WorkStatus } from "./work_item.js";
+import type { WorkItemKey } from "./work_item_key.js";
 
 export interface MilestoneOrderingPolicy {
   readonly enabled: boolean;

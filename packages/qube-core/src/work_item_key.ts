@@ -13,6 +13,10 @@ export function normalizeWorkItemKey(providerId: string, id: string): WorkItemKe
   return { providerId: nonEmpty(providerId, "providerId"), id: nonEmpty(id, "id") };
 }
 
+export function sameWorkItemKey(left: WorkItemKey, right: WorkItemKey): boolean {
+  return left.providerId === right.providerId && left.id === right.id;
+}
+
 export function uniqueWorkItemKeys(keys: readonly WorkItemKey[]): WorkItemKey[] {
   const seen = new Set<string>();
   const unique: WorkItemKey[] = [];

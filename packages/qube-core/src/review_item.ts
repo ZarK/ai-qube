@@ -1,7 +1,7 @@
 import type { GateEvidence } from "./gate_evidence.js";
 import { normalizeGateEvidence } from "./gate_evidence.js";
 import type { JsonObject } from "./json_value.js";
-import type { ProviderResourceKind, ProviderSource } from "./provider_source.js";
+import type { ProviderSource } from "./provider_source.js";
 import type { WorkItemKey } from "./work_item_key.js";
 import { uniqueWorkItemKeys } from "./work_item_key.js";
 

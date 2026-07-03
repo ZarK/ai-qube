@@ -31,3 +31,7 @@ export function normalizeProviderSource(input: {
     metadata: input.metadata ?? {},
   };
 }
+
+export function sourceKey(source: ProviderSource): string {
+  return JSON.stringify([source.providerId, source.resourceKind, source.resourceId]);
+}
