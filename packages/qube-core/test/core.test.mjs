@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { readdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
+import * as core from "../dist/index.js";
 import {
   findQubeProduct,
   normalizeWorkItem,
@@ -104,6 +106,49 @@ describe("qube core contracts", () => {
       url: null,
       metadata: {}
     });
+  });
+
+  it("keeps provider-neutral review contracts owned by focused modules", () => {
+    const srcDir = fileURLToPath(new URL("../src/", import.meta.url));
+    const files = readdirSync(srcDir).filter((name) => name.endsWith(".ts"));
+    const definitions = new Map([
+      ["ReviewItem", "review_item.ts"],
+      ["GateEvidence", "gate_evidence.ts"],
+      ["ReviewForgeProvider", "review_forge.ts"],
+      ["ReviewParticipant", "review_participant.ts"]
+    ]);
+
+    for (const [symbol, expectedFile] of definitions) {
+      const matches = files.filter((file) => {
+        const source = readFileSync(fileURLToPath(new URL(`../src/${file}`, import.meta.url)), "utf8");
+        return new RegExp(`export interface ${symbol}\\b`).test(source);
+      });
+      assert.deepEqual(matches, [expectedFile], `${symbol} should be defined only in ${expectedFile}`);
+    }
+
+    const reviewBarrel = readFileSync(fileURLToPath(new URL("../src/review.ts", import.meta.url)), "utf8");
+    assert.doesNotMatch(reviewBarrel, /export interface /);
+    assert.match(reviewBarrel, /export \* from "\.\/review_item\.js";/);
+  });
+
+  it("keeps the root export surface explicit and canonical", () => {
+    const indexTypes = readFileSync(fileURLToPath(new URL("../dist/index.d.ts", import.meta.url)), "utf8");
+    assert.doesNotMatch(indexTypes, /export \* from "\.\/review\.js"/);
+    assert.match(indexTypes, /from "\.\/review_item\.js"/);
+    assert.match(indexTypes, /from "\.\/review_forge\.js"/);
+    assert.match(indexTypes, /from "\.\/review_participant\.js"/);
+
+    for (const symbol of [
+      "normalizeWorkItem",
+      "createActionPlan",
+      "normalizeReviewItem",
+      "normalizeReviewFinding",
+      "resolveReviewParticipants"
+    ]) {
+      assert.equal(typeof core[symbol], "function", `${symbol} should be exported as a runtime function`);
+    }
+    assert.equal(typeof core.githubAdapterContract, "object");
+    assert.equal(typeof core.opencodeAdapterContract, "object");
   });
 });
 
