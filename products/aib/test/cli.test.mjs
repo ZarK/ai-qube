@@ -160,6 +160,45 @@ test("arena synthesize asks before guessing an ambiguous package manager", async
   assert.ok(result.readinessChecklist.includes("blocking questions open"));
 });
 
+test("arena synthesize asks before using a floating package manager", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-floating-manager-"));
+  await writeFile(join(dir, "package.json"), JSON.stringify({
+    private: true,
+    packageManager: "pnpm@latest",
+    scripts: {
+      test: "node --test"
+    }
+  }), "utf8");
+  await mkdir(join(dir, "src"));
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.equal(result.classification, "needs-clarification");
+  assert.ok(result.blockingQuestions.some((question) => question.id === "target.packageManager"));
+  assert.match(result.blockingQuestions.map((question) => question.reason).join(" "), /Unsupported packageManager value/);
+});
+
+test("arena synthesize keeps malformed package manifests structured", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-malformed-manager-"));
+  await writeFile(join(dir, "package.json"), "{ invalid", "utf8");
+  await mkdir(join(dir, "src"));
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.equal(result.classification, "needs-clarification");
+  assert.ok(result.blockingQuestions.some((question) => question.id === "target.packageManager"));
+  assert.match(result.blockingQuestions.map((question) => question.reason).join(" "), /could not be parsed/);
+});
+
+test("arena synthesize classifies prompt pack names before generic documents", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-prompt-pack-"));
+  await writeFile(join(dir, "prompt.md"), "System prompt notes.\n", "utf8");
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "improve prompt review quality", "--json"]));
+  assert.equal(result.classification, "autoresearch");
+  assert.equal(result.target.kind, "prompt-pack");
+  assert.equal(result.evaluator.kind, "rubric-review");
+  assert.deepEqual(result.blockingQuestions, []);
+});
+
 test("arena synthesize returns a complete document target plan without questions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-arena-docs-"));
   await writeFile(join(dir, "README.md"), "# Notes\n\nExisting documentation.\n", "utf8");

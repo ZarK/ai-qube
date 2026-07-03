@@ -1425,8 +1425,11 @@ function promoteAutoresearch(
 
 function validateAutoresearchPromotionOutput(context: AutoresearchContext, outputPath: string): string | undefined {
   const output = path.resolve(outputPath);
+  const targetRoot = path.resolve(context.state.targetPath);
   const allowedSurfaces = context.arena.mutableSurfaces.filter(surface => (
-    surface.kind === "directory" && surface.permission === "read-write"
+    surface.kind === "directory"
+    && surface.permission === "read-write"
+    && isPathInside(targetRoot, path.resolve(surface.path))
   ));
   if (allowedSurfaces.some(surface => isPathInside(path.resolve(surface.path), output))) {
     return undefined;

@@ -152,9 +152,9 @@ function classifyTarget(targetPath: string): AutoresearchTargetKind {
   const entries = safeEntries(targetPath);
   const names = new Set(entries.map(entry => entry.name.toLowerCase()));
   if (names.has("package.json") || names.has("tsconfig.json") || names.has("src")) return "code";
+  if (entries.some(entry => /(?:prompt|system|agent).*\.(?:md|txt|json)$/i.test(entry.name))) return "prompt-pack";
   if (entries.some(entry => /\.(?:md|mdx|txt|rst)$/i.test(entry.name))) return "document-corpus";
   if (entries.some(entry => /\.(?:fig|sketch|png|jpg|jpeg|webp|svg)$/i.test(entry.name))) return "design-artifact";
-  if (entries.some(entry => /(?:prompt|system|agent).*\.(?:md|txt|json)$/i.test(entry.name))) return "prompt-pack";
   return "unknown";
 }
 
@@ -283,7 +283,12 @@ function inferCommand(targetPath: string): InferredCommand {
   if (!existsSync(manifestPath)) {
     return blockingPackageManagerQuestion("No package.json was found for the code target.");
   }
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: Record<string, string>; packageManager?: string };
+  let manifest: { scripts?: Record<string, string>; packageManager?: string };
+  try {
+    manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: Record<string, string>; packageManager?: string };
+  } catch {
+    return blockingPackageManagerQuestion("package.json could not be parsed for a fixed evaluator command.");
+  }
   const tool = inferPackageCommandTool(targetPath, manifest.packageManager);
   if (tool.kind === "blocked") {
     return tool;
@@ -326,10 +331,10 @@ function inferPackageCommandTool(
 
 function declaredPackageCommandTool(packageManager: string | undefined): PackageCommandTool | undefined {
   if (!packageManager) return undefined;
-  if (packageManager.startsWith("pnpm@")) return "pnpm";
-  if (packageManager.startsWith("npm@")) return "npm";
-  if (packageManager.startsWith("yarn@")) return "yarn";
-  if (packageManager.startsWith("bun@")) return "bun";
+  if (/^pnpm@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageManager)) return "pnpm";
+  if (/^npm@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageManager)) return "npm";
+  if (/^yarn@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageManager)) return "yarn";
+  if (/^bun@\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(packageManager)) return "bun";
   return undefined;
 }
 

@@ -841,6 +841,36 @@ describe("qube composer CLI", () => {
     assert.equal(existsSync(path.join(path.dirname(cwd), "outside.md")), false);
   });
 
+  it("refuses autoresearch promotion when arena surfaces are tampered wider than the target", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tampered-surface-cwd-"));
+    const target = path.join(cwd, "target");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+
+    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const arenaPath = path.join(initialized.stateDirectory, "arena.json");
+    const arena = JSON.parse(readFileSync(arenaPath, "utf8"));
+    arena.mutableSurfaces = [{
+      path: cwd,
+      kind: "directory",
+      permission: "read-write",
+      reason: "tampered"
+    }];
+    writeFileSync(arenaPath, `${JSON.stringify(arena, null, 2)}\n`, "utf8");
+
+    const promote = runCli(["autoresearch", "promote", "--output", "outside.md", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside declared mutable surfaces/);
+    assert.equal(existsSync(path.join(cwd, "outside.md")), false);
+  });
+
   it("renders oneshot dry-run plans without local mutation", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-dry-cwd-"));
     const planned = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--dry-run", "--json"], { cwd });
