@@ -962,6 +962,31 @@ describe("qube composer CLI", () => {
     assert.match(JSON.parse(promote.stdout).error.likelyCause, /human-gated/);
   });
 
+  it("marks human-gated autoresearch code objectives as blocked at baseline", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-code-human-gated-cwd-"));
+    createAutoresearchPackageTarget(cwd, 10);
+
+    const init = runCli(["autoresearch", "init", "target", "improve documentation quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(initialized.synthesis.objective.shape, "judge-rubric");
+    const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(evaluator.acceptancePolicy.promotionRequiresHuman, true);
+
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 0);
+    const baselined = JSON.parse(baseline.stdout).autoresearch;
+    assert.equal(baselined.evaluation.referee.status, "rejected");
+    assert.match(baselined.evaluation.referee.reasons.join("\n"), /human-gated/);
+
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.equal(current.continuation.status, "blocked");
+    assert.equal(current.continuation.resumeCommand, null);
+    assert.deepEqual(current.currentBestTrajectory, []);
+  });
+
   it("refuses autoresearch baseline before copying oversized targets", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-large-target-cwd-"));
     const target = createAutoresearchPackageTarget(cwd, 10);

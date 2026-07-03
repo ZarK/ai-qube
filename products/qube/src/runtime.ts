@@ -1343,7 +1343,7 @@ function baselineAutoresearch(
   if (context.state.baseline) {
     return { error: "Autoresearch baseline is immutable once recorded for this run." };
   }
-  if (!isCommandMetricEvaluator(context.evaluator)) {
+  if (!isCommandMetricEvaluator(context.evaluator) || context.evaluator.acceptancePolicy.promotionRequiresHuman) {
     return baselineHumanGatedAutoresearch(context, dryRun);
   }
   const workspacePath = autoresearchWorkspacePath(context);
