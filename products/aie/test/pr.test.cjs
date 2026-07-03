@@ -1296,6 +1296,8 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bounded review bundle/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle PR: #12 Review me/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle changed files:/);
+    assert.equal((result.localReviewRunner.lanes[0].promptText.match(/no changed paths were available from local git diff commands/g) ?? []).length, 1);
+    assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Changed and relevant local paths: no changed paths were available from local git diff commands/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle provider feedback summaries:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Repository instructions: AGENTS\.md/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Inspect linked issue\(s\): #93/);

@@ -713,7 +713,7 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
     `PR title: ${snapshot.pr.title}.`,
     `PR head SHA: ${snapshot.pr.headRefOid}.`,
     `Review decision: ${snapshot.pr.reviewDecision}; merge state: ${snapshot.pr.mergeStateStatus}; mergeability: ${snapshot.pr.mergeable}.`,
-    `Changed and relevant local paths: ${changedPaths}.`,
+    'Changed and relevant local paths are listed once in the bounded review bundle.',
     'Bounded review bundle:',
     `Bundle PR: #${snapshot.pr.number} ${snapshot.pr.title}; url=${snapshot.pr.url}; head=${snapshot.pr.headRefOid}; state=${snapshot.pr.state}; draft=${snapshot.pr.isDraft}; reviewDecision=${snapshot.pr.reviewDecision}; mergeState=${snapshot.pr.mergeStateStatus}; mergeable=${snapshot.pr.mergeable}.`,
     `Bundle issues: ${issueChecklists.map(summary => `#${summary.issue.number} ${summary.issue.title} (${summary.issue.state}) ${summary.issue.url}`).join(' | ') || 'none loaded'}.`,
