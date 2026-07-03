@@ -907,6 +907,24 @@ describe("qube composer CLI", () => {
     assert.equal(JSON.parse(findingsRun.stdout).autoresearch.candidate.accepted, true);
   });
 
+  it("rejects threshold candidates that pass the threshold but regress the current score", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-threshold-regression-cwd-"));
+    createAutoresearchPackageTarget(cwd, 1);
+
+    const init = runCli(["autoresearch", "init", "target", "keep score below 5 threshold", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 4);
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 0);
+    const ran = JSON.parse(run.stdout).autoresearch;
+    assert.equal(ran.candidate.accepted, false);
+    assert.equal(ran.currentBest, null);
+    assert.match(ran.candidate.referee.reasons.join("\n"), /did not improve current best 1/);
+  });
+
   it("marks autoresearch document objectives as human-gated instead of faking automated progress", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-doc-cwd-"));
     createAutoresearchDocumentTarget(cwd);
@@ -1143,6 +1161,10 @@ describe("qube composer CLI", () => {
     assert.equal(current.continuation.status, "blocked");
     assert.equal(current.continuation.resumeCommand, null);
     assert.match(current.blockers.join("\n"), /human-gated by evaluator policy/);
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 2);
+    assert.match(JSON.parse(run.stdout).error.likelyCause, /human-gated by evaluator policy/);
 
     const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
     assert.equal(promote.status, 2);

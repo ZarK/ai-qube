@@ -1458,6 +1458,9 @@ function runAutoresearchCandidate(
   if (!isCommandMetricEvaluator(context.evaluator)) {
     return { error: "Autoresearch run requires a trustworthy automated command evaluator. This arena is human-gated; inspect status/dashboard and use normal QUBE review instead of faking objective progress." };
   }
+  if (context.evaluator.acceptancePolicy.promotionRequiresHuman) {
+    return { error: "Autoresearch run is human-gated by evaluator policy; inspect status/dashboard and use normal QUBE review instead of faking objective progress." };
+  }
   const workspacePath = autoresearchWorkspacePath(context);
   if (!existsSync(workspacePath)) {
     return { error: `Autoresearch sandbox workspace is missing: ${workspacePath}. Run baseline again with a new arena.` };
@@ -2350,13 +2353,14 @@ function runAiqAutoresearchReferee(
 }
 
 function isAutoresearchScoreImproved(evaluator: AutoresearchEvaluator, score: number, currentScore: number): boolean {
+  const improved = evaluator.direction === "minimize" ? score < currentScore : score > currentScore;
   if (evaluator.acceptancePolicy.mode === "threshold" && typeof evaluator.acceptancePolicy.threshold === "number") {
-    return evaluator.direction === "minimize"
+    const thresholdPassed = evaluator.direction === "minimize"
       ? score <= evaluator.acceptancePolicy.threshold
       : score >= evaluator.acceptancePolicy.threshold;
+    return thresholdPassed && improved;
   }
-  if (evaluator.direction === "minimize") return score < currentScore;
-  return score > currentScore;
+  return improved;
 }
 
 function renderAutoresearchArtifact(
