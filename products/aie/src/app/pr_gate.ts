@@ -732,11 +732,25 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
   ];
 }
 
+function localReviewContextCacheKey(snapshot: Pick<ReviewForgeSnapshot, 'pr'>): string {
+  return `${snapshot.pr.number}:${snapshot.pr.headRefOid}`;
+}
+
+async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
+  const key = localReviewContextCacheKey(snapshot);
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const loaded = buildLocalReviewContextLines(config, repoRoot, snapshot, issueChecklists, checkDiagnostics, feedback);
+  cache.set(key, loaded);
+  return loaded;
+}
+
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = reviewRequestPolicy(config);
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents });
   const repoRoot = options.repoRoot ?? process.cwd();
+  const localReviewContextCache = new Map<string, Promise<string[]>>();
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const localRequired = localReviewRequired(config);
   const localShadow = localReviewShadow(config);
@@ -773,7 +787,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const initialCheckDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const linkedChecklistWarnings: string[] = [];
   const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
-  const localReviewContextLines = await buildLocalReviewContextLines(config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
+  const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,

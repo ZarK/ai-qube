@@ -4,7 +4,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation } from '../providers/review_forge_provider.js';
+import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
 
 export interface PrReviewPublishOptions {
@@ -23,6 +23,32 @@ export interface PrReviewPublishResult {
   prNumber: number;
   lane: LocalReviewLaneId;
   publish: ReviewForgeLaneReviewPublishResult;
+}
+
+const snapshotCacheByProvider = new WeakMap<ReviewForgeProvider, Map<string, Promise<ReviewForgeSnapshot>>>();
+
+function snapshotCacheKey(prNumber: number, headSha: string): string {
+  return `${prNumber}:${headSha}`;
+}
+
+async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string): Promise<ReviewForgeSnapshot> {
+  let cache = snapshotCacheByProvider.get(provider);
+  if (!cache) {
+    cache = new Map();
+    snapshotCacheByProvider.set(provider, cache);
+  }
+  const key = snapshotCacheKey(prNumber, headSha);
+  const cached = cache.get(key);
+  if (cached) return cached;
+  const loaded = provider.loadPullRequestReview(prNumber).then(snapshot => {
+    if (snapshot.pr.headRefOid !== headSha) {
+      cache?.delete(key);
+      throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
+    }
+    return snapshot;
+  });
+  cache.set(key, loaded);
+  return loaded;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,14 +203,18 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   };
 }
 
-export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
+  const loadedSnapshot = options.headSha && options.issueNumber
+    ? null
+    : provider.loadPullRequestReviewTarget
+      ? null
+      : await provider.loadPullRequestReview(options.prNumber);
   const target = options.headSha && options.issueNumber
     ? null
     : provider.loadPullRequestReviewTarget
       ? await provider.loadPullRequestReviewTarget(options.prNumber)
-      : await provider.loadPullRequestReview(options.prNumber);
+      : loadedSnapshot;
   const headSha = options.headSha ?? target?.pr.headRefOid ?? '';
   const issueNumber = options.issueNumber ?? target?.closingIssueNumbers[0] ?? 0;
   if (issueNumber <= 0) {
@@ -207,8 +237,14 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(options.prNumber)).item, publishInput);
+    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha)).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
+}
+
+export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+  const repoRoot = options.repoRoot ?? process.cwd();
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
+  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {

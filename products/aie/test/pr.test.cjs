@@ -24,7 +24,7 @@ try {
 }
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
-const { runPrReviewPublishService } = require('../dist/app/pr_review_publish.js');
+const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../dist/app/pr_review_publish.js');
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
@@ -1298,6 +1298,11 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle changed files:/);
     assert.equal((result.localReviewRunner.lanes[0].promptText.match(/no changed paths were available from local git diff commands/g) ?? []).length, 1);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Changed and relevant local paths: no changed paths were available from local git diff commands/);
+    const bundleChangedFileLines = result.localReviewRunner.lanes
+      .map(lane => lane.promptText.split('\n').find(line => line.includes('Bundle changed files:')))
+      .filter(Boolean);
+    assert.ok(bundleChangedFileLines.length > 1);
+    assert.equal(new Set(bundleChangedFileLines).size, 1);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bundle provider feedback summaries:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Repository instructions: AGENTS\.md/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Inspect linked issue\(s\): #93/);
@@ -1924,6 +1929,48 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
+  });
+
+  it('reuses full PR review snapshots across same-head legacy lane publish fallback', async () => {
+    const repo = makeGitRepo();
+    const withReviewedContext = evidence => ({
+      ...evidence,
+      lanes: evidence.lanes.map(lane => ({
+        ...lane,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      })),
+    });
+    writeLocalEvidence(repo, withReviewedContext(localEvidence()));
+    writeLocalEvidence(repo, withReviewedContext(localEvidence({ issueNumber: 94, prNumber: 13, headSha: 'def456' })));
+    const snapshots = {
+      12: { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] },
+      13: { item: { id: 'review:13' }, pr: cleanLocalPr({ number: 13, headRefOid: 'def456' }), closingIssueNumbers: [94], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] },
+    };
+    const loadCalls = [];
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview(prNumber) {
+        loadCalls.push(prNumber);
+        return snapshots[prNumber];
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push({ item, input });
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo });
+    await runPrReviewPublishWithProvider(provider, { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo });
+
+    assert.deepEqual(loadCalls, [12, 13]);
+    assert.equal(publishCalls[0].item, snapshots[12].item);
+    assert.equal(publishCalls[1].item, snapshots[12].item);
+    assert.equal(publishCalls[2].item, snapshots[13].item);
   });
 
   it('rejects blocking lane publish evidence without structured findings', async () => {
