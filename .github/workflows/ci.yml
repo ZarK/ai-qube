@@ -81,6 +81,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run build
           pnpm --filter @tjalve/qube-adapter-github run build
           pnpm --filter @tjalve/qube-adapter-codex run build
+          pnpm --filter @tjalve/qube-adapter-claude-code run build
           pnpm --filter @tjalve/qube-adapter-opencode run build
           pnpm --filter @tjalve/qube-adapter-gitlab run build
           pnpm --filter @tjalve/qube-adapter-linear run build
@@ -96,6 +97,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run typecheck
           pnpm --filter @tjalve/qube-adapter-github run typecheck
           pnpm --filter @tjalve/qube-adapter-codex run typecheck
+          pnpm --filter @tjalve/qube-adapter-claude-code run typecheck
           pnpm --filter @tjalve/qube-adapter-opencode run typecheck
           pnpm --filter @tjalve/qube-adapter-gitlab run typecheck
           pnpm --filter @tjalve/qube-adapter-linear run typecheck
@@ -111,6 +113,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run verify
           pnpm --filter @tjalve/qube-adapter-github run verify
           pnpm --filter @tjalve/qube-adapter-codex run verify
+          pnpm --filter @tjalve/qube-adapter-claude-code run verify
           pnpm --filter @tjalve/qube-adapter-opencode run verify
           pnpm --filter @tjalve/qube-adapter-gitlab run verify
           pnpm --filter @tjalve/qube-adapter-linear run verify
@@ -192,6 +195,7 @@ jobs:
           pnpm --filter @tjalve/qube-core run build
           pnpm --filter @tjalve/qube-adapter-github run build
           pnpm --filter @tjalve/qube-adapter-codex run build
+          pnpm --filter @tjalve/qube-adapter-claude-code run build
           pnpm --filter @tjalve/qube-cli run build
           pnpm --filter @tjalve/aie run build
           pnpm --filter @tjalve/aiu run build
