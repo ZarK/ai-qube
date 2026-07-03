@@ -91,6 +91,56 @@ test("schema exposes dry-run and mutation metadata", () => {
   assert.equal(render.dryRun.supported, true);
   assert.deepEqual(render.mutation.categories, ["local-files"]);
   assert.ok(render.errors.some((error) => error.kind === "provider-mutation-unsupported"));
+
+  const synthesize = schema.commands.find((command) => command.name === "arena synthesize");
+  assert.ok(synthesize);
+  assert.deepEqual(synthesize.mutation, { mutates: false, categories: [] });
+  assert.equal(synthesize.supplyChain.sensitive, false);
+});
+
+test("arena synthesize returns a complete code target plan without questions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-code-"));
+  await writeFile(join(dir, "package.json"), JSON.stringify({
+    private: true,
+    packageManager: "pnpm@11.0.4",
+    scripts: {
+      test: "node --test"
+    }
+  }), "utf8");
+  await mkdir(join(dir, "src"));
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.equal(result.classification, "autoresearch");
+  assert.deepEqual(result.blockingQuestions, []);
+  assert.equal(result.target.kind, "code");
+  assert.equal(result.evaluator.kind, "command-metric");
+  assert.equal(result.evaluator.command, "pnpm test");
+  assert.equal(result.objective.shape, "direct-metric");
+  assert.ok(result.arenaMarkdown.includes("# Autoresearch Arena"));
+  assert.ok(result.readinessChecklist.includes("no blocking questions"));
+});
+
+test("arena synthesize returns a complete document target plan without questions", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-docs-"));
+  await writeFile(join(dir, "README.md"), "# Notes\n\nExisting documentation.\n", "utf8");
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "improve summary quality", "--json"]));
+  assert.equal(result.classification, "autoresearch");
+  assert.deepEqual(result.blockingQuestions, []);
+  assert.equal(result.target.kind, "document-corpus");
+  assert.equal(result.evaluator.kind, "rubric-review");
+  assert.equal(result.acceptancePolicy.mode, "human-gated");
+  assert.ok(result.evaluator.rubric.some((item) => item.includes("improve summary quality")));
+});
+
+test("arena synthesize returns blocking questions for ambiguous setup", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-ambiguous-"));
+  await writeFile(join(dir, "README.md"), "# Notes\n", "utf8");
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "better", "--json"]));
+  assert.equal(result.classification, "needs-clarification");
+  assert.ok(result.blockingQuestions.some((question) => question.id === "goal"));
+  assert.ok(result.readinessChecklist.includes("blocking questions open"));
 });
 
 test("init dry-run returns agent-facing next action without mutating", () => {
@@ -123,6 +173,7 @@ test("init with opencode writes local command assets without global installs", a
   const instructions = await readFile(join(dir, "AGENTS.md"), "utf8");
   assert.match(instructions, /agent-operated planning engine/);
   assert.match(instructions, /`aib` state machine/);
+  assert.match(instructions, /qube autoresearch --help/);
 });
 
 test("init dry-run does not write state", async () => {

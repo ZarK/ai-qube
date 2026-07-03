@@ -23,11 +23,13 @@ export type {
 } from "./contracts.js";
 export { createAgentAssetPlan, writeAgentAssetFiles } from "./agent_assets.js";
 export type { AgentAssetFile, AgentAssetKind } from "./agent_assets.js";
+export { synthesizeAutoresearchArena } from "./arena.js";
+export type { AutoresearchSynthesisInput } from "./arena.js";
 export { defaultAibConfig, loadAibConfig, mergeAibConfig, parseAibConfig } from "./config.js";
 export type { AibAgentHost, AibConfig, AibPrivacyMode, AibProviderKind, LoadedAibConfig } from "./config.js";
 export { createInitPlan } from "./init.js";
 export type { InitPlan } from "./init.js";
-export { bootstrapRegistry, initCommand, planningTopic } from "./metadata.js";
+export { arenaSynthesizeCommand, bootstrapRegistry, initCommand, planningTopic } from "./metadata.js";
 export { renderGitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
 export type { GitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
 export { renderJiraIssueDraft } from "@tjalve/qube-adapter-jira";

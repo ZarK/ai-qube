@@ -70,6 +70,8 @@ describe('init service', () => {
     assert.match(agents, /ZarK\/ai-supply-chain-guard/);
     assert.match(agents, /https:\/\/github\.com\/ZarK\/ai-supply-chain-guard/);
     assert.match(agents, /\.agents\/skills\/supply-chain-guard\/SKILL\.md/);
+    assert.match(agents, /qube autoresearch --help/);
+    assert.match(agents, /synthesize the arena before edits/);
     const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
     assert.match(command, /Continue repository development/);
     assert.match(command, /run `qube aie pr gate <pr>` to request reviewers/);

@@ -209,6 +209,53 @@ export const nextCommand = defineCommand({
   exitCodes: stateCommandExitCodes
 });
 
+export const arenaSynthesizeCommand = defineCommand({
+  kind: "command",
+  name: "arena synthesize",
+  description: "Synthesize a reviewable autoresearch arena plan from a local target and measurable goal.",
+  arguments: [
+    defineArgument({
+      name: "target",
+      description: "Existing local target directory to inspect.",
+      required: false
+    }),
+    defineArgument({
+      name: "goal",
+      description: "Measurable autoresearch goal.",
+      required: false
+    })
+  ],
+  flags: [
+    defineFlag({
+      name: "json",
+      description: "Render machine-readable JSON output.",
+      short: "j",
+      type: "boolean"
+    })
+  ],
+  examples: [
+    defineExample({
+      description: "Synthesize an autoresearch arena for a local target.",
+      command: "aib arena synthesize ./target \"reduce test runtime\" --json"
+    })
+  ],
+  output: {
+    formats: ["human", "json"],
+    defaultFormat: "human"
+  },
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false
+  },
+  supplyChain: {
+    sensitive: false
+  },
+  errors: stateCommandErrors,
+  exitCodes: stateCommandExitCodes
+});
+
 export const specDraftCommand = defineCommand({
   kind: "command",
   name: "spec draft",
@@ -775,6 +822,7 @@ export const bootstrapRegistry = createCommandRegistry({
     initCommand,
     statusCommand,
     nextCommand,
+    arenaSynthesizeCommand,
     answerCommand,
     specDraftCommand,
     specValidateCommand,

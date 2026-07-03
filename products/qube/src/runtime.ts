@@ -9,6 +9,8 @@ import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tj
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
+import { synthesizeAutoresearchArena } from "@tjalve/aib";
+import type { AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
@@ -138,24 +140,13 @@ interface AutoresearchRequest {
   readonly flags: AutoresearchFlags;
 }
 
-interface AutoresearchEvaluator {
-  readonly schemaVersion: 1;
-  readonly kind: "term-coverage";
-  readonly owner: "aiq";
-  readonly goal: string;
-  readonly direction: "maximize";
-  readonly terms: readonly string[];
-  readonly invariants: readonly string[];
-  readonly hash: string;
-}
-
 interface AutoresearchState {
   readonly schemaVersion: 1;
   readonly runId: string;
   readonly phase: AutoresearchPhase;
   readonly target: string;
   readonly targetPath: string;
-  readonly targetKind: "directory";
+  readonly targetKind: string;
   readonly goal: string;
   readonly evaluatorHash: string;
   readonly currentBest: AutoresearchCandidate | null;
@@ -562,11 +553,11 @@ const componentsCommand = defineCommand({
 const autoresearchCommand = defineCommand({
   kind: "command",
   name: "autoresearch",
-  description: "Run a safety-bounded local autoresearch arena lifecycle.",
+  description: "Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits.",
   arguments: [
     defineArgument({
       name: "args",
-      description: "Lifecycle input: init <target-directory> <goal> for an existing local directory, baseline, run, status, dashboard, promote, or compact <target-directory> <goal> as an init-only alias. State lives under .qube/autoresearch/runs/<run-id>/ with latest selection in .qube/autoresearch/latest.json.",
+      description: "Lifecycle input: init <target-directory> <goal> for an existing local directory, baseline, run, status, dashboard, promote, or compact <target-directory> <goal> as an init-only alias. AIB arena synthesis designs the fixed evaluator from command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy. State lives under .qube/autoresearch/runs/<run-id>/ with latest selection in .qube/autoresearch/latest.json.",
       multiple: true
     })
   ],
@@ -1236,8 +1227,13 @@ function initAutoresearch(
   if (!existsSync(targetPath) || !statSync(targetPath).isDirectory()) {
     return { error: "This first autoresearch implementation requires an existing directory target." };
   }
+  const synthesis = synthesizeAutoresearchArena({ target, goal, cwd: environment.cwd });
+  if (synthesis.classification !== "autoresearch" || !synthesis.target || !synthesis.evaluator || !synthesis.arena || !synthesis.arenaMarkdown) {
+    const questions = synthesis.blockingQuestions.map(question => question.text).join(" ");
+    return { error: questions || synthesis.nextAction };
+  }
   const now = new Date().toISOString();
-  const evaluator = createAutoresearchEvaluator(goal);
+  const evaluator = synthesis.evaluator;
   const runId = createAutoresearchRunId(goal, now);
   const runDirectory = autoresearchRunDirectory(environment, runId);
   const state: AutoresearchState = {
@@ -1246,7 +1242,7 @@ function initAutoresearch(
     phase: "initialized",
     target,
     targetPath,
-    targetKind: "directory",
+    targetKind: synthesis.target.kind,
     goal,
     evaluatorHash: evaluator.hash,
     currentBest: null,
@@ -1257,10 +1253,11 @@ function initAutoresearch(
     updatedAt: now,
     nextAction: `Run qube autoresearch baseline --run ${runId}.`
   };
-  const arena = createAutoresearchArena(state, evaluator, runDirectory);
+  const arena = createAutoresearchArena(state, evaluator, runDirectory, synthesis.arena);
   if (!dryRun) {
     createAutoresearchDirectories(runDirectory);
     writeJsonFile(path.join(runDirectory, "arena.json"), arena);
+    writeFileSync(path.join(runDirectory, "arena.md"), synthesis.arenaMarkdown, "utf8");
     writeJsonFile(path.join(runDirectory, "evaluator.json"), evaluator);
     writeJsonFile(path.join(runDirectory, "state.json"), state);
     writeFileSync(path.join(runDirectory, "attempts.jsonl"), "", "utf8");
@@ -1276,6 +1273,11 @@ function initAutoresearch(
       targetPath,
       goal,
       evaluatorHash: evaluator.hash,
+      synthesis: {
+        classification: synthesis.classification,
+        readinessChecklist: synthesis.readinessChecklist,
+        objective: synthesis.objective
+      },
       stateDirectory: runDirectory,
       stateLayout: autoresearchStateLayout(runDirectory),
       safety: arena.safety,
@@ -1421,7 +1423,7 @@ interface AutoresearchContext {
   readonly runDirectory: string;
   readonly state: AutoresearchState;
   readonly evaluator: AutoresearchEvaluator;
-  readonly arena: Readonly<Record<string, unknown>>;
+  readonly arena: AutoresearchArena;
 }
 
 function validateAutoresearchCandidateArtifact(
@@ -1588,7 +1590,7 @@ function loadAutoresearchContext(environment: CliEnvironment, runIdInput: string
     runDirectory,
     state: readJsonFile<AutoresearchState>(statePath),
     evaluator: readJsonFile<AutoresearchEvaluator>(evaluatorPath),
-    arena: readJsonFile<Readonly<Record<string, unknown>>>(arenaPath)
+    arena: readJsonFile<AutoresearchArena>(arenaPath)
   };
 }
 
@@ -1600,39 +1602,16 @@ function readLatestAutoresearchRunId(environment: CliEnvironment): string | unde
 }
 
 function validateAutoresearchEvaluator(state: AutoresearchState, evaluator: AutoresearchEvaluator): string | undefined {
-  const hash = hashAutoresearchEvaluator(evaluator.goal, evaluator.terms, evaluator.invariants);
+  const hash = hashAutoresearchEvaluator(evaluator);
   if (evaluator.hash !== hash || state.evaluatorHash !== hash) {
     return "Autoresearch evaluator changed after arena creation. Refusing to continue until a new arena is initialized.";
   }
   return undefined;
 }
 
-function createAutoresearchEvaluator(goal: string): AutoresearchEvaluator {
-  const terms = extractAutoresearchTerms(goal);
-  const invariants = [
-    "Candidate work stays under .qube/autoresearch until promote.",
-    "The evaluator hash must not change after init.",
-    "Promotion is explicit and leaves evidence in the run directory."
-  ];
-  return {
-    schemaVersion: 1,
-    kind: "term-coverage",
-    owner: "aiq",
-    goal,
-    direction: "maximize",
-    terms,
-    invariants,
-    hash: hashAutoresearchEvaluator(goal, terms, invariants)
-  };
-}
-
-function extractAutoresearchTerms(goal: string): readonly string[] {
-  const terms = [...new Set(goal.toLowerCase().match(/[a-z0-9][a-z0-9-]{3,}/g) ?? [])].slice(0, 12);
-  return terms.length > 0 ? terms : ["goal"];
-}
-
-function hashAutoresearchEvaluator(goal: string, terms: readonly string[], invariants: readonly string[]): string {
-  return createHash("sha256").update(JSON.stringify({ kind: "term-coverage", goal, direction: "maximize", terms, invariants })).digest("hex");
+function hashAutoresearchEvaluator(evaluator: AutoresearchEvaluator): string {
+  const { hash: _hash, ...hashable } = evaluator;
+  return createHash("sha256").update(stableJson(hashable)).digest("hex");
 }
 
 function createAutoresearchRunId(goal: string, timestamp: string): string {
@@ -1644,31 +1623,35 @@ function hashText(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-function createAutoresearchArena(state: AutoresearchState, evaluator: AutoresearchEvaluator, runDirectory: string): Readonly<Record<string, unknown>> {
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().filter(key => record[key] !== undefined).map(key => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function createAutoresearchArena(
+  state: AutoresearchState,
+  evaluator: AutoresearchEvaluator,
+  runDirectory: string,
+  synthesizedArena: AutoresearchArena
+): AutoresearchArena {
   return {
+    ...synthesizedArena,
     schemaVersion: 1,
     runId: state.runId,
     goal: state.goal,
-    target: {
-      input: state.target,
-      path: state.targetPath,
-      kind: state.targetKind,
-      supportedKind: "local-directory"
-    },
-    ownership: {
-      qube: "top-level lifecycle and .qube/autoresearch state",
-      aib: "arena synthesis and acceptance criteria",
-      aie: "sandboxed candidate execution boundary",
-      aiq: "fixed evaluator and referee evidence",
-      aiu: "continuation and next safe command"
-    },
     evaluator: {
       kind: evaluator.kind,
       owner: evaluator.owner,
       hash: evaluator.hash,
-      terms: evaluator.terms
+      objective: evaluator.objective,
+      signals: evaluator.signals
     },
     safety: {
+      ...synthesizedArena.safety,
       evaluatorFixedBeforeRun: true,
       targetMutationBeforePromote: false,
       sandboxDirectory: path.join(runDirectory, "sandbox"),
@@ -1694,6 +1677,7 @@ function createAutoresearchDirectories(runDirectory: string): void {
 function autoresearchStateLayout(runDirectory: string): Readonly<Record<string, string>> {
   return {
     arena: path.join(runDirectory, "arena.json"),
+    arenaMarkdown: path.join(runDirectory, "arena.md"),
     evaluator: path.join(runDirectory, "evaluator.json"),
     state: path.join(runDirectory, "state.json"),
     attempts: path.join(runDirectory, "attempts.jsonl"),
@@ -1713,15 +1697,15 @@ function summarizeAutoresearchTarget(state: AutoresearchState): string {
 
 function evaluateAutoresearchText(text: string, evaluator: AutoresearchEvaluator): AutoresearchEvaluation {
   const lower = text.toLowerCase();
-  const matchedTerms = evaluator.terms.filter(term => lower.includes(term));
-  const missingTerms = evaluator.terms.filter(term => !lower.includes(term));
-  const score = evaluator.terms.length === 0 ? 0 : Math.round((matchedTerms.length / evaluator.terms.length) * 1000) / 1000;
+  const matchedTerms = evaluator.signals.filter(term => lower.includes(term));
+  const missingTerms = evaluator.signals.filter(term => !lower.includes(term));
+  const score = evaluator.signals.length === 0 ? 0 : Math.round((matchedTerms.length / evaluator.signals.length) * 1000) / 1000;
   return {
     score,
     matchedTerms,
     missingTerms,
     evaluatorHash: evaluator.hash,
-    summary: `${matchedTerms.length}/${evaluator.terms.length} evaluator terms matched.`,
+    summary: `${matchedTerms.length}/${evaluator.signals.length} evaluator signals matched.`,
     recordedAt: new Date().toISOString()
   };
 }
@@ -1733,9 +1717,9 @@ function renderAutoresearchArtifact(state: AutoresearchState, evaluator: Autores
     `Target: ${state.target}`,
     `Goal: ${state.goal}`,
     "",
-    "## Fixed Evaluator Terms",
+    "## Fixed Evaluator Signals",
     "",
-    ...evaluator.terms.map(term => `- ${term}`),
+    ...evaluator.signals.map(term => `- ${term}`),
     "",
     "## Candidate Output",
     "",
@@ -1827,13 +1811,27 @@ function renderAutoresearchHelp(): string {
     "  qube autoresearch promote [--run <id>] [--output <path>] [--force] [--json] [--dry-run]",
     "  qube autoresearch <target-directory> <goal> [--json] [--dry-run]",
     "",
+    "Agent entry:",
+    "  When a user asks for autoresearch in natural language, run this help first.",
+    "  Translate the request into <target-directory> plus <goal>; do not edit the target before arena synthesis.",
+    "  Init uses AIB arena synthesis to classify the target, resolve the local path, design the referee, define mutable surfaces and invariants, and write the fixed arena.",
+    "  Ask only blocking clarification questions returned by synthesis; otherwise infer safe defaults from the target.",
+    "",
     "Target and goal:",
     "  The first supported target is an existing local directory.",
-    "  The goal is plain text used to create a fixed term-coverage evaluator before candidate work starts.",
+    "  Remote and provider target kinds route away until a local target exists.",
+    "  The goal must be machine-verifiable through a command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy.",
     "  The compact <target-directory> <goal> form is a safe alias for init only.",
     "",
+    "Arena synthesis steps:",
+    "  1. Classify the target kind and objective shape.",
+    "  2. Resolve the target path and mutable surfaces.",
+    "  3. Design the fixed evaluator/referee and acceptance policy.",
+    "  4. Persist arena.json, arena.md, evaluator.json, and state.",
+    "  5. Baseline, run candidates, inspect status/dashboard, and promote explicitly.",
+    "",
     "State:",
-    "  Runs write arena.json, evaluator.json, state.json, attempts.jsonl, dashboards, logs, and sandbox files under .qube/autoresearch/runs/<run-id>/.",
+    "  Runs write arena.json, arena.md, evaluator.json, state.json, attempts.jsonl, dashboards, logs, and sandbox files under .qube/autoresearch/runs/<run-id>/.",
     "  .qube/autoresearch/latest.json selects the latest run when --run is omitted.",
     "",
     "Safety boundaries:",
@@ -3379,6 +3377,7 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   if (selections.scope === "global") {
     notes.push("Prefer project-local installs for automation; global installs are for manual shell use.");
   }
+  notes.push("Autoresearch agent entry: run `qube autoresearch --help`, translate natural-language requests to `<target>` plus `<goal>`, and synthesize the arena before edits.");
   notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
   notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
   if (selections.host === "codex") {

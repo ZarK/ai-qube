@@ -45,12 +45,14 @@
     "@tjalve/qube-adapter-gitlab": "workspace:*",
     "@tjalve/qube-adapter-jira": "workspace:*",
     "@tjalve/qube-adapter-linear": "workspace:*",
-    "@tjalve/qube-cli": "0.1.2"
+    "@tjalve/qube-cli": "0.1.2",
+    "@tjalve/qube-core": "0.1.1"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build": "pnpm run clean && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build",
+    "build": "pnpm run build:deps && pnpm run clean && tsc -p tsconfig.build.json",
+    "typecheck": "pnpm run build:deps && tsc -p tsconfig.json --noEmit",
     "lint": "pnpm run typecheck",
     "test": "pnpm run build && node --test \"test/*.test.mjs\"",
     "prepack": "pnpm run build",

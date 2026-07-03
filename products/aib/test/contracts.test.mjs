@@ -69,10 +69,12 @@ test("agent asset plans cover supported host instruction surfaces", () => {
   const codex = createAgentAssetPlan("codex");
   assert.deepEqual(codex.map((file) => file.path), ["AGENTS.md"]);
   assert.match(codex[0].body, /aib next --json/);
+  assert.match(codex[0].body, /qube autoresearch --help/);
 
   const opencode = createAgentAssetPlan("opencode");
   assert.deepEqual(opencode.map((file) => file.path), ["AGENTS.md", ".opencode/commands/aib-bootstrap.md"]);
   assert.match(opencode[1].body, /aib init --agent opencode --json/);
+  assert.match(opencode[1].body, /synthesize the arena before edits/);
 
   const claude = createAgentAssetPlan("claude-code");
   assert.deepEqual(claude.map((file) => file.path), ["CLAUDE.md"]);

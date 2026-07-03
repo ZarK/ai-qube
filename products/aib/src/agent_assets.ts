@@ -106,6 +106,7 @@ This repository uses \`aib\` as an agent-operated planning engine. The human tal
 - Draft, validate, accept, and reopen specs with the structured \`aib spec ... --json\` commands.
 - Generate milestones before work items, then render work items only after the canonical drafts are reviewable.
 - Keep product requirements provider-neutral; provider IDs and URLs belong in state or provider metadata.
+- If the human asks for autoresearch, run \`qube autoresearch --help\`, translate natural language to \`<target>\` plus \`<goal>\`, and synthesize the arena before edits.
 - Do not install global commands, skills, hooks, or tools unless the human explicitly requests that separate action.
 
 ## ${hostName}
@@ -150,6 +151,7 @@ Use \`aib\` as the planning state machine for this repository.
 3. Perform exactly the returned action: ask the human, inspect context, draft or validate specs, generate milestones, generate work-item drafts, render provider outputs, or stop.
 4. Record human answers with \`aib answer --field <field> --value <answer> --json\`.
 5. Keep implementation work out of Bootstrap planning until accepted work items exist.
+6. For autoresearch requests, run \`qube autoresearch --help\`, translate natural language to \`<target>\` plus \`<goal>\`, and synthesize the arena before edits.
 
 Do not install global commands or mutate providers unless the relevant \`aib\` command reports that mutation is planned and allowed.
 `;

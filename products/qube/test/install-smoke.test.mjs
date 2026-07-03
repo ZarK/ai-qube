@@ -134,6 +134,17 @@ async function createFakeComponentTarball(component, root, packDir) {
   if (process.platform !== "win32") {
     await chmod(binPath, 0o755);
   }
+  if (component.name === "@tjalve/aib") {
+    await writeFile(
+      path.join(componentRoot, "index.js"),
+      [
+        "export function synthesizeAutoresearchArena() {",
+        "  throw new Error('fake AIB synthesis is not available in install smoke tests');",
+        "}",
+        ""
+      ].join("\n")
+    );
+  }
   await writeFile(
     path.join(componentRoot, "package.json"),
     `${JSON.stringify(
@@ -141,6 +152,12 @@ async function createFakeComponentTarball(component, root, packDir) {
         name: component.name,
         version: component.version,
         type: "module",
+        ...(component.name === "@tjalve/aib" ? {
+          main: "index.js",
+          exports: {
+            ".": "./index.js"
+          }
+        } : {}),
         bin: {
           [component.command]: `bin/${component.command}.js`
         }

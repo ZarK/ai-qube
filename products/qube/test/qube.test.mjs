@@ -124,6 +124,9 @@ describe("qube composer CLI", () => {
     assert.match(autoresearchHelp.stdout, /qube autoresearch init <target-directory> <goal>/);
     assert.match(autoresearchHelp.stdout, /Run a safety-bounded local autoresearch arena lifecycle\./);
     assert.match(autoresearchHelp.stdout, /existing local directory/);
+    assert.match(autoresearchHelp.stdout, /translate the request into <target-directory> plus <goal>/);
+    assert.match(autoresearchHelp.stdout, /AIB arena synthesis/);
+    assert.match(autoresearchHelp.stdout, /command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy/);
     assert.match(autoresearchHelp.stdout, /\.qube\/autoresearch\/runs\/<run-id>\//);
     assert.match(autoresearchHelp.stdout, /promote is the only command that copies the selected best candidate/);
 
@@ -188,6 +191,7 @@ describe("qube composer CLI", () => {
       workProvider: "github"
     });
     assert.equal(parsed.installPlan.dryRun, true);
+    assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
       "pnpm exec qube components"
@@ -695,8 +699,14 @@ describe("qube composer CLI", () => {
     assert.equal(initialized.action, "init");
     assert.equal(initialized.phase, "initialized");
     assert.equal(initialized.safety.targetMutationBeforePromote, false);
+    assert.equal(initialized.synthesis.classification, "autoresearch");
+    assert.notEqual(initialized.synthesis.objective.shape, "term-coverage");
     assert.ok(existsSync(path.join(initialized.stateDirectory, "arena.json")));
+    assert.ok(existsSync(path.join(initialized.stateDirectory, "arena.md")));
     assert.ok(existsSync(path.join(initialized.stateDirectory, "evaluator.json")));
+    const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(evaluator.kind, "rubric-review");
+    assert.notEqual(evaluator.kind, "term-coverage");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
     assert.equal(baseline.status, 0);
@@ -740,12 +750,13 @@ describe("qube composer CLI", () => {
   it("refuses autoresearch when the fixed evaluator changes", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tamper-cwd-"));
     mkdirSync(path.join(cwd, "target"), { recursive: true });
+    writeFileSync(path.join(cwd, "target", "README.md"), "Existing notes target.\n", "utf8");
     const init = runCli(["autoresearch", "target", "improve notes summary quality", "--json"], { cwd });
     assert.equal(init.status, 0);
     const initialized = JSON.parse(init.stdout).autoresearch;
     const evaluatorPath = path.join(initialized.stateDirectory, "evaluator.json");
     const evaluator = JSON.parse(readFileSync(evaluatorPath, "utf8"));
-    evaluator.terms = [...evaluator.terms, "tampered"];
+    evaluator.signals = [...evaluator.signals, "tampered"];
     writeFileSync(evaluatorPath, `${JSON.stringify(evaluator, null, 2)}\n`, "utf8");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
