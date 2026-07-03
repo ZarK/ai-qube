@@ -1944,7 +1944,17 @@ describe('PR gate service', () => {
         toolsUsed: ['codex'],
       })),
     });
-    writeLocalEvidence(repo, withReviewedContext(localEvidence()));
+    const evidence = withReviewedContext(localEvidence());
+    const codeQualityLane = evidence.lanes.find(lane => lane.id === 'code-quality');
+    evidence.lanes.push({
+      ...codeQualityLane,
+      id: 'performance',
+      summary: 'performance reviewed',
+      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      promptStack: promptStackForLane('performance'),
+      runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
+    });
+    writeLocalEvidence(repo, evidence);
     writeLocalEvidence(repo, withReviewedContext(localEvidence({ issueNumber: 94, prNumber: 13, headSha: 'def456' })));
     const snapshots = {
       12: { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] },
@@ -1974,6 +1984,64 @@ describe('PR gate service', () => {
     assert.equal(publishCalls[0].item, snapshots[12].item);
     assert.equal(publishCalls[1].item, snapshots[12].item);
     assert.equal(publishCalls[2].item, snapshots[13].item);
+  });
+
+  it('serializes cold parallel legacy lane publish fallback snapshot loads', async () => {
+    const repo = makeGitRepo();
+    const withReviewedContext = evidence => ({
+      ...evidence,
+      lanes: evidence.lanes.map(lane => ({
+        ...lane,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      })),
+    });
+    const evidence = withReviewedContext(localEvidence());
+    const codeQualityLane = evidence.lanes.find(lane => lane.id === 'code-quality');
+    evidence.lanes.push({
+      ...codeQualityLane,
+      id: 'performance',
+      summary: 'performance reviewed',
+      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      promptStack: promptStackForLane('performance'),
+      runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
+    });
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const loadCalls = [];
+    const publishCalls = [];
+    const provider = () => ({
+      async loadPullRequestReview(prNumber) {
+        loadCalls.push(prNumber);
+        await new Promise(resolve => setTimeout(resolve, 250));
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push({ item, input });
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    });
+    const publishModulePath = require.resolve('../dist/app/pr_review_publish.js');
+    const freshPublish = () => {
+      delete require.cache[publishModulePath];
+      return require(publishModulePath).runPrReviewPublishWithProvider;
+    };
+    const firstPublish = freshPublish();
+    const secondPublish = freshPublish();
+    const thirdPublish = freshPublish();
+
+    await Promise.all([
+      firstPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo }),
+      secondPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo }),
+      thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo }),
+    ]);
+
+    assert.deepEqual(loadCalls, [12]);
+    assert.equal(publishCalls.length, 3);
+    assert.ok(publishCalls.every(call => call.item.id === 'review:12'));
   });
 
   it('does not keep failed fallback snapshot loads in the lane publish cache', async () => {
