@@ -121,6 +121,22 @@ describe('work provider adapter boundary', () => {
     assert.equal(adapters.every(adapter => adapter.installed), true);
   });
 
+  it('loads OpenCode host review-runner capability from the adapter package', async () => {
+    const { listHostRunnerAdapters, probeHostReviewRunner } = require('../dist/providers/host_runner_adapters.js');
+    const adapters = listHostRunnerAdapters();
+    const opencode = adapters.find(adapter => adapter.id === 'opencode');
+
+    assert.equal(opencode.packageName, '@tjalve/qube-adapter-opencode');
+    assert.equal(opencode.installed, true);
+
+    const capability = await probeHostReviewRunner('opencode');
+    assert.equal(capability.host, 'opencode');
+    assert.equal(capability.independentReviewer, false);
+    assert.equal(capability.freshContext, false);
+    assert.deepEqual(capability.missingCapabilities, ['opencode-local-review-runner-unsupported']);
+    assert.match(capability.nextAction, /OpenCode does not currently expose/);
+  });
+
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
     const provider = await createWorkProvider('linear');

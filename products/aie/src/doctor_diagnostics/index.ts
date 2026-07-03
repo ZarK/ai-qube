@@ -11,7 +11,7 @@ import { redact } from '../redact.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
-import { probeCodexReviewCapabilitySync } from '../app/local_review_runner.js';
+import { probeCodexReviewCapabilitySync, probeOpenCodeReviewCapabilitySync } from '../app/local_review_runner.js';
 import { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
@@ -237,7 +237,9 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const localHostLanes = config.reviewLanes.filter(lane => lane.runner === 'local-host');
   const localHostCommand = localHostLanes.find(lane => lane.command?.trim())?.command?.trim() ?? null;
   const codexReviewCapability = probeCodexReviewCapabilitySync(localHostCommand, config.localReviewAgents.includes('codex'));
+  const opencodeReviewCapability = probeOpenCodeReviewCapabilitySync();
   const localHostNeedsAgent = localHostLanes.length > 0 && !localHostCommand;
+  const opencodeLocalReviewConfigured = config.localReviewAgents.includes('opencode');
   const commandlessCodexHostReady = localHostNeedsAgent && codexReviewCapability.independentReviewer;
   const localRunnerConfigured = localCommandLanes.length > 0 || localHostLanes.length > 0;
   const localRunnerReadiness: DoctorReadinessStatus = !(localReviewEnabled || localReviewShadow)
@@ -267,7 +269,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     },
     missingTools: localRunnerReadiness === 'missing'
       ? localHostNeedsAgent
-        ? ['codex local review agent']
+        ? [opencodeLocalReviewConfigured ? 'opencode local review runner' : 'codex local review agent']
         : ['local-command review lane command']
       : [],
     codex: {
@@ -278,12 +280,22 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
       evidenceWriting: codexReviewCapability.evidenceWriting,
       missingCapabilities: [...codexReviewCapability.missingCapabilities],
     },
+    opencode: {
+      independentReviewer: opencodeReviewCapability.independentReviewer,
+      freshContext: opencodeReviewCapability.freshContext,
+      promptOnly: opencodeReviewCapability.promptOnly,
+      hooks: opencodeReviewCapability.hooks,
+      evidenceWriting: opencodeReviewCapability.evidenceWriting,
+      missingCapabilities: [...opencodeReviewCapability.missingCapabilities],
+    },
     nextAction: localRunnerReadiness === 'ready'
       ? 'Local review lanes are configured; run `aie pr gate <pr> --dry-run --json` to inspect planned lane execution.'
       : localRunnerReadiness === 'needs-action'
         ? codexReviewCapability.nextAction
         : localRunnerReadiness === 'missing'
-          ? 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
+          ? opencodeLocalReviewConfigured && localHostNeedsAgent
+            ? opencodeReviewCapability.nextAction
+            : 'No local-command review lane command is configured. Configure reviews.lanes entries with runner local-command and command before relying on runner automation.'
           : 'Local review evidence is disabled by the selected review adapter.',
   };
   const policy = config.supplyChain;

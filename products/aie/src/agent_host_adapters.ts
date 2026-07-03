@@ -93,11 +93,11 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
     instruction: 'For OpenCode, use `todowrite` and `todoread` directly from the main agent for local issue todos. Never ask a Task/subagent to create, read, or complete todos.',
   },
   dialogue: {
-    expectation: 'Operate autonomously in the main OpenCode session and use subagents only for bounded research or review work.',
+    expectation: 'Operate autonomously in the main OpenCode session. Provider-visible PR reviews and GitHub issue comments remain the durable communication channel for review results.',
   },
   subagents: {
     supported: true,
-    instruction: 'Use OpenCode subagents only for bounded research or review work; keep issue workflow todos in the main session.',
+    instruction: 'OpenCode subagents may be used only for bounded support work; QUBE does not currently have a tested OpenCode fresh-context review-runner API, so local-host review lanes must use Codex or a trusted local-command runner.',
   },
   hooks: {
     supported: true,

@@ -285,6 +285,28 @@ describe('init service', () => {
     assert.doesNotMatch(agent, /<!--/);
   });
 
+  it('documents OpenCode local review-runner boundary when local opencode review is configured', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['opencode'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const command = readFileSync(join(repo, '.opencode', 'commands', 'make-it-so.md'), 'utf8');
+    assert.match(agents, /Configured review adapter: local/);
+    assert.match(agents, /OpenCode local-host review-runner automation is explicitly unsupported/);
+    assert.match(agents, /Configure Codex local-host review lanes or trusted local-command review lane commands/);
+    assert.match(agents, /OpenCode: instructions target `AGENTS\.md`/);
+    assert.match(agents, /does not currently have a tested OpenCode fresh-context review-runner API/);
+    assert.match(command, /Continue repository development/);
+  });
+
   it('renders full always-loaded workflow instructions with host projections', async () => {
     const repo = makeGitRepo();
     const result = await runInit({

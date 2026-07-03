@@ -14,6 +14,7 @@ export type LocalReviewRunStatus = 'disabled' | 'planned' | 'completed' | 'pendi
 export type LocalReviewLaneRunStatus = 'planned' | 'completed' | 'skipped' | 'pending' | 'unavailable' | 'failed';
 
 export type CodexReviewCapability = HostReviewCapability & { host: 'codex' };
+export type OpenCodeReviewCapability = HostReviewCapability & { host: 'opencode' };
 
 export interface LocalReviewLaneRun {
   issueNumber: number;
@@ -43,6 +44,7 @@ export interface LocalReviewRunResult {
   status: LocalReviewRunStatus;
   evidenceRoot: string;
   codex: CodexReviewCapability;
+  opencode: OpenCodeReviewCapability;
   lanes: LocalReviewLaneRun[];
   written: string[];
   unavailable: string[];
@@ -77,6 +79,16 @@ export async function probeCodexReviewCapability(independentReviewerCommand?: st
 export function probeCodexReviewCapabilitySync(independentReviewerCommand?: string | null, hostProvided = false): CodexReviewCapability {
   const capability = probeHostReviewRunnerSync('codex', { independentReviewerCommand, hostProvided });
   return { ...capability, host: 'codex' };
+}
+
+export async function probeOpenCodeReviewCapability(): Promise<OpenCodeReviewCapability> {
+  const capability = await probeHostReviewRunner('opencode');
+  return { ...capability, host: 'opencode' };
+}
+
+export function probeOpenCodeReviewCapabilitySync(): OpenCodeReviewCapability {
+  const capability = probeHostReviewRunnerSync('opencode');
+  return { ...capability, host: 'opencode' };
 }
 
 function codexCommand(config: Config): string | null {
@@ -137,6 +149,7 @@ function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, link
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
   const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
+  const opencode = await probeOpenCodeReviewCapability();
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
@@ -144,10 +157,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
   const lanes: LocalReviewLaneRun[] = [];
@@ -157,11 +170,24 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
 
+  const opencodeConfigured = config.localReviewAgents.includes('opencode');
+  const commandlessHostReady = codex.independentReviewer || !opencodeConfigured;
   for (const lane of commandlessHostLanes) {
     for (const issueNumber of input.issueNumbers) {
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const linkedIssueNumbers = [issueNumber, ...input.issueNumbers.filter(linkedIssueNumber => linkedIssueNumber !== issueNumber)];
       const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
+      if (!commandlessHostReady) {
+        const summary = opencodeConfigured
+          ? `OpenCode local-host review runner is unsupported: ${opencode.nextAction}`
+          : codex.nextAction;
+        const blocker = opencodeConfigured
+          ? opencode.missingCapabilities[0] ?? 'opencode-local-review-runner-unsupported'
+          : codex.missingCapabilities[0] ?? 'codex-local-reviewer-not-configured';
+        unavailable.push(`${lane}: ${summary}`);
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path]));
+        continue;
+      }
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
@@ -248,6 +274,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     status,
     evidenceRoot,
     codex,
+    opencode,
     lanes,
     written,
     unavailable,

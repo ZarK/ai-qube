@@ -228,6 +228,14 @@ export interface GateReadinessDiagnostics {
         evidenceWriting: boolean;
         missingCapabilities: string[];
       };
+      opencode: {
+        independentReviewer: boolean;
+        freshContext: boolean;
+        promptOnly: boolean;
+        hooks: boolean;
+        evidenceWriting: boolean;
+        missingCapabilities: string[];
+      };
       nextAction: string;
     };
     externalServices: string[];
