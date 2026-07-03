@@ -1,10 +1,10 @@
 import type { Config } from '../config/index.js';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation } from '../providers/review_forge_provider.js';
+import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
 
 export interface PrReviewPublishOptions {
@@ -23,6 +23,108 @@ export interface PrReviewPublishResult {
   prNumber: number;
   lane: LocalReviewLaneId;
   publish: ReviewForgeLaneReviewPublishResult;
+}
+
+const snapshotCacheByHead = new Map<string, Promise<ReviewForgeSnapshot>>();
+const SNAPSHOT_CACHE_LOCK_POLL_MS = 100;
+const SNAPSHOT_CACHE_LOCK_TIMEOUT_MS = 60_000;
+
+function snapshotCacheKey(prNumber: number, headSha: string, cachePath?: string): string {
+  return `${cachePath ?? 'memory'}:${prNumber}:${headSha}`;
+}
+
+function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  const safeHead = headSha.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeHead, 'fallback-snapshot-cache.json');
+}
+
+function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.pr) || !isRecord(parsed.item) || !Array.isArray(parsed.closingIssueNumbers)) return null;
+  if (parsed.pr.number !== prNumber || parsed.pr.headRefOid !== headSha) return null;
+  return parsed as unknown as ReviewForgeSnapshot;
+}
+
+function writeSnapshotCache(path: string, snapshot: ReviewForgeSnapshot): void {
+  mkdirSync(dirname(path), { recursive: true });
+  const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(tempPath, JSON.stringify(snapshot), 'utf8');
+  renameSync(tempPath, path);
+}
+
+function snapshotCacheLockPath(cachePath: string): string {
+  return `${cachePath}.lock`;
+}
+
+function tryAcquireSnapshotCacheLock(lockPath: string): boolean {
+  try {
+    mkdirSync(lockPath);
+    return true;
+  } catch (error: unknown) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? String((error as { code?: unknown }).code) : '';
+    if (code === 'EEXIST') return false;
+    throw error;
+  }
+}
+
+function releaseSnapshotCacheLock(lockPath: string): void {
+  rmSync(lockPath, { recursive: true, force: true });
+}
+
+function sleep(milliseconds: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string): Promise<ReviewForgeSnapshot> {
+  const cachedFile = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+  if (cachedFile) return cachedFile;
+  const lockPath = snapshotCacheLockPath(cachePath);
+  const deadline = Date.now() + SNAPSHOT_CACHE_LOCK_TIMEOUT_MS;
+  while (true) {
+    if (tryAcquireSnapshotCacheLock(lockPath)) {
+      try {
+        const cachedAfterLock = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+        if (cachedAfterLock) return cachedAfterLock;
+        const snapshot = await provider.loadPullRequestReview(prNumber);
+        if (snapshot.pr.headRefOid !== headSha) {
+          throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
+        }
+        writeSnapshotCache(cachePath, snapshot);
+        return snapshot;
+      } finally {
+        releaseSnapshotCacheLock(lockPath);
+      }
+    }
+    const cachedWhileWaiting = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+    if (cachedWhileWaiting) return cachedWhileWaiting;
+    if (Date.now() >= deadline) {
+      throw new Error(`publish lane review failed. Likely cause: fallback snapshot cache for pull request #${prNumber} head ${headSha} stayed locked. Next action: remove stale cache lock ${relativeEvidencePath(process.cwd(), lockPath) ?? lockPath}, rerun pr gate for the current PR head, then retry lane publish.`);
+    }
+    await sleep(SNAPSHOT_CACHE_LOCK_POLL_MS);
+  }
+}
+
+async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath?: string): Promise<ReviewForgeSnapshot> {
+  const key = snapshotCacheKey(prNumber, headSha, cachePath);
+  const cached = snapshotCacheByHead.get(key);
+  if (cached) return cached;
+  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath) : provider.loadPullRequestReview(prNumber).then(snapshot => {
+    if (snapshot.pr.headRefOid !== headSha) {
+      snapshotCacheByHead.delete(key);
+      throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
+    }
+    return snapshot;
+  })).catch(error => {
+    snapshotCacheByHead.delete(key);
+    throw error;
+  });
+  snapshotCacheByHead.set(key, loaded);
+  return loaded;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -177,14 +279,18 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   };
 }
 
-export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
+  const loadedSnapshot = options.headSha && options.issueNumber
+    ? null
+    : provider.loadPullRequestReviewTarget
+      ? null
+      : await provider.loadPullRequestReview(options.prNumber);
   const target = options.headSha && options.issueNumber
     ? null
     : provider.loadPullRequestReviewTarget
       ? await provider.loadPullRequestReviewTarget(options.prNumber)
-      : await provider.loadPullRequestReview(options.prNumber);
+      : loadedSnapshot;
   const headSha = options.headSha ?? target?.pr.headRefOid ?? '';
   const issueNumber = options.issueNumber ?? target?.closingIssueNumbers[0] ?? 0;
   if (issueNumber <= 0) {
@@ -207,8 +313,14 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(options.prNumber)).item, publishInput);
+    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha))).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
+}
+
+export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+  const repoRoot = options.repoRoot ?? process.cwd();
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
+  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {
