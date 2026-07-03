@@ -210,6 +210,12 @@ interface AutoresearchWorkspaceChange {
   readonly kind: "added" | "modified" | "deleted" | "symlink";
 }
 
+interface AutoresearchWorkspaceScan {
+  readonly fileCount: number;
+  readonly totalBytes: number;
+  readonly reasons: readonly string[];
+}
+
 interface AutoresearchPromotion {
   readonly candidateId: string;
   readonly outputPath: string;
@@ -1328,6 +1334,7 @@ function baselineAutoresearch(
     return { error: "Autoresearch baseline requires a command-metric evaluator synthesized from the target." };
   }
   const workspacePath = autoresearchWorkspacePath(context);
+  const targetSizeReasons = validateAutoresearchWorkspaceSize(context.state.targetPath, "Autoresearch target");
   if (dryRun) {
     return {
       payload: {
@@ -1336,10 +1343,15 @@ function baselineAutoresearch(
         phase: context.state.phase,
         planned: true,
         workspacePath,
+        workspaceLimits: autoresearchWorkspaceLimitSummary(),
+        blockers: targetSizeReasons,
         evaluatorProvenance: autoresearchEvaluatorProvenance(context),
         nextAction: `Run qube autoresearch baseline --run ${context.state.runId} without --dry-run to snapshot and evaluate the baseline.`
       }
     };
+  }
+  if (targetSizeReasons.length > 0) {
+    return { error: targetSizeReasons.join(" ") };
   }
   if (!dryRun) {
     materializeAutoresearchWorkspace(context.state.targetPath, workspacePath);
@@ -1392,6 +1404,32 @@ function runAutoresearchCandidate(
   const artifactPath = path.join(candidateDirectory, "artifact.md");
   const baseWorkspacePath = context.state.currentBest ? autoresearchCurrentBestWorkspacePath(context) : autoresearchBaselineWorkspacePath(context);
   const currentScore = context.state.currentBest?.evaluation.score ?? context.state.baseline.score;
+  const workspaceSizeReasons = [
+    ...validateAutoresearchWorkspaceSize(workspacePath, "Autoresearch sandbox workspace"),
+    ...validateAutoresearchWorkspaceSize(baseWorkspacePath, "Autoresearch current-best workspace")
+  ];
+  if (workspaceSizeReasons.length > 0) {
+    if (dryRun) {
+      return {
+        payload: {
+          action: "run",
+          runId: context.state.runId,
+          phase: context.state.phase,
+          planned: true,
+          candidateId,
+          workspacePath,
+          candidateWorkspacePath,
+          changedFiles: [],
+          currentScore,
+          workspaceLimits: autoresearchWorkspaceLimitSummary(),
+          evaluatorProvenance: autoresearchEvaluatorProvenance(context),
+          blockers: workspaceSizeReasons,
+          nextAction: "Reduce the autoresearch workspace size before evaluating a candidate."
+        }
+      };
+    }
+    return { error: workspaceSizeReasons.join(" ") };
+  }
   const changes = collectAutoresearchWorkspaceChanges(baseWorkspacePath, workspacePath);
   const changedFiles = changes.map(change => change.path);
   if (dryRun) {
@@ -1406,6 +1444,7 @@ function runAutoresearchCandidate(
         candidateWorkspacePath,
         changedFiles,
         currentScore,
+        workspaceLimits: autoresearchWorkspaceLimitSummary(),
         evaluatorProvenance: autoresearchEvaluatorProvenance(context),
         blockers: validateAutoresearchCandidateBoundary(context, changes),
         nextAction: `Run qube autoresearch run --run ${context.state.runId} without --dry-run to evaluate ${candidateId}.`
@@ -1872,6 +1911,10 @@ function materializeAutoresearchWorkspace(targetPath: string, workspacePath: str
 }
 
 function copyAutoresearchWorkspace(sourcePath: string, destinationPath: string): void {
+  const sizeReasons = validateAutoresearchWorkspaceSize(sourcePath, "Autoresearch workspace copy source");
+  if (sizeReasons.length > 0) {
+    throw new Error(sizeReasons.join(" "));
+  }
   rmSync(destinationPath, { recursive: true, force: true });
   mkdirSync(destinationPath, { recursive: true });
   for (const entry of readdirSync(sourcePath, { withFileTypes: true })) {
@@ -1905,6 +1948,68 @@ function restoreAutoresearchWorkspace(context: AutoresearchContext, workspacePat
 
 function isIgnoredAutoresearchEntry(name: string): boolean {
   return name === ".git" || name === ".qube" || name === "node_modules" || name === "dist" || name === "build";
+}
+
+const autoresearchWorkspaceMaxFiles = 2_000;
+const autoresearchWorkspaceMaxBytes = 50 * 1024 * 1024;
+
+function autoresearchWorkspaceLimitSummary(): Readonly<Record<string, number>> {
+  return {
+    maxFiles: autoresearchWorkspaceMaxFiles,
+    maxBytes: autoresearchWorkspaceMaxBytes
+  };
+}
+
+function validateAutoresearchWorkspaceSize(rootPath: string, label: string): readonly string[] {
+  return scanAutoresearchWorkspace(rootPath, label).reasons;
+}
+
+function scanAutoresearchWorkspace(rootPath: string, label: string): AutoresearchWorkspaceScan {
+  let fileCount = 0;
+  let totalBytes = 0;
+  const reasons: string[] = [];
+  if (!existsSync(rootPath)) {
+    return { fileCount, totalBytes, reasons };
+  }
+  const visit = (directoryPath: string): void => {
+    if (reasons.length > 0) return;
+    for (const entry of readdirSync(directoryPath, { withFileTypes: true })) {
+      if (isIgnoredAutoresearchEntry(entry.name)) continue;
+      const entryPath = path.join(directoryPath, entry.name);
+      let stats;
+      try {
+        stats = lstatSync(entryPath);
+      } catch {
+        continue;
+      }
+      if (stats.isSymbolicLink()) continue;
+      if (stats.isDirectory()) {
+        visit(entryPath);
+        if (reasons.length > 0) return;
+        continue;
+      }
+      if (!stats.isFile()) continue;
+      fileCount += 1;
+      totalBytes += stats.size;
+      if (fileCount > autoresearchWorkspaceMaxFiles) {
+        reasons.push(`${label} has ${fileCount} files, exceeding the autoresearch limit of ${autoresearchWorkspaceMaxFiles} files.`);
+        return;
+      }
+      if (totalBytes > autoresearchWorkspaceMaxBytes) {
+        reasons.push(`${label} has ${formatAutoresearchBytes(totalBytes)}, exceeding the autoresearch limit of ${formatAutoresearchBytes(autoresearchWorkspaceMaxBytes)}.`);
+        return;
+      }
+    }
+  };
+  visit(rootPath);
+  return { fileCount, totalBytes, reasons };
+}
+
+function formatAutoresearchBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} bytes`;
+  const kib = bytes / 1024;
+  if (kib < 1024) return `${Math.round(kib)} KiB`;
+  return `${Math.round(kib / 1024)} MiB`;
 }
 
 function collectAutoresearchWorkspaceChanges(basePath: string, candidatePath: string): readonly AutoresearchWorkspaceChange[] {

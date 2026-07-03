@@ -77,6 +77,13 @@ function writeAutoresearchSandboxScore(stateDirectory, score) {
   return scorePath;
 }
 
+function writeManyAutoresearchFiles(directory, count) {
+  mkdirSync(directory, { recursive: true });
+  for (let index = 0; index < count; index += 1) {
+    writeFileSync(path.join(directory, `extra-${String(index).padStart(4, "0")}.txt`), "x\n", "utf8");
+  }
+}
+
 function createAcceptedAutoresearchRun(cwd, initialScore = 10, improvedScore = 5) {
   const target = createAutoresearchPackageTarget(cwd, initialScore);
   const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
@@ -833,6 +840,50 @@ describe("qube composer CLI", () => {
     assert.equal(planned.planned, true);
     assert.deepEqual(planned.changedFiles, ["score.json"]);
     assert.equal(JSON.parse(readFileSync(sideEffectPath, "utf8")).count, 1);
+  });
+
+  it("refuses autoresearch baseline before copying oversized targets", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-large-target-cwd-"));
+    const target = createAutoresearchPackageTarget(cwd, 10);
+    writeManyAutoresearchFiles(path.join(target, "bulk"), 2001);
+
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+
+    const dryRun = runCli(["autoresearch", "baseline", "--dry-run", "--json"], { cwd });
+    assert.equal(dryRun.status, 0);
+    const planned = JSON.parse(dryRun.stdout).autoresearch;
+    assert.match(planned.blockers.join("\n"), /exceeding the autoresearch limit/);
+    assert.equal(existsSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json")), false);
+
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 2);
+    assert.match(JSON.parse(baseline.stdout).error.likelyCause, /exceeding the autoresearch limit/);
+    assert.equal(existsSync(path.join(initialized.stateDirectory, "baseline.json")), false);
+    assert.equal(existsSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json")), false);
+  });
+
+  it("refuses autoresearch run before hashing or copying oversized workspaces", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-large-run-cwd-"));
+    createAutoresearchPackageTarget(cwd, 10);
+
+    const init = runCli(["autoresearch", "init", "target", "improve runtime performance", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    writeManyAutoresearchFiles(path.join(initialized.stateDirectory, "sandbox", "workspace", "bulk"), 2001);
+
+    const dryRun = runCli(["autoresearch", "run", "--dry-run", "--json"], { cwd });
+    assert.equal(dryRun.status, 0);
+    const planned = JSON.parse(dryRun.stdout).autoresearch;
+    assert.match(planned.blockers.join("\n"), /exceeding the autoresearch limit/);
+    assert.deepEqual(planned.changedFiles, []);
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 2);
+    assert.match(JSON.parse(run.stdout).error.likelyCause, /exceeding the autoresearch limit/);
+    assert.equal(existsSync(path.join(initialized.stateDirectory, "sandbox", "candidates", "candidate-001")), false);
   });
 
   it("rejects non-improving autoresearch candidates and restores the sandbox workspace", () => {
