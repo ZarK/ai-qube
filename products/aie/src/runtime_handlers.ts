@@ -669,7 +669,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
       return commandResult(context, result, formatRepoAffectedHuman(result));
     } catch (err: unknown) {
       const cause = err instanceof Error ? err.message : String(err);
-      const message = `Failed to run \`aie repo affected\`. Likely cause: ${cause}. Next action: provide --changed paths or rerun from a checkout with origin/main available.`;
+      const message = `Failed to run \`aie repo affected\`. Likely cause: ${cause}. Next action: provide --changed paths or rerun from a checkout with the configured base ref available.`;
       return commandFailure(context, { ok: false, command: 'repo affected', error: message }, message);
     }
   },

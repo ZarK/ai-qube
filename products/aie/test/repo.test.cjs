@@ -49,6 +49,12 @@ function makeFixtureRepo(fixtureName) {
   return repo;
 }
 
+function commitFile(repo, path, content) {
+  writeFileSync(join(repo, path), content);
+  execFileSync('git', ['add', path], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', `change ${path}`], { cwd: repo, stdio: 'ignore' });
+}
+
 function success(args, stdout) {
   return { args, exitCode: 0, stdout, stderr: '' };
 }
@@ -231,6 +237,37 @@ describe('repo layout inspection and affected scope', () => {
     assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-root', '@fixture/core']);
     assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/core').gates.includes('typecheck'));
     assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('uses configured base ref when changed paths are not provided', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['branch', 'develop', base], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['update-ref', 'refs/remotes/upstream/develop', base], { cwd: repo, stdio: 'ignore' });
+    commitFile(repo, 'packages/core/src/index.ts', 'export const changed = true;\n');
+    const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
+
+    const result = await runRepoAffected({
+      config: { ...getDefaults(), baseRemote: 'upstream', baseBranch: 'develop' },
+      cwd: repo,
+    });
+
+    assert.deepEqual(result.changedPaths, ['packages/core/src/index.ts']);
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['@fixture/core']);
+    assert.equal(result.warnings.some(warning => warning.includes('Failed to inspect changed paths')), false);
+  });
+
+  it('warns when default changed path inspection fails', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoAffected({
+      config: { ...getDefaults(), baseRemote: 'missing-remote', baseBranch: 'missing-branch' },
+      cwd: repo,
+    });
+
+    assert.deepEqual(result.changedPaths, []);
+    assert.ok(result.warnings.some(warning => warning.includes('Failed to inspect changed paths from missing-remote/missing-branch...HEAD')));
   });
 });
 

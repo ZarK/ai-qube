@@ -182,7 +182,7 @@ export const RUN_STOP_FLAG_DETAILS: CommandFlagSchema[] = [
 
 export const REPO_AFFECTED_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable affected-scope output', default: false },
-  { name: '--changed', type: 'string', description: 'Changed repository path to map; repeat or comma-separate. Defaults to git diff origin/main...HEAD.', multiple: true },
+  { name: '--changed', type: 'string', description: 'Changed repository path to map; repeat or comma-separate. Defaults to git diff against the configured base ref.', multiple: true },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

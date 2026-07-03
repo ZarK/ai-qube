@@ -223,20 +223,27 @@ function gatesForChangedPath(path: string): string[] {
   return ['test'];
 }
 
-async function changedPathsFromGit(options: RepoAffectedOptions, root: string | null): Promise<string[]> {
-  if (options.changedPaths && options.changedPaths.length > 0) return options.changedPaths.map(portablePath);
-  if (!root) return [];
+async function changedPathsFromGit(options: RepoAffectedOptions, root: string | null): Promise<{ paths: string[]; warnings: string[] }> {
+  if (options.changedPaths && options.changedPaths.length > 0) return { paths: options.changedPaths.map(portablePath), warnings: [] };
+  if (!root) return { paths: [], warnings: ['Changed paths could not be inspected because the repository root is unavailable. Provide --changed paths to map affected scope explicitly.'] };
   const git = options.git ?? ((args: string[], gitOptions: { cwd: string }) => {
     const result = spawnSync('git', args, { cwd: gitOptions.cwd, encoding: 'utf8' });
     return { args, exitCode: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
   });
-  const result = await git(['diff', '--name-only', 'origin/main...HEAD'], { cwd: root });
-  return result.exitCode === 0 ? result.stdout.split(/\r?\n/).map(portablePath).filter(Boolean) : [];
+  const baseRef = `${options.config.baseRemote}/${options.config.baseBranch}`;
+  const result = await git(['diff', '--name-only', `${baseRef}...HEAD`], { cwd: root });
+  if (result.exitCode === 0) return { paths: result.stdout.split(/\r?\n/).map(portablePath).filter(Boolean), warnings: [] };
+  const cause = result.stderr.trim() || `git diff exited with ${result.exitCode}`;
+  return {
+    paths: [],
+    warnings: [`Failed to inspect changed paths from ${baseRef}...HEAD. Likely cause: ${cause}. Next action: provide --changed paths or fetch and verify the configured base ref.`],
+  };
 }
 
 export async function inspectAffected(options: RepoAffectedOptions): Promise<RepoAffectedResult> {
   const layout = await inspectRepoLayout(options);
-  const changedPaths = await changedPathsFromGit(options, layout.root);
+  const changedPathResult = await changedPathsFromGit(options, layout.root);
+  const changedPaths = changedPathResult.paths;
   const affectedProjects: RepoAffectedProject[] = [];
   for (const project of layout.projects) {
     const matches = changedPaths.filter(path => containsPath(project.path, path));
@@ -253,6 +260,7 @@ export async function inspectAffected(options: RepoAffectedOptions): Promise<Rep
     suggestedGates,
     warnings: [
       ...layout.warnings,
+      ...changedPathResult.warnings,
       ...(unmatched.length > 0 ? [`${unmatched.length} changed path(s) did not map to a detected project; use conservative gates.`] : []),
     ],
   };
