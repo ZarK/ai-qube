@@ -224,6 +224,22 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
   });
 
+  it('uses narrow git probes for layout inspection', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+    const calls = [];
+    const git = async (args) => {
+      calls.push(args.join(' '));
+      if (args.join(' ') === 'rev-parse --show-toplevel') return { args, exitCode: 0, stdout: repo, stderr: '' };
+      if (args.join(' ') === 'remote -v') return { args, exitCode: 0, stdout: 'origin\thttps://github.com/example/repo.git (fetch)\norigin\thttps://github.com/example/repo.git (push)\n', stderr: '' };
+      return { args, exitCode: 1, stdout: '', stderr: `unexpected git call: ${args.join(' ')}` };
+    };
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo, git });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.deepEqual(calls, ['rev-parse --show-toplevel', 'remote -v']);
+  });
+
   it('maps changed paths to affected workspace projects and suggested gates', async () => {
     const repo = makeFixtureRepo('js-workspace');
 
@@ -237,6 +253,20 @@ describe('repo layout inspection and affected scope', () => {
     assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-root', '@fixture/core']);
     assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/core').gates.includes('typecheck'));
     assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('does not treat nested lockfiles as root project changes', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['products/aie/test/fixtures/layout/js-workspace/pnpm-lock.yaml'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
   });
 
   it('does not expand workspace projects outside the repository root', async () => {

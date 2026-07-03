@@ -2,10 +2,8 @@ import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
 import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoRootMarker } from '@tjalve/qube-core';
-import { configToExecutorPolicy } from '../config_policy.js';
 import type { Config } from '../config/index.js';
-import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
-import type { GitExec } from '../providers/local/local_git_provider.js';
+import type { GitExec, GitRunResult } from '../providers/local/local_git_provider.js';
 
 interface PackageJson {
   readonly name?: unknown;
@@ -35,6 +33,46 @@ export interface RepoAffectedCommandResult extends RepoAffectedResult {
 
 function portablePath(path: string): string {
   return path.replace(/\\/g, '/');
+}
+
+function trimOutput(result: Pick<GitRunResult, 'stdout'>): string {
+  return result.stdout.trim();
+}
+
+async function runGit(args: string[], cwd: string, git?: GitExec): Promise<GitRunResult> {
+  if (git) return git(args, { cwd });
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+  return { args, exitCode: result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
+}
+
+function parseRemoteLines(stdout: string): Array<{ name: string; url: string }> {
+  const remotes = new Map<string, string>();
+  for (const line of stdout.split(/\r?\n/).filter(Boolean)) {
+    const match = line.match(/^(\S+)\s+(\S+)\s+\(fetch\)$/);
+    if (match) remotes.set(match[1], match[2]);
+  }
+  return [...remotes].map(([name, url]) => ({ name, url }));
+}
+
+async function inspectRepoSignals(options: RepoInspectOptions): Promise<{
+  readonly root: string | null;
+  readonly remotes: Array<{ name: string; url: string }>;
+  readonly generatedPathSignals: RepoPathSignal[];
+  readonly warnings: string[];
+}> {
+  const start = options.cwd ?? process.cwd();
+  const rootResult = await runGit(['rev-parse', '--show-toplevel'], start, options.git);
+  const root = rootResult.exitCode === 0 ? trimOutput(rootResult) : null;
+  const remoteResult = await runGit(['remote', '-v'], root ?? start, options.git);
+  const warnings: string[] = [];
+  if (!root) warnings.push('Not inside a git repository.');
+  if (remoteResult.exitCode !== 0) warnings.push(remoteResult.stderr.trim() || 'Failed to inspect git remotes.');
+  return {
+    root,
+    remotes: remoteResult.exitCode === 0 ? parseRemoteLines(remoteResult.stdout) : [],
+    generatedPathSignals: root && existsSync(join(root, 'dist')) ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
+    warnings,
+  };
 }
 
 function repoRelativePath(root: string, path: string): string | null {
@@ -195,8 +233,7 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
 }
 
 export async function inspectRepoLayout(options: RepoInspectOptions): Promise<RepoLayoutInspection> {
-  const provider = createLocalGitRepositoryProvider({ cwd: options.cwd, git: options.git });
-  const repoState = await provider.inspect(configToExecutorPolicy(options.config));
+  const repoState = await inspectRepoSignals(options);
   const root = repoState.root;
   const packageManagers = detectPackageManagers(root);
   const rootMarkers = detectRootMarkers(root);
@@ -223,7 +260,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
 }
 
 function containsPath(projectPath: string, changedPath: string): boolean {
-  if (projectPath === '.') return !changedPath.includes('/') || changedPath.startsWith('.github/') || changedPath === 'package.json' || changedPath.endsWith('lock.yaml');
+  if (projectPath === '.') return !changedPath.includes('/') || changedPath.startsWith('.github/');
   const prefix = `${projectPath.replace(/\/+$/, '')}/`;
   return changedPath === projectPath || changedPath.startsWith(prefix);
 }
