@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, posix: pathPosix } = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults } = require('../dist/config/index.js');
@@ -550,6 +551,28 @@ describe('init service', () => {
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
   });
 
+  it('scopes legacy instruction detection to selected init tools', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
+
+    const opencode = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(opencode.ok, true);
+    assert.deepEqual(opencode.legacy, []);
+    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+    assert.doesNotMatch(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+
+    const claudeRepo = makeGitRepo();
+    writeFileSync(join(claudeRepo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
+
+    const blocked = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: claudeRepo });
+
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.legacy[0].category, 'instructions');
+    assert.deepEqual(blocked.legacy[0].paths, ['CLAUDE.md']);
+    assert.doesNotMatch(readFileSync(join(claudeRepo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+  });
+
   it('requires force for managed sections with missing checksums', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'AGENTS.md'), [
@@ -628,7 +651,7 @@ describe('init service', () => {
     writeFileSync(join(repo, 'scripts', 'gh-issue-start.sh'), '#!/bin/sh\n');
 
     const { getAllAgentHostProfiles, hostIdsForInstructionPath } = require('../dist/agent_hosts.js');
-    const profiles = getAllAgentHostProfiles();
+    const profiles = await getAllAgentHostProfiles();
     const opencode = profiles.find(profile => profile.id === 'opencode');
     const codex = profiles.find(profile => profile.id === 'codex');
     const claude = profiles.find(profile => profile.id === 'claude-code');
@@ -643,7 +666,7 @@ describe('init service', () => {
     assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
-    const agentsHosts = hostIdsForInstructionPath('AGENTS.md');
+    const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');
     assert.deepEqual(agentsHosts, ['opencode', 'codex']);
 
     const wrapperPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { legacyScripts: 'install-wrappers' } } });
@@ -661,6 +684,43 @@ describe('init service', () => {
     assert.match(wrapperLifecycle.nextCommand, /--install-wrappers --dry-run/);
     assert.equal(cleanupLifecycle.action, 'cleanup-and-replace');
     assert.match(cleanupLifecycle.nextCommand, /--cleanup --dry-run/);
+  });
+
+  it('skips missing optional host adapters during generic instruction discovery', () => {
+    const isolated = mkdtempSync(join(tmpdir(), 'aie-host-adapters-'));
+    const isolatedModule = join(isolated, 'agent_host_adapters.mjs');
+    copyFileSync(join(__dirname, '..', 'dist', 'agent_host_adapters.js'), isolatedModule);
+
+    const script = `
+      const mod = await import(${JSON.stringify(pathToFileURL(isolatedModule).href)});
+      const profiles = await mod.getAllAgentHostProfiles();
+      const paths = await mod.getInstructionTargetPaths();
+      const agentsHosts = await mod.hostIdsForInstructionPath('AGENTS.md');
+      const claudeHosts = await mod.hostIdsForInstructionPath('CLAUDE.md');
+      let explicitClaudeMessage = '';
+      try {
+        await mod.getAgentHostProfile('claude-code');
+      } catch (error) {
+        explicitClaudeMessage = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify({
+        profiles: profiles.map(profile => profile.id),
+        paths,
+        agentsHosts,
+        claudeHosts,
+        explicitClaudeMessage,
+      }));
+    `;
+
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { cwd: isolated, encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.profiles, ['opencode']);
+    assert.deepEqual(parsed.paths, ['AGENTS.md']);
+    assert.deepEqual(parsed.agentsHosts, ['opencode']);
+    assert.equal(parsed.claudeHosts, null);
+    assert.match(parsed.explicitClaudeMessage, /Claude Code host profile adapter @tjalve\/qube-adapter-claude-code is not installed/);
   });
 });
 

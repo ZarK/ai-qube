@@ -1,4 +1,5 @@
 import {
+  claudeCodeAdapterContract,
   codexAdapterContract,
   gitLabAdapterContract,
   githubAdapterContract,
@@ -11,7 +12,6 @@ import {
   type QubeIntegrationSurface,
 } from "@tjalve/qube-core";
 
-import { listClaudeCodeHostCapabilities } from "./claude_code_host.js";
 import { listGrokBuildHostCapabilities } from "./grok_build_host.js";
 
 export type QubeOptionSupport = "installed" | "optional" | "unsupported";
@@ -121,14 +121,7 @@ export const executorHostSurfaces: readonly QubeDiscoveryOption[] = Object.freez
     capabilities: [],
   }),
   adapterOption(codexAdapterContract, "installed", "Codex host capability reporting uses the Codex adapter contract and AGENTS.md host profile."),
-  hostOption({
-    id: "claude-code",
-    support: "installed",
-    surface: "claude-code",
-    packageName: "@tjalve/qube",
-    summary: "Claude Code host capability reporting uses the QUBE Claude Code host contract.",
-    capabilities: listClaudeCodeHostCapabilities(),
-  }),
+  adapterOption(claudeCodeAdapterContract, "installed", "Claude Code host capability reporting uses the Claude Code adapter contract."),
   hostOption({
     id: "grok-build",
     support: "installed",

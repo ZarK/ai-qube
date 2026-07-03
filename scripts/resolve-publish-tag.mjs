@@ -4,12 +4,14 @@ import path from "node:path";
 const buildQubeCore = "pnpm --filter @tjalve/qube-core run build";
 const buildGitHubAdapter = "pnpm --filter @tjalve/qube-adapter-github run build";
 const buildCodexAdapter = "pnpm --filter @tjalve/qube-adapter-codex run build";
+const buildClaudeCodeAdapter = "pnpm --filter @tjalve/qube-adapter-claude-code run build";
 const buildQubeCli = "pnpm --filter @tjalve/qube-cli run build";
-const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildCodexAdapter} && ${buildQubeCli}`;
+const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildQubeCli}`;
 const buildAiqDependencies = `${buildAieDependencies} && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build`;
 
 const packages = new Map([
   ["qube-cli", { filter: "@tjalve/qube-cli", path: "packages/qube-cli", packageJson: "packages/qube-cli/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/qube-cli run verify" }],
+  ["qube-adapter-claude-code", { filter: "@tjalve/qube-adapter-claude-code", path: "adapters/claude-code", packageJson: "adapters/claude-code/package.json", prepare: buildQubeCore, verify: "pnpm --filter @tjalve/qube-adapter-claude-code run verify" }],
   ["aib", { filter: "@tjalve/aib", path: "products/aib", packageJson: "products/aib/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aib run verify" }],
   ["aie", { filter: "@tjalve/aie", path: "products/aie", packageJson: "products/aie/package.json", prepare: buildAieDependencies, verify: "pnpm --filter @tjalve/aie run verify" }],
   ["aiu", { filter: "@tjalve/aiu", path: "products/aiu", packageJson: "products/aiu/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aiu run release:check" }],

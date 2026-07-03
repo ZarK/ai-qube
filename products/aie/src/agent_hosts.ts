@@ -12,11 +12,11 @@ export type {
 } from './agent_host_adapters.js';
 
 export {
-  getAgentHostProfileSync as getAgentHostProfile,
-  getAgentHostProfilesSync as getAgentHostProfiles,
-  getAllAgentHostProfilesSync as getAllAgentHostProfiles,
-  getInstructionTargetPathsSync as getInstructionTargetPaths,
-  hostIdsForInstructionPathSync as hostIdsForInstructionPath,
+  getAgentHostProfile,
+  getAgentHostProfiles,
+  getAllAgentHostProfiles,
+  getInstructionTargetPaths,
+  hostIdsForInstructionPath,
   listAgentHostAdapters,
   parseAgentHostSelection,
   uniqueAgentHostIds,

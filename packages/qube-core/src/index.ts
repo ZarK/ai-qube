@@ -240,6 +240,30 @@ export const codexAdapterContract = defineQubeAdapter({
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
+export const claudeCodeAdapterContract = defineQubeAdapter({
+  id: "claude-code",
+  packageName: "@tjalve/qube-adapter-claude-code",
+  surface: "claude-code",
+  owns: ["host-detection", "instruction-targets", "todo-tools", "hooks", "slash-command-boundaries", "unsupported-capability-reporting"],
+  boundary: "Claude Code host behavior stays at the adapter edge; product packages consume explicit capability records and own product-specific side effects.",
+  capabilities: Object.freeze([
+    adapterCapability("detect-host", "supported", "@tjalve/qube-adapter-claude-code", "Detect Claude Code-oriented repository instructions from CLAUDE.md and .claude assets without assuming Codex or OpenCode assets."),
+    adapterCapability("read-instructions", "supported", "@tjalve/aib and @tjalve/aie", "Claude Code project instructions use CLAUDE.md with repository policy precedence."),
+    adapterCapability("inspect-repository-state", "supported", "@tjalve/aie", "Executor checks branch policy, worktree state, base-branch freshness, and blocking pull requests before issue work."),
+    adapterCapability("use-task-state", "standalone", "Claude Code host", "Claude Code todo state is host session state; durable QUBE state stays in GitHub issues, pull requests, and .qube artifacts."),
+    adapterCapability("run-commands", "standalone", "Claude Code host", "Claude Code command execution follows the active permission mode, settings, hooks, and repository policy."),
+    adapterCapability("use-hooks", "standalone", "Claude Code host", "Claude Code hooks are configured through host settings and can observe lifecycle events such as tool use and Stop."),
+    adapterCapability("use-slash-commands", "standalone", "Claude Code host", "Claude Code slash commands and skills are host customization assets, separate from Codex AGENTS.md and OpenCode project commands."),
+    adapterCapability("use-subagents", "standalone", "Claude Code host", "Claude Code can delegate bounded work to subagents, but protected QUBE issue workflow state stays in the main session."),
+    adapterCapability("continue-session", "standalone", "Claude Code host", "Claude Code can continue or resume host conversations, while QUBE continuation remains anchored in provider and .qube state."),
+    adapterCapability("install-slash-command", "unsupported", "@tjalve/qube-adapter-claude-code", "QUBE composer install notes do not create Claude Code slash command or skill assets."),
+    adapterCapability("request-external-review", "unsupported", "@tjalve/aie", "Claude Code host support does not directly invoke configured external PR reviewers."),
+    adapterCapability("create-git-branch", "unsupported", "@tjalve/aie repository provider", "Claude Code host support does not bypass QUBE branch policy."),
+    adapterCapability("open-pull-request", "unsupported", "@tjalve/aie GitHub provider", "Claude Code host support does not open pull requests without the configured repository workflow."),
+  ]),
+  contractOnly: false,
+} satisfies QubeAdapterContract);
+
 export const opencodeAdapterContract = defineQubeAdapter({
   id: "opencode",
   packageName: "@tjalve/qube-adapter-opencode",

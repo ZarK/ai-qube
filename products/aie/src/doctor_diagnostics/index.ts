@@ -8,7 +8,6 @@ import type { GitHubIssue } from '../providers/github_adapter_exports.js';
 import { MANAGED_START } from '../managed_file.js';
 import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.js';
 import { redact } from '../redact.js';
-import { getInstructionTargetPaths } from '../agent_hosts.js';
 import { hasCanonicalSupplyChainGuardInstruction } from '../supply_chain_guard.js';
 import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
@@ -79,7 +78,7 @@ export function buildLifecycleDiagnostics(input: {
 
 function managedInstructionText(repoRoot: string | null): string {
   if (!repoRoot) return '';
-  return getInstructionTargetPaths()
+  return ['AGENTS.md', 'CLAUDE.md']
     .map(path => {
       const fullPath = join(repoRoot, path);
       if (!existsSync(fullPath)) return '';

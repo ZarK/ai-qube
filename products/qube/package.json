@@ -51,16 +51,18 @@
     "@tjalve/aie": "0.1.4",
     "@tjalve/aiq": "0.2.2",
     "@tjalve/aiu": "0.0.4",
+    "@tjalve/qube-adapter-claude-code": "workspace:*",
     "@tjalve/qube-cli": "0.1.2",
     "@tjalve/qube-core": "0.1.1"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
+    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-claude-code run build",
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "pnpm run build && node --test --test-concurrency=1 \"test/*.test.mjs\"",
+    "typecheck": "pnpm run build:deps && tsc -p tsconfig.json --noEmit",
+    "test": "pnpm run build:deps && pnpm run build && node --test --test-concurrency=1 \"test/*.test.mjs\"",
     "prepack": "pnpm run build",
-    "pack:check": "pnpm run build && pnpm pack --dry-run --json",
+    "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json",
     "verify": "pnpm run typecheck && pnpm test && pnpm run pack:check"
   },
   "devDependencies": {

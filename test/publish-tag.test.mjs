@@ -54,4 +54,26 @@ describe("publish tag resolution", () => {
     assert.match(plan.verify, /ai-code-quality run test:publish-readiness/);
     assert.doesNotMatch(plan.verify, /ai-code-quality test(?:\s|$)/);
   });
+
+  it("maps the Claude Code adapter publish tag to the adapter package", () => {
+    const result = resolveTag("publish-qube-adapter-claude-code-v0.1.0");
+    assert.equal(result.status, 0);
+
+    const plan = JSON.parse(result.stdout);
+    assert.deepEqual({
+      packageKey: plan.packageKey,
+      packageName: plan.packageName,
+      version: plan.version,
+      filter: plan.filter,
+      path: plan.path
+    }, {
+      packageKey: "qube-adapter-claude-code",
+      packageName: "@tjalve/qube-adapter-claude-code",
+      version: "0.1.0",
+      filter: "@tjalve/qube-adapter-claude-code",
+      path: "adapters/claude-code"
+    });
+    assert.match(plan.prepare, /@tjalve\/qube-core/);
+    assert.match(plan.verify, /@tjalve\/qube-adapter-claude-code/);
+  });
 });

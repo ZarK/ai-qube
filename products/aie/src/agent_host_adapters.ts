@@ -64,12 +64,6 @@ const AGENTS_INSTRUCTIONS: InstructionTarget = {
   description: 'Always-loaded Executor instructions for AGENTS.md hosts.',
 };
 
-const CLAUDE_INSTRUCTIONS: InstructionTarget = {
-  id: 'claude-instructions',
-  path: 'CLAUDE.md',
-  description: 'Always-loaded Executor instructions for Claude Code.',
-};
-
 const OPENCODE_COMMAND: CommandTarget = {
   id: 'opencode-make-it-so',
   path: pathPosix.join('.opencode', 'commands', 'make-it-so.md'),
@@ -112,44 +106,20 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   supportsProjectCommands: true,
 };
 
-const BUILTIN_CLAUDE_PROFILE: AgentHostProfile = {
-  id: 'claude-code',
-  displayName: 'Claude Code',
-  instructionTargets: [CLAUDE_INSTRUCTIONS],
-  commandTargets: [],
-  todo: {
-    tools: ['TodoWrite', 'TodoRead'],
-    fallback: 'Use an explicit visible checklist if the host todo tools are unavailable.',
-    instruction: 'For Claude Code, use `TodoWrite` and `TodoRead` or their current host-exposed equivalents directly from the main Claude Code agent. Do not delegate todo operations to subagents.',
-  },
-  dialogue: {
-    expectation: 'Keep issue workflow state visible in the main Claude Code conversation and use subagents only for bounded support work.',
-  },
-  subagents: {
-    supported: true,
-    instruction: 'Use Claude Code subagents only for bounded support work; keep issue workflow todos in the main session.',
-  },
-  hooks: {
-    supported: true,
-    description: 'Claude Code hooks may exist in host settings; Executor init installs managed instructions only.',
-  },
-  supportsProjectCommands: false,
-};
-
 const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
 
 const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
   opencode: BUILTIN_OPENCODE_PROFILE,
-  'claude-code': BUILTIN_CLAUDE_PROFILE,
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
   Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false }),
   Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true }),
-  Object.freeze({ id: 'claude-code', packageName: null, installed: true }),
+  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true }),
 ]);
 
 let cachedCodexProfile: AgentHostProfile | null | undefined;
+let cachedClaudeCodeProfile: AgentHostProfile | null | undefined;
 
 async function loadCodexProfile(): Promise<AgentHostProfile | null> {
   if (cachedCodexProfile !== undefined) return cachedCodexProfile;
@@ -162,20 +132,72 @@ async function loadCodexProfile(): Promise<AgentHostProfile | null> {
     }
     cachedCodexProfile = profile as AgentHostProfile;
     return cachedCodexProfile;
-  } catch {
-    cachedCodexProfile = null;
-    return null;
+  } catch (error) {
+    if (isModuleMissing(error, '@tjalve/qube-adapter-codex')) {
+      cachedCodexProfile = null;
+      return null;
+    }
+    throw error;
   }
 }
 
-async function resolveProfile(id: AgentHostId): Promise<AgentHostProfile> {
-  if (id === 'codex') {
-    const loaded = await loadCodexProfile();
-    if (loaded) return loaded;
+async function loadClaudeCodeProfile(): Promise<AgentHostProfile | null> {
+  if (cachedClaudeCodeProfile !== undefined) return cachedClaudeCodeProfile;
+  try {
+    const imported = await import('@tjalve/qube-adapter-claude-code');
+    const profile = (imported as Record<string, unknown>).claudeCodeHostProfile;
+    if (!profile || typeof profile !== 'object') {
+      cachedClaudeCodeProfile = null;
+      return null;
+    }
+    cachedClaudeCodeProfile = profile as AgentHostProfile;
+    return cachedClaudeCodeProfile;
+  } catch (error) {
+    if (isModuleMissing(error, '@tjalve/qube-adapter-claude-code')) {
+      cachedClaudeCodeProfile = null;
+      return null;
+    }
+    throw error;
   }
-  const builtin = BUILTIN_PROFILES[id];
-  if (!builtin) throw new Error(`Unknown agent host "${id}".`);
-  return builtin;
+}
+
+function isModuleMissing(error: unknown, packageName: string): boolean {
+  if (!(error instanceof Error)) return false;
+  const code = 'code' in error ? String((error as { code?: unknown }).code) : '';
+  return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
+}
+
+async function loadProfile(id: AgentHostId): Promise<AgentHostProfile | null> {
+  if (id === 'codex') return loadCodexProfile();
+  if (id === 'claude-code') return loadClaudeCodeProfile();
+  return BUILTIN_PROFILES[id] ?? null;
+}
+
+async function getAvailableAgentHostProfiles(): Promise<AgentHostProfile[]> {
+  const profiles: AgentHostProfile[] = [];
+  for (const id of HOST_ORDER) {
+    const profile = await loadProfile(id);
+    if (profile) profiles.push(profile);
+  }
+  return profiles;
+}
+
+function missingAdapterMessage(id: AgentHostId, packageName: string): string {
+  if (id === 'codex') {
+    return `Codex host profile adapter ${packageName} is not installed. Install the adapter or include it as an optional dependency before running \`aie init . --tool codex\`.`;
+  }
+  if (id === 'claude-code') {
+    return `Claude Code host profile adapter ${packageName} is not installed. Install the adapter or include it as an optional dependency before running \`aie init . --tool claude-code\`.`;
+  }
+  return `Agent host profile adapter ${packageName} is not installed.`;
+}
+
+async function resolveProfile(id: AgentHostId): Promise<AgentHostProfile> {
+  const loaded = await loadProfile(id);
+  if (loaded) return loaded;
+  const adapter = ADAPTERS.find(candidate => candidate.id === id);
+  if (adapter?.packageName) throw new Error(missingAdapterMessage(id, adapter.packageName));
+  throw new Error(`Unknown agent host "${id}".`);
 }
 
 export function listAgentHostAdapters(): readonly AgentHostAdapterMetadata[] {
@@ -196,7 +218,7 @@ export async function getAgentHostProfiles(ids: AgentHostId[]): Promise<AgentHos
 }
 
 export async function getAllAgentHostProfiles(): Promise<AgentHostProfile[]> {
-  return Promise.all(HOST_ORDER.map(id => resolveProfile(id)));
+  return getAvailableAgentHostProfiles();
 }
 
 export function parseAgentHostSelection(value: string): AgentHostId[] | null {
@@ -212,72 +234,13 @@ export function uniqueAgentHostIds(ids: AgentHostId[]): AgentHostId[] {
 
 export async function hostIdsForInstructionPath(path: string): Promise<AgentHostId[] | null> {
   const hosts: AgentHostId[] = [];
-  for (const id of HOST_ORDER) {
-    const profile = await resolveProfile(id);
-    if (profile.instructionTargets.some(target => target.path === path)) hosts.push(id);
+  for (const profile of await getAvailableAgentHostProfiles()) {
+    if (profile.instructionTargets.some(target => target.path === path)) hosts.push(profile.id);
   }
   return hosts.length === 0 ? null : hosts;
 }
 
-export async function getInstructionTargetPaths(): Promise<string[]> {
-  const profiles = await getAllAgentHostProfiles();
+export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<string[]> {
+  const profiles = ids ? await getAgentHostProfiles(ids) : await getAvailableAgentHostProfiles();
   return [...new Set(profiles.flatMap(profile => profile.instructionTargets.map(target => target.path)))];
-}
-
-// Synchronous accessors for existing call sites during adapter transition.
-const SYNC_PROFILES: Record<AgentHostId, AgentHostProfile> = {
-  opencode: BUILTIN_OPENCODE_PROFILE,
-  codex: {
-    id: 'codex',
-    displayName: 'Codex',
-    instructionTargets: [AGENTS_INSTRUCTIONS],
-    commandTargets: [{
-      id: 'codex-review-focus-agent',
-      path: pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
-      description: 'Codex read-only subagent for one focused local PR review lane.',
-      optional: false,
-      enabledBy: 'codexLocalReview',
-      renderer: 'codex-review-focus-agent',
-    }],
-    todo: {
-      tools: ['update_plan'],
-      fallback: 'If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state.',
-      instruction: 'For Codex, use `update_plan` or the host plan/todo tool directly when available. If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.',
-    },
-    dialogue: {
-      expectation: 'Use Codex plan/todo support in the main session, spawn independent Codex subagents for local PR review focuses, wait for all review subagents before publishing provider feedback, and keep durable state in configured provider records.',
-    },
-    subagents: {
-      supported: true,
-      instruction: 'For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: "qube-review-focus"` and `fork_context: false`, paste each lane `spawnPrompt` from `pr gate --dry-run --json --local-review-prompts` verbatim as the subagent task prompt (never reference .qube/aie/reviews/.../prompts/ files), wait for all subagents before editing or testing in the main session, have each subagent publish with `pr review publish <pr> --lane <lane> --issue <issue>`, delete the review session lock, rerun `pr gate <pr> --json`, then inspect PR comments for merge guidance.',
-    },
-    hooks: {
-      supported: true,
-      description: 'Codex host hooks may exist in trusted host configuration; Executor init does not install them.',
-    },
-    supportsProjectCommands: true,
-  },
-  'claude-code': BUILTIN_CLAUDE_PROFILE,
-};
-
-export function getAgentHostProfileSync(id: AgentHostId): AgentHostProfile {
-  return SYNC_PROFILES[id];
-}
-
-export function getAgentHostProfilesSync(ids: AgentHostId[]): AgentHostProfile[] {
-  const selected = new Set(ids);
-  return HOST_ORDER.filter(id => selected.has(id)).map(id => SYNC_PROFILES[id]);
-}
-
-export function getAllAgentHostProfilesSync(): AgentHostProfile[] {
-  return HOST_ORDER.map(id => SYNC_PROFILES[id]);
-}
-
-export function hostIdsForInstructionPathSync(path: string): AgentHostId[] | null {
-  const hosts = HOST_ORDER.filter(id => SYNC_PROFILES[id].instructionTargets.some(target => target.path === path));
-  return hosts.length === 0 ? null : hosts;
-}
-
-export function getInstructionTargetPathsSync(): string[] {
-  return [...new Set(getAllAgentHostProfilesSync().flatMap(profile => profile.instructionTargets.map(target => target.path)))];
 }
