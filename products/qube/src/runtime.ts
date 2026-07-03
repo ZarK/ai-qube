@@ -1383,6 +1383,10 @@ function promoteAutoresearch(
   const outputPath = request.flags.output
     ? path.resolve(environment.cwd, request.flags.output)
     : path.join(context.state.targetPath, "autoresearch-result.md");
+  const mutableSurfaceError = validateAutoresearchPromotionOutput(context, outputPath);
+  if (mutableSurfaceError) {
+    return { error: mutableSurfaceError };
+  }
   if (existsSync(outputPath) && !request.flags.force) {
     return { error: `Promotion output already exists: ${outputPath}. Pass --force to replace it.` };
   }
@@ -1417,6 +1421,25 @@ function promoteAutoresearch(
       nextAction: state.nextAction
     }
   };
+}
+
+function validateAutoresearchPromotionOutput(context: AutoresearchContext, outputPath: string): string | undefined {
+  const output = path.resolve(outputPath);
+  const allowedSurfaces = context.arena.mutableSurfaces.filter(surface => (
+    surface.kind === "directory" && surface.permission === "read-write"
+  ));
+  if (allowedSurfaces.some(surface => isPathInside(path.resolve(surface.path), output))) {
+    return undefined;
+  }
+  const surfaces = allowedSurfaces.map(surface => surface.path).join(", ");
+  return `Promotion output is outside declared mutable surfaces: ${output}. Allowed surfaces: ${surfaces || "none"}.`;
+}
+
+function isPathInside(rootPath: string, candidatePath: string): boolean {
+  const root = path.resolve(rootPath);
+  const candidate = path.resolve(candidatePath);
+  const relativePath = path.relative(root, candidate);
+  return relativePath === "" || (relativePath.length > 0 && !relativePath.startsWith("..") && !path.isAbsolute(relativePath));
 }
 
 interface AutoresearchContext {

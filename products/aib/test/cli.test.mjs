@@ -120,6 +120,46 @@ test("arena synthesize returns a complete code target plan without questions", a
   assert.ok(result.readinessChecklist.includes("no blocking questions"));
 });
 
+test("arena synthesize uses explicit JavaScript package-manager commands", async () => {
+  const cases = [
+    ["npm@11.0.0", "npm test"],
+    ["yarn@4.0.0", "yarn test"],
+    ["bun@1.2.0", "bun run test"]
+  ];
+  for (const [packageManager, command] of cases) {
+    const dir = await mkdtemp(join(tmpdir(), "aib-arena-manager-"));
+    await writeFile(join(dir, "package.json"), JSON.stringify({
+      private: true,
+      packageManager,
+      scripts: {
+        test: "node --test"
+      }
+    }), "utf8");
+    await mkdir(join(dir, "src"));
+
+    const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+    assert.equal(result.classification, "autoresearch");
+    assert.deepEqual(result.blockingQuestions, []);
+    assert.equal(result.evaluator.command, command);
+  }
+});
+
+test("arena synthesize asks before guessing an ambiguous package manager", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "aib-arena-package-manager-"));
+  await writeFile(join(dir, "package.json"), JSON.stringify({
+    private: true,
+    scripts: {
+      test: "node --test"
+    }
+  }), "utf8");
+  await mkdir(join(dir, "src"));
+
+  const result = parseJsonStdout(runAib(["arena", "synthesize", dir, "reduce test runtime", "--json"]));
+  assert.equal(result.classification, "needs-clarification");
+  assert.ok(result.blockingQuestions.some((question) => question.id === "target.packageManager"));
+  assert.ok(result.readinessChecklist.includes("blocking questions open"));
+});
+
 test("arena synthesize returns a complete document target plan without questions", async () => {
   const dir = await mkdtemp(join(tmpdir(), "aib-arena-docs-"));
   await writeFile(join(dir, "README.md"), "# Notes\n\nExisting documentation.\n", "utf8");

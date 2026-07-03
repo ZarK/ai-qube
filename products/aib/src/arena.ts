@@ -91,11 +91,20 @@ export function synthesizeAutoresearchArena(input: AutoresearchSynthesisInput): 
     kind: targetKind,
     supportedKind: "local-directory"
   };
+  const command = targetKind === "code" ? inferCommand(targetPath) : undefined;
+  if (command?.kind === "blocked") {
+    return incompletePlan({
+      classification: "needs-clarification",
+      goal,
+      blockingQuestions: [command.question],
+      nextAction: "Answer the package-manager question, then rerun aib arena synthesize."
+    });
+  }
   const objective = createObjective(goal, targetKind);
   const invariants = createInvariants();
   const mutableSurfaces = createMutableSurfaces(target);
   const acceptancePolicy = createAcceptancePolicy(objective, targetKind);
-  const evaluator = createEvaluator({ goal, target, objective, invariants, acceptancePolicy });
+  const evaluator = createEvaluator({ goal, target, objective, invariants, acceptancePolicy, command: command?.command });
   const arena = createArena({ goal, target, objective, mutableSurfaces, invariants, acceptancePolicy, evaluator });
   const draft: Omit<AutoresearchArenaPlan, "readinessChecklist"> = {
     schemaVersion: 1,
@@ -239,6 +248,7 @@ function createEvaluator(input: {
   readonly objective: AutoresearchObjective;
   readonly invariants: readonly AutoresearchInvariant[];
   readonly acceptancePolicy: AutoresearchAcceptancePolicy;
+  readonly command?: string;
 }): AutoresearchEvaluator {
   const signals = extractSignals(input.goal);
   const base = {
@@ -248,7 +258,7 @@ function createEvaluator(input: {
     goal: input.goal,
     objective: input.objective,
     direction: input.objective.direction,
-    command: input.target.kind === "code" ? inferCommand(input.target.path) : undefined,
+    command: input.target.kind === "code" ? input.command : undefined,
     rubric: input.target.kind === "code" ? undefined : createRubric(input.goal),
     signals,
     invariants: input.invariants,
@@ -261,15 +271,88 @@ function createEvaluator(input: {
   return { ...base, hash: hashJson(base) };
 }
 
-function inferCommand(targetPath: string): string {
+type PackageCommandTool = "pnpm" | "npm" | "yarn" | "bun";
+
+type InferredCommand =
+  | { readonly kind: "command"; readonly command: string }
+  | { readonly kind: "blocked"; readonly question: AutoresearchBlockingQuestion };
+type BlockedCommand = Extract<InferredCommand, { readonly kind: "blocked" }>;
+
+function inferCommand(targetPath: string): InferredCommand {
   const manifestPath = path.join(targetPath, "package.json");
-  if (existsSync(manifestPath)) {
-    const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: Record<string, string>; packageManager?: string };
-    const manager = manifest.packageManager?.startsWith("npm@") ? "npm run" : "pnpm";
-    if (manifest.scripts?.test) return manager === "npm run" ? "npm test" : "pnpm test";
-    if (manifest.scripts?.build) return `${manager} build`;
+  if (!existsSync(manifestPath)) {
+    return blockingPackageManagerQuestion("No package.json was found for the code target.");
   }
-  return "node --test";
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { scripts?: Record<string, string>; packageManager?: string };
+  const tool = inferPackageCommandTool(targetPath, manifest.packageManager);
+  if (tool.kind === "blocked") {
+    return tool;
+  }
+  if (manifest.scripts?.test) {
+    return { kind: "command", command: testCommand(tool.tool) };
+  }
+  if (manifest.scripts?.build) {
+    return { kind: "command", command: runScriptCommand(tool.tool, "build") };
+  }
+  return blockingPackageManagerQuestion("package.json does not define a test or build script for a fixed evaluator command.");
+}
+
+function inferPackageCommandTool(
+  targetPath: string,
+  packageManager: string | undefined
+): { readonly kind: "tool"; readonly tool: PackageCommandTool } | { readonly kind: "blocked"; readonly question: AutoresearchBlockingQuestion } {
+  const declared = declaredPackageCommandTool(packageManager);
+  if (declared) return { kind: "tool", tool: declared };
+  if (packageManager && packageManager.trim() !== "") {
+    return blockingPackageManagerQuestion(`Unsupported packageManager value: ${packageManager}`);
+  }
+
+  const lockfileTools = [
+    existsSync(path.join(targetPath, "pnpm-lock.yaml")) ? "pnpm" : undefined,
+    existsSync(path.join(targetPath, "package-lock.json")) || existsSync(path.join(targetPath, "npm-shrinkwrap.json")) ? "npm" : undefined,
+    existsSync(path.join(targetPath, "yarn.lock")) ? "yarn" : undefined,
+    existsSync(path.join(targetPath, "bun.lock")) || existsSync(path.join(targetPath, "bun.lockb")) ? "bun" : undefined
+  ].filter((tool): tool is PackageCommandTool => tool !== undefined);
+  const uniqueTools = [...new Set(lockfileTools)];
+  if (uniqueTools.length === 1) {
+    return { kind: "tool", tool: uniqueTools[0] };
+  }
+  return blockingPackageManagerQuestion(
+    uniqueTools.length > 1
+      ? `Multiple package-manager lockfiles were found: ${uniqueTools.join(", ")}.`
+      : "No packageManager field or package-manager lockfile was found."
+  );
+}
+
+function declaredPackageCommandTool(packageManager: string | undefined): PackageCommandTool | undefined {
+  if (!packageManager) return undefined;
+  if (packageManager.startsWith("pnpm@")) return "pnpm";
+  if (packageManager.startsWith("npm@")) return "npm";
+  if (packageManager.startsWith("yarn@")) return "yarn";
+  if (packageManager.startsWith("bun@")) return "bun";
+  return undefined;
+}
+
+function testCommand(tool: PackageCommandTool): string {
+  if (tool === "npm") return "npm test";
+  if (tool === "bun") return "bun run test";
+  return `${tool} test`;
+}
+
+function runScriptCommand(tool: PackageCommandTool, script: string): string {
+  if (tool === "npm" || tool === "bun") return `${tool} run ${script}`;
+  return `${tool} ${script}`;
+}
+
+function blockingPackageManagerQuestion(reason: string): BlockedCommand {
+  return {
+    kind: "blocked",
+    question: {
+      id: "target.packageManager",
+      text: "Which package manager and evaluator script should autoresearch use for this code target?",
+      reason
+    }
+  };
 }
 
 function createRubric(goal: string): readonly string[] {

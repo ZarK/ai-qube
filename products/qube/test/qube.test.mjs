@@ -823,6 +823,24 @@ describe("qube composer CLI", () => {
     assert.match(parsed.error.likelyCause, /outside the sandbox/);
   });
 
+  it("refuses autoresearch promotion output outside declared mutable surfaces", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-output-surface-cwd-"));
+    const target = path.join(cwd, "target");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+
+    assert.equal(runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const promote = runCli(["autoresearch", "promote", "--output", "../outside.md", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside declared mutable surfaces/);
+    assert.equal(existsSync(path.join(path.dirname(cwd), "outside.md")), false);
+  });
+
   it("renders oneshot dry-run plans without local mutation", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-oneshot-dry-cwd-"));
     const planned = runCli(["oneshot", "Create a README draft", "--kind", "doc", "--dry-run", "--json"], { cwd });
