@@ -9,6 +9,7 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const claudeCodeAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "claude-code");
 const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli");
 const qubeCoreRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-core");
 const tempRoots = [];
@@ -33,6 +34,7 @@ describe("packed QUBE install smoke", () => {
     await mkdir(target);
 
     const qubeTarball = await packPackage(packageRoot, packDir);
+    const claudeCodeAdapterTarball = await packPackage(claudeCodeAdapterRoot, packDir);
     const qubeCliTarball = await packPackage(qubeCliRoot, packDir);
     const qubeCoreTarball = await packPackage(qubeCoreRoot, packDir);
     const componentTarballs = new Map();
@@ -64,11 +66,18 @@ describe("packed QUBE install smoke", () => {
         "      if (pkg.name === '@tjalve/qube') {",
         "        pkg.dependencies = {",
         "          ...pkg.dependencies,",
+        `          "@tjalve/qube-adapter-claude-code": ${JSON.stringify(fileSpecifier(target, claudeCodeAdapterTarball))},`,
         `          "@tjalve/qube-cli": ${JSON.stringify(fileSpecifier(target, qubeCliTarball))},`,
         `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         ...fakeComponents.map(component =>
           `          ${JSON.stringify(component.name)}: ${JSON.stringify(fileSpecifier(target, componentTarballs.get(component.name)))},`
         ),
+        "        };",
+        "      }",
+        "      if (pkg.name === '@tjalve/qube-adapter-claude-code') {",
+        "        pkg.dependencies = {",
+        "          ...pkg.dependencies,",
+        `          "@tjalve/qube-core": ${JSON.stringify(fileSpecifier(target, qubeCoreTarball))},`,
         "        };",
         "      }",
         "      return pkg;",

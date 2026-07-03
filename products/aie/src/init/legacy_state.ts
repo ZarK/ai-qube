@@ -1,5 +1,6 @@
 import { readdir } from 'fs/promises';
 import { join } from 'path';
+import type { AgentHostId } from '../agent_hosts.js';
 import type { Config } from '../config/index.js';
 import { getDefaults } from '../config/index.js';
 import { getInstructionTargetPaths } from '../agent_hosts.js';
@@ -70,7 +71,7 @@ function legacyActionText(action: LegacyChoice): string {
   return 'This init plan defers instruction replacement to migration unless --force is used to add managed Executor sections intentionally.';
 }
 
-export async function detectLegacyState(repoRoot: string, config: Config = getDefaults()): Promise<LegacyState[]> {
+export async function detectLegacyState(repoRoot: string, config: Config = getDefaults(), hostIds?: AgentHostId[]): Promise<LegacyState[]> {
   const byCategory = new Map<LegacyCategory, Set<string>>();
   const add = (category: LegacyCategory, path: string): void => {
     const paths = byCategory.get(category) ?? new Set<string>();
@@ -82,7 +83,7 @@ export async function detectLegacyState(repoRoot: string, config: Config = getDe
     add(categorizeLegacyPath(path), path);
   }
 
-  for (const path of await getInstructionTargetPaths()) {
+  for (const path of await getInstructionTargetPaths(hostIds)) {
     const content = await readTextIfPresent(join(repoRoot, path));
     if (content && categorizeLegacyInstruction(content)) add('instructions', path);
   }

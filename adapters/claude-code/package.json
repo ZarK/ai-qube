@@ -1,13 +1,33 @@
 {
   "name": "@tjalve/qube-adapter-claude-code",
   "version": "0.1.0",
-  "description": "Private Claude Code host capability adapter for QUBE instruction and workspace integrations.",
-  "private": true,
+  "description": "Claude Code host capability adapter for QUBE instruction and workspace integrations.",
+  "keywords": [
+    "cli",
+    "agent",
+    "automation",
+    "claude-code",
+    "adapter"
+  ],
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "adapters/claude-code"
+  },
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-qube/issues"
+  },
+  "homepage": "https://github.com/ZarK/ai-qube/tree/main/adapters/claude-code#readme",
   "packageManager": "pnpm@11.0.4",
   "engines": {
     "node": ">=24.0.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/",
+    "provenance": true
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

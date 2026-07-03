@@ -220,7 +220,7 @@ export async function hostIdsForInstructionPath(path: string): Promise<AgentHost
   return hosts.length === 0 ? null : hosts;
 }
 
-export async function getInstructionTargetPaths(): Promise<string[]> {
-  const profiles = await getAllAgentHostProfiles();
+export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<string[]> {
+  const profiles = ids ? await getAgentHostProfiles(ids) : await getAllAgentHostProfiles();
   return [...new Set(profiles.flatMap(profile => profile.instructionTargets.map(target => target.path)))];
 }

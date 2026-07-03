@@ -358,6 +358,9 @@ importers:
       '@tjalve/aiu':
         specifier: 0.0.4
         version: link:../aiu
+      '@tjalve/qube-adapter-claude-code':
+        specifier: workspace:*
+        version: link:../../adapters/claude-code
       '@tjalve/qube-cli':
         specifier: 0.1.2
         version: link:../../packages/qube-cli

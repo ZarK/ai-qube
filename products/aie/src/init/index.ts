@@ -408,7 +408,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
   actions.push(configPlan.action);
   if (configPlan.write) writes.push(configPlan.write);
 
-  const legacy = await detectLegacyState(repoRoot, config);
+  const legacy = await detectLegacyState(repoRoot, config, selectedTools);
   actions.push(...legacyActions(legacy));
   warnings.push(...legacy.map(item => item.reason));
   const legacyInstructionPatterns = legacyInstructionConflictPatterns(legacy);

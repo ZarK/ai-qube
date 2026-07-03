@@ -550,6 +550,28 @@ describe('init service', () => {
     assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
   });
 
+  it('scopes legacy instruction detection to selected init tools', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
+
+    const opencode = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(opencode.ok, true);
+    assert.deepEqual(opencode.legacy, []);
+    assert.match(readFileSync(join(repo, 'AGENTS.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+    assert.doesNotMatch(readFileSync(join(repo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+
+    const claudeRepo = makeGitRepo();
+    writeFileSync(join(claudeRepo, 'CLAUDE.md'), '# Project instructions\n\nUse gh-workflow.sh for issue work.\n');
+
+    const blocked = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: claudeRepo });
+
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.legacy[0].category, 'instructions');
+    assert.deepEqual(blocked.legacy[0].paths, ['CLAUDE.md']);
+    assert.doesNotMatch(readFileSync(join(claudeRepo, 'CLAUDE.md'), 'utf8'), /BEGIN EXECUTOR MANAGED SECTION/);
+  });
+
   it('requires force for managed sections with missing checksums', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'AGENTS.md'), [
