@@ -350,7 +350,7 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.1.1
+        specifier: 0.1.2
         version: link:../aib
       '@tjalve/aie':
         specifier: 0.1.4

@@ -32,7 +32,7 @@ Current intentional `aie doctor` warnings for this package workspace:
 
 ## Package Safety
 
-- Use the exact package version, for example `@tjalve/aib@0.1.1`.
+- Use the exact package version, for example `@tjalve/aib@0.1.2`.
 - Do not document or use floating `latest` in agent workflows.
 - Use `pnpm install --frozen-lockfile --ignore-scripts` for repository setup.
 - Do not add dependencies without supply-chain intake.

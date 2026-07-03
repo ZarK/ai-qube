@@ -1426,16 +1426,39 @@ function promoteAutoresearch(
 function validateAutoresearchPromotionOutput(context: AutoresearchContext, outputPath: string): string | undefined {
   const output = path.resolve(outputPath);
   const targetRoot = path.resolve(context.state.targetPath);
+  const realTargetRoot = realpathSync(targetRoot);
+  const realOutputAnchor = realAutoresearchOutputAnchor(output);
   const allowedSurfaces = context.arena.mutableSurfaces.filter(surface => (
     surface.kind === "directory"
     && surface.permission === "read-write"
     && isPathInside(targetRoot, path.resolve(surface.path))
+    && existsSync(surface.path)
+    && isPathInside(realTargetRoot, realpathSync(surface.path))
   ));
-  if (allowedSurfaces.some(surface => isPathInside(path.resolve(surface.path), output))) {
+  if (allowedSurfaces.some(surface => {
+    const surfacePath = path.resolve(surface.path);
+    const realSurfacePath = realpathSync(surfacePath);
+    return isPathInside(surfacePath, output) && isPathInside(realSurfacePath, realOutputAnchor);
+  })) {
     return undefined;
   }
   const surfaces = allowedSurfaces.map(surface => surface.path).join(", ");
   return `Promotion output is outside declared mutable surfaces: ${output}. Allowed surfaces: ${surfaces || "none"}.`;
+}
+
+function realAutoresearchOutputAnchor(outputPath: string): string {
+  if (existsSync(outputPath)) {
+    return realpathSync(outputPath);
+  }
+  let currentPath = path.dirname(outputPath);
+  while (!existsSync(currentPath)) {
+    const parentPath = path.dirname(currentPath);
+    if (parentPath === currentPath) {
+      return realpathSync(parentPath);
+    }
+    currentPath = parentPath;
+  }
+  return realpathSync(currentPath);
 }
 
 function isPathInside(rootPath: string, candidatePath: string): boolean {
