@@ -1,6 +1,6 @@
 import type { Config } from '../config/index.js';
-import { readFileSync } from 'node:fs';
-import { isAbsolute, join, relative } from 'node:path';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -25,29 +25,58 @@ export interface PrReviewPublishResult {
   publish: ReviewForgeLaneReviewPublishResult;
 }
 
-const snapshotCacheByProvider = new WeakMap<ReviewForgeProvider, Map<string, Promise<ReviewForgeSnapshot>>>();
+const snapshotCacheByHead = new Map<string, Promise<ReviewForgeSnapshot>>();
 
-function snapshotCacheKey(prNumber: number, headSha: string): string {
-  return `${prNumber}:${headSha}`;
+function snapshotCacheKey(prNumber: number, headSha: string, cachePath?: string): string {
+  return `${cachePath ?? 'memory'}:${prNumber}:${headSha}`;
 }
 
-async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string): Promise<ReviewForgeSnapshot> {
-  let cache = snapshotCacheByProvider.get(provider);
-  if (!cache) {
-    cache = new Map();
-    snapshotCacheByProvider.set(provider, cache);
+function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  const safeHead = headSha.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeHead, 'fallback-snapshot-cache.json');
+}
+
+function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    return null;
   }
-  const key = snapshotCacheKey(prNumber, headSha);
-  const cached = cache.get(key);
+  if (!isRecord(parsed) || !isRecord(parsed.pr) || !isRecord(parsed.item) || !Array.isArray(parsed.closingIssueNumbers)) return null;
+  if (parsed.pr.number !== prNumber || parsed.pr.headRefOid !== headSha) return null;
+  return parsed as unknown as ReviewForgeSnapshot;
+}
+
+function writeSnapshotCache(path: string, snapshot: ReviewForgeSnapshot): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify(snapshot), 'utf8');
+}
+
+async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath?: string): Promise<ReviewForgeSnapshot> {
+  const key = snapshotCacheKey(prNumber, headSha, cachePath);
+  const cached = snapshotCacheByHead.get(key);
   if (cached) return cached;
+  if (cachePath) {
+    const cachedFile = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+    if (cachedFile) {
+      const loadedFile = Promise.resolve(cachedFile);
+      snapshotCacheByHead.set(key, loadedFile);
+      return loadedFile;
+    }
+  }
   const loaded = provider.loadPullRequestReview(prNumber).then(snapshot => {
     if (snapshot.pr.headRefOid !== headSha) {
-      cache?.delete(key);
+      snapshotCacheByHead.delete(key);
       throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
     }
+    if (cachePath) writeSnapshotCache(cachePath, snapshot);
     return snapshot;
+  }).catch(error => {
+    snapshotCacheByHead.delete(key);
+    throw error;
   });
-  cache.set(key, loaded);
+  snapshotCacheByHead.set(key, loaded);
   return loaded;
 }
 
@@ -237,7 +266,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha)).item, publishInput);
+    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha))).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
 }
 
