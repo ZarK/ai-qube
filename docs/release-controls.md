@@ -43,7 +43,7 @@ git tag publish-<package>-v<version>
 git push origin publish-<package>-v<version>
 ```
 
-Valid package keys are `qube-cli`, `aib`, `aie`, `aiu`, `aiq`, and `qube`.
+Valid package keys are `qube-cli`, `qube-core`, `aib`, `aie`, `aiu`, `aiq`, and `qube`.
 The workflow verifies the tag version against the selected package manifest,
 checks that the tag commit is reachable from `origin/main`, installs dependencies
 with lifecycle scripts disabled, builds required workspace dependencies, verifies
@@ -64,8 +64,8 @@ provenance for that seed publish:
 
 ```sh
 cd <repo-root>
-pnpm --filter @tjalve/qube-cli run build
-cd products/aib
+pnpm --filter @tjalve/qube-core run build
+cd packages/qube-core
 npm publish --access public --provenance=false --otp <otp>
 ```
 

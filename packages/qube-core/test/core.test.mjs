@@ -7,6 +7,10 @@ import { fileURLToPath } from "node:url";
 
 import * as core from "../dist/index.js";
 import {
+  AUTORESEARCH_EVALUATOR_KINDS,
+  AUTORESEARCH_OBJECTIVE_SHAPES,
+  AUTORESEARCH_TARGET_KINDS,
+  autoresearchReadinessChecklist,
   findQubeProduct,
   normalizeWorkItem,
   qubeCommandSurfaceContracts,
@@ -52,6 +56,28 @@ describe("qube core contracts", () => {
     assert.ok(REPO_LAYOUT_KINDS.includes("generated-vendor-heavy"));
     assert.ok(REPO_LAYOUT_KINDS.includes("unknown"));
     assert.equal(new Set(REPO_LAYOUT_KINDS).size, REPO_LAYOUT_KINDS.length);
+  });
+
+  it("exports canonical autoresearch arena contracts for setup and evaluator handoff", () => {
+    assert.ok(AUTORESEARCH_TARGET_KINDS.includes("code"));
+    assert.ok(AUTORESEARCH_TARGET_KINDS.includes("document-corpus"));
+    assert.ok(AUTORESEARCH_OBJECTIVE_SHAPES.includes("direct-metric"));
+    assert.ok(AUTORESEARCH_OBJECTIVE_SHAPES.includes("judge-rubric"));
+    assert.ok(AUTORESEARCH_EVALUATOR_KINDS.includes("command-metric"));
+    assert.ok(AUTORESEARCH_EVALUATOR_KINDS.includes("rubric-review"));
+
+    const checklist = autoresearchReadinessChecklist({
+      schemaVersion: 1,
+      classification: "needs-clarification",
+      goal: "make it better",
+      mutableSurfaces: [],
+      invariants: [],
+      blockingQuestions: [{ id: "goal", text: "What should improve?", reason: "Goal is ambiguous." }],
+      readinessChecklist: [],
+      nextAction: "Answer blocking questions."
+    });
+    assert.ok(checklist.includes("target unresolved"));
+    assert.ok(checklist.includes("blocking questions open"));
   });
 
   it("classifies command, path, and repo artifact surfaces", () => {

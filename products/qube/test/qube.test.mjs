@@ -3,7 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -50,11 +50,11 @@ describe("qube composer CLI", () => {
   it("reports package version without invoking component tools", () => {
     const text = runCli(["--version"]);
     assert.equal(text.status, 0);
-    assert.equal(text.stdout.trim(), "0.1.1");
+    assert.equal(text.stdout.trim(), "0.1.2");
 
     const short = runCli(["-v"]);
     assert.equal(short.status, 0);
-    assert.equal(short.stdout.trim(), "0.1.1");
+    assert.equal(short.stdout.trim(), "0.1.2");
 
     const json = runCli(["-v", "--json"]);
     assert.equal(json.status, 0);
@@ -63,9 +63,9 @@ describe("qube composer CLI", () => {
       command: "version",
       package: {
         name: "@tjalve/qube",
-        version: "0.1.1"
+        version: "0.1.2"
       },
-      version: "0.1.1"
+      version: "0.1.2"
     });
   });
 
@@ -124,6 +124,9 @@ describe("qube composer CLI", () => {
     assert.match(autoresearchHelp.stdout, /qube autoresearch init <target-directory> <goal>/);
     assert.match(autoresearchHelp.stdout, /Run a safety-bounded local autoresearch arena lifecycle\./);
     assert.match(autoresearchHelp.stdout, /existing local directory/);
+    assert.match(autoresearchHelp.stdout, /translate the request into <target-directory> plus <goal>/);
+    assert.match(autoresearchHelp.stdout, /AIB arena synthesis/);
+    assert.match(autoresearchHelp.stdout, /command metric, threshold, finding reduction, fixed rubric, or human-gated promotion policy/);
     assert.match(autoresearchHelp.stdout, /\.qube\/autoresearch\/runs\/<run-id>\//);
     assert.match(autoresearchHelp.stdout, /promote is the only command that copies the selected best candidate/);
 
@@ -175,7 +178,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.command, "install");
     assert.deepEqual(parsed.installPlan.package, {
       name: "@tjalve/qube",
-      version: "0.1.1"
+      version: "0.1.2"
     });
     assert.deepEqual(parsed.installPlan.selections, {
       docs: true,
@@ -188,8 +191,9 @@ describe("qube composer CLI", () => {
       workProvider: "github"
     });
     assert.equal(parsed.installPlan.dryRun, true);
+    assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.2",
       "pnpm exec qube components"
     ]);
     assert.deepEqual(
@@ -258,7 +262,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: global/);
     assert.match(result.stdout, /Host surface: codex/);
-    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.1\.1/);
+    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.1\.2/);
     assert.match(result.stdout, /AGENTS\.md policy notes/);
     assert.match(result.stdout, /Codex host support uses AGENTS\.md/);
     assert.match(result.stdout, /Codex does not use OpenCode-style project command files/);
@@ -424,7 +428,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: local/);
     assert.match(result.stdout, /Host surface: claude-code/);
-    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.1\.1/);
+    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.1\.2/);
     assert.match(result.stdout, /CLAUDE\.md policy notes/);
     assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
     assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
@@ -459,7 +463,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1",
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.2",
       "pnpm exec qube components"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
@@ -695,8 +699,14 @@ describe("qube composer CLI", () => {
     assert.equal(initialized.action, "init");
     assert.equal(initialized.phase, "initialized");
     assert.equal(initialized.safety.targetMutationBeforePromote, false);
+    assert.equal(initialized.synthesis.classification, "autoresearch");
+    assert.notEqual(initialized.synthesis.objective.shape, "term-coverage");
     assert.ok(existsSync(path.join(initialized.stateDirectory, "arena.json")));
+    assert.ok(existsSync(path.join(initialized.stateDirectory, "arena.md")));
     assert.ok(existsSync(path.join(initialized.stateDirectory, "evaluator.json")));
+    const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(evaluator.kind, "rubric-review");
+    assert.notEqual(evaluator.kind, "term-coverage");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
     assert.equal(baseline.status, 0);
@@ -740,12 +750,13 @@ describe("qube composer CLI", () => {
   it("refuses autoresearch when the fixed evaluator changes", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tamper-cwd-"));
     mkdirSync(path.join(cwd, "target"), { recursive: true });
+    writeFileSync(path.join(cwd, "target", "README.md"), "Existing notes target.\n", "utf8");
     const init = runCli(["autoresearch", "target", "improve notes summary quality", "--json"], { cwd });
     assert.equal(init.status, 0);
     const initialized = JSON.parse(init.stdout).autoresearch;
     const evaluatorPath = path.join(initialized.stateDirectory, "evaluator.json");
     const evaluator = JSON.parse(readFileSync(evaluatorPath, "utf8"));
-    evaluator.terms = [...evaluator.terms, "tampered"];
+    evaluator.signals = [...evaluator.signals, "tampered"];
     writeFileSync(evaluatorPath, `${JSON.stringify(evaluator, null, 2)}\n`, "utf8");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
@@ -810,6 +821,76 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(promote.stdout);
     assert.equal(parsed.ok, false);
     assert.match(parsed.error.likelyCause, /outside the sandbox/);
+  });
+
+  it("refuses autoresearch promotion output outside declared mutable surfaces", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-output-surface-cwd-"));
+    const target = path.join(cwd, "target");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+
+    assert.equal(runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const promote = runCli(["autoresearch", "promote", "--output", "../outside.md", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside declared mutable surfaces/);
+    assert.equal(existsSync(path.join(path.dirname(cwd), "outside.md")), false);
+  });
+
+  it("refuses autoresearch promotion when arena surfaces are tampered wider than the target", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-tampered-surface-cwd-"));
+    const target = path.join(cwd, "target");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+
+    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const arenaPath = path.join(initialized.stateDirectory, "arena.json");
+    const arena = JSON.parse(readFileSync(arenaPath, "utf8"));
+    arena.mutableSurfaces = [{
+      path: cwd,
+      kind: "directory",
+      permission: "read-write",
+      reason: "tampered"
+    }];
+    writeFileSync(arenaPath, `${JSON.stringify(arena, null, 2)}\n`, "utf8");
+
+    const promote = runCli(["autoresearch", "promote", "--output", "outside.md", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside declared mutable surfaces/);
+    assert.equal(existsSync(path.join(cwd, "outside.md")), false);
+  });
+
+  it("refuses autoresearch promotion through symlinks inside mutable surfaces", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-symlink-surface-cwd-"));
+    const target = path.join(cwd, "target");
+    const outside = path.join(cwd, "outside");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(path.join(target, "README.md"), "Existing notes target.\n", "utf8");
+    symlinkSync(outside, path.join(target, "linked"), process.platform === "win32" ? "junction" : "dir");
+
+    const init = runCli(["autoresearch", "init", "target", "improve notes summary quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+    assert.equal(runCli(["autoresearch", "run", "--json"], { cwd }).status, 0);
+
+    const promote = runCli(["autoresearch", "promote", "--output", path.join("target", "linked", "escaped.md"), "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /outside declared mutable surfaces/);
+    assert.equal(existsSync(path.join(outside, "escaped.md")), false);
   });
 
   it("renders oneshot dry-run plans without local mutation", () => {
@@ -951,7 +1032,7 @@ describe("qube composer CLI", () => {
     const commandPath = path.join(dir, command);
     await mkdir(dir, { recursive: true });
     await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho aib %*\r\n" : "#!/usr/bin/env sh\necho aib \"$@\"\n");
-    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.1" })}\n`);
+    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.2" })}\n`);
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
@@ -1183,7 +1264,7 @@ describe("qube composer CLI", () => {
     await mkdir(packageDir, { recursive: true });
     await writeFile(installCommandPath, process.platform === "win32" ? "@echo off\r\necho install-scoped %*\r\n" : "#!/usr/bin/env sh\necho install-scoped \"$@\"\n");
     await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho path %*\r\n" : "#!/usr/bin/env sh\necho path \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.1" })}\n`);
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.2" })}\n`);
     if (process.platform !== "win32") {
       await chmod(installCommandPath, 0o755);
       await chmod(pathCommandPath, 0o755);
@@ -1196,7 +1277,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(resolution?.commandPath, installCommandPath);
     assert.equal(resolution?.source, "install");
-    assert.equal(resolution?.packageVersion, "0.1.1");
+    assert.equal(resolution?.packageVersion, "0.1.2");
     assert.equal(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 
@@ -1215,7 +1296,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.1, found 0\.0\.1/);
+    assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.2, found 0\.0\.1/);
     assert.equal(planned.dispatch, undefined);
   });
 
@@ -1237,7 +1318,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.1/);
+    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.2/);
     assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
   });
 

@@ -6,10 +6,10 @@
     {
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.1"
+      "published": true,
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -18,6 +18,14 @@
       "latestPublished": "0.1.1",
       "publishedVersions": ["0.1.0", "0.1.1"],
       "selectedVersion": "0.1.2"
+    },
+    {
+      "name": "@tjalve/qube-core",
+      "packageJson": "packages/qube-core/package.json",
+      "published": false,
+      "latestPublished": null,
+      "publishedVersions": [],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-claude-code",
@@ -30,10 +38,10 @@
     {
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.1"
+      "published": true,
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/aie",

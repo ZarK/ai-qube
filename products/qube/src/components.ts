@@ -180,7 +180,7 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "bootstrap",
     command: "aib",
     packageName: "@tjalve/aib",
-    packageVersion: "0.1.1",
+    packageVersion: "0.1.2",
     summary: "Plan projects, specs, milestones, and work-item drafts."
   },
   {

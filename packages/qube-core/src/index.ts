@@ -1,3 +1,25 @@
+export type {
+  AutoresearchAcceptancePolicy,
+  AutoresearchArena,
+  AutoresearchArenaPlan,
+  AutoresearchBlockingQuestion,
+  AutoresearchEvaluator,
+  AutoresearchEvaluatorKind,
+  AutoresearchInvariant,
+  AutoresearchMutableSurface,
+  AutoresearchObjective,
+  AutoresearchObjectiveDirection,
+  AutoresearchObjectiveShape,
+  AutoresearchPlanClassification,
+  AutoresearchTarget,
+  AutoresearchTargetKind,
+} from "./autoresearch.js";
+export {
+  AUTORESEARCH_EVALUATOR_KINDS,
+  AUTORESEARCH_OBJECTIVE_SHAPES,
+  AUTORESEARCH_TARGET_KINDS,
+  autoresearchReadinessChecklist,
+} from "./autoresearch.js";
 export type { JsonObject, JsonValue } from "./json_value.js";
 export type {
   ProviderResourceKind,

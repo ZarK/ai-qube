@@ -4,10 +4,12 @@ import { createCli, createCommand, createSchemaCommand, createTopicCommand, runC
 import { basename, dirname } from "node:path";
 
 import { writeAgentAssetFiles } from "./agent_assets.js";
+import { synthesizeAutoresearchArena } from "./arena.js";
 import { loadAibConfig } from "./config.js";
 import { createInitPlan } from "./init.js";
 import {
   answerCommand,
+  arenaSynthesizeCommand,
   bootstrapRegistry,
   initCommand,
   milestonesGenerateCommand,
@@ -207,6 +209,18 @@ export const aibCli = createCli({
         if (error instanceof AnswerError) throw answerError(error);
         throw stateError("answer", error);
       }
+    }),
+    createCommand(arenaSynthesizeCommand, ({ args }) => {
+      const target = typeof args.target === "string" ? args.target : undefined;
+      const goal = typeof args.goal === "string" ? args.goal : undefined;
+      const plan = synthesizeAutoresearchArena({ target, goal, cwd: process.cwd() });
+      return {
+        json: {
+          ...plan,
+          arenaPlan: plan
+        },
+        human: renderArenaSynthesis(plan)
+      };
     }),
     createCommand(specDraftCommand, ({ flags }) => {
       try {
@@ -631,6 +645,26 @@ export async function runAibCli(input: readonly string[]): Promise<number> {
   if (result.stderr.length > 0) process.stderr.write(result.stderr);
   process.exitCode = result.exitCode === 0 ? process.exitCode : result.exitCode;
   return result.exitCode;
+}
+
+function renderArenaSynthesis(plan: ReturnType<typeof synthesizeAutoresearchArena>): string {
+  const questions = plan.blockingQuestions.length > 0
+    ? ["", "Blocking questions:", ...plan.blockingQuestions.map(question => `- ${question.text} (${question.reason})`)]
+    : [];
+  const target = plan.target ? [`Target: ${plan.target.path}`, `Target kind: ${plan.target.kind}`] : [];
+  const evaluator = plan.evaluator ? [`Evaluator: ${plan.evaluator.kind}`, `Evaluator hash: ${plan.evaluator.hash}`] : [];
+  return [
+    "AIB autoresearch arena synthesis",
+    "",
+    `Classification: ${plan.classification}`,
+    ...target,
+    `Goal: ${plan.goal || "(missing)"}`,
+    ...(plan.objective ? [`Objective: ${plan.objective.description}`] : []),
+    ...evaluator,
+    `Next action: ${plan.nextAction}`,
+    ...questions,
+    ""
+  ].join("\n");
 }
 
 function stateError(command: string, error: unknown): ReturnType<typeof createCliError> {

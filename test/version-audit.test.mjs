@@ -13,7 +13,7 @@ describe("version audit", () => {
     assert.deepEqual(JSON.parse(result.stdout), {
       ok: true,
       auditPath: "docs/release/version-audit.json",
-      packageCount: 6
+      packageCount: 8
     });
   });
 });

@@ -196,6 +196,7 @@ jobs:
           pnpm --filter @tjalve/qube-adapter-github run build
           pnpm --filter @tjalve/qube-adapter-codex run build
           pnpm --filter @tjalve/qube-adapter-claude-code run build
+          pnpm --filter @tjalve/qube-adapter-opencode run build
           pnpm --filter @tjalve/qube-cli run build
           pnpm --filter @tjalve/aie run build
           pnpm --filter @tjalve/aiu run build
