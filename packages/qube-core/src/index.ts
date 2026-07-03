@@ -68,6 +68,19 @@ export type {
 } from "./gate_evidence.js";
 export { isVerifiedGateEvidence, normalizeGateEvidence } from "./gate_evidence.js";
 export type {
+  RepoAffectedProject,
+  RepoAffectedResult,
+  RepoCiHint,
+  RepoLayoutInspection,
+  RepoLayoutKind,
+  RepoPackageManager,
+  RepoPathSignal,
+  RepoProject,
+  RepoProjectKind,
+  RepoRootMarker,
+} from "./repo_layout.js";
+export { REPO_LAYOUT_KINDS } from "./repo_layout.js";
+export type {
   FeedbackTrust,
   Mergeability,
   ResolveReviewThreadInput,

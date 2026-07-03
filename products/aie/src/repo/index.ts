@@ -8,6 +8,8 @@ import { listOpenIssues, runGh, type GhExec, type GitHubIssue } from '../provide
 import { applyLabelPlan, computeLabelPlan, getDesiredLabels, LabelPlan, parseGhLabelList } from '../labels.js';
 import { getManagedSectionHealth } from '../managed_file.js';
 import { inspectBaseRef, inspectRepoRoot, inspectWorktree } from '../providers/local/local_git_provider.js';
+export type { RepoAffectedCommandResult, RepoInspectCommandResult } from './layout.js';
+export { inspectAffected, inspectRepoLayout, runRepoAffected, runRepoInspect } from './layout.js';
 
 export interface RepositoryIdentity {
   nameWithOwner: string;
