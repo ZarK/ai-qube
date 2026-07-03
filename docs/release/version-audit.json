@@ -20,6 +20,14 @@
       "selectedVersion": "0.1.2"
     },
     {
+      "name": "@tjalve/qube-core",
+      "packageJson": "packages/qube-core/package.json",
+      "published": false,
+      "latestPublished": null,
+      "publishedVersions": [],
+      "selectedVersion": "0.1.1"
+    },
+    {
       "name": "@tjalve/qube-adapter-claude-code",
       "packageJson": "adapters/claude-code/package.json",
       "published": false,

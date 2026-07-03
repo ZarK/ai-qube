@@ -11,7 +11,7 @@ function resolveTag(tag) {
 
 describe("publish tag resolution", () => {
   it("maps package-specific publish tags to a package path and verification command", () => {
-    const result = resolveTag("publish-qube-v0.1.1");
+    const result = resolveTag("publish-qube-v0.1.2");
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -24,7 +24,7 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube",
       packageName: "@tjalve/qube",
-      version: "0.1.1",
+      version: "0.1.2",
       filter: "@tjalve/qube",
       path: "products/qube"
     });
@@ -75,5 +75,27 @@ describe("publish tag resolution", () => {
     });
     assert.match(plan.prepare, /@tjalve\/qube-core/);
     assert.match(plan.verify, /@tjalve\/qube-adapter-claude-code/);
+  });
+
+  it("maps the qube-core first publish tag to the shared core package", () => {
+    const result = resolveTag("publish-qube-core-v0.1.1");
+    assert.equal(result.status, 0);
+
+    const plan = JSON.parse(result.stdout);
+    assert.deepEqual({
+      packageKey: plan.packageKey,
+      packageName: plan.packageName,
+      version: plan.version,
+      filter: plan.filter,
+      path: plan.path
+    }, {
+      packageKey: "qube-core",
+      packageName: "@tjalve/qube-core",
+      version: "0.1.1",
+      filter: "@tjalve/qube-core",
+      path: "packages/qube-core"
+    });
+    assert.match(plan.prepare, /@tjalve\/qube-core/);
+    assert.match(plan.verify, /@tjalve\/qube-core/);
   });
 });

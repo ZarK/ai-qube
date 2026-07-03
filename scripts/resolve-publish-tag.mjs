@@ -11,6 +11,7 @@ const buildAiqDependencies = `${buildAieDependencies} && pnpm --filter @tjalve/a
 
 const packages = new Map([
   ["qube-cli", { filter: "@tjalve/qube-cli", path: "packages/qube-cli", packageJson: "packages/qube-cli/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/qube-cli run verify" }],
+  ["qube-core", { filter: "@tjalve/qube-core", path: "packages/qube-core", packageJson: "packages/qube-core/package.json", prepare: buildQubeCore, verify: "pnpm --filter @tjalve/qube-core run verify" }],
   ["qube-adapter-claude-code", { filter: "@tjalve/qube-adapter-claude-code", path: "adapters/claude-code", packageJson: "adapters/claude-code/package.json", prepare: buildQubeCore, verify: "pnpm --filter @tjalve/qube-adapter-claude-code run verify" }],
   ["aib", { filter: "@tjalve/aib", path: "products/aib", packageJson: "products/aib/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aib run verify" }],
   ["aie", { filter: "@tjalve/aie", path: "products/aie", packageJson: "products/aie/package.json", prepare: buildAieDependencies, verify: "pnpm --filter @tjalve/aie run verify" }],
