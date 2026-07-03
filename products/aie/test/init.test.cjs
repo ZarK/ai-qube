@@ -1,9 +1,10 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join, posix: pathPosix } = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults } = require('../dist/config/index.js');
@@ -683,6 +684,43 @@ describe('init service', () => {
     assert.match(wrapperLifecycle.nextCommand, /--install-wrappers --dry-run/);
     assert.equal(cleanupLifecycle.action, 'cleanup-and-replace');
     assert.match(cleanupLifecycle.nextCommand, /--cleanup --dry-run/);
+  });
+
+  it('skips missing optional host adapters during generic instruction discovery', () => {
+    const isolated = mkdtempSync(join(tmpdir(), 'aie-host-adapters-'));
+    const isolatedModule = join(isolated, 'agent_host_adapters.mjs');
+    copyFileSync(join(__dirname, '..', 'dist', 'agent_host_adapters.js'), isolatedModule);
+
+    const script = `
+      const mod = await import(${JSON.stringify(pathToFileURL(isolatedModule).href)});
+      const profiles = await mod.getAllAgentHostProfiles();
+      const paths = await mod.getInstructionTargetPaths();
+      const agentsHosts = await mod.hostIdsForInstructionPath('AGENTS.md');
+      const claudeHosts = await mod.hostIdsForInstructionPath('CLAUDE.md');
+      let explicitClaudeMessage = '';
+      try {
+        await mod.getAgentHostProfile('claude-code');
+      } catch (error) {
+        explicitClaudeMessage = error instanceof Error ? error.message : String(error);
+      }
+      console.log(JSON.stringify({
+        profiles: profiles.map(profile => profile.id),
+        paths,
+        agentsHosts,
+        claudeHosts,
+        explicitClaudeMessage,
+      }));
+    `;
+
+    const result = spawnSync(process.execPath, ['--input-type=module', '--eval', script], { cwd: isolated, encoding: 'utf8' });
+
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.profiles, ['opencode']);
+    assert.deepEqual(parsed.paths, ['AGENTS.md']);
+    assert.deepEqual(parsed.agentsHosts, ['opencode']);
+    assert.equal(parsed.claudeHosts, null);
+    assert.match(parsed.explicitClaudeMessage, /Claude Code host profile adapter @tjalve\/qube-adapter-claude-code is not installed/);
   });
 });
 

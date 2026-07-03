@@ -132,9 +132,12 @@ async function loadCodexProfile(): Promise<AgentHostProfile | null> {
     }
     cachedCodexProfile = profile as AgentHostProfile;
     return cachedCodexProfile;
-  } catch {
-    cachedCodexProfile = null;
-    return null;
+  } catch (error) {
+    if (isModuleMissing(error, '@tjalve/qube-adapter-codex')) {
+      cachedCodexProfile = null;
+      return null;
+    }
+    throw error;
   }
 }
 
@@ -164,19 +167,37 @@ function isModuleMissing(error: unknown, packageName: string): boolean {
   return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes(packageName);
 }
 
-async function resolveProfile(id: AgentHostId): Promise<AgentHostProfile> {
+async function loadProfile(id: AgentHostId): Promise<AgentHostProfile | null> {
+  if (id === 'codex') return loadCodexProfile();
+  if (id === 'claude-code') return loadClaudeCodeProfile();
+  return BUILTIN_PROFILES[id] ?? null;
+}
+
+async function getAvailableAgentHostProfiles(): Promise<AgentHostProfile[]> {
+  const profiles: AgentHostProfile[] = [];
+  for (const id of HOST_ORDER) {
+    const profile = await loadProfile(id);
+    if (profile) profiles.push(profile);
+  }
+  return profiles;
+}
+
+function missingAdapterMessage(id: AgentHostId, packageName: string): string {
   if (id === 'codex') {
-    const loaded = await loadCodexProfile();
-    if (loaded) return loaded;
+    return `Codex host profile adapter ${packageName} is not installed. Install the adapter or include it as an optional dependency before running \`aie init . --tool codex\`.`;
   }
   if (id === 'claude-code') {
-    const loaded = await loadClaudeCodeProfile();
-    if (loaded) return loaded;
-    throw new Error('Claude Code host profile adapter @tjalve/qube-adapter-claude-code is not installed. Install the adapter or include it as an optional dependency before running `aie init . --tool claude-code`.');
+    return `Claude Code host profile adapter ${packageName} is not installed. Install the adapter or include it as an optional dependency before running \`aie init . --tool claude-code\`.`;
   }
-  const builtin = BUILTIN_PROFILES[id];
-  if (!builtin) throw new Error(`Unknown agent host "${id}".`);
-  return builtin;
+  return `Agent host profile adapter ${packageName} is not installed.`;
+}
+
+async function resolveProfile(id: AgentHostId): Promise<AgentHostProfile> {
+  const loaded = await loadProfile(id);
+  if (loaded) return loaded;
+  const adapter = ADAPTERS.find(candidate => candidate.id === id);
+  if (adapter?.packageName) throw new Error(missingAdapterMessage(id, adapter.packageName));
+  throw new Error(`Unknown agent host "${id}".`);
 }
 
 export function listAgentHostAdapters(): readonly AgentHostAdapterMetadata[] {
@@ -197,7 +218,7 @@ export async function getAgentHostProfiles(ids: AgentHostId[]): Promise<AgentHos
 }
 
 export async function getAllAgentHostProfiles(): Promise<AgentHostProfile[]> {
-  return Promise.all(HOST_ORDER.map(id => resolveProfile(id)));
+  return getAvailableAgentHostProfiles();
 }
 
 export function parseAgentHostSelection(value: string): AgentHostId[] | null {
@@ -213,14 +234,13 @@ export function uniqueAgentHostIds(ids: AgentHostId[]): AgentHostId[] {
 
 export async function hostIdsForInstructionPath(path: string): Promise<AgentHostId[] | null> {
   const hosts: AgentHostId[] = [];
-  for (const id of HOST_ORDER) {
-    const profile = await resolveProfile(id);
-    if (profile.instructionTargets.some(target => target.path === path)) hosts.push(id);
+  for (const profile of await getAvailableAgentHostProfiles()) {
+    if (profile.instructionTargets.some(target => target.path === path)) hosts.push(profile.id);
   }
   return hosts.length === 0 ? null : hosts;
 }
 
 export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<string[]> {
-  const profiles = ids ? await getAgentHostProfiles(ids) : await getAllAgentHostProfiles();
+  const profiles = ids ? await getAgentHostProfiles(ids) : await getAvailableAgentHostProfiles();
   return [...new Set(profiles.flatMap(profile => profile.instructionTargets.map(target => target.path)))];
 }
