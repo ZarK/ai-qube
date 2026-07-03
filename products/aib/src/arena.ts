@@ -167,6 +167,18 @@ function safeEntries(targetPath: string): readonly { readonly name: string; read
 
 function createObjective(goal: string, targetKind: AutoresearchTargetKind): AutoresearchObjective {
   const lower = goal.toLowerCase();
+  if (/\b(?:threshold|below|under|above|over|at\s+least|at\s+most|satisfy|pass)\b/.test(lower)) {
+    const threshold = extractObjectiveThreshold(lower);
+    const direction = /\b(?:above|over|at\s+least)\b/.test(lower) ? "maximize" : "minimize";
+    return {
+      shape: "threshold",
+      direction,
+      metric: threshold === undefined ? "threshold result" : `threshold ${threshold}`,
+      description: threshold === undefined
+        ? "Satisfy the configured threshold checks without weakening invariants."
+        : `Satisfy the configured threshold check at ${threshold} without weakening invariants.`
+    };
+  }
   if (/\b(?:fast|faster|runtime|latency|performance|speed)\b/.test(lower)) {
     return {
       shape: "direct-metric",
@@ -218,6 +230,15 @@ function createMutableSurfaces(target: AutoresearchTarget): readonly Autoresearc
 }
 
 function createAcceptancePolicy(objective: AutoresearchObjective, targetKind: AutoresearchTargetKind): AutoresearchAcceptancePolicy {
+  if (objective.shape === "threshold") {
+    return {
+      mode: "threshold",
+      direction: objective.direction,
+      threshold: parseObjectiveThreshold(objective.metric),
+      promotionRequiresHuman: true,
+      evidenceRequired: ["baseline threshold output", "candidate threshold output", "changed files"]
+    };
+  }
   if (objective.shape === "finding-reduction") {
     return {
       mode: "finding-reduction",
@@ -367,6 +388,20 @@ function createRubric(goal: string): readonly string[] {
     "Candidate is easier to review than the baseline.",
     "Promotion remains explicit and evidence-backed."
   ];
+}
+
+function extractObjectiveThreshold(goal: string): number | undefined {
+  const match = goal.match(/\b\d+(?:\.\d+)?\b/);
+  if (!match) return undefined;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : undefined;
+}
+
+function parseObjectiveThreshold(metric: string): number | undefined {
+  const match = metric.match(/\b\d+(?:\.\d+)?\b/);
+  if (!match) return undefined;
+  const value = Number(match[0]);
+  return Number.isFinite(value) ? value : undefined;
 }
 
 function createArena(input: {

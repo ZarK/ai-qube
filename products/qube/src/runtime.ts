@@ -216,6 +216,19 @@ interface AutoresearchWorkspaceScan {
   readonly reasons: readonly string[];
 }
 
+interface AutoresearchContinuation {
+  readonly owner: "aiu";
+  readonly runId: string;
+  readonly phase: AutoresearchPhase;
+  readonly status: "ready" | "blocked" | "complete";
+  readonly resumeCommand: string | null;
+  readonly nextAction: string;
+  readonly blockers: readonly string[];
+  readonly activeCandidateId: string | null;
+  readonly currentBestId: string | null;
+  readonly safeToResume: boolean;
+}
+
 interface AutoresearchPromotion {
   readonly candidateId: string;
   readonly outputPath: string;
@@ -1331,7 +1344,7 @@ function baselineAutoresearch(
     return { error: "Autoresearch baseline is immutable once recorded for this run." };
   }
   if (!isCommandMetricEvaluator(context.evaluator)) {
-    return { error: "Autoresearch baseline requires a command-metric evaluator synthesized from the target." };
+    return baselineHumanGatedAutoresearch(context, dryRun);
   }
   const workspacePath = autoresearchWorkspacePath(context);
   const targetSizeReasons = validateAutoresearchWorkspaceSize(context.state.targetPath, "Autoresearch target");
@@ -1383,6 +1396,58 @@ function baselineAutoresearch(
   };
 }
 
+function baselineHumanGatedAutoresearch(
+  context: AutoresearchContext,
+  dryRun: boolean
+): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  const workspacePath = autoresearchWorkspacePath(context);
+  const targetSizeReasons = validateAutoresearchWorkspaceSize(context.state.targetPath, "Autoresearch target");
+  const reasons = [
+    ...targetSizeReasons,
+    "Autoresearch has no trustworthy automated score for this evaluator; promotion is human-gated."
+  ];
+  if (dryRun) {
+    return {
+      payload: {
+        action: "baseline",
+        runId: context.state.runId,
+        phase: context.state.phase,
+        planned: true,
+        workspacePath,
+        workspaceLimits: autoresearchWorkspaceLimitSummary(),
+        blockers: reasons,
+        evaluatorProvenance: autoresearchEvaluatorProvenance(context),
+        continuation: createAutoresearchContinuation(context),
+        nextAction: "Use the dashboard and normal QUBE review to decide whether this human-gated arena should continue."
+      }
+    };
+  }
+  if (targetSizeReasons.length > 0) {
+    return { error: targetSizeReasons.join(" ") };
+  }
+  materializeAutoresearchWorkspace(context.state.targetPath, workspacePath);
+  const evaluation = createAutoresearchHumanGatedEvaluation(context, workspacePath, reasons);
+  const state = updateAutoresearchState(context.state, {
+    phase: "baselined",
+    baseline: evaluation,
+    nextAction: "Human-gated arena recorded. Inspect dashboard and use normal QUBE review before any promotion."
+  });
+  writeJsonFile(path.join(context.runDirectory, "baseline.json"), evaluation);
+  writeJsonFile(path.join(context.runDirectory, "state.json"), state);
+  writeAutoresearchDashboard({ ...context, state });
+  return {
+    payload: {
+      action: "baseline",
+      runId: state.runId,
+      phase: state.phase,
+      evaluation,
+      blockers: reasons,
+      continuation: createAutoresearchContinuation({ ...context, state }),
+      nextAction: state.nextAction
+    }
+  };
+}
+
 function runAutoresearchCandidate(
   context: AutoresearchContext,
   dryRun: boolean
@@ -1391,7 +1456,7 @@ function runAutoresearchCandidate(
     return { error: "Run qube autoresearch baseline before executing candidates." };
   }
   if (!isCommandMetricEvaluator(context.evaluator)) {
-    return { error: "Autoresearch run requires a command-metric evaluator synthesized from the target." };
+    return { error: "Autoresearch run requires a trustworthy automated command evaluator. This arena is human-gated; inspect status/dashboard and use normal QUBE review instead of faking objective progress." };
   }
   const workspacePath = autoresearchWorkspacePath(context);
   if (!existsSync(workspacePath)) {
@@ -1522,6 +1587,9 @@ function promoteAutoresearch(
   environment: CliEnvironment,
   dryRun: boolean
 ): { readonly payload: Readonly<Record<string, unknown>> } | { readonly error: string } {
+  if (context.evaluator.acceptancePolicy.promotionRequiresHuman && !isCommandMetricEvaluator(context.evaluator)) {
+    return { error: "Autoresearch promotion is human-gated because no trustworthy automated score exists. Use the evidence package and normal QUBE review before promoting changes." };
+  }
   const best = context.state.currentBest;
   if (!best) {
     return { error: "No accepted autoresearch candidate is available to promote." };
@@ -2126,6 +2194,42 @@ function createAutoresearchRejectedEvaluation(
   };
 }
 
+function createAutoresearchHumanGatedEvaluation(
+  context: AutoresearchContext,
+  workspacePath: string,
+  reasons: readonly string[]
+): AutoresearchEvaluation {
+  const referee: AutoresearchReferee = {
+    owner: "aiq",
+    boundary: "aiq-fixed-evaluator",
+    status: "rejected",
+    reasons,
+    evaluatorImmutable: validateAutoresearchEvaluator(context.state, context.evaluator) === undefined,
+    gatesPassed: false,
+    antiGamingPassed: true,
+    provenance: {
+      evaluatorHash: context.evaluator.hash,
+      command: context.evaluator.command,
+      evidenceRequired: context.evaluator.acceptancePolicy.evidenceRequired
+    }
+  };
+  return {
+    score: 0,
+    matchedTerms: [],
+    missingTerms: [],
+    evaluatorHash: context.evaluator.hash,
+    summary: `Human-gated evaluator recorded without automated score: ${reasons.join(" ")}`,
+    command: context.evaluator.command,
+    exitCode: null,
+    stdout: "",
+    stderr: "",
+    durationMs: 0,
+    workspacePath,
+    referee,
+    recordedAt: new Date().toISOString()
+  };
+}
+
 const autoresearchEvidenceOutputLimit = 16_000;
 
 function evaluateAutoresearchCommand(context: AutoresearchContext, workspacePath: string): AutoresearchEvaluation {
@@ -2306,7 +2410,12 @@ function summarizeAutoresearch(context: AutoresearchContext, action: string): Re
     currentBest: context.state.currentBest,
     activeCandidate,
     attempts: context.state.attempts.length,
+    attemptHistory: summarizeAutoresearchAttempts(context.state.attempts),
+    currentBestTrajectory: autoresearchBestTrajectory(context.state),
+    changedSurfaceSummary: summarizeAutoresearchChangedSurfaces(context.state.attempts),
     blockers: autoresearchBlockers(context),
+    activeBlocker: autoresearchBlockers(context)[0] ?? null,
+    continuation: createAutoresearchContinuation(context),
     promoted: context.state.promoted,
     stateDirectory: context.runDirectory,
     nextAction: context.state.nextAction
@@ -2331,7 +2440,7 @@ function autoresearchBlockers(context: AutoresearchContext): readonly string[] {
   const evaluatorError = validateAutoresearchEvaluator(context.state, context.evaluator);
   if (evaluatorError) blockers.push(evaluatorError);
   if (!isCommandMetricEvaluator(context.evaluator)) {
-    blockers.push("Autoresearch requires a command-metric evaluator before baseline or run.");
+    blockers.push("No trustworthy automated command evaluator is available; this arena is human-gated.");
   }
   if (context.state.baseline?.referee?.status === "rejected") {
     blockers.push(...context.state.baseline.referee.reasons);
@@ -2343,26 +2452,104 @@ function autoresearchBlockers(context: AutoresearchContext): readonly string[] {
   return [...new Set(blockers)];
 }
 
+function createAutoresearchContinuation(context: AutoresearchContext): AutoresearchContinuation {
+  const blockers = autoresearchBlockers(context);
+  const complete = context.state.phase === "promoted";
+  const blocked = blockers.length > 0;
+  const resumeCommand = complete || blocked ? null : nextAutoresearchResumeCommand(context);
+  return {
+    owner: "aiu",
+    runId: context.state.runId,
+    phase: context.state.phase,
+    status: complete ? "complete" : blocked ? "blocked" : "ready",
+    resumeCommand,
+    nextAction: context.state.nextAction,
+    blockers,
+    activeCandidateId: context.state.attempts.at(-1)?.id ?? null,
+    currentBestId: context.state.currentBest?.id ?? null,
+    safeToResume: resumeCommand !== null
+  };
+}
+
+function nextAutoresearchResumeCommand(context: AutoresearchContext): string | null {
+  if (!context.state.baseline) return `qube autoresearch baseline --run ${context.state.runId} --json`;
+  if (!context.state.currentBest) return `qube autoresearch run --run ${context.state.runId} --json`;
+  if (context.state.phase === "ran") return `qube autoresearch run --run ${context.state.runId} --json`;
+  return `qube autoresearch status --run ${context.state.runId} --json`;
+}
+
+function summarizeAutoresearchAttempts(attempts: readonly AutoresearchCandidate[]): readonly Readonly<Record<string, unknown>>[] {
+  return attempts.map(candidate => ({
+    id: candidate.id,
+    accepted: candidate.accepted,
+    score: candidate.evaluation.score,
+    changedFiles: candidate.changedFiles,
+    refereeStatus: candidate.referee.status,
+    refereeReasons: candidate.referee.reasons
+  }));
+}
+
+function autoresearchBestTrajectory(state: AutoresearchState): readonly Readonly<Record<string, unknown>>[] {
+  const trajectory: Readonly<Record<string, unknown>>[] = [];
+  if (state.baseline && state.baseline.referee?.status !== "rejected") {
+    trajectory.push({ id: "baseline", score: state.baseline.score, accepted: true, recordedAt: state.baseline.recordedAt });
+  }
+  for (const candidate of state.attempts) {
+    if (candidate.accepted) {
+      trajectory.push({ id: candidate.id, score: candidate.evaluation.score, accepted: true, recordedAt: candidate.evaluation.recordedAt });
+    }
+  }
+  return trajectory;
+}
+
+function summarizeAutoresearchChangedSurfaces(attempts: readonly AutoresearchCandidate[]): Readonly<Record<string, unknown>> {
+  const files = [...new Set(attempts.flatMap(candidate => candidate.changedFiles))].sort();
+  return {
+    totalChangedFiles: files.length,
+    files
+  };
+}
+
 function writeAutoresearchDashboard(context: AutoresearchContext): void {
+  const summary = summarizeAutoresearch(context, "dashboard");
   const data = {
     state: context.state,
     evaluator: context.evaluator,
-    arena: context.arena
+    arena: context.arena,
+    summary
   };
   writeJsonFile(path.join(context.runDirectory, "dashboard-data.json"), data);
   const bestScore = context.state.currentBest?.evaluation.score ?? context.state.baseline?.score ?? 0;
+  const continuation = createAutoresearchContinuation(context);
+  const attempts = summarizeAutoresearchAttempts(context.state.attempts);
+  const trajectory = autoresearchBestTrajectory(context.state);
+  const changedSurfaces = summarizeAutoresearchChangedSurfaces(context.state.attempts);
   const html = [
     "<!doctype html>",
     "<html><head><meta charset=\"utf-8\"><title>QUBE Autoresearch</title></head>",
+    "<style>",
+    "*,*::before,*::after{box-sizing:border-box}",
+    "body{font-family:system-ui,-apple-system,Segoe UI,sans-serif;line-height:1.45;margin:0;padding:28px 32px;max-width:960px;overflow-wrap:anywhere;color:#171717;background:#fff}",
+    "h1{font-size:clamp(1.75rem,5vw,2.5rem);line-height:1.1;margin:0 0 24px}",
+    "h2{font-size:1.4rem;margin:28px 0 12px}",
+    "p{margin:0 0 14px}",
+    "ul{padding-left:1.25rem}",
+    "@media (max-width:480px){body{padding:32px 40px}h1{font-size:1.85rem}}",
+    "</style>",
     "<body>",
     `<h1>QUBE Autoresearch ${escapeHtml(context.state.runId)}</h1>`,
     `<p><strong>Phase:</strong> ${escapeHtml(context.state.phase)}</p>`,
     `<p><strong>Goal:</strong> ${escapeHtml(context.state.goal)}</p>`,
     `<p><strong>Current score:</strong> ${bestScore}</p>`,
+    `<p><strong>Continuation:</strong> ${escapeHtml(continuation.status)}${continuation.resumeCommand ? ` (${escapeHtml(continuation.resumeCommand)})` : ""}</p>`,
+    `<p><strong>Active blocker:</strong> ${escapeHtml(continuation.blockers[0] ?? "none")}</p>`,
     `<p><strong>Next:</strong> ${escapeHtml(context.state.nextAction)}</p>`,
+    "<h2>Control Loop</h2>",
+    `<p><strong>Current best trajectory:</strong> ${escapeHtml(trajectory.map(point => `${point.id}:${point.score}`).join(" -> ") || "none")}</p>`,
+    `<p><strong>Changed surfaces:</strong> ${escapeHtml(`${changedSurfaces.totalChangedFiles} file(s)`)}</p>`,
     "<h2>Attempts</h2>",
     "<ul>",
-    ...context.state.attempts.map(candidate => `<li>${escapeHtml(candidate.id)}: score ${candidate.evaluation.score}, accepted=${String(candidate.accepted)}</li>`),
+    ...attempts.map(candidate => `<li>${escapeHtml(String(candidate.id))}: score ${candidate.score}, accepted=${String(candidate.accepted)}, referee=${escapeHtml(String(candidate.refereeStatus))}${Array.isArray(candidate.refereeReasons) && candidate.refereeReasons.length > 0 ? `, reason=${escapeHtml(candidate.refereeReasons.join("; "))}` : ""}</li>`),
     "</ul>",
     "</body></html>"
   ].join("\n");
