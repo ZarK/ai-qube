@@ -2442,6 +2442,9 @@ function autoresearchBlockers(context: AutoresearchContext): readonly string[] {
   if (!isCommandMetricEvaluator(context.evaluator)) {
     blockers.push("No trustworthy automated command evaluator is available; this arena is human-gated.");
   }
+  if (context.evaluator.acceptancePolicy.promotionRequiresHuman) {
+    blockers.push("Autoresearch promotion is human-gated by evaluator policy.");
+  }
   if (context.state.baseline?.referee?.status === "rejected") {
     blockers.push(...context.state.baseline.referee.reasons);
   }

@@ -1137,6 +1137,13 @@ describe("qube composer CLI", () => {
     writeFileSync(evaluatorPath, `${JSON.stringify(evaluator, null, 2)}\n`, "utf8");
     writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
 
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.equal(current.continuation.status, "blocked");
+    assert.equal(current.continuation.resumeCommand, null);
+    assert.match(current.blockers.join("\n"), /human-gated by evaluator policy/);
+
     const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
     assert.equal(promote.status, 2);
     const parsed = JSON.parse(promote.stdout);
