@@ -20,18 +20,18 @@ Use the package README for install and command documentation:
 
 ## Workspace Packages
 
-| Workspace | Purpose |
-| --- | --- |
-| `@tjalve/aiq` | Published CLI and API package. |
-| `aiq-internal-engine` | Stage planning and runner execution. |
-| `aiq-internal-config-schema` | Config, progress, and surface resolution. |
-| `aiq-internal-model` | Shared contracts and IDs. |
-| `aiq-internal-reporters` | Text and JSON output formatting. |
-| `aiq-internal-benchmark` | Benchmark scenarios. |
-| `aiq-internal-hook` | Hook adapter. |
-| `aiq-internal-github-action` | GitHub Action adapter. |
-| `aiq-internal-lsp` | LSP adapter. |
-| `aiq-internal-opencode-plugin` | OpenCode adapter. |
+| Workspace | Status | Purpose |
+| --- | --- | --- |
+| `@tjalve/aiq` | Published | CLI and API package. |
+| `@tjalve/aiq-internal-engine` | Private | Stage planning and runner execution. |
+| `@tjalve/aiq-internal-config-schema` | Private | Config, progress, and surface resolution. |
+| `@tjalve/aiq-internal-model` | Private | Shared contracts and IDs. |
+| `@tjalve/aiq-internal-reporters` | Private | Text and JSON output formatting. |
+| `@tjalve/aiq-internal-benchmark` | Private | Benchmark scenarios. |
+| `@tjalve/aiq-internal-hook` | Private | Hook adapter. |
+| `@tjalve/aiq-internal-github-action` | Private | GitHub Action adapter. |
+| `@tjalve/aiq-internal-lsp` | Private | LSP adapter. |
+| `@tjalve/aiq-internal-opencode-plugin` | Private | OpenCode adapter. |
 
 ## Development
 

@@ -1,5 +1,5 @@
 {
-  "name": "aiq-internal-opencode-plugin",
+  "name": "@tjalve/aiq-internal-opencode-plugin",
   "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
@@ -20,8 +20,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-quality.git",
-    "directory": "packages/opencode-plugin"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aiq/packages/opencode-plugin"
   },
   "private": true
 }

@@ -1,5 +1,5 @@
 {
-  "name": "aiq-internal-lsp",
+  "name": "@tjalve/aiq-internal-lsp",
   "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
@@ -19,8 +19,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-quality.git",
-    "directory": "packages/lsp"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aiq/packages/lsp"
   },
   "private": true
 }

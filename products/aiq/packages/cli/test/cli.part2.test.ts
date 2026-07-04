@@ -7,7 +7,7 @@ import {
   repoRoot,
 } from "./cli-test-support.js";
 describe("CLI foundation", () => {
-  it("keeps former split packages private to the workspace", async () => {
+  it("keeps internal packages private in the scoped AIQ namespace", async () => {
     for (const workspace of internalPackageWorkspaces) {
       const packageJson = JSON.parse(
         await readFile(path.join(repoRoot, workspace, "package.json"), "utf8"),
@@ -20,10 +20,10 @@ describe("CLI foundation", () => {
 
       expect(packageJson.private).toBe(true);
       expect(packageJson.publishConfig).toBeUndefined();
-      expect(packageJson.name.startsWith("@tjalve/aiq-")).toBe(false);
+      expect(packageJson.name.startsWith("@tjalve/aiq-internal-")).toBe(true);
 
       for (const dependencyName of Object.keys(packageJson.dependencies ?? {})) {
-        expect(dependencyName.startsWith("@tjalve/aiq-")).toBe(false);
+        expect(dependencyName.startsWith("@tjalve/aiq-internal-")).toBe(false);
       }
     }
   });

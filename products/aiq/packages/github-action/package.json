@@ -1,5 +1,5 @@
 {
-  "name": "aiq-internal-github-action",
+  "name": "@tjalve/aiq-internal-github-action",
   "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
@@ -21,8 +21,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-quality.git",
-    "directory": "packages/github-action"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aiq/packages/github-action"
   },
   "private": true
 }
