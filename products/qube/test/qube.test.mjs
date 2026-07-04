@@ -334,7 +334,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: global/);
     assert.match(result.stdout, /Host surface: codex/);
-    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.2\.0/);
+    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.2\.1/);
     assert.match(result.stdout, /AGENTS\.md policy notes/);
     assert.match(result.stdout, /Codex host support uses AGENTS\.md/);
     assert.match(result.stdout, /Codex does not use OpenCode-style project command files/);
@@ -500,7 +500,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: local/);
     assert.match(result.stdout, /Host surface: claude-code/);
-    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.2\.0/);
+    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.2\.1/);
     assert.match(result.stdout, /CLAUDE\.md policy notes/);
     assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
     assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
@@ -1658,7 +1658,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /expected @tjalve\/aib@0\.2\.0, found 0\.0\.1/);
+    assert.match(planned.stderr, /expected @tjalve\/aib@0\.2\.1, found 0\.0\.1/);
     assert.equal(planned.dispatch, undefined);
   });
 
@@ -1680,7 +1680,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.2\.0/);
+    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.2\.1/);
     assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
   });
 
