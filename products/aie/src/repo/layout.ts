@@ -318,7 +318,7 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
 function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
-  if (hasJsWorkspaceSignals(jsWorkspaceSignals) && (rootSignals.some(signal => signal.path === 'package.json') || projects.filter(project => project.path !== '.').length > 0)) return 'javascript-typescript-workspace';
+  if (hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json')) return 'javascript-typescript-workspace';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';

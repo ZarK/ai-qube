@@ -354,7 +354,7 @@ describe('repo layout inspection and affected scope', () => {
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
     assert.equal(result.kind, 'unknown');
-    assert.equal(result.projects.length, 0);
+    assert.deepEqual(result.projects.map(project => project.path), ['apps/web']);
     assert.ok(result.rootMarkers.some(marker => marker.path === 'turbo.json'));
     assert.ok(result.warnings.some(warning => warning.includes('no root package.json was found')));
   });
