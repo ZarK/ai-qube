@@ -217,10 +217,13 @@ describe('repo layout inspection and affected scope', () => {
 
     assert.equal(result.command, 'repo inspect');
     assert.equal(result.kind, 'javascript-typescript-workspace');
-    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core']);
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/web', 'packages/core', 'tools/cli']);
+    assert.equal(result.projects.find(project => project.path === 'apps/web').packageName, '@fixture/web');
     assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, '@fixture/core');
+    assert.equal(result.projects.find(project => project.path === 'tools/cli').packageName, '@fixture/cli');
     assert.deepEqual(result.lockfiles, ['pnpm-lock.yaml']);
     assert.ok(result.rootMarkers.some(marker => marker.path === 'pnpm-workspace.yaml'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'turbo.json'));
     assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
   });
 
@@ -304,12 +307,14 @@ describe('repo layout inspection and affected scope', () => {
     const result = await runRepoAffected({
       config: getDefaults(),
       cwd: repo,
-      changedPaths: ['packages/core/src/index.ts', 'pnpm-lock.yaml'],
+      changedPaths: ['apps/web/src/index.ts', 'packages/core/src/index.ts', 'tools/cli/src/index.ts', 'pnpm-lock.yaml'],
     });
 
     assert.equal(result.command, 'repo affected');
-    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-root', '@fixture/core']);
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-root', '@fixture/web', '@fixture/core', '@fixture/cli']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/web').gates.includes('typecheck'));
     assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/core').gates.includes('typecheck'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === '@fixture/cli').gates.includes('typecheck'));
     assert.ok(result.suggestedGates.includes('dependency-review'));
   });
 
@@ -340,9 +345,20 @@ describe('repo layout inspection and affected scope', () => {
 
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
-    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core']);
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'apps/web', 'packages/core', 'tools/cli']);
     assert.equal(result.projects.some(project => project.packageName === 'outside-layout-leak'), false);
     assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not classify JavaScript tooling markers without a root package as a workspace', async () => {
+    const repo = makeFixtureRepo('ambiguous-js-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['apps/web']);
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'turbo.json'));
+    assert.ok(result.warnings.some(warning => warning.includes('no root package.json was found')));
   });
 
   it('uses configured base ref when changed paths are not provided', async () => {
