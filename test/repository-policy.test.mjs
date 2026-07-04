@@ -41,9 +41,9 @@ describe("repository policy", () => {
   it("keeps CI off the full AIQ suite while it is not publish-ready", () => {
     const workflow = read(".github/workflows/ci.yml");
 
-    assert.match(workflow, /pnpm --filter ai-code-quality run build/);
-    assert.match(workflow, /pnpm --filter ai-code-quality run typecheck/);
-    assert.match(workflow, /pnpm --filter ai-code-quality run test:publish-readiness/);
-    assert.doesNotMatch(workflow, /pnpm --filter ai-code-quality test(?:\s|$)/);
+    assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run build/);
+    assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run typecheck/);
+    assert.match(workflow, /pnpm --filter @tjalve\/aiq-workspace run test:publish-readiness/);
+    assert.doesNotMatch(workflow, /pnpm --filter @tjalve\/aiq-workspace test(?:\s|$)/);
   });
 });

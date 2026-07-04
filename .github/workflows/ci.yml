@@ -202,13 +202,13 @@ jobs:
           pnpm --filter @tjalve/aiu run build
 
       - name: Build AIQ
-        run: pnpm --filter ai-code-quality run build
+        run: pnpm --filter @tjalve/aiq-workspace run build
 
       - name: Typecheck AIQ
-        run: pnpm --filter ai-code-quality run typecheck
+        run: pnpm --filter @tjalve/aiq-workspace run typecheck
 
       - name: Check AIQ package readiness
-        run: pnpm --filter ai-code-quality run test:publish-readiness
+        run: pnpm --filter @tjalve/aiq-workspace run test:publish-readiness
 
   ci-required:
     needs:

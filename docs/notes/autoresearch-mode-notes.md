@@ -44,11 +44,11 @@ Useful references:
 
 ## Local Precedent: `aiq-autoreserach`
 
-The local repo `/Users/tjalve/Github/aiq-autoreserach` is the best QUBE-shaped prototype. It adapts the pattern to `ai-code-quality` with:
+The historical local repo `/Users/tjalve/Github/aiq-autoreserach` is the best QUBE-shaped prototype. It adapted the pattern to the legacy `ai-code-quality` checkout with:
 
 - fixed harness: `prepare.py`
 - agent instructions: `AGENTS.md` and `continuation.md`
-- target repo: `/Users/tjalve/Github/ai-code-quality`
+- historical target repo: `/Users/tjalve/Github/ai-code-quality`
 - runtime state under `.aiq-autoresearch/`
 - commands: `init`, `baseline`, `evaluate`, `status`, `serve-report`
 - objective: minimize `aiq bench --format json --tag ci` `summary.totalDurationMs`

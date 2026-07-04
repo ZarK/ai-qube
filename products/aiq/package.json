@@ -1,5 +1,5 @@
 {
-  "name": "ai-code-quality",
+  "name": "@tjalve/aiq-workspace",
   "private": true,
   "version": "0.2.2",
   "type": "module",

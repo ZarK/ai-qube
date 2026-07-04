@@ -6,13 +6,13 @@ Package-specific notes:
 
 - [ai-bootstrap-notes.md](ai-bootstrap-notes.md)
 - [ai-executor-notes.md](ai-executor-notes.md)
-- [ai-code-quality-notes.md](ai-code-quality-notes.md)
+- [aiq-notes.md](aiq-notes.md)
 - [ai-umpire-notes.md](ai-umpire-notes.md)
 - [autoresearch-mode-notes.md](autoresearch-mode-notes.md)
 
 ## Package Roles
 
-- **Quality-control**: `ai-code-quality`, npm `@tjalve/aiq`. Provides code-quality gates and deeper quality checks that other QUBE packages can call.
+- **Quality-control**: `@tjalve/aiq`, with private workspace root `@tjalve/aiq-workspace`. Provides code-quality gates and deeper quality checks that other QUBE packages can call.
 - **Umpire whip**: `ai-umpire`, npm `@tjalve/aiu` (unpublished). Keeps the agent loop alive, notices when work stalls, and resumes or redirects execution.
 - **Bootstrap**: `ai-bootstrap`, npm `@tjalve/aib` (unpublished). Helps create the spec file, milestones, and work items that define the durable work queue.
 - **Executor**: `ai-executor`, npm `@tjalve/aie` (unpublished). Executes work items end to end: queue selection, lifecycle, implementation guidance, verification, review item creation, merge, completion, and continuation.
@@ -23,7 +23,7 @@ Autoresearch should become a QUBE mode rather than a fifth peer package at first
 
 ## Shared Harness Model
 
-Existing repositories such as `ai-code-quality`, `ai-umpire`, `ai-bootstrap`, and `memex.photos` already use a script-backed GitHub-first process:
+Historical source repositories such as `ai-code-quality`, `ai-umpire`, `ai-bootstrap`, and `memex.photos` already used a script-backed GitHub-first process:
 
 - GitHub issues are the current durable executable queue encoding.
 - Priority labels use `P1-Critical`, `P2-High`, `P3-Medium`, and `P4-Low`.

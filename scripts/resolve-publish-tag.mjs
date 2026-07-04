@@ -16,8 +16,8 @@ const packages = new Map([
   ["aib", { filter: "@tjalve/aib", path: "products/aib", packageJson: "products/aib/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aib run verify" }],
   ["aie", { filter: "@tjalve/aie", path: "products/aie", packageJson: "products/aie/package.json", prepare: buildAieDependencies, verify: "pnpm --filter @tjalve/aie run verify" }],
   ["aiu", { filter: "@tjalve/aiu", path: "products/aiu", packageJson: "products/aiu/package.json", prepare: buildQubeCli, verify: "pnpm --filter @tjalve/aiu run release:check" }],
-  ["aiq", { filter: "@tjalve/aiq", path: "products/aiq/packages/cli", packageJson: "products/aiq/packages/cli/package.json", prepare: buildAiqDependencies, verify: "pnpm --filter ai-code-quality run build && pnpm --filter ai-code-quality run test:publish-readiness" }],
-  ["qube", { filter: "@tjalve/qube", path: "products/qube", packageJson: "products/qube/package.json", prepare: `${buildAieDependencies} && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --filter ai-code-quality run build`, verify: "pnpm --filter @tjalve/qube run verify" }]
+  ["aiq", { filter: "@tjalve/aiq", path: "products/aiq/packages/cli", packageJson: "products/aiq/packages/cli/package.json", prepare: buildAiqDependencies, verify: "pnpm --filter @tjalve/aiq-workspace run build && pnpm --filter @tjalve/aiq-workspace run test:publish-readiness" }],
+  ["qube", { filter: "@tjalve/qube", path: "products/qube", packageJson: "products/qube/package.json", prepare: `${buildAieDependencies} && pnpm --filter @tjalve/aib run build && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build && pnpm --filter @tjalve/aiq-workspace run build`, verify: "pnpm --filter @tjalve/qube run verify" }]
 ]);
 
 const tag = process.argv[2] ?? "";

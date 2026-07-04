@@ -38,9 +38,9 @@ Use the package README for install and command documentation:
 ```sh
 corepack enable
 pnpm install --frozen-lockfile --ignore-scripts
-pnpm --filter ai-code-quality run build
-pnpm --filter ai-code-quality test
-pnpm --filter ai-code-quality run test:publish-readiness
+pnpm --filter @tjalve/aiq-workspace run build
+pnpm --filter @tjalve/aiq-workspace test
+pnpm --filter @tjalve/aiq-workspace run test:publish-readiness
 ```
 
 Build before packing so the published CLI package contains fresh internal module

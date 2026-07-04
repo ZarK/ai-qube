@@ -50,9 +50,9 @@ describe("publish tag resolution", () => {
     assert.match(plan.prepare, /@tjalve\/qube-cli/);
     assert.match(plan.prepare, /@tjalve\/aie/);
     assert.match(plan.prepare, /@tjalve\/aiu/);
-    assert.match(plan.verify, /ai-code-quality run build/);
-    assert.match(plan.verify, /ai-code-quality run test:publish-readiness/);
-    assert.doesNotMatch(plan.verify, /ai-code-quality test(?:\s|$)/);
+    assert.match(plan.verify, /@tjalve\/aiq-workspace run build/);
+    assert.match(plan.verify, /@tjalve\/aiq-workspace run test:publish-readiness/);
+    assert.doesNotMatch(plan.verify, /@tjalve\/aiq-workspace test(?:\s|$)/);
   });
 
   it("maps the Claude Code adapter publish tag to the adapter package", () => {
