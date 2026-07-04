@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 
 import {
   assertClaudeCodeHostCapabilityAvailable,
@@ -71,10 +72,30 @@ function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   return target;
 }
 
+function createAutoresearchDocumentTarget(cwd) {
+  const target = path.join(cwd, "docs");
+  mkdirSync(target, { recursive: true });
+  writeFileSync(path.join(target, "notes.md"), "# Notes\n\nDraft summary needs clearer sourcing.\n", "utf8");
+  return target;
+}
+
 function writeAutoresearchSandboxScore(stateDirectory, score) {
   const scorePath = path.join(stateDirectory, "sandbox", "workspace", "score.json");
   writeFileSync(scorePath, `${JSON.stringify({ score })}\n`, "utf8");
   return scorePath;
+}
+
+function stableJson(value) {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().filter((key) => value[key] !== undefined).map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function hashAutoresearchEvaluatorForTest(evaluator) {
+  const { hash: _hash, ...hashable } = evaluator;
+  return createHash("sha256").update(stableJson(hashable)).digest("hex");
 }
 
 function writeManyAutoresearchFiles(directory, count) {
@@ -756,6 +777,7 @@ describe("qube composer CLI", () => {
     const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
     assert.equal(evaluator.kind, "command-metric");
     assert.equal(evaluator.command, "npm test");
+    assert.equal(evaluator.acceptancePolicy.promotionRequiresHuman, false);
     assert.notEqual(evaluator.kind, "term-coverage");
 
     const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
@@ -799,12 +821,22 @@ describe("qube composer CLI", () => {
     assert.equal(current.activeCandidate.id, ran.candidate.id);
     assert.deepEqual(current.activeCandidate.changedFiles, ["score.json"]);
     assert.deepEqual(current.blockers, []);
+    assert.equal(current.continuation.owner, "aiu");
+    assert.equal(current.continuation.status, "ready");
+    assert.match(current.continuation.resumeCommand, /qube autoresearch run --run/);
+    assert.deepEqual(current.changedSurfaceSummary.files, ["score.json"]);
+    assert.deepEqual(current.currentBestTrajectory.map((point) => point.id), ["baseline", ran.candidate.id]);
 
     const dashboard = runCli(["autoresearch", "dashboard", "--json"], { cwd });
     assert.equal(dashboard.status, 0);
     const dashboardState = JSON.parse(dashboard.stdout).autoresearch;
     assert.ok(existsSync(dashboardState.dashboardPath));
-    assert.match(readFileSync(dashboardState.dashboardPath, "utf8"), /QUBE Autoresearch/);
+    const dashboardHtml = readFileSync(dashboardState.dashboardPath, "utf8");
+    const dashboardData = JSON.parse(readFileSync(dashboardState.dashboardDataPath, "utf8"));
+    assert.match(dashboardHtml, /QUBE Autoresearch/);
+    assert.match(dashboardHtml, /Control Loop/);
+    assert.equal(dashboardData.summary.continuation.owner, "aiu");
+    assert.equal(dashboardData.summary.attemptHistory[0].id, ran.candidate.id);
 
     const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
     assert.equal(promote.status, 0);
@@ -840,6 +872,119 @@ describe("qube composer CLI", () => {
     assert.equal(planned.planned, true);
     assert.deepEqual(planned.changedFiles, ["score.json"]);
     assert.equal(JSON.parse(readFileSync(sideEffectPath, "utf8")).count, 1);
+  });
+
+  it("accepts autoresearch threshold and finding-reduction objective shapes with command metrics", () => {
+    const thresholdCwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-threshold-cwd-"));
+    createAutoresearchPackageTarget(thresholdCwd, 10);
+    const thresholdInit = runCli(["autoresearch", "init", "target", "keep score below 5 threshold", "--json"], { cwd: thresholdCwd });
+    assert.equal(thresholdInit.status, 0);
+    const thresholdInitialized = JSON.parse(thresholdInit.stdout).autoresearch;
+    assert.equal(thresholdInitialized.synthesis.objective.shape, "threshold");
+    const thresholdEvaluator = JSON.parse(readFileSync(path.join(thresholdInitialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(thresholdEvaluator.acceptancePolicy.mode, "threshold");
+    assert.equal(thresholdEvaluator.acceptancePolicy.threshold, 5);
+    assert.equal(thresholdEvaluator.acceptancePolicy.promotionRequiresHuman, false);
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd: thresholdCwd }).status, 0);
+    writeAutoresearchSandboxScore(thresholdInitialized.stateDirectory, 5);
+    const thresholdRun = runCli(["autoresearch", "run", "--json"], { cwd: thresholdCwd });
+    assert.equal(thresholdRun.status, 0);
+    assert.equal(JSON.parse(thresholdRun.stdout).autoresearch.candidate.accepted, true);
+
+    const findingsCwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-findings-cwd-"));
+    createAutoresearchPackageTarget(findingsCwd, 3);
+    const findingsInit = runCli(["autoresearch", "init", "target", "reduce findings count", "--json"], { cwd: findingsCwd });
+    assert.equal(findingsInit.status, 0);
+    const findingsInitialized = JSON.parse(findingsInit.stdout).autoresearch;
+    assert.equal(findingsInitialized.synthesis.objective.shape, "finding-reduction");
+    const findingsEvaluator = JSON.parse(readFileSync(path.join(findingsInitialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(findingsEvaluator.acceptancePolicy.mode, "finding-reduction");
+    assert.equal(findingsEvaluator.acceptancePolicy.promotionRequiresHuman, false);
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd: findingsCwd }).status, 0);
+    writeAutoresearchSandboxScore(findingsInitialized.stateDirectory, 1);
+    const findingsRun = runCli(["autoresearch", "run", "--json"], { cwd: findingsCwd });
+    assert.equal(findingsRun.status, 0);
+    assert.equal(JSON.parse(findingsRun.stdout).autoresearch.candidate.accepted, true);
+  });
+
+  it("rejects threshold candidates that pass the threshold but regress the current score", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-threshold-regression-cwd-"));
+    createAutoresearchPackageTarget(cwd, 1);
+
+    const init = runCli(["autoresearch", "init", "target", "keep score below 5 threshold", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(runCli(["autoresearch", "baseline", "--json"], { cwd }).status, 0);
+
+    writeAutoresearchSandboxScore(initialized.stateDirectory, 4);
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 0);
+    const ran = JSON.parse(run.stdout).autoresearch;
+    assert.equal(ran.candidate.accepted, false);
+    assert.equal(ran.currentBest, null);
+    assert.match(ran.candidate.referee.reasons.join("\n"), /did not improve current best 1/);
+  });
+
+  it("marks autoresearch document objectives as human-gated instead of faking automated progress", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-doc-cwd-"));
+    createAutoresearchDocumentTarget(cwd);
+
+    const init = runCli(["autoresearch", "init", "docs", "improve documentation quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(initialized.synthesis.objective.shape, "judge-rubric");
+    const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(evaluator.kind, "rubric-review");
+    assert.equal(evaluator.acceptancePolicy.mode, "human-gated");
+
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 0);
+    const baselined = JSON.parse(baseline.stdout).autoresearch;
+    assert.equal(baselined.phase, "baselined");
+    assert.equal(baselined.evaluation.referee.status, "rejected");
+    assert.match(baselined.evaluation.referee.reasons.join("\n"), /human-gated/);
+
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.equal(current.continuation.owner, "aiu");
+    assert.equal(current.continuation.status, "blocked");
+    assert.equal(current.continuation.resumeCommand, null);
+    assert.deepEqual(current.currentBestTrajectory, []);
+    assert.match(current.blockers.join("\n"), /human-gated|No trustworthy automated command evaluator/);
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 2);
+    assert.match(JSON.parse(run.stdout).error.likelyCause, /human-gated/);
+
+    const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    assert.match(JSON.parse(promote.stdout).error.likelyCause, /human-gated/);
+  });
+
+  it("marks human-gated autoresearch code objectives as blocked at baseline", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-code-human-gated-cwd-"));
+    createAutoresearchPackageTarget(cwd, 10);
+
+    const init = runCli(["autoresearch", "init", "target", "improve documentation quality", "--json"], { cwd });
+    assert.equal(init.status, 0);
+    const initialized = JSON.parse(init.stdout).autoresearch;
+    assert.equal(initialized.synthesis.objective.shape, "judge-rubric");
+    const evaluator = JSON.parse(readFileSync(path.join(initialized.stateDirectory, "evaluator.json"), "utf8"));
+    assert.equal(evaluator.acceptancePolicy.promotionRequiresHuman, true);
+
+    const baseline = runCli(["autoresearch", "baseline", "--json"], { cwd });
+    assert.equal(baseline.status, 0);
+    const baselined = JSON.parse(baseline.stdout).autoresearch;
+    assert.equal(baselined.evaluation.referee.status, "rejected");
+    assert.match(baselined.evaluation.referee.reasons.join("\n"), /human-gated/);
+
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.equal(current.continuation.status, "blocked");
+    assert.equal(current.continuation.resumeCommand, null);
+    assert.deepEqual(current.currentBestTrajectory, []);
   });
 
   it("refuses autoresearch baseline before copying oversized targets", () => {
@@ -905,6 +1050,13 @@ describe("qube composer CLI", () => {
     assert.equal(ran.currentBest, null);
     assert.equal(JSON.parse(readFileSync(path.join(initialized.stateDirectory, "sandbox", "workspace", "score.json"), "utf8")).score, 10);
     assert.equal(JSON.parse(readFileSync(path.join(target, "score.json"), "utf8")).score, 10);
+
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.deepEqual(current.blockers, []);
+    assert.equal(current.continuation.status, "ready");
+    assert.match(current.continuation.resumeCommand, /qube autoresearch run --run/);
   });
 
   it("rejects autoresearch candidates outside declared mutable surfaces", () => {
@@ -1013,6 +1165,37 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(promote.stdout);
     assert.equal(parsed.ok, false);
     assert.match(parsed.error.likelyCause, /outside the sandbox/);
+  });
+
+  it("refuses autoresearch promotion when evaluator policy requires a human gate", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-autoresearch-human-promotion-cwd-"));
+    const { initialized } = createAcceptedAutoresearchRun(cwd);
+    const evaluatorPath = path.join(initialized.stateDirectory, "evaluator.json");
+    const statePath = path.join(initialized.stateDirectory, "state.json");
+    const evaluator = JSON.parse(readFileSync(evaluatorPath, "utf8"));
+    evaluator.acceptancePolicy = { ...evaluator.acceptancePolicy, promotionRequiresHuman: true };
+    evaluator.hash = hashAutoresearchEvaluatorForTest(evaluator);
+    const state = JSON.parse(readFileSync(statePath, "utf8"));
+    state.evaluatorHash = evaluator.hash;
+    writeFileSync(evaluatorPath, `${JSON.stringify(evaluator, null, 2)}\n`, "utf8");
+    writeFileSync(statePath, `${JSON.stringify(state, null, 2)}\n`, "utf8");
+
+    const status = runCli(["autoresearch", "status", "--json"], { cwd });
+    assert.equal(status.status, 0);
+    const current = JSON.parse(status.stdout).autoresearch;
+    assert.equal(current.continuation.status, "blocked");
+    assert.equal(current.continuation.resumeCommand, null);
+    assert.match(current.blockers.join("\n"), /human-gated by evaluator policy/);
+
+    const run = runCli(["autoresearch", "run", "--json"], { cwd });
+    assert.equal(run.status, 2);
+    assert.match(JSON.parse(run.stdout).error.likelyCause, /human-gated by evaluator policy/);
+
+    const promote = runCli(["autoresearch", "promote", "--json"], { cwd });
+    assert.equal(promote.status, 2);
+    const parsed = JSON.parse(promote.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /human-gated by evaluator policy/);
   });
 
   it("refuses autoresearch promotion output outside declared mutable surfaces", () => {
