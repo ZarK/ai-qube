@@ -1,5 +1,5 @@
 {
-  "name": "aiq-internal-benchmark",
+  "name": "@tjalve/aiq-internal-benchmark",
   "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,8 +16,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-quality.git",
-    "directory": "packages/benchmark"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aiq/packages/benchmark"
   },
   "private": true
 }

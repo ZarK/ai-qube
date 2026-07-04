@@ -1,5 +1,5 @@
 {
-  "name": "aiq-internal-reporters",
+  "name": "@tjalve/aiq-internal-reporters",
   "version": "0.2.2",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,8 +16,8 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ZarK/ai-quality.git",
-    "directory": "packages/reporters"
+    "url": "git+https://github.com/ZarK/ai-qube.git",
+    "directory": "products/aiq/packages/reporters"
   },
   "private": true
 }
