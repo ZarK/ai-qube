@@ -16,12 +16,21 @@ describe("QUBE public docs site", () => {
     const page = read("docs/index.html");
     const rootReadme = read("README.md");
     const packageReadmes = [
+      "packages/qube-core/README.md",
+      "packages/qube-cli/README.md",
+      "adapters/github/README.md",
+      "adapters/codex/README.md",
+      "adapters/opencode/README.md",
+      "adapters/claude-code/README.md",
+      "adapters/gitlab/README.md",
+      "adapters/linear/README.md",
+      "adapters/jira/README.md",
+      "adapters/jenkins/README.md",
       "products/aib/README.md",
       "products/aie/README.md",
       "products/aiq/packages/cli/README.md",
       "products/aiu/README.md",
-      "products/qube/README.md",
-      "packages/qube-cli/README.md"
+      "products/qube/README.md"
     ].map((path) => [path, read(path)]);
 
     assert.match(page, /QUBE moves ideas to completed implementation/);

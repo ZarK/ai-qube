@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-gitlab",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "GitLab work provider adapter for QUBE issue reads, draft rendering, and unsupported lifecycle reporting.",
   "keywords": [
     "cli",
@@ -39,7 +39,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

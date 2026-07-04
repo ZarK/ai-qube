@@ -84,7 +84,9 @@ const aieVersion = await readVersion("products/aie/package.json");
 const qubeVersion = await readVersion("products/qube/package.json");
 process.stdout.write(`npm install -g --ignore-scripts @tjalve/qube@${qubeVersion}\n`);
 process.stdout.write("# or minimal executor stack:\n");
-process.stdout.write(`npm install -g --ignore-scripts @tjalve/aie@${aieVersion} @tjalve/qube-core@${qubeCoreVersion} @tjalve/qube-adapter-github@0.1.0 @tjalve/qube-adapter-codex@0.1.0\n\n`);
+const githubAdapterVersion = await readVersion("adapters/github/package.json");
+const codexAdapterVersion = await readVersion("adapters/codex/package.json");
+process.stdout.write(`npm install -g --ignore-scripts @tjalve/aie@${aieVersion} @tjalve/qube-core@${qubeCoreVersion} @tjalve/qube-adapter-github@${githubAdapterVersion} @tjalve/qube-adapter-codex@${codexAdapterVersion}\n\n`);
 
 process.stdout.write("Notes:\n");
 process.stdout.write("- Seed qube-core before any adapter seed publish.\n");
