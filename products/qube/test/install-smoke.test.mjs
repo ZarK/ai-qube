@@ -7,6 +7,8 @@ import { afterEach, describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { componentFixtures, expectedComponentRows } from "./workspace-versions.mjs";
+
 const execFileAsync = promisify(execFile);
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const claudeCodeAdapterRoot = path.resolve(packageRoot, "..", "..", "adapters", "claude-code");
@@ -14,12 +16,7 @@ const qubeCliRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-cli"
 const qubeCoreRoot = path.resolve(packageRoot, "..", "..", "packages", "qube-core");
 const tempRoots = [];
 
-const fakeComponents = [
-  { name: "@tjalve/aib", command: "aib", version: "0.2.1" },
-  { name: "@tjalve/aie", command: "aie", version: "0.2.1" },
-  { name: "@tjalve/aiq", command: "aiq", version: "0.2.3" },
-  { name: "@tjalve/aiu", command: "aiu", version: "0.0.5" }
-];
+const fakeComponents = componentFixtures;
 
 describe("packed QUBE install smoke", () => {
   afterEach(async () => {
@@ -99,12 +96,7 @@ describe("packed QUBE install smoke", () => {
         component.packageName,
         component.packageVersion
       ]),
-      [
-        ["bootstrap", "aib", "@tjalve/aib", "0.2.1"],
-        ["executor", "aie", "@tjalve/aie", "0.2.1"],
-        ["quality", "aiq", "@tjalve/aiq", "0.2.3"],
-        ["umpire", "aiu", "@tjalve/aiu", "0.0.5"]
-      ]
+      expectedComponentRows
     );
     const executor = parsedComponents.find(component => component.id === "executor");
     assert.equal(executor.capabilities.localReview.freshContextReviewerSupport, "host-provided");
@@ -115,7 +107,9 @@ describe("packed QUBE install smoke", () => {
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
 
     const dispatched = await runPnpm(["exec", "qube", "run", "aib", "--", "status", "--json"], target);
-    assert.equal(dispatched.stdout.trim(), "aib 0.2.1 status --json");
+    const aibFixture = fakeComponents.find(component => component.command === "aib");
+    assert.ok(aibFixture);
+    assert.equal(dispatched.stdout.trim(), `${aibFixture.command} ${aibFixture.version} status --json`);
   });
 });
 
