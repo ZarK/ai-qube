@@ -1,7 +1,7 @@
 import { spawnSync } from 'child_process';
 import { existsSync, readFileSync, readdirSync } from 'fs';
 import { isAbsolute, join, relative, resolve } from 'path';
-import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoRootMarker } from '@tjalve/qube-core';
+import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoProjectKind, RepoRootMarker } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import type { GitExec, GitRunResult } from '../providers/local/local_git_provider.js';
 
@@ -10,6 +10,24 @@ interface PackageJson {
   readonly workspaces?: unknown;
   readonly scripts?: unknown;
 }
+
+interface RootBuildSignal {
+  readonly path: string;
+  readonly markerKind: RepoRootMarker['kind'];
+  readonly projectKind: RepoProjectKind;
+  readonly packageManager: string | null;
+}
+
+const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
+  { path: 'package.json', markerKind: 'package', projectKind: 'app', packageManager: null },
+  { path: 'pyproject.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
+  { path: 'Cargo.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
+  { path: 'go.mod', markerKind: 'package', projectKind: 'app', packageManager: null },
+  { path: 'pom.xml', markerKind: 'package', projectKind: 'app', packageManager: null },
+  { path: 'build.gradle', markerKind: 'build', projectKind: 'app', packageManager: null },
+  { path: 'build.gradle.kts', markerKind: 'build', projectKind: 'app', packageManager: null },
+  { path: 'CMakeLists.txt', markerKind: 'build', projectKind: 'app', packageManager: null },
+]);
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -139,6 +157,54 @@ function packageManagerForPath(packageManagers: readonly RepoPackageManager[], p
   return packageManagers.find(manager => manager.manifestPath === 'package.json')?.kind ?? match?.kind ?? null;
 }
 
+function readTextFile(root: string, path: string): string | null {
+  try {
+    return readFileSync(join(root, path), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function firstMatch(text: string | null, pattern: RegExp): string | null {
+  const match = text?.match(pattern);
+  return match?.[1]?.trim() || null;
+}
+
+function rootDirectoryName(root: string): string {
+  const pathParts = portablePath(root).split('/').filter(Boolean);
+  return pathParts[pathParts.length - 1] ?? 'root';
+}
+
+function rootProjectName(root: string, signal: RootBuildSignal): string | null {
+  if (signal.path === 'package.json') {
+    const packageJson = readPackageJson(root);
+    return typeof packageJson?.name === 'string' ? packageJson.name : null;
+  }
+  const text = readTextFile(root, signal.path);
+  if (signal.path === 'pyproject.toml') return firstMatch(text, /^\s*name\s*=\s*["']([^"']+)["']/m);
+  if (signal.path === 'Cargo.toml') return firstMatch(text, /^\s*name\s*=\s*["']([^"']+)["']/m);
+  if (signal.path === 'go.mod') return firstMatch(text, /^\s*module\s+(\S+)/m);
+  if (signal.path === 'pom.xml') return firstMatch(text, /<artifactId>\s*([^<\s][^<]*?)\s*<\/artifactId>/);
+  if (signal.path.endsWith('.csproj')) return signal.path.replace(/\.csproj$/i, '');
+  return rootDirectoryName(root);
+}
+
+function detectRootBuildSignals(root: string | null, packageManagers: readonly RepoPackageManager[]): RootBuildSignal[] {
+  if (!root) return [];
+  const signals: RootBuildSignal[] = [];
+  for (const signal of ROOT_BUILD_SIGNAL_FILES) {
+    if (!existsSync(join(root, signal.path))) continue;
+    const packageManager = signal.path === 'package.json' ? packageManagerForPath(packageManagers, '.') : signal.packageManager;
+    signals.push({ ...signal, packageManager });
+  }
+  for (const entry of readdirSync(root, { withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith('.csproj')) {
+      signals.push({ path: entry.name, markerKind: 'build', projectKind: 'app', packageManager: null });
+    }
+  }
+  return signals.sort((left, right) => left.path.localeCompare(right.path));
+}
+
 function gatesForProject(path: string): string[] {
   if (path === '.') return ['build', 'typecheck', 'test'];
   return ['build', 'typecheck', 'test'];
@@ -170,17 +236,19 @@ function detectPackageManagers(root: string | null): RepoPackageManager[] {
   return managers;
 }
 
-function detectRootMarkers(root: string | null): RepoRootMarker[] {
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[]): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
-    { path: 'package.json', kind: 'package' },
     { path: 'pnpm-workspace.yaml', kind: 'workspace' },
     { path: '.github/workflows', kind: 'ci' },
     { path: 'tsconfig.json', kind: 'build' },
     { path: 'docs', kind: 'docs' },
+    ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
-  return candidates.filter(marker => existsSync(join(root, marker.path)));
+  return candidates
+    .filter(marker => existsSync(join(root, marker.path)))
+    .filter((marker, index, markers) => markers.findIndex(other => other.path === marker.path) === index);
 }
 
 function detectCiHints(root: string | null): RepoCiHint[] {
@@ -196,14 +264,18 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[]): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[]): RepoProject[] {
   const rootPackage = readPackageJson(root);
   const patterns = readWorkspacePatterns(rootPackage, root);
   const paths = [...new Set(patterns.flatMap(pattern => expandWorkspacePattern(root, pattern)))].sort();
   const projects: RepoProject[] = [];
   if (rootPackage) {
     const packageName = typeof rootPackage.name === 'string' ? rootPackage.name : null;
-    projects.push({ id: projectId('.', packageName), path: '.', kind: paths.length > 0 ? 'workspace' : 'package', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+    projects.push({ id: projectId('.', packageName), path: '.', kind: paths.length > 0 ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+  } else if (paths.length === 0 && rootSignals.length > 0) {
+    const primarySignal = rootSignals[0];
+    const packageName = rootProjectName(root, primarySignal);
+    projects.push({ id: projectId('.', packageName), path: '.', kind: primarySignal.projectKind, packageName, packageManager: primarySignal.packageManager, gates: gatesForProject('.') });
   }
   for (const path of paths) {
     const packageJson = readPackageJson(root, `${path}/package.json`);
@@ -213,17 +285,19 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   return projects;
 }
 
-function detectLayoutKind(root: string | null, rootMarkers: readonly RepoRootMarker[], projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[]): RepoLayoutKind {
+function detectLayoutKind(root: string | null, rootMarkers: readonly RepoRootMarker[], projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[]): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   if (rootMarkers.some(marker => marker.path === 'pnpm-workspace.yaml') || projects.filter(project => project.path !== '.').length > 0) return 'javascript-typescript-workspace';
-  if (rootMarkers.some(marker => marker.path === 'package.json')) return 'single-app-service';
+  if (rootSignals.length === 1) return 'single-app-service';
+  if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[]): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[]): string[] {
   const warnings: string[] = [];
   if (!root) warnings.push('Not inside a git repository; layout inspection is incomplete.');
+  if (rootSignals.length > 1 && kind === 'unknown') warnings.push(`Multiple root package/build signals were detected (${rootSignals.map(signal => signal.path).join(', ')}); repository layout is ambiguous.`);
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
   if (kind !== 'javascript-typescript-workspace' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
@@ -236,14 +310,15 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const repoState = await inspectRepoSignals(options);
   const root = repoState.root;
   const packageManagers = detectPackageManagers(root);
-  const rootMarkers = detectRootMarkers(root);
-  const projects = root ? workspaceProjects(root, packageManagers) : [];
+  const rootSignals = detectRootBuildSignals(root, packageManagers);
+  const rootMarkers = detectRootMarkers(root, rootSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
     ...pathSignals(root, ['dist', 'build', 'coverage', 'generated'], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, rootMarkers, projects, generatedPaths, vendorPaths);
+  const kind = detectLayoutKind(root, rootMarkers, projects, generatedPaths, vendorPaths, rootSignals);
   return {
     kind,
     root,
@@ -255,21 +330,31 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals)],
   };
 }
 
-function containsPath(projectPath: string, changedPath: string): boolean {
-  if (projectPath === '.') return !changedPath.includes('/') || changedPath.startsWith('.github/');
+function signalContainsPath(signals: readonly RepoPathSignal[], changedPath: string): boolean {
+  return signals.some(signal => {
+    const signalPath = portablePath(signal.path).replace(/\/+$/, '');
+    return changedPath === signalPath || changedPath.startsWith(`${signalPath}/`);
+  });
+}
+
+function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPath: string): boolean {
+  if (projectPath === '.') {
+    if (layoutKind === 'single-app-service') return true;
+    return !changedPath.includes('/') || changedPath.startsWith('.github/');
+  }
   const prefix = `${projectPath.replace(/\/+$/, '')}/`;
   return changedPath === projectPath || changedPath.startsWith(prefix);
 }
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb$/.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb$|pyproject\.toml$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
-  if (/\.(ts|tsx|js|jsx|mjs|cjs)$/.test(path)) return ['build', 'typecheck', 'test'];
+  if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];
   return ['test'];
 }
@@ -296,8 +381,9 @@ export async function inspectAffected(options: RepoAffectedOptions): Promise<Rep
   const changedPathResult = await changedPathsFromGit(options, layout.root);
   const changedPaths = changedPathResult.paths;
   const affectedProjects: RepoAffectedProject[] = [];
+  const mutationEligiblePaths = changedPaths.filter(path => !signalContainsPath(layout.generatedPaths, path) && !signalContainsPath(layout.vendorPaths, path));
   for (const project of layout.projects) {
-    const matches = changedPaths.filter(path => containsPath(project.path, path));
+    const matches = mutationEligiblePaths.filter(path => containsPath(layout.kind, project.path, path));
     if (matches.length === 0) continue;
     const gates = [...new Set(matches.flatMap(gatesForChangedPath))];
     affectedProjects.push({ project, changedPaths: matches, gates });
