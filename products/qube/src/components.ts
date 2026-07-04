@@ -180,14 +180,14 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "bootstrap",
     command: "aib",
     packageName: "@tjalve/aib",
-    packageVersion: "0.2.0",
+    packageVersion: "0.2.1",
     summary: "Plan projects, specs, milestones, and work-item drafts."
   },
   {
     id: "executor",
     command: "aie",
     packageName: "@tjalve/aie",
-    packageVersion: "0.2.0",
+    packageVersion: "0.2.1",
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     capabilities: {
       localReview: {

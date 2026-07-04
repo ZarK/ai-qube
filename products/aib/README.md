@@ -15,16 +15,25 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.2.0
+pnpm add -D --save-exact --ignore-scripts @tjalve/aib@0.2.1
 pnpm exec aib --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aib@0.2.0 --ignore-scripts
+npm install -g @tjalve/aib@0.2.1 --ignore-scripts
 aib --help
 ```
+
+GitLab, Linear, and Jira work-item rendering uses optional adapter packages.
+Install only the adapter for the provider you render to:
+
+```sh
+npm install --save-exact --ignore-scripts @tjalve/qube-adapter-linear@0.1.1
+```
+
+Markdown and GitHub rendering do not require forge adapters.
 
 ## Planning Flow
 

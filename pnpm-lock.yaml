@@ -145,15 +145,6 @@ importers:
 
   products/aib:
     dependencies:
-      '@tjalve/qube-adapter-gitlab':
-        specifier: workspace:*
-        version: link:../../adapters/gitlab
-      '@tjalve/qube-adapter-jira':
-        specifier: workspace:*
-        version: link:../../adapters/jira
-      '@tjalve/qube-adapter-linear':
-        specifier: workspace:*
-        version: link:../../adapters/linear
       '@tjalve/qube-cli':
         specifier: 0.2.0
         version: link:../../packages/qube-cli
@@ -167,6 +158,16 @@ importers:
       typescript:
         specifier: 6.0.3
         version: 6.0.3
+    optionalDependencies:
+      '@tjalve/qube-adapter-gitlab':
+        specifier: workspace:*
+        version: link:../../adapters/gitlab
+      '@tjalve/qube-adapter-jira':
+        specifier: workspace:*
+        version: link:../../adapters/jira
+      '@tjalve/qube-adapter-linear':
+        specifier: workspace:*
+        version: link:../../adapters/linear
 
   products/aie:
     dependencies:
@@ -199,6 +200,9 @@ importers:
       '@tjalve/qube-adapter-jira':
         specifier: workspace:*
         version: link:../../adapters/jira
+      '@tjalve/qube-adapter-linear':
+        specifier: workspace:*
+        version: link:../../adapters/linear
       '@tjalve/qube-adapter-opencode':
         specifier: workspace:*
         version: link:../../adapters/opencode
@@ -209,11 +213,11 @@ importers:
         specifier: 1.9.4
         version: 1.9.4
       '@tjalve/aie':
-        specifier: 0.2.0
+        specifier: workspace:*
         version: link:../aie
       '@tjalve/aiu':
-        specifier: 0.0.4
-        version: 0.0.4
+        specifier: workspace:*
+        version: link:../aiu
       '@types/node':
         specifier: 24.12.0
         version: 24.12.0
@@ -350,10 +354,10 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.2.0
+        specifier: 0.2.1
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.2.0
+        specifier: 0.2.1
         version: link:../aie
       '@tjalve/aiq':
         specifier: 0.2.3
@@ -1410,15 +1414,6 @@ packages:
 
   '@sinonjs/fake-timers@10.3.0':
     resolution: {integrity: sha512-V4BG07kuYSUkTCSBHG8G8TNhM+F19jXFWnQtzj+we8DrkpSBCee9Z3Ms8yiGer/dlmhe35/Xdgyo3/0rQKg7YA==}
-
-  '@tjalve/aiu@0.0.4':
-    resolution: {integrity: sha512-HZnvbdkFDBiWu45qhKILTsxXR+mf/BAb7jepMZWzdfKJyeIEH6u8FGcQDh0UFiq+rFGKxYfe8za/WhhK9+uFzA==}
-    engines: {node: '>=24.0.0'}
-    hasBin: true
-
-  '@tjalve/qube-cli@0.1.2':
-    resolution: {integrity: sha512-0VlnZCAezUZ8wbNdWwKpnbPhXoxas78htJLp5UMeRrgjzSKPwoFdTVosJvZOKD7jXFUUfhrQ6K11HR/pWDEDMA==}
-    engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -4298,15 +4293,6 @@ snapshots:
   '@sinonjs/fake-timers@10.3.0':
     dependencies:
       '@sinonjs/commons': 3.0.1
-
-  '@tjalve/aiu@0.0.4':
-    dependencies:
-      '@tjalve/qube-cli': 0.1.2
-
-  '@tjalve/qube-cli@0.1.2':
-    dependencies:
-      '@clack/prompts': 1.1.0
-      '@oclif/core': 4.8.0
 
   '@types/babel__core@7.20.5':
     dependencies:

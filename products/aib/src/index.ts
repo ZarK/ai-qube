@@ -30,12 +30,8 @@ export type { AibAgentHost, AibConfig, AibPrivacyMode, AibProviderKind, LoadedAi
 export { createInitPlan } from "./init.js";
 export type { InitPlan } from "./init.js";
 export { arenaSynthesizeCommand, bootstrapRegistry, initCommand, planningTopic } from "./metadata.js";
-export { renderGitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
-export type { GitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
-export { renderJiraIssueDraft } from "@tjalve/qube-adapter-jira";
-export type { JiraIssueDraft } from "@tjalve/qube-adapter-jira";
-export { renderLinearIssueDraft } from "@tjalve/qube-adapter-linear";
-export type { LinearIssueDraft } from "@tjalve/qube-adapter-linear";
+export { renderGitLabIssueDraft, renderJiraIssueDraft, renderLinearIssueDraft } from "./adapter_exports.js";
+export type { GitLabIssueDraft, JiraIssueDraft, LinearIssueDraft } from "./adapter_exports.js";
 export { renderGitHubIssueDraft, renderMarkdownWorkItemDraft } from "./renderers.js";
 export type { GitHubIssueDraft, MarkdownWorkItem } from "./renderers.js";
 export { getProfileByKind, selectProjectProfile, specChaptersForProject, workItemValidationForProject } from "./project_profiles.js";

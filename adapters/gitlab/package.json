@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-gitlab",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "GitLab work provider adapter for QUBE issue reads, draft rendering, and unsupported lifecycle reporting.",
   "keywords": [
     "cli",
@@ -47,7 +47,8 @@
     "build": "pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "pnpm run build && node --test \"test/*.test.mjs\"",
-    "prepack": "pnpm run build",
+    "prepack": "node ../../scripts/resolve-publish-dependencies.mjs && node ../../scripts/check-publish-manifest.mjs && pnpm run build",
+    "postpack": "node ../../scripts/restore-publish-dependencies.mjs",
     "verify": "pnpm run typecheck && pnpm test"
   },
   "dependencies": {

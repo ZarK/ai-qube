@@ -122,11 +122,11 @@ describe("qube composer CLI", () => {
   it("reports package version without invoking component tools", () => {
     const text = runCli(["--version"]);
     assert.equal(text.status, 0);
-    assert.equal(text.stdout.trim(), "0.2.0");
+    assert.equal(text.stdout.trim(), "0.2.1");
 
     const short = runCli(["-v"]);
     assert.equal(short.status, 0);
-    assert.equal(short.stdout.trim(), "0.2.0");
+    assert.equal(short.stdout.trim(), "0.2.1");
 
     const json = runCli(["-v", "--json"]);
     assert.equal(json.status, 0);
@@ -135,9 +135,9 @@ describe("qube composer CLI", () => {
       command: "version",
       package: {
         name: "@tjalve/qube",
-        version: "0.2.0"
+        version: "0.2.1"
       },
-      version: "0.2.0"
+      version: "0.2.1"
     });
   });
 
@@ -250,7 +250,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.command, "install");
     assert.deepEqual(parsed.installPlan.package, {
       name: "@tjalve/qube",
-      version: "0.2.0"
+      version: "0.2.1"
     });
     assert.deepEqual(parsed.installPlan.selections, {
       docs: true,
@@ -265,7 +265,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.dryRun, true);
     assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.0",
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.1",
       "pnpm exec qube components"
     ]);
     assert.deepEqual(
@@ -535,7 +535,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.0",
+      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.1",
       "pnpm exec qube components"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
@@ -1394,7 +1394,7 @@ describe("qube composer CLI", () => {
     const commandPath = path.join(dir, command);
     await mkdir(dir, { recursive: true });
     await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho aib %*\r\n" : "#!/usr/bin/env sh\necho aib \"$@\"\n");
-    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.2.0" })}\n`);
+    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.2.1" })}\n`);
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
@@ -1626,7 +1626,7 @@ describe("qube composer CLI", () => {
     await mkdir(packageDir, { recursive: true });
     await writeFile(installCommandPath, process.platform === "win32" ? "@echo off\r\necho install-scoped %*\r\n" : "#!/usr/bin/env sh\necho install-scoped \"$@\"\n");
     await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho path %*\r\n" : "#!/usr/bin/env sh\necho path \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.2.0" })}\n`);
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.2.1" })}\n`);
     if (process.platform !== "win32") {
       await chmod(installCommandPath, 0o755);
       await chmod(pathCommandPath, 0o755);
@@ -1639,7 +1639,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(resolution?.commandPath, installCommandPath);
     assert.equal(resolution?.source, "install");
-    assert.equal(resolution?.packageVersion, "0.2.0");
+    assert.equal(resolution?.packageVersion, "0.2.1");
     assert.equal(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 

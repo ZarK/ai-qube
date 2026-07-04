@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aie",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "AI Executor - autonomous GitHub issue execution for agentic development.",
   "keywords": [
     "cli",
@@ -51,6 +51,7 @@
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",
     "@tjalve/qube-adapter-gitlab": "workspace:*",
+    "@tjalve/qube-adapter-linear": "workspace:*",
     "@tjalve/qube-adapter-codex": "workspace:*",
     "@tjalve/qube-adapter-claude-code": "workspace:*",
     "@tjalve/qube-adapter-opencode": "workspace:*",
@@ -63,8 +64,9 @@
     "typecheck": "tsc --noEmit",
     "lint": "pnpm run typecheck",
     "test": "pnpm run build:deps && pnpm run build && node test/run-node-tests.mjs",
-    "prepack": "pnpm run build",
-    "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json",
+    "prepack": "node ../../scripts/resolve-publish-dependencies.mjs && node ../../scripts/check-publish-manifest.mjs && pnpm run build",
+    "postpack": "node ../../scripts/restore-publish-dependencies.mjs",
+    "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json && node ../../scripts/restore-publish-dependencies.mjs",
     "verify": "pnpm run lint && pnpm run test && pnpm run pack:check"
   },
   "devDependencies": {
