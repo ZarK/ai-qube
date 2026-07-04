@@ -38,6 +38,21 @@ describe("repository policy", () => {
     assert.match(codeowners, /^\.npmrc @ZarK$/m);
   });
 
+  it("keeps pnpm supply-chain gates and publish dependency resolution scripts", () => {
+    const workspace = read("pnpm-workspace.yaml");
+    const qubePackage = JSON.parse(read("products/qube/package.json"));
+
+    assert.match(workspace, /minimumReleaseAge:\s*10080/);
+    assert.match(workspace, /minimumReleaseAgeStrict:\s*true/);
+    assert.match(workspace, /verifyDepsBeforeRun:\s*error/);
+    assert.match(workspace, /linkWorkspacePackages:\s*true/);
+    assert.match(workspace, /- "@tjalve\/qube"/m);
+    assert.match(workspace, /- undici@6\.27\.0/m);
+    assert.match(qubePackage.scripts.prepack, /resolve-publish-dependencies\.mjs/);
+    assert.match(qubePackage.scripts.prepack, /check-publish-manifest\.mjs/);
+    assert.match(qubePackage.scripts.postpack, /restore-publish-dependencies\.mjs/);
+  });
+
   it("keeps CI off the full AIQ suite while it is not publish-ready", () => {
     const workflow = read(".github/workflows/ci.yml");
 

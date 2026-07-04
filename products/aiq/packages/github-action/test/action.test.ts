@@ -42,8 +42,10 @@ describe("github action adapter", () => {
     expect(rootWorkspaceConfig).toMatch(/^ {2}undici: 6\.27\.0$/m);
     expect(aiqWorkspaceConfig).toMatch(/^ {2}js-yaml: 4\.2\.0$/m);
     expect(aiqWorkspaceConfig).toMatch(/^ {2}undici: 6\.27\.0$/m);
-    expect(rootWorkspaceConfig).toMatch(/^minimumReleaseAgeExclude:\n {2}- undici@6\.27\.0$/m);
-    expect(aiqWorkspaceConfig).toMatch(/^ {2}- undici@6\.27\.0$/m);
+    expect(rootWorkspaceConfig).toMatch(/minimumReleaseAgeExclude:[\s\S]*- undici@6\.27\.0/m);
+    expect(rootWorkspaceConfig).toMatch(/- "@tjalve\/qube"/m);
+    expect(aiqWorkspaceConfig).toMatch(/minimumReleaseAgeExclude:[\s\S]*- undici@6\.27\.0/m);
+    expect(aiqWorkspaceConfig).toMatch(/- "@tjalve\/aie"/m);
     expect(rootWorkspaceConfig).not.toMatch(/^ {2}- undici$/m);
     expect(aiqWorkspaceConfig).not.toMatch(/^ {2}- undici$/m);
 

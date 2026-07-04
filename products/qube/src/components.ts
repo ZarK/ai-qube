@@ -12,6 +12,7 @@ import {
   type QubeIntegrationSurface,
 } from "@tjalve/qube-core";
 
+import { dependencyVersion } from "./package.js";
 import { listGrokBuildHostCapabilities } from "./grok_build_host.js";
 
 export type QubeOptionSupport = "installed" | "optional" | "unsupported";
@@ -180,14 +181,14 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "bootstrap",
     command: "aib",
     packageName: "@tjalve/aib",
-    packageVersion: "0.2.0",
+    packageVersion: dependencyVersion("@tjalve/aib"),
     summary: "Plan projects, specs, milestones, and work-item drafts."
   },
   {
     id: "executor",
     command: "aie",
     packageName: "@tjalve/aie",
-    packageVersion: "0.2.0",
+    packageVersion: dependencyVersion("@tjalve/aie"),
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     capabilities: {
       localReview: {
@@ -214,14 +215,14 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "quality",
     command: "aiq",
     packageName: "@tjalve/aiq",
-    packageVersion: "0.2.3",
+    packageVersion: dependencyVersion("@tjalve/aiq"),
     summary: "Run staged quality gates and produce agent-readable evidence."
   },
   {
     id: "umpire",
     command: "aiu",
     packageName: "@tjalve/aiu",
-    packageVersion: "0.0.5",
+    packageVersion: dependencyVersion("@tjalve/aiu"),
     summary: "Guard agent continuation, host policy, and safe idle-work decisions."
   }
 ]);

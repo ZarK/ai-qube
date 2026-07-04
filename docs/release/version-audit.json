@@ -7,9 +7,9 @@
       "name": "@tjalve/qube",
       "packageJson": "products/qube/package.json",
       "published": true,
-      "latestPublished": "0.1.1",
-      "publishedVersions": ["0.1.0", "0.1.1"],
-      "selectedVersion": "0.2.0"
+      "latestPublished": "0.2.0",
+      "publishedVersions": ["0.1.0", "0.1.1", "0.2.0"],
+      "selectedVersion": "0.2.1"
     },
     {
       "name": "@tjalve/qube-cli",
@@ -31,81 +31,81 @@
       "name": "@tjalve/qube-adapter-github",
       "packageJson": "adapters/github/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-codex",
       "packageJson": "adapters/codex/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-opencode",
       "packageJson": "adapters/opencode/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-claude-code",
       "packageJson": "adapters/claude-code/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-gitlab",
       "packageJson": "adapters/gitlab/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-linear",
       "packageJson": "adapters/linear/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-jira",
       "packageJson": "adapters/jira/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/qube-adapter-jenkins",
       "packageJson": "adapters/jenkins/package.json",
       "published": true,
-      "latestPublished": "0.1.0",
-      "publishedVersions": ["0.1.0"],
-      "selectedVersion": "0.1.1"
+      "latestPublished": "0.1.1",
+      "publishedVersions": ["0.1.0", "0.1.1"],
+      "selectedVersion": "0.1.2"
     },
     {
       "name": "@tjalve/aib",
       "packageJson": "products/aib/package.json",
       "published": true,
-      "latestPublished": "0.1.1",
-      "publishedVersions": ["0.1.0", "0.1.1"],
-      "selectedVersion": "0.2.0"
+      "latestPublished": "0.2.0",
+      "publishedVersions": ["0.1.0", "0.1.1", "0.2.0"],
+      "selectedVersion": "0.2.1"
     },
     {
       "name": "@tjalve/aie",
       "packageJson": "products/aie/package.json",
       "published": true,
-      "latestPublished": "0.1.4",
-      "publishedVersions": ["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4"],
-      "selectedVersion": "0.2.0"
+      "latestPublished": "0.2.0",
+      "publishedVersions": ["0.1.0", "0.1.1", "0.1.2", "0.1.3", "0.1.4", "0.2.0"],
+      "selectedVersion": "0.2.1"
     },
     {
       "name": "@tjalve/aiq",

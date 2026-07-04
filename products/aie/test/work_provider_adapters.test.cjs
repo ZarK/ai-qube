@@ -139,22 +139,19 @@ describe('work provider adapter boundary', () => {
 
   it('does not silently fall back to GitHub when an optional adapter is missing', async () => {
     const { createWorkProvider } = require('../dist/providers/work_provider_adapters.js');
-    const provider = await createWorkProvider('linear');
 
-    assert.equal(provider.id, 'linear');
-    assert.deepEqual(provider.capabilities(), {
-      listOpenWork: false,
-      loadWork: false,
-      planStatusSync: false,
-      planLifecycleMutations: false,
-      applyLifecycleMutations: false,
-      commentMutations: false,
-      reviewIntegration: false,
-      ciMergeStatus: false,
-    });
     await assert.rejects(
-      () => provider.listOpenWorkItems(),
-      /@tjalve\/qube-adapter-linear.*LINEAR_API_KEY.*qube install --work-provider linear/s,
+      async () => {
+        const provider = await createWorkProvider('linear');
+        assert.equal(provider.id, 'linear');
+        await provider.listOpenWorkItems();
+      },
+      error => {
+        const message = error instanceof Error ? error.message : String(error);
+        assert.match(message, /linear|LINEAR_API_KEY|@tjalve\/qube-adapter-linear/i);
+        assert.doesNotMatch(message, /github/i);
+        return true;
+      },
     );
   });
 

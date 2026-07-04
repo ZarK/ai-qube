@@ -546,7 +546,7 @@ export const aibCli = createCli({
         throw stateError("work-items generate", error);
       }
     }),
-    createCommand(workItemsRenderCommand, ({ flags }) => {
+    createCommand(workItemsRenderCommand, async ({ flags }) => {
       try {
         const envelope = readBootstrapState(typeof flags.state === "string" ? flags.state : ".qube/aib/session.json");
         const projectRoot = projectRootForState(envelope.statePath);
@@ -578,8 +578,8 @@ export const aibCli = createCli({
         let result: WorkItemRenderResult;
         try {
           result = flags["dry-run"] === true || provider === "github" || provider === "gitlab" || provider === "linear" || provider === "jira"
-            ? renderWorkItemDrafts(envelope.state, provider, { outputDir })
-            : writeRenderedMarkdownWorkItems(envelope.state, { outputDir, baseDir: projectRoot });
+            ? await renderWorkItemDrafts(envelope.state, provider, { outputDir })
+            : await writeRenderedMarkdownWorkItems(envelope.state, { outputDir, baseDir: projectRoot });
         } catch (error) {
           if (error instanceof WorkItemQueueOrderError) {
             throw createCliError({

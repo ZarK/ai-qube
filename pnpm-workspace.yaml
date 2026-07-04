@@ -12,6 +12,22 @@ packages:
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
   - undici@6.27.0
+  # First-party QUBE packages from this repository (trusted publishing). Third-party deps still use the age gate.
+  - "@tjalve/qube"
+  - "@tjalve/qube-cli"
+  - "@tjalve/qube-core"
+  - "@tjalve/qube-adapter-github"
+  - "@tjalve/qube-adapter-codex"
+  - "@tjalve/qube-adapter-opencode"
+  - "@tjalve/qube-adapter-claude-code"
+  - "@tjalve/qube-adapter-gitlab"
+  - "@tjalve/qube-adapter-linear"
+  - "@tjalve/qube-adapter-jira"
+  - "@tjalve/qube-adapter-jenkins"
+  - "@tjalve/aib"
+  - "@tjalve/aie"
+  - "@tjalve/aiq"
+  - "@tjalve/aiu"
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true
 trustPolicy: no-downgrade

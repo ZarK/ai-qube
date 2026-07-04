@@ -70,6 +70,12 @@ describe('package publish surface safety', () => {
     }
   });
 
+  it('resolves workspace protocol dependencies before publish', () => {
+    assert.match(pkg.scripts.prepack, /resolve-publish-dependencies\.mjs/);
+    assert.match(pkg.scripts.prepack, /check-publish-manifest\.mjs/);
+    assert.match(pkg.scripts.postpack, /restore-publish-dependencies\.mjs/);
+  });
+
   it('keeps trusted publishing staged, tokenless, and pinned', () => {
     const workflowPath = join(__dirname, '..', '..', '..', '.github', 'workflows', 'publish.yml');
     assert.equal(existsSync(workflowPath), true);
