@@ -14,6 +14,7 @@ interface PackageJson {
 interface PyProject {
   readonly name: string | null;
   readonly workspacePatterns: readonly string[];
+  readonly toolMarkers: readonly string[];
 }
 
 interface RootBuildSignal {
@@ -136,6 +137,7 @@ function readPyProject(root: string, path = 'pyproject.toml'): PyProject | null 
   return {
     name: pyProjectName(text),
     workspacePatterns: pythonWorkspacePatterns(text),
+    toolMarkers: pythonToolMarkers(text),
   };
 }
 
@@ -177,6 +179,19 @@ function pythonWorkspacePatterns(text: string): string[] {
     if (collectingMembers && line.includes(']')) collectingMembers = false;
   }
   return [...new Set(patterns)].sort();
+}
+
+function pythonToolMarkers(text: string): string[] {
+  const markers = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    const section = sectionMatch?.[1].trim();
+    if (section === 'tool.poetry' || section?.startsWith('tool.poetry.')) markers.add('pyproject.toml#tool.poetry');
+    if (section === 'tool.hatch' || section?.startsWith('tool.hatch.')) markers.add('pyproject.toml#tool.hatch');
+    if (section === 'tool.pdm' || section?.startsWith('tool.pdm.')) markers.add('pyproject.toml#tool.pdm');
+    if (section === 'tool.uv' || section?.startsWith('tool.uv.')) markers.add('pyproject.toml#tool.uv');
+  }
+  return [...markers].sort();
 }
 
 function readWorkspacePatterns(packageJson: PackageJson | null, root: string): string[] {
@@ -333,7 +348,7 @@ function hasJsWorkspaceSignals(signals: JsWorkspaceSignals): boolean {
 function detectPythonWorkspaceSignals(root: string | null, rootPyProject: PyProject | null): PythonWorkspaceSignals {
   if (!root) return { declaredPatterns: [], markerPaths: [], resolvedProjectPaths: [] };
   const declaredPatterns = [...(rootPyProject?.workspacePatterns ?? [])];
-  const markerPaths = PYTHON_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path)));
+  const markerPaths = [...PYTHON_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path))), ...(rootPyProject?.toolMarkers ?? [])].sort();
   const resolvedProjectPaths = [...new Set([
     ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'pyproject.toml')),
     ...PYTHON_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
@@ -363,7 +378,7 @@ function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildS
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
-    .filter(marker => existsSync(join(root, marker.path)))
+    .filter(marker => existsSync(join(root, marker.path.split('#')[0])))
     .filter((marker, index, markers) => markers.findIndex(other => other.path === marker.path) === index);
 }
 

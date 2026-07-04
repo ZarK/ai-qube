@@ -7,3 +7,6 @@ members = [
   "packages/*",
   "services/*",
 ]
+
+[tool.hatch.envs.default]
+dependencies = []

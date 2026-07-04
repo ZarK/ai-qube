@@ -240,6 +240,8 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.find(project => project.path === 'services/api').packageName, 'fixture-python-api');
     assert.deepEqual(result.lockfiles, []);
     assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml#tool.hatch'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml#tool.uv'));
     assert.ok(result.rootMarkers.some(marker => marker.path === 'uv.lock'));
     assert.ok(result.rootMarkers.some(marker => marker.path === 'tox.ini'));
     assert.ok(result.rootMarkers.some(marker => marker.path === 'noxfile.py'));
