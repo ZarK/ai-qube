@@ -46,7 +46,7 @@
     "@tjalve/qube-adapter-jira": "workspace:*",
     "@tjalve/qube-adapter-linear": "workspace:*",
     "@tjalve/qube-cli": "0.2.0",
-    "@tjalve/qube-core": "0.2.0"
+    "@tjalve/qube-core": "0.2.1"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

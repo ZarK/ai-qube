@@ -2,6 +2,14 @@
   "name": "@tjalve/aiu",
   "version": "0.0.5",
   "description": "AI Umpire package foundation and CLI for safe agent continuation.",
+  "keywords": [
+    "cli",
+    "agent",
+    "continuation",
+    "umpire",
+    "automation"
+  ],
+  "author": "tjalve",
   "type": "module",
   "license": "MIT",
   "packageManager": "pnpm@11.0.4",

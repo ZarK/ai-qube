@@ -158,7 +158,7 @@ importers:
         specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.0
+        specifier: 0.2.1
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -174,7 +174,7 @@ importers:
         specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.0
+        specifier: 0.2.1
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -368,7 +368,7 @@ importers:
         specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.2.0
+        specifier: 0.2.1
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Codex host capability adapter for QUBE local review runner and instruction integrations.",
   "keywords": [
     "cli",
@@ -39,7 +39,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

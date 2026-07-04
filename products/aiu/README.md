@@ -16,14 +16,14 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.4
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiu@0.0.5
 pnpm exec aiu --help
 ```
 
 For manual global use:
 
 ```sh
-npm install -g @tjalve/aiu@0.0.4 --ignore-scripts
+npm install -g @tjalve/aiu@0.0.5 --ignore-scripts
 aiu --help
 ```
 

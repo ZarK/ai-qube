@@ -15,7 +15,7 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-pnpm add @tjalve/qube-cli@0.1.2 --save-exact --ignore-scripts
+pnpm add @tjalve/qube-cli@0.2.0 --save-exact --ignore-scripts
 ```
 
 ## What It Provides

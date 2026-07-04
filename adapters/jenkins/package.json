@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/qube-adapter-jenkins",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Jenkins CI provider adapter for QUBE gate evidence reads and unsupported mutation reporting.",
   "keywords": [
     "cli",
@@ -39,7 +39,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

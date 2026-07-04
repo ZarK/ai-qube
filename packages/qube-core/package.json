@@ -1,7 +1,14 @@
 {
   "name": "@tjalve/qube-core",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Shared QUBE product, provider, review, and adapter contracts.",
+  "keywords": [
+    "qube",
+    "contracts",
+    "work-items",
+    "review",
+    "adapter"
+  ],
   "type": "module",
   "license": "MIT",
   "author": "tjalve",
@@ -27,7 +34,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "README.md"
   ],
   "publishConfig": {
     "access": "public",

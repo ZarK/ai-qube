@@ -13,14 +13,14 @@ https://github.com/ZarK/ai-qube/blob/HEAD/docs/index.html.
 ## Install
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/aiq@0.2.2
+pnpm add -D --save-exact --ignore-scripts @tjalve/aiq@0.2.3
 pnpm exec aiq --help
 ```
 
 For a one-off pinned run:
 
 ```sh
-npx @tjalve/aiq@0.2.2 doctor
+npx @tjalve/aiq@0.2.3 doctor
 ```
 
 ## Quick Start

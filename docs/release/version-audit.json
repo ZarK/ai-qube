@@ -22,74 +22,74 @@
     {
       "name": "@tjalve/qube-core",
       "packageJson": "packages/qube-core/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.2.0"
+      "published": true,
+      "latestPublished": "0.2.0",
+      "publishedVersions": ["0.2.0"],
+      "selectedVersion": "0.2.1"
     },
     {
       "name": "@tjalve/qube-adapter-github",
       "packageJson": "adapters/github/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-codex",
       "packageJson": "adapters/codex/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-opencode",
       "packageJson": "adapters/opencode/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-claude-code",
       "packageJson": "adapters/claude-code/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-gitlab",
       "packageJson": "adapters/gitlab/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-linear",
       "packageJson": "adapters/linear/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-jira",
       "packageJson": "adapters/jira/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/qube-adapter-jenkins",
       "packageJson": "adapters/jenkins/package.json",
-      "published": false,
-      "latestPublished": null,
-      "publishedVersions": [],
-      "selectedVersion": "0.1.0"
+      "published": true,
+      "latestPublished": "0.1.0",
+      "publishedVersions": ["0.1.0"],
+      "selectedVersion": "0.1.1"
     },
     {
       "name": "@tjalve/aib",
