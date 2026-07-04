@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aiq-internal-lsp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -15,7 +15,7 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@tjalve/aiq": "0.2.2"
+    "@tjalve/aiq": "0.2.3"
   },
   "repository": {
     "type": "git",

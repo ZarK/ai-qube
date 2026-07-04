@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aib",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "AI Bootstrap - agent-operated project discovery and planning CLI.",
   "keywords": [
     "cli",
@@ -45,8 +45,8 @@
     "@tjalve/qube-adapter-gitlab": "workspace:*",
     "@tjalve/qube-adapter-jira": "workspace:*",
     "@tjalve/qube-adapter-linear": "workspace:*",
-    "@tjalve/qube-cli": "0.1.2",
-    "@tjalve/qube-core": "0.1.1"
+    "@tjalve/qube-cli": "0.2.0",
+    "@tjalve/qube-core": "0.2.0"
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",

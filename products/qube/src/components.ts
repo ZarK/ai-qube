@@ -180,14 +180,14 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "bootstrap",
     command: "aib",
     packageName: "@tjalve/aib",
-    packageVersion: "0.1.2",
+    packageVersion: "0.2.0",
     summary: "Plan projects, specs, milestones, and work-item drafts."
   },
   {
     id: "executor",
     command: "aie",
     packageName: "@tjalve/aie",
-    packageVersion: "0.1.4",
+    packageVersion: "0.2.0",
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
     capabilities: {
       localReview: {
@@ -214,14 +214,14 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     id: "quality",
     command: "aiq",
     packageName: "@tjalve/aiq",
-    packageVersion: "0.2.2",
+    packageVersion: "0.2.3",
     summary: "Run staged quality gates and produce agent-readable evidence."
   },
   {
     id: "umpire",
     command: "aiu",
     packageName: "@tjalve/aiu",
-    packageVersion: "0.0.4",
+    packageVersion: "0.0.5",
     summary: "Guard agent continuation, host policy, and safe idle-work decisions."
   }
 ]);

@@ -155,10 +155,10 @@ importers:
         specifier: workspace:*
         version: link:../../adapters/linear
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.1.1
+        specifier: 0.2.0
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -171,10 +171,10 @@ importers:
   products/aie:
     dependencies:
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.1.1
+        specifier: 0.2.0
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -209,17 +209,17 @@ importers:
         specifier: 1.9.4
         version: 1.9.4
       '@tjalve/aie':
-        specifier: 0.1.4
+        specifier: 0.2.0
         version: link:../aie
       '@tjalve/aiu':
         specifier: 0.0.4
-        version: link:../aiu
+        version: 0.0.4
       '@types/node':
         specifier: 24.12.0
         version: 24.12.0
       '@vitest/coverage-v8':
         specifier: 3.2.6
-        version: 3.2.6(supports-color@8.1.1)(vitest@3.2.6(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3))
+        version: 3.2.6(vitest@3.2.6(@types/node@24.12.0)(yaml@2.8.3))
       esbuild:
         specifier: 0.25.12
         version: 0.25.12
@@ -231,7 +231,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: 3.2.6
-        version: 3.2.6(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3)
+        version: 3.2.6(@types/node@24.12.0)(yaml@2.8.3)
 
   products/aiq/packages/benchmark: {}
 
@@ -241,7 +241,7 @@ importers:
         specifier: 1.9.4
         version: 1.9.4
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../../../packages/qube-cli
       htmlhint:
         specifier: 1.9.2
@@ -257,7 +257,7 @@ importers:
         version: 15.7.2
       stylelint:
         specifier: 17.5.0
-        version: 17.5.0(supports-color@8.1.1)(typescript@5.9.3)
+        version: 17.5.0(typescript@5.9.3)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -286,7 +286,7 @@ importers:
         version: 15.7.2
       stylelint:
         specifier: 17.5.0
-        version: 17.5.0(supports-color@8.1.1)(typescript@5.9.3)
+        version: 17.5.0(typescript@5.9.3)
       typescript:
         specifier: 5.9.3
         version: 5.9.3
@@ -298,27 +298,27 @@ importers:
     dependencies:
       '@actions/artifact':
         specifier: 6.2.1
-        version: 6.2.1(supports-color@8.1.1)
+        version: 6.2.1
       '@actions/core':
         specifier: 3.0.1
         version: 3.0.1
       '@tjalve/aiq':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../cli
 
   products/aiq/packages/hook:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../cli
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../../../packages/qube-cli
 
   products/aiq/packages/lsp:
     dependencies:
       '@tjalve/aiq':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../cli
 
   products/aiq/packages/model: {}
@@ -329,7 +329,7 @@ importers:
         specifier: 1.3.0
         version: 1.3.0
       '@tjalve/aiq':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../cli
 
   products/aiq/packages/reporters: {}
@@ -337,7 +337,7 @@ importers:
   products/aiu:
     dependencies:
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../packages/qube-cli
     devDependencies:
       '@types/node':
@@ -350,25 +350,25 @@ importers:
   products/qube:
     dependencies:
       '@tjalve/aib':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../aib
       '@tjalve/aie':
-        specifier: 0.1.4
+        specifier: 0.2.0
         version: link:../aie
       '@tjalve/aiq':
-        specifier: 0.2.2
+        specifier: 0.2.3
         version: link:../aiq/packages/cli
       '@tjalve/aiu':
-        specifier: 0.0.4
+        specifier: 0.0.5
         version: link:../aiu
       '@tjalve/qube-adapter-claude-code':
         specifier: workspace:*
         version: link:../../adapters/claude-code
       '@tjalve/qube-cli':
-        specifier: 0.1.2
+        specifier: 0.2.0
         version: link:../../packages/qube-cli
       '@tjalve/qube-core':
-        specifier: 0.1.1
+        specifier: 0.2.0
         version: link:../../packages/qube-core
     devDependencies:
       '@types/node':
@@ -1410,6 +1410,15 @@ packages:
 
   '@sinonjs/fake-timers@10.3.0':
     resolution: {integrity: sha512-V4BG07kuYSUkTCSBHG8G8TNhM+F19jXFWnQtzj+we8DrkpSBCee9Z3Ms8yiGer/dlmhe35/Xdgyo3/0rQKg7YA==}
+
+  '@tjalve/aiu@0.0.4':
+    resolution: {integrity: sha512-HZnvbdkFDBiWu45qhKILTsxXR+mf/BAb7jepMZWzdfKJyeIEH6u8FGcQDh0UFiq+rFGKxYfe8za/WhhK9+uFzA==}
+    engines: {node: '>=24.0.0'}
+    hasBin: true
+
+  '@tjalve/qube-cli@0.1.2':
+    resolution: {integrity: sha512-0VlnZCAezUZ8wbNdWwKpnbPhXoxas78htJLp5UMeRrgjzSKPwoFdTVosJvZOKD7jXFUUfhrQ6K11HR/pWDEDMA==}
+    engines: {node: '>=24.0.0', pnpm: '>=11.0.0'}
 
   '@types/babel__core@7.20.5':
     resolution: {integrity: sha512-qoQprZvz5wQFJwMDqeseRXWv3rqMvhgpbXFfVyWhbx9X47POIA6i/+dXefEmZKoAgOaTdaIgNSMqMIU61yRyzA==}
@@ -3256,7 +3265,7 @@ packages:
 
 snapshots:
 
-  '@actions/artifact@6.2.1(supports-color@8.1.1)':
+  '@actions/artifact@6.2.1':
     dependencies:
       '@actions/core': 3.0.1
       '@actions/github': 9.1.1
@@ -3267,7 +3276,7 @@ snapshots:
       '@octokit/plugin-retry': 8.1.0(@octokit/core@7.0.6)
       '@octokit/request': 10.0.10
       '@octokit/request-error': 7.1.0
-      '@protobuf-ts/plugin': 2.11.1(supports-color@8.1.1)
+      '@protobuf-ts/plugin': 2.11.1
       '@protobuf-ts/runtime': 2.11.1
       archiver: 7.0.1
       jwt-decode: 4.0.0
@@ -3655,10 +3664,10 @@ snapshots:
 
   '@bufbuild/protobuf@2.12.0': {}
 
-  '@bufbuild/protoplugin@2.12.0(supports-color@8.1.1)':
+  '@bufbuild/protoplugin@2.12.0':
     dependencies:
       '@bufbuild/protobuf': 2.12.0
-      '@typescript/vfs': 1.6.4(supports-color@8.1.1)(typescript@5.4.5)
+      '@typescript/vfs': 1.6.4(typescript@5.4.5)
       typescript: 5.4.5
     transitivePeerDependencies:
       - supports-color
@@ -4184,10 +4193,10 @@ snapshots:
   '@pkgjs/parseargs@0.11.0':
     optional: true
 
-  '@protobuf-ts/plugin@2.11.1(supports-color@8.1.1)':
+  '@protobuf-ts/plugin@2.11.1':
     dependencies:
       '@bufbuild/protobuf': 2.12.0
-      '@bufbuild/protoplugin': 2.12.0(supports-color@8.1.1)
+      '@bufbuild/protoplugin': 2.12.0
       '@protobuf-ts/protoc': 2.11.1
       '@protobuf-ts/runtime': 2.11.1
       '@protobuf-ts/runtime-rpc': 2.11.1
@@ -4290,6 +4299,15 @@ snapshots:
     dependencies:
       '@sinonjs/commons': 3.0.1
 
+  '@tjalve/aiu@0.0.4':
+    dependencies:
+      '@tjalve/qube-cli': 0.1.2
+
+  '@tjalve/qube-cli@0.1.2':
+    dependencies:
+      '@clack/prompts': 1.1.0
+      '@oclif/core': 4.8.0
+
   '@types/babel__core@7.20.5':
     dependencies:
       '@babel/parser': 7.29.7
@@ -4358,7 +4376,7 @@ snapshots:
     dependencies:
       '@types/yargs-parser': 21.0.3
 
-  '@typescript/vfs@1.6.4(supports-color@8.1.1)(typescript@5.4.5)':
+  '@typescript/vfs@1.6.4(typescript@5.4.5)':
     dependencies:
       debug: 4.4.3(supports-color@8.1.1)
       typescript: 5.4.5
@@ -4373,7 +4391,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  '@vitest/coverage-v8@3.2.6(supports-color@8.1.1)(vitest@3.2.6(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3))':
+  '@vitest/coverage-v8@3.2.6(vitest@3.2.6(@types/node@24.12.0)(yaml@2.8.3))':
     dependencies:
       '@ampproject/remapping': 2.3.0
       '@bcoe/v8-coverage': 1.0.2
@@ -4381,14 +4399,14 @@ snapshots:
       debug: 4.4.3(supports-color@8.1.1)
       istanbul-lib-coverage: 3.2.2
       istanbul-lib-report: 3.0.1
-      istanbul-lib-source-maps: 5.0.6(supports-color@8.1.1)
+      istanbul-lib-source-maps: 5.0.6
       istanbul-reports: 3.2.0
       magic-string: 0.30.21
       magicast: 0.3.5
       std-env: 3.10.0
       test-exclude: 7.0.2
       tinyrainbow: 2.0.0
-      vitest: 3.2.6(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3)
+      vitest: 3.2.6(@types/node@24.12.0)(yaml@2.8.3)
     transitivePeerDependencies:
       - supports-color
 
@@ -5228,7 +5246,7 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  istanbul-lib-source-maps@5.0.6(supports-color@8.1.1):
+  istanbul-lib-source-maps@5.0.6:
     dependencies:
       '@jridgewell/trace-mapping': 0.3.31
       debug: 4.4.3(supports-color@8.1.1)
@@ -6068,7 +6086,7 @@ snapshots:
     dependencies:
       anynum: 1.0.0
 
-  stylelint@17.5.0(supports-color@8.1.1)(typescript@5.9.3):
+  stylelint@17.5.0(typescript@5.9.3):
     dependencies:
       '@csstools/css-calc': 3.2.1(@csstools/css-parser-algorithms@4.0.0(@csstools/css-tokenizer@4.0.0))(@csstools/css-tokenizer@4.0.0)
       '@csstools/css-parser-algorithms': 4.0.0(@csstools/css-tokenizer@4.0.0)
@@ -6246,7 +6264,7 @@ snapshots:
       '@types/istanbul-lib-coverage': 2.0.6
       convert-source-map: 2.0.0
 
-  vite-node@3.2.4(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3):
+  vite-node@3.2.4(@types/node@24.12.0)(yaml@2.8.3):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3(supports-color@8.1.1)
@@ -6280,7 +6298,7 @@ snapshots:
       fsevents: 2.3.3
       yaml: 2.8.3
 
-  vitest@3.2.6(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3):
+  vitest@3.2.6(@types/node@24.12.0)(yaml@2.8.3):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.6
@@ -6303,7 +6321,7 @@ snapshots:
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
       vite: 7.3.5(@types/node@24.12.0)(yaml@2.8.3)
-      vite-node: 3.2.4(@types/node@24.12.0)(supports-color@8.1.1)(yaml@2.8.3)
+      vite-node: 3.2.4(@types/node@24.12.0)(yaml@2.8.3)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/node': 24.12.0

@@ -1,6 +1,6 @@
 {
   "name": "@tjalve/aie",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "AI Executor - autonomous GitHub issue execution for agentic development.",
   "keywords": [
     "cli",
@@ -45,8 +45,8 @@
     "README.md"
   ],
   "dependencies": {
-    "@tjalve/qube-cli": "0.1.2",
-    "@tjalve/qube-core": "0.1.1"
+    "@tjalve/qube-cli": "0.2.0",
+    "@tjalve/qube-core": "0.2.0"
   },
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",

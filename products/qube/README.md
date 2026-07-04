@@ -29,14 +29,14 @@ command prints a plan and copyable commands; it does not run package managers or
 install hidden dependencies.
 
 ```sh
-pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.2
+pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.0
 pnpm exec qube components
 ```
 
 Global installs are acceptable for manual use when the exact version is pinned:
 
 ```sh
-npm install -g @tjalve/qube@0.1.2 --ignore-scripts
+npm install -g @tjalve/qube@0.2.0 --ignore-scripts
 qube components
 ```
 
