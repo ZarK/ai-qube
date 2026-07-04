@@ -119,18 +119,19 @@ function readPackageJson(root: string, path = 'package.json'): PackageJson | nul
 
 function readWorkspacePatterns(packageJson: PackageJson | null, root: string): string[] {
   const workspaces = packageJson?.workspaces;
-  if (Array.isArray(workspaces)) return workspaces.filter((value): value is string => typeof value === 'string');
+  const patterns: string[] = [];
+  if (Array.isArray(workspaces)) patterns.push(...workspaces.filter((value): value is string => typeof value === 'string'));
   if (workspaces && typeof workspaces === 'object' && Array.isArray((workspaces as { packages?: unknown }).packages)) {
-    return (workspaces as { packages: unknown[] }).packages.filter((value): value is string => typeof value === 'string');
+    patterns.push(...(workspaces as { packages: unknown[] }).packages.filter((value): value is string => typeof value === 'string'));
   }
   const workspaceFile = join(root, 'pnpm-workspace.yaml');
-  if (!existsSync(workspaceFile)) return [];
-  const patterns: string[] = [];
-  for (const line of readFileSync(workspaceFile, 'utf8').split(/\r?\n/)) {
-    const match = line.match(/^\s*-\s+["']?([^"']+)["']?\s*$/);
-    if (match) patterns.push(match[1]);
+  if (existsSync(workspaceFile)) {
+    for (const line of readFileSync(workspaceFile, 'utf8').split(/\r?\n/)) {
+      const match = line.match(/^\s*-\s+["']?([^"']+)["']?\s*$/);
+      if (match) patterns.push(match[1]);
+    }
   }
-  return patterns;
+  return [...new Set(patterns)].sort();
 }
 
 function expandWorkspacePattern(root: string, pattern: string): string[] {
