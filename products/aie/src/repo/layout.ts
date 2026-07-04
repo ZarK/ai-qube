@@ -400,12 +400,17 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   const rootPyProject = readPyProject(root);
   const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths])].sort();
   const projects: RepoProject[] = [];
-  if (rootPackage) {
+  const jsWorkspace = rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals);
+  const pythonWorkspace = rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals);
+  if (pythonWorkspace && !jsWorkspace) {
+    const packageName = rootPyProject.name;
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (rootPackage) {
     const packageName = typeof rootPackage.name === 'string' ? rootPackage.name : null;
-    projects.push({ id: projectId('.', packageName), path: '.', kind: hasJsWorkspaceSignals(jsWorkspaceSignals) ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+    projects.push({ id: projectId('.', packageName), path: '.', kind: jsWorkspace ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
   } else if (rootPyProject) {
     const packageName = rootPyProject.name;
-    projects.push({ id: projectId('.', packageName), path: '.', kind: hasPythonWorkspaceSignals(pythonWorkspaceSignals) ? 'workspace' : 'app', packageName, packageManager: null, gates: gatesForProject('.') });
+    projects.push({ id: projectId('.', packageName), path: '.', kind: pythonWorkspace ? 'workspace' : 'app', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);

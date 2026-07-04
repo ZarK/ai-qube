@@ -247,6 +247,32 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.rootMarkers.some(marker => marker.path === 'noxfile.py'));
   });
 
+  it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'python-workspace-monorepo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'packages/core', 'services/api']);
+    const rootProject = inspected.projects.find(project => project.path === '.');
+    assert.equal(rootProject.id, 'fixture-python-root');
+    assert.equal(rootProject.kind, 'workspace');
+    assert.equal(rootProject.packageName, 'fixture-python-root');
+    assert.equal(rootProject.packageManager, null);
+
+    const affected = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['uv.lock'],
+    });
+
+    assert.equal(affected.layout.kind, 'python-workspace-monorepo');
+    assert.deepEqual(affected.affectedProjects.map(project => project.project.id), ['fixture-python-root']);
+    assert.equal(affected.affectedProjects[0].project.packageName, 'fixture-python-root');
+    assert.equal(affected.affectedProjects[0].project.kind, 'workspace');
+  });
+
   it('inspects a single app service layout from fixture root signals', async () => {
     const repo = makeFixtureRepo('single-app-service');
 
