@@ -17,6 +17,7 @@
     "test:aiq": "pnpm --filter @tjalve/aiq-workspace test",
     "site:preview": "node scripts/serve-docs.mjs",
     "version:audit": "node scripts/check-version-audit.mjs",
+    "publish:plan": "node scripts/print-publish-plan.mjs",
     "verify": "pnpm run version:audit && pnpm --filter @tjalve/qube-core run verify && pnpm --filter @tjalve/qube-adapter-github run verify && pnpm --filter @tjalve/qube-adapter-codex run verify && pnpm --filter @tjalve/qube-adapter-claude-code run verify && pnpm --filter @tjalve/qube-adapter-opencode run verify && pnpm --filter @tjalve/qube-adapter-gitlab run verify && pnpm --filter @tjalve/qube-adapter-linear run verify && pnpm --filter @tjalve/qube-adapter-jira run verify && pnpm --filter @tjalve/qube-adapter-jenkins run verify && pnpm --filter @tjalve/qube-cli run verify && pnpm --filter @tjalve/aib run verify && pnpm --filter @tjalve/aie run verify && pnpm --filter @tjalve/aiu run release:check && pnpm --filter @tjalve/qube run verify && pnpm --filter @tjalve/aiq-workspace run build && pnpm --filter @tjalve/aiq-workspace test && pnpm --filter @tjalve/aiq-workspace run test:publish-readiness",
     "verify:aiq": "pnpm --filter @tjalve/aiq-workspace run build && pnpm --filter @tjalve/aiq-workspace test && pnpm --filter @tjalve/aiq-workspace run test:publish-readiness && pnpm --filter @tjalve/aiq-workspace run bench:ci"
   }
