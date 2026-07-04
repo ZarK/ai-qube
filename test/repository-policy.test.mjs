@@ -32,7 +32,10 @@ describe("repository policy", () => {
     assert.match(workflow, /id-token:\s*write/);
     assert.match(workflow, /npm install -g npm@11\.15\.0 --ignore-scripts/);
     assert.match(workflow, /git merge-base --is-ancestor "\$tag_commit" origin\/main/);
+    assert.match(workflow, /resolve-publish-dependencies\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
+    assert.match(workflow, /check-publish-manifest\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
     assert.match(workflow, /npm stage publish \. --access public --ignore-scripts/);
+    assert.match(workflow, /restore-publish-dependencies\.mjs "\$\{\{ steps\.plan\.outputs\.path \}\}\/package\.json"/);
     assert.doesNotMatch(workflow, /NODE_AUTH_TOKEN|NPM_TOKEN|secrets\./);
     assert.doesNotMatch(workflow, /(?:^|\s)npm publish(?:\s|$)/);
     assert.match(codeowners, /^\.npmrc @ZarK$/m);
