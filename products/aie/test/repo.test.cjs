@@ -224,6 +224,64 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
   });
 
+  it('inspects a single app service layout from fixture root signals', async () => {
+    const repo = makeFixtureRepo('single-app-service');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'single-app-service');
+    assert.deepEqual(result.projects.map(project => [project.id, project.path, project.kind]), [['single-app-fixture', '.', 'app']]);
+    assert.equal(result.projects[0].packageName, 'single-app-fixture');
+    assert.ok(result.projects[0].gates.includes('build'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'package.json'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+  });
+
+  it('maps nested single app changes to the root project and safe gates', async () => {
+    const repo = makeFixtureRepo('single-app-service');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['src/index.ts', 'test/index.test.ts', 'package.json'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['single-app-fixture']);
+    assert.deepEqual(result.affectedProjects[0].changedPaths, ['src/index.ts', 'test/index.test.ts', 'package.json']);
+    assert.ok(result.affectedProjects[0].gates.includes('build'));
+    assert.ok(result.affectedProjects[0].gates.includes('typecheck'));
+    assert.ok(result.affectedProjects[0].gates.includes('test'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps generated single app paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('single-app-service');
+    mkdirSync(join(repo, 'dist'), { recursive: true });
+    writeFileSync(join(repo, 'dist', 'bundle.js'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['dist/bundle.js'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.suggestedGates.includes('build'));
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('treats conflicting single app root signals as ambiguous', async () => {
+    const repo = makeFixtureRepo('ambiguous-single-app');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.notEqual(result.kind, 'single-app-service');
+    assert.ok(result.warnings.some(warning => warning.includes('Multiple root package/build signals were detected')));
+  });
+
   it('uses narrow git probes for layout inspection', async () => {
     const repo = makeFixtureRepo('js-workspace');
     const calls = [];
