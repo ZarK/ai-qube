@@ -67,6 +67,15 @@ jobs:
           VERIFY_CMD: ${{ steps.plan.outputs.verify }}
         run: bash -euo pipefail -c "$VERIFY_CMD"
 
+      - name: Resolve publish manifest dependencies
+        run: |
+          node scripts/resolve-publish-dependencies.mjs "${{ steps.plan.outputs.path }}/package.json"
+          node scripts/check-publish-manifest.mjs "${{ steps.plan.outputs.path }}/package.json"
+
       - name: Publish selected package
         working-directory: ${{ steps.plan.outputs.path }}
         run: npm stage publish . --access public --ignore-scripts
+
+      - name: Restore publish manifest dependencies
+        if: always()
+        run: node scripts/restore-publish-dependencies.mjs "${{ steps.plan.outputs.path }}/package.json"
