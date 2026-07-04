@@ -50,7 +50,7 @@
   },
   "scripts": {
     "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\"",
-    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build",
+    "build:deps": "pnpm --dir ../.. --filter @tjalve/qube-core run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-gitlab run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-linear run build && pnpm --dir ../.. --filter @tjalve/qube-adapter-jira run build",
     "build": "pnpm run build:deps && pnpm run clean && tsc -p tsconfig.build.json",
     "typecheck": "pnpm run build:deps && tsc -p tsconfig.json --noEmit",
     "lint": "pnpm run typecheck",

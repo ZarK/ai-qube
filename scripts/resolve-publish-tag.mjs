@@ -11,7 +11,7 @@ const buildLinearAdapter = "pnpm --filter @tjalve/qube-adapter-linear run build"
 const buildJiraAdapter = "pnpm --filter @tjalve/qube-adapter-jira run build";
 const buildJenkinsAdapter = "pnpm --filter @tjalve/qube-adapter-jenkins run build";
 const buildQubeCli = "pnpm --filter @tjalve/qube-cli run build";
-const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildOpenCodeAdapter} && ${buildQubeCli}`;
+const buildAieDependencies = `${buildQubeCore} && ${buildGitHubAdapter} && ${buildGitLabAdapter} && ${buildLinearAdapter} && ${buildJiraAdapter} && ${buildCodexAdapter} && ${buildClaudeCodeAdapter} && ${buildOpenCodeAdapter} && ${buildQubeCli}`;
 const buildAiqDependencies = `${buildAieDependencies} && pnpm --filter @tjalve/aie run build && pnpm --filter @tjalve/aiu run build`;
 
 function adapterEntry(key, filter, packageJson, verifyFilter = filter) {
