@@ -82,7 +82,7 @@ Examples:
 ```bash
 qube autoresearch . "reduce CLI benchmark wall time without changing behavior"
 qube autoresearch /repo/api "improve p95 endpoint latency under the existing load test"
-qube autoresearch github:tjalve/ai-code-quality "reduce aiq bench totalDurationMs"
+qube autoresearch github:ZarK/ai-qube "reduce aiq bench totalDurationMs"
 ```
 
 The command should create an external run workspace, not inject a large harness into the target repo:
