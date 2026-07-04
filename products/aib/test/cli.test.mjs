@@ -1,11 +1,16 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const node = process.execPath;
+const packageJson = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8"));
+const packageName = packageJson.name;
+const packageVersion = packageJson.version;
 
 function runAib(args) {
   return spawnSync(node, ["bin/run", ...args], {
@@ -58,11 +63,11 @@ test("renders help and version", () => {
 
   const version = runAib(["--version"]);
   assert.equal(version.status, 0, version.stderr);
-  assert.equal(version.stdout.trim(), "0.2.1");
+  assert.equal(version.stdout.trim(), packageVersion);
 
   const shortVersion = runAib(["-v"]);
   assert.equal(shortVersion.status, 0, shortVersion.stderr);
-  assert.equal(shortVersion.stdout.trim(), "0.2.1");
+  assert.equal(shortVersion.stdout.trim(), packageVersion);
 
   const jsonVersion = runAib(["-v", "--json"]);
   assert.equal(jsonVersion.status, 0, jsonVersion.stderr);
@@ -70,10 +75,10 @@ test("renders help and version", () => {
     ok: true,
     command: "version",
     package: {
-      name: "@tjalve/aib",
-      version: "0.2.1"
+      name: packageName,
+      version: packageVersion
     },
-    version: "0.2.1"
+    version: packageVersion
   });
 });
 
