@@ -18,6 +18,12 @@ interface RootBuildSignal {
   readonly packageManager: string | null;
 }
 
+interface JsWorkspaceSignals {
+  readonly declaredPatterns: readonly string[];
+  readonly markerPaths: readonly string[];
+  readonly resolvedProjectPaths: readonly string[];
+}
+
 const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
   { path: 'package.json', markerKind: 'package', projectKind: 'app', packageManager: null },
   { path: 'pyproject.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
@@ -28,6 +34,9 @@ const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
   { path: 'build.gradle.kts', markerKind: 'build', projectKind: 'app', packageManager: null },
   { path: 'CMakeLists.txt', markerKind: 'build', projectKind: 'app', packageManager: null },
 ]);
+
+const JS_WORKSPACE_MARKER_FILES = ['pnpm-workspace.yaml', 'turbo.json', 'nx.json', 'lerna.json'] as const;
+const JS_WORKSPACE_PROJECT_DIRS = ['apps', 'packages', 'products', 'adapters', 'plugins'] as const;
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -220,13 +229,14 @@ function detectPackageManagers(root: string | null): RepoPackageManager[] {
       ['npm', `${prefix}package-lock.json`],
       ['pnpm', `${prefix}pnpm-lock.yaml`],
       ['yarn', `${prefix}yarn.lock`],
+      ['bun', `${prefix}bun.lock`],
       ['bun', `${prefix}bun.lockb`],
     ];
     const match = lockfiles.find(([, lockfile]) => existsSync(join(repoRoot, lockfile)));
     managers.push({ kind: match?.[0] ?? 'unknown', manifestPath: `${prefix}package.json`, lockfilePath: match?.[1] ?? null });
   }
   if (existsSync(join(repoRoot, 'package.json'))) addPackage('.');
-  for (const top of ['packages', 'products', 'adapters', 'plugins']) {
+  for (const top of JS_WORKSPACE_PROJECT_DIRS) {
     const directory = join(repoRoot, top);
     if (!existsSync(directory)) continue;
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
@@ -236,14 +246,35 @@ function detectPackageManagers(root: string | null): RepoPackageManager[] {
   return managers;
 }
 
-function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[]): RepoRootMarker[] {
+function detectJsWorkspaceSignals(root: string | null, rootPackage: PackageJson | null): JsWorkspaceSignals {
+  if (!root) return { declaredPatterns: [], markerPaths: [], resolvedProjectPaths: [] };
+  const declaredPatterns = readWorkspacePatterns(rootPackage, root);
+  const markerPaths = JS_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path)));
+  const resolvedProjectPaths = [...new Set([
+    ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern)),
+    ...JS_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
+      const directory = join(root, directoryName);
+      if (!existsSync(directory)) return [];
+      return readdirSync(directory, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'package.json')))
+        .map(entry => portablePath(join(directoryName, entry.name)));
+    }),
+  ])].sort();
+  return { declaredPatterns, markerPaths, resolvedProjectPaths };
+}
+
+function hasJsWorkspaceSignals(signals: JsWorkspaceSignals): boolean {
+  return signals.declaredPatterns.length > 0 || signals.markerPaths.length > 0 || signals.resolvedProjectPaths.length > 0;
+}
+
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
-    { path: 'pnpm-workspace.yaml', kind: 'workspace' },
     { path: '.github/workflows', kind: 'ci' },
     { path: 'tsconfig.json', kind: 'build' },
     { path: 'docs', kind: 'docs' },
+    ...jsWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
@@ -264,14 +295,13 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[]): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoProject[] {
   const rootPackage = readPackageJson(root);
-  const patterns = readWorkspacePatterns(rootPackage, root);
-  const paths = [...new Set(patterns.flatMap(pattern => expandWorkspacePattern(root, pattern)))].sort();
+  const paths = [...jsWorkspaceSignals.resolvedProjectPaths];
   const projects: RepoProject[] = [];
   if (rootPackage) {
     const packageName = typeof rootPackage.name === 'string' ? rootPackage.name : null;
-    projects.push({ id: projectId('.', packageName), path: '.', kind: paths.length > 0 ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+    projects.push({ id: projectId('.', packageName), path: '.', kind: hasJsWorkspaceSignals(jsWorkspaceSignals) ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);
@@ -285,19 +315,21 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   return projects;
 }
 
-function detectLayoutKind(root: string | null, rootMarkers: readonly RepoRootMarker[], projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[]): RepoLayoutKind {
+function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
-  if (rootMarkers.some(marker => marker.path === 'pnpm-workspace.yaml') || projects.filter(project => project.path !== '.').length > 0) return 'javascript-typescript-workspace';
+  if (hasJsWorkspaceSignals(jsWorkspaceSignals) && (rootSignals.some(signal => signal.path === 'package.json') || projects.filter(project => project.path !== '.').length > 0)) return 'javascript-typescript-workspace';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[]): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): string[] {
   const warnings: string[] = [];
   if (!root) warnings.push('Not inside a git repository; layout inspection is incomplete.');
   if (rootSignals.length > 1 && kind === 'unknown') warnings.push(`Multiple root package/build signals were detected (${rootSignals.map(signal => signal.path).join(', ')}); repository layout is ambiguous.`);
+  if (jsWorkspaceSignals.markerPaths.length > 0 && !rootSignals.some(signal => signal.path === 'package.json')) warnings.push(`JavaScript workspace marker(s) were detected (${jsWorkspaceSignals.markerPaths.join(', ')}) but no root package.json was found; workspace layout is ambiguous.`);
+  if (kind === 'javascript-typescript-workspace' && jsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('JavaScript workspace signals were detected, but no member package roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
   if (kind !== 'javascript-typescript-workspace' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
@@ -311,14 +343,16 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const root = repoState.root;
   const packageManagers = detectPackageManagers(root);
   const rootSignals = detectRootBuildSignals(root, packageManagers);
-  const rootMarkers = detectRootMarkers(root, rootSignals);
-  const projects = root ? workspaceProjects(root, packageManagers, rootSignals) : [];
+  const rootPackage = root ? readPackageJson(root) : null;
+  const jsWorkspaceSignals = detectJsWorkspaceSignals(root, rootPackage);
+  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
     ...pathSignals(root, ['dist', 'build', 'coverage', 'generated'], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, rootMarkers, projects, generatedPaths, vendorPaths, rootSignals);
+  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals);
   return {
     kind,
     root,
@@ -330,7 +364,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals)],
   };
 }
 
@@ -352,7 +386,7 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb$|pyproject\.toml$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];

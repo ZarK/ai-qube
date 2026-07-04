@@ -8,6 +8,7 @@ Add one positive fixture and one negative or ambiguous fixture for each layout s
 
 Current fixture shapes:
 
-- `js-workspace`: positive JavaScript workspace fixture with a root package, workspace manifest, package project, lockfile, and GitHub Actions workflow.
+- `js-workspace`: positive JavaScript workspace fixture with a root package, workspace manifest, app and package projects, Turbo metadata, lockfile, and GitHub Actions workflow.
+- `ambiguous-js-workspace`: negative JavaScript workspace fixture with tooling metadata but no root package manifest.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
