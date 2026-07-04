@@ -44,11 +44,11 @@ Useful references:
 
 ## Local Precedent: `aiq-autoreserach`
 
-The local repo `/Users/tjalve/Github/aiq-autoreserach` is the best QUBE-shaped prototype. It adapts the pattern to `ai-code-quality` with:
+The historical local repo `/Users/tjalve/Github/aiq-autoreserach` is the best QUBE-shaped prototype. It adapted the pattern to the legacy `ai-code-quality` checkout with:
 
 - fixed harness: `prepare.py`
 - agent instructions: `AGENTS.md` and `continuation.md`
-- target repo: `/Users/tjalve/Github/ai-code-quality`
+- historical target repo: `/Users/tjalve/Github/ai-code-quality`
 - runtime state under `.aiq-autoresearch/`
 - commands: `init`, `baseline`, `evaluate`, `status`, `serve-report`
 - objective: minimize `aiq bench --format json --tag ci` `summary.totalDurationMs`
@@ -82,7 +82,7 @@ Examples:
 ```bash
 qube autoresearch . "reduce CLI benchmark wall time without changing behavior"
 qube autoresearch /repo/api "improve p95 endpoint latency under the existing load test"
-qube autoresearch github:tjalve/ai-code-quality "reduce aiq bench totalDurationMs"
+qube autoresearch github:ZarK/ai-qube "reduce aiq bench totalDurationMs"
 ```
 
 The command should create an external run workspace, not inject a large harness into the target repo:
