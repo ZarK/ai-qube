@@ -1,8 +1,6 @@
-# QUBE Repository Instructions
-
 <!-- BEGIN EXECUTOR MANAGED SECTION -->
 <!-- executor-managed-version: 1 -->
-<!-- executor-managed-checksum: f776f593cc7bb586c27dfedbaa3d2383e671a0f8bcdd183991382f0ed6a62804 -->
+<!-- executor-managed-checksum: b98d1a5bdc9fdaa705b9d2b8b7cb0e897f79f5428152156472dbdec98194ec98 -->
 ## Executor Issue Workflow
 
 This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through `aie` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
@@ -57,7 +55,7 @@ Stage checklist:
 
 Todo requirements:
 
-- For Codex, use `update_plan` or the host plan/todo tool directly when available. If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state. Do not invent an OpenCode todo hook.
+- For Claude Code, use `TodoWrite` and `TodoRead` or their current host-exposed equivalents directly from the main Claude Code agent. Do not delegate todo operations to subagents.
 - Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record. Update both when both exist.
 - At issue start, create local todos for issue read, repository context, implementation, configured manual UI audit, configured review-agent QA, tests and quality gates, configured PR review wait as `pr-review-wait`, `branch-check`, `ship`, and `next`.
 - Protected workflow todo ids are `branch-check`, `ship`, `pr-review-wait`, `next`. Do not rename or omit those protected items during issue execution.
@@ -69,7 +67,7 @@ Todo requirements:
 
 Host capability profile:
 
-- Codex: instructions target `AGENTS.md`, project commands or agents are installed when configured (.codex/agents/qube-review-focus.toml), todo tools `update_plan`, dialogue expectation: Use Codex plan/todo support in the main session, spawn independent Codex subagents for local PR review focuses, wait for all review subagents before publishing provider feedback, and keep durable state in configured provider records.. Subagent guidance: For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: "qube-review-focus"` and `fork_context: false` by pasting each lane `spawnPrompt` verbatim from `pr gate --dry-run --json --local-review-prompts`, wait for all subagents before editing or testing in the main session, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback, delete the review session lock, then inspect PR comments for merge guidance. Hook support: Codex host hooks may exist in trusted host configuration; Executor init does not install them.
+- Claude Code: instructions target `CLAUDE.md`, project command files are not installed by Executor for this host, todo tools `TodoWrite`, `TodoRead`, dialogue expectation: Keep issue workflow state visible in the main Claude Code conversation and use subagents only for bounded support work.. Subagent guidance: Use Claude Code subagents only for bounded support work; keep issue workflow todos in the main session. Hook support: Claude Code hooks may exist in host settings; Executor init installs managed instructions only.
 
 Stop conditions:
 
