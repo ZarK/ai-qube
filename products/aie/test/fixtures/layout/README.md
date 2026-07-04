@@ -10,5 +10,7 @@ Current fixture shapes:
 
 - `js-workspace`: positive JavaScript workspace fixture with a root package, workspace manifest, app and package projects, Turbo metadata, lockfile, and GitHub Actions workflow.
 - `ambiguous-js-workspace`: negative JavaScript workspace fixture with tooling metadata but no root package manifest.
+- `python-workspace`: positive Python workspace fixture with a root `pyproject.toml`, uv workspace members, package and service projects, Python workflow metadata, and `uv.lock`.
+- `ambiguous-python-workspace`: negative Python workspace fixture with Python workspace tooling metadata and a nested package but no root `pyproject.toml`.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
