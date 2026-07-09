@@ -20,6 +20,7 @@ export type RepoProjectKind = "workspace" | "package" | "app" | "service" | "doc
 export interface RepoRootMarker {
   readonly path: string;
   readonly kind: "git" | "package" | "workspace" | "ci" | "build" | "docs" | "unknown";
+  readonly section?: string;
 }
 
 export interface RepoProject {
