@@ -137,7 +137,10 @@ export function safeSecretReferences(publisher: GitHubReviewPublisherConfig | nu
 }
 
 function safeEnvironmentName(value: string | undefined): boolean {
-  return typeof value === 'string' && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value);
+  return typeof value === 'string'
+    && /^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(value)
+    && !/^(?:github_pat_|gh[pousr]_)/i.test(value)
+    && !/BEGIN [A-Z ]*PRIVATE KEY/i.test(value);
 }
 
 function safePathReference(value: string | undefined): boolean {

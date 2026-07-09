@@ -131,10 +131,20 @@ describe('review publisher setup execution', () => {
     const rejectedToken = await runReviewSetup({
       mode: 'token', config: null, configPath, root, tokenEnv: 'github_pat_fixture_value', yes: true,
     });
+    const rejectedOauthToken = await runReviewSetup({
+      mode: 'token', config: null, configPath, root, tokenEnv: 'gho_FAKE_REVIEW_CREDENTIAL_1234567890', yes: true,
+    });
+    const rejectedAppToken = await runReviewSetup({
+      mode: 'token', config: null, configPath, root, tokenEnv: 'ghs_FAKE_INSTALLATION_TOKEN_1234567890', yes: true,
+    });
     assert.equal(rejectedPem.ok, false);
     assert.equal(rejectedToken.ok, false);
+    assert.equal(rejectedOauthToken.ok, false);
+    assert.equal(rejectedAppToken.ok, false);
     assert.match(rejectedPem.validationErrors.join('\n'), /environment variable name/);
     assert.match(rejectedToken.validationErrors.join('\n'), /environment variable name/);
+    assert.match(rejectedOauthToken.validationErrors.join('\n'), /environment variable name/);
+    assert.match(rejectedAppToken.validationErrors.join('\n'), /environment variable name/);
   });
 
   it('explains token fallback and stores only the environment variable name', async () => {

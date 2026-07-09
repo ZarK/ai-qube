@@ -66,25 +66,30 @@ function trimmed(value: string | undefined): string | undefined {
   return result ? result : undefined;
 }
 
-function suspiciousSecretReference(value: string): boolean {
+const GITHUB_TOKEN_PREFIX = /(?:^|[^A-Za-z0-9_])(?:github_pat_|gh[pousr]_)[A-Za-z0-9_]+/;
+
+function looksLikeCredentialMaterial(value: string): boolean {
   return value.includes('\n')
     || value.includes('\r')
-    || value.includes('BEGIN ')
-    || value.startsWith('ghp_')
-    || value.startsWith('github_pat_')
-    || value.length > 128;
+    || /BEGIN [A-Z ]*PRIVATE KEY|BEGIN CERTIFICATE/i.test(value)
+    || GITHUB_TOKEN_PREFIX.test(value)
+    || /^(?:github_pat_|gh[pousr]_)/i.test(value);
 }
 
 function validateEnvironmentName(value: string | undefined, flag: string): string[] {
   if (!value) return [];
-  if (suspiciousSecretReference(value)) return [`${flag} must be an environment variable name, never token or private-key material.`];
+  if (looksLikeCredentialMaterial(value) || value.length > 128) {
+    return [`${flag} must be an environment variable name, never token or private-key material.`];
+  }
   if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) return [`${flag} must be a valid environment variable name.`];
   return [];
 }
 
 function validatePrivateKeyPath(value: string | undefined): string[] {
   if (!value) return [];
-  if (suspiciousSecretReference(value)) return ['--private-key-path must be a local filesystem path, never private-key or token material.'];
+  if (looksLikeCredentialMaterial(value) || value.length > 1024) {
+    return ['--private-key-path must be a local filesystem path, never private-key or token material.'];
+  }
   return [];
 }
 
