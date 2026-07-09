@@ -60,9 +60,16 @@ function sha256(value: string): string {
   return createHash('sha256').update(value).digest('hex');
 }
 
+function utf8Bytes(value: string): number {
+  return Buffer.byteLength(value, 'utf8');
+}
+
 function safeText(value: string, maxLength = 1200): string {
   const normalized = redact(value).replace(/[\u0000-\u001f\u007f]+/g, ' ').replace(/\s+/g, ' ').trim();
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+  if (utf8Bytes(normalized) <= maxLength) return normalized;
+  let end = Math.min(normalized.length, maxLength);
+  while (end > 0 && utf8Bytes(normalized.slice(0, end)) > maxLength - 3) end -= 1;
+  return `${normalized.slice(0, Math.max(0, end))}...`;
 }
 
 function normalizeRepoPath(value: string): string | null {
@@ -168,9 +175,7 @@ function parseReport(repoRoot: string, reportPath: string, contents: string, cha
   const changedPathSet = new Set(changedPaths.map(normalizeRepoPath).filter((path): path is string => path !== null));
   const scoped = changedPathSet.size > 0;
   const selected = scoped ? allFindings.filter(finding => finding.path !== null && changedPathSet.has(finding.path)) : allFindings;
-  const relativeReportPath = normalizeRepoPath(relative(repoRoot, reportPath))
-    ?? (isAnyAbsolute(reportPath) ? null : normalizeRepoPath(reportPath))
-    ?? reportCandidates[0];
+  const relativeReportPath = reportDisplayPath(repoRoot, reportPath);
   const findings = selected.map(finding => {
     const id = `aiq:${finding.contentHash}`;
     return {
@@ -192,6 +197,19 @@ function parseReport(repoRoot: string, reportPath: string, contents: string, cha
     truncatedFindingCount: 0,
     findings,
   };
+}
+
+function reportDisplayPath(repoRoot: string, reportPath: string): string {
+  try {
+    const relativePath = relative(resolve(repoRoot), resolve(reportPath));
+    const normalized = normalizeRepoPath(relativePath);
+    if (normalized) return normalized;
+  } catch {
+    // fall through
+  }
+  // Outside-repo / action-downloaded paths must not claim an unrelated in-repo file.
+  const base = posix.basename(reportPath.replace(/\\/g, '/')) || 'aiq.report.json';
+  return `aiq-report://${safeText(base, 180)}`;
 }
 
 function envReportPaths(): string[] {
@@ -273,14 +291,14 @@ export function aiqReviewContextLines(report: AiqReviewFindings | null): string[
 
   const selected: AiqReviewFinding[] = [];
   let truncatedFindingCount = 0;
-  let usedBytes = header.join('\n').length;
+  let usedBytes = utf8Bytes(header.join('\n'));
   for (const finding of report.findings) {
     if (selected.length >= AIQ_REVIEW_MAX_FINDINGS) {
       truncatedFindingCount = report.findings.length - selected.length;
       break;
     }
     const line = `AIQ finding: ${JSON.stringify(finding)}.`;
-    const nextBytes = usedBytes + line.length + 1;
+    const nextBytes = usedBytes + utf8Bytes(line) + 1;
     if (nextBytes > AIQ_REVIEW_MAX_CONTEXT_BYTES) {
       truncatedFindingCount = report.findings.length - selected.length;
       break;

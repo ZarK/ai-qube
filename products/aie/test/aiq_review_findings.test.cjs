@@ -121,4 +121,29 @@ describe('AIQ review findings', () => {
     const findingLines = context.split('\n').filter(line => line.startsWith('AIQ finding:'));
     assert.ok(findingLines.length <= 40);
   });
+
+  it('uses UTF-8 byte budget and preserves outside-repo report identity', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-external-'));
+    const externalRoot = mkdtempSync(join(tmpdir(), 'aie-aiq-external-report-'));
+    const externalReport = join(externalRoot, 'downloaded-aiq.report.json');
+    const report = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    for (let index = 0; index < 20; index += 1) {
+      report.stages[0].diagnostics.push({
+        code: `wide-${index}`,
+        file: 'src/changed.ts',
+        message: `${'字'.repeat(400)} finding ${index}`,
+        range: { startColumn: 1, startLine: index + 40 },
+        severity: 'warning',
+        source: 'fixture',
+      });
+    }
+    writeFileSync(externalReport, `${JSON.stringify(report, null, 2)}\n`);
+    const loaded = loadAiqReviewFindings(repo, ['src/changed.ts'], { reportPath: externalReport });
+    assert.ok(loaded);
+    assert.match(loaded.reportPath, /^aiq-report:\/\/downloaded-aiq\.report\.json$/);
+    assert.ok(loaded.findings.every(finding => finding.evidenceLink.path.startsWith('aiq-report://')));
+    assert.doesNotMatch(loaded.reportPath, /\.qube\/aiq\/out\/aiq\.report\.json/);
+    const context = aiqReviewContextLines(loaded).join('\n');
+    assert.ok(Buffer.byteLength(context, 'utf8') <= 24_000 + 2_000);
+  });
 });
