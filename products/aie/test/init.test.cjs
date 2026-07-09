@@ -279,12 +279,29 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Configured review adapter: local/);
     assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
-    assert.match(agents, /spawn one independent Codex subagent per lane/);
+    assert.match(agents, /spawn one independent Codex subagent per lane with `agent_type: "qube-review-focus"`/);
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
     assert.match(agent, /read-only PR reviewer/);
     assert.match(agent, /^# BEGIN EXECUTOR MANAGED SECTION/);
     assert.doesNotMatch(agent, /<!--/);
+  });
+
+  it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
+    assert.match(claude, /spawn one independent fresh-context review subagent per lane that runs the lane through the Codex CLI/);
+    assert.match(claude, /pass each lane `spawnPrompt` verbatim as the Codex prompt/);
+    assert.doesNotMatch(claude, /agent_type: "qube-review-focus"/);
   });
 
   it('documents OpenCode local review-runner boundary when local opencode review is configured', async () => {
