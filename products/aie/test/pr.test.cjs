@@ -9,7 +9,7 @@ const { basename, join } = require('node:path');
 const { getDefaults } = require('../dist/config/index.js');
 const { renderAgentPrompt } = require('../dist/agent_descriptors.js');
 const { laneContextLines, promptStack, hash: promptTextHashFromLines } = require('../dist/app/local_review_runner_support.js');
-const { localReviewEvidenceSha256 } = require('../dist/local_review_evidence.js');
+const { buildFixBatch, localReviewEvidenceSha256 } = require('../dist/local_review_evidence.js');
 let createGitHubReviewForgeProvider;
 try {
   ({ createGitHubReviewForgeProvider } = require('@tjalve/qube-adapter-github'));
@@ -1651,6 +1651,20 @@ describe('PR gate service', () => {
     assert.equal(parserFindings.length, 1);
     assert.equal(parserFindings[0].classification, 'persisting');
     assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Fix the parser crash.').length, 1);
+  });
+
+  it('keeps fix batch resolution indeterminate for pending current-head evidence', () => {
+    const repo = makeGitRepo();
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+
+    const batch = buildFixBatch(repo, [93], 12, 'def456', [{ status: 'pending', issueNumber: 93, prNumber: 12, headSha: 'def456', lanes: [] }]);
+
+    assert.equal(batch.resolved.length, 0);
+    assert.match(batch.summary, /resolved state is indeterminate/);
   });
 
   it('keeps fix batch resolution indeterminate when current-head lane evidence is missing', async () => {

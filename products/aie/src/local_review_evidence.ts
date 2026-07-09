@@ -1276,11 +1276,13 @@ function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prN
           }
         })
         .sort((left, right) => right.modifiedAt - left.modifiedAt)
-        .slice(0, 5)
         .map(entry => entry.name);
+      let validCandidates = 0;
       for (const headDir of headDirs) {
+        if (validCandidates >= 5) break;
         const timestamp = headDirectoryTimestamp(repoRoot, issueNumber, prNumber, headDir);
         if (timestamp === null) continue;
+        validCandidates += 1;
         if (newestTimestamp === null || timestamp > newestTimestamp) {
           newestTimestamp = timestamp;
           priorHeadSha = headDir;
@@ -1300,14 +1302,10 @@ function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], pr
     for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
       const path = join(directory, `${laneId}.json`);
       if (!existsSync(path)) continue;
-      try {
-        const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-        if (!isRecord(parsed)) continue;
-        for (const finding of readFindings(parsed.findings)) {
-          priorFindings.push({ laneId, finding, contentHash: findingContentHash(laneId, finding) });
-        }
-      } catch {
-        continue;
+      const parsed = parseLaneEvidence(path, issueNumber, prNumber, priorHeadSha);
+      if (!parsed || parsed.lane.id !== laneId) continue;
+      for (const finding of parsed.lane.findings) {
+        priorFindings.push({ laneId, finding, contentHash: findingContentHash(laneId, finding) });
       }
     }
   }
@@ -1351,7 +1349,7 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
       }
     }
   }
-  const currentEvidenceLoaded = evidence.some(entry => entry.status !== 'missing' && entry.status !== 'stale' && entry.status !== 'malformed');
+  const currentEvidenceLoaded = evidence.some(entry => entry.status === 'passed' || entry.status === 'failed' || entry.status === 'needs-work');
   const priorHeadSha = findPriorHeadSha(repoRoot, issueNumbers, prNumber, headSha);
   const priorFindings = priorHeadSha === null ? [] : readPriorFindings(repoRoot, issueNumbers, prNumber, priorHeadSha);
   const priorRemaining = new Map<string, number>();
