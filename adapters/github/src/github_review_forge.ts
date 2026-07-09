@@ -252,15 +252,15 @@ function normalizeProviderText(value: string | null | undefined): string | null 
   return normalized.length > 240 ? `${normalized.slice(0, 237)}...` : normalized;
 }
 
-function trustedMarkerComment(comment: RawComment, trustedAuthor: string | null): boolean {
-  return trustedAuthor !== null && authorMatches(comment.author?.login ?? '', trustedAuthor) && (comment.body ?? '').includes(`<!-- ${MARKER_PREFIX}:`);
+function trustedMarkerComment(comment: RawComment, trustedAuthor: string | null | readonly string[]): boolean {
+  return authorIsTrusted(comment.author?.login, trustedAuthor) && (comment.body ?? '').includes(`<!-- ${MARKER_PREFIX}:`);
 }
 
-function hasMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null): boolean {
+function hasMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null | readonly string[]): boolean {
   return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(markerFor(reviewer, headSha)));
 }
 
-function hasStaleMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null): boolean {
+function hasStaleMarker(comments: RawComment[], reviewer: string, headSha: string, trustedAuthor: string | null | readonly string[]): boolean {
   if (hasMarker(comments, reviewer, headSha, trustedAuthor)) return false;
   const prefix = `<!-- ${MARKER_PREFIX}:${reviewerId(reviewer)}:`;
   return comments.some(comment => trustedMarkerComment(comment, trustedAuthor) && (comment.body ?? '').includes(prefix));
@@ -373,8 +373,8 @@ function parseLocalReviewMetadata(body: string | undefined): LocalReviewMetadata
   }
 }
 
-function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | null): LocalReviewMetadata | null {
-  if (trustedAuthor === null || !authorMatches(comment.author?.login ?? '', trustedAuthor)) return null;
+function trustedLocalReviewComment(comment: RawComment, trustedAuthor: string | null | readonly string[]): LocalReviewMetadata | null {
+  if (!authorIsTrusted(comment.author?.login, trustedAuthor)) return null;
   return parseLocalReviewMetadata(comment.body);
 }
 
@@ -425,12 +425,24 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
   }
 }
 
-function trustedLaneReviewComment(comment: RawComment, trustedAuthor: string | null): LaneReviewMetadata | null {
-  if (trustedAuthor === null || !authorMatches(comment.author?.login ?? '', trustedAuthor)) return null;
+function trustedAuthorsList(trustedAuthor: string | null | readonly string[]): string[] {
+  if (trustedAuthor === null || trustedAuthor === undefined) return [];
+  if (typeof trustedAuthor === 'string') return trustedAuthor.trim() === '' ? [] : [trustedAuthor];
+  return trustedAuthor.map(author => author.trim()).filter(author => author !== '');
+}
+
+function authorIsTrusted(login: string | null | undefined, trustedAuthor: string | null | readonly string[]): boolean {
+  const authors = trustedAuthorsList(trustedAuthor);
+  if (authors.length === 0) return false;
+  return authors.some(author => authorMatches(login ?? '', author));
+}
+
+function trustedLaneReviewComment(comment: RawComment, trustedAuthor: string | null | readonly string[]): LaneReviewMetadata | null {
+  if (!authorIsTrusted(comment.author?.login, trustedAuthor)) return null;
   return parseLaneReviewMetadata(comment.body);
 }
 
-function laneReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LaneReviewComment[] {
+function laneReviewComments(comments: RawComment[], trustedAuthor: string | null | readonly string[], headSha: string): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
   for (const comment of comments) {
     const metadata = trustedLaneReviewComment(comment, trustedAuthor);
@@ -440,11 +452,11 @@ function laneReviewComments(comments: RawComment[], trustedAuthor: string | null
   return [...latest.values()];
 }
 
-function laneReviewReviews(reviews: RawReview[], trustedAuthor: string | null, headSha: string): LaneReviewComment[] {
+function laneReviewReviews(reviews: RawReview[], trustedAuthor: string | null | readonly string[], headSha: string): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
-  if (trustedAuthor === null) return [];
+  if (trustedAuthorsList(trustedAuthor).length === 0) return [];
   for (const review of reviews) {
-    if (!authorMatches(review.author?.login ?? '', trustedAuthor)) continue;
+    if (!authorIsTrusted(review.author?.login, trustedAuthor)) continue;
     const metadata = parseLaneReviewMetadata(review.body);
     if (!metadata) continue;
     latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha });
@@ -470,7 +482,7 @@ function isEmptyStaleDraftReview(review: RawReview, headSha: string, reviewComme
   return !hasReviewComments(reviewComments, review.id);
 }
 
-function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: string | null; headSha: string }): LaneReviewComment[] {
+function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: string | null | readonly string[]; headSha: string }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
   for (const comment of laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha)) {
     latest.set(`${comment.metadata.head}\0${comment.metadata.lane}`, comment);
@@ -591,7 +603,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   });
 }
 
-function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: string | null, headSha: string): JsonObject[] {
+function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: string | null | readonly string[], headSha: string): JsonObject[] {
   return laneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha }).map(comment => {
     const metadata = comment.metadata;
     return {
@@ -621,7 +633,7 @@ function laneMarkerReviews(rawPr: RawPrView): RawReview[] {
   return rawPr.reviews && rawPr.reviews.length > 0 ? rawPr.reviews : rawPr.latestReviews ?? [];
 }
 
-function localReviewComments(comments: RawComment[], trustedAuthor: string | null, headSha: string): LocalReviewComment[] {
+function localReviewComments(comments: RawComment[], trustedAuthor: string | null | readonly string[], headSha: string): LocalReviewComment[] {
   return comments.flatMap(comment => {
     const metadata = trustedLocalReviewComment(comment, trustedAuthor);
     if (!metadata) return [];
@@ -1110,7 +1122,7 @@ function latestThreadComment(thread: RawThreadNode) {
   return threadComments(thread).at(-1) ?? null;
 }
 
-function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null; headRefOid: string; reviewAgents?: readonly string[] }): ReviewFeedback[] {
+function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: string | null | readonly string[]; headRefOid: string; reviewAgents?: readonly string[] }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
   for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
     if (localReview.stale) continue;
@@ -1136,7 +1148,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const review of raw.latestReviews) {
     const state = review.state ?? 'UNKNOWN';
-    if (raw.trustedMarkerAuthor !== null && authorMatches(review.author?.login ?? '', raw.trustedMarkerAuthor) && parseLaneReviewMetadata(review.body)) continue;
+    if (authorIsTrusted(review.author?.login, raw.trustedMarkerAuthor) && parseLaneReviewMetadata(review.body)) continue;
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
     if (raw.unresolvedThreads.length === 0 && isResolvedProviderReviewSummary(review.body)) continue;
     if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body, review.author?.login, { agents: raw.reviewAgents }))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
@@ -1223,7 +1235,7 @@ function mergeBlockers(raw: { pr: GitHubReviewPullRequest; unresolvedThreads: Ra
   return blockers;
 }
 
-function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; laneReviews: RawReview[]; unresolvedThreads: RawThreadNode[]; unavailable: string[]; trustedMarkerAuthor: string | null; checks: GateEvidence[] }): JsonObject {
+function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; comments: RawComment[]; latestReviews: RawReview[]; laneReviews: RawReview[]; unresolvedThreads: RawThreadNode[]; unavailable: string[]; trustedMarkerAuthor: string | null | readonly string[]; checks: GateEvidence[] }): JsonObject {
   const localReviews = raw.comments.flatMap(comment => {
     const metadata = parseLocalReviewMetadata(comment.body);
     if (!metadata) return [];
@@ -1303,7 +1315,10 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     trustedLocalReviews,
     trustedLaneReviews,
     unavailable: raw.unavailable,
-    trustedMarkerAuthor: raw.trustedMarkerAuthor,
+    trustedMarkerAuthor: Array.isArray(raw.trustedMarkerAuthor)
+      ? raw.trustedMarkerAuthor[0] ?? null
+      : raw.trustedMarkerAuthor,
+    trustedMarkerAuthors: trustedAuthorsList(raw.trustedMarkerAuthor),
   };
 }
 
@@ -1475,15 +1490,42 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     } catch (error: unknown) {
       unavailable.push(`Repository identity unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
-    let trustedMarkerAuthor: string | null = null;
-    try { trustedMarkerAuthor = await this.currentLogin(); } catch { trustedMarkerAuthor = null; }
+    const trustedAuthors: string[] = [];
+    try {
+      const login = await this.currentLogin();
+      if (login) trustedAuthors.push(login);
+    } catch {
+      // keep empty and fall through to publisher identity when configured
+    }
+    try {
+      // Prefer mint:false. When a distinct publisher is configured without a known login,
+      // mint once so lane reviews published as that identity remain trusted.
+      let publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
+        cwd: this.options.cwd,
+        exec: this.options.exec,
+        mint: false,
+      });
+      if ((publisher.identity.mode === 'github-app' || publisher.identity.mode === 'token') && !publisher.identity.login) {
+        publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
+          cwd: this.options.cwd,
+          exec: this.options.exec,
+          mint: true,
+        });
+      }
+      if (publisher.identity.login && !trustedAuthors.some(author => authorMatches(author, publisher.identity.login!))) {
+        trustedAuthors.push(publisher.identity.login);
+      }
+    } catch {
+      // publisher identity is optional for load paths
+    }
+    const trustedMarkerAuthor = trustedAuthors[0] ?? null;
     const comments = rawPr.comments ?? [];
     const latestReviews = rawPr.latestReviews ?? [];
     const laneReviews = laneMarkerReviews(rawPr);
     const reviewRequests = reviewRequestNames(rawPr.reviewRequests);
     const pr = normalizePr(rawPr, mergeUiState);
     return {
-      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, laneReviews, reviewComments, unresolvedThreads, unavailable, trustedMarkerAuthor, ciDiagnostics, mergeUiState),
+      item: this.reviewItem(rawPr, reviewRequests, comments, latestReviews, laneReviews, reviewComments, unresolvedThreads, unavailable, trustedAuthors.length > 0 ? trustedAuthors : trustedMarkerAuthor, ciDiagnostics, mergeUiState),
       pr,
       ciDiagnostics,
       closingIssueNumbers: closingIssueNumbers(rawPr),
@@ -2107,7 +2149,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     }
   }
 
-  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], laneReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null, ciDiagnostics: GitHubCiDiagnostic[], mergeUiState: RawMergeUiState | null): ReviewItem {
+  private reviewItem(rawPr: RawPrView, reviewRequests: string[], comments: RawComment[], latestReviews: RawReview[], laneReviews: RawReview[], reviewComments: RawReviewComment[], unresolvedThreads: RawThreadNode[], unavailable: string[], trustedMarkerAuthor: string | null | readonly string[], ciDiagnostics: GitHubCiDiagnostic[], mergeUiState: RawMergeUiState | null): ReviewItem {
     const pr = normalizePr(rawPr, mergeUiState);
     const source = normalizeProviderSource({ providerId: this.id, resourceKind: 'review-item', resourceId: String(rawPr.number), url: pr.url });
     const normalizedChecks = checks(rawPr.statusCheckRollup, ciDiagnostics);

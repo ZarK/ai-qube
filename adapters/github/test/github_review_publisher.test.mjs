@@ -139,4 +139,73 @@ describe('github review publisher', () => {
     assert.match(resolved.identity.fallbackReason ?? '', /QUBE_MISSING_REVIEW_TOKEN/);
     assert.equal(JSON.stringify(resolved).includes('github_pat_'), false);
   });
+
+  it('succeeds for a distinct fine-grained token identity with formal events', async () => {
+    process.env.QUBE_TEST_REVIEW_TOKEN = 'github_pat_test_token_value_not_for_output_abcdefghijklmnop';
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'token',
+      token: { env: 'QUBE_TEST_REVIEW_TOKEN' },
+    }, {
+      mint: true,
+      prAuthorLogin: 'pr-author',
+      fetchTokenIdentity: async () => ({ login: 'reviewer-bot', type: 'User' }),
+    });
+    assert.equal(resolved.identity.identityClass, 'fine-grained-token');
+    assert.equal(resolved.identity.login, 'reviewer-bot');
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.identity.publishTransport, 'pull-request-review');
+    assert.equal(resolved.identity.fallbackReason, null);
+    assert.ok(resolved.accessToken);
+  });
+
+  it('mints an app token and posts a pull request review on a mocked transport', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const calls = [];
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      prAuthorLogin: 'pr-author',
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'review-bot[bot]',
+      }),
+      fetchTokenIdentity: async () => ({ login: 'review-bot[bot]', type: 'Bot' }),
+    });
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.ok(resolved.accessToken);
+
+    // Fixture/mock transport: submit a formal PR review using the minted token.
+    const transport = async (args, _cwd, options = {}) => {
+      calls.push({ args, token: options.token ?? null });
+      if (args[0] === 'api' && String(args[1]).includes('/pulls/') && String(args[1]).includes('/reviews') && args.includes('POST')) {
+        assert.equal(options.token, resolved.accessToken);
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ id: 42, html_url: 'https://example.test/review/42', event: 'APPROVE' }),
+          stderr: '',
+        };
+      }
+      return { args, exitCode: 1, stdout: '', stderr: `unexpected ${args.join(' ')}` };
+    };
+
+    const { runGh } = await import('../dist/gh.js');
+    const publish = await runGh(
+      ['api', 'repos/o/r/pulls/12/reviews', '--method', 'POST', '--input', '-'],
+      { exec: transport, token: resolved.accessToken },
+    );
+    assert.equal(publish.exitCode, 0);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].token, resolved.accessToken);
+    assert.match(calls[0].args.join(' '), /pulls\/12\/reviews/);
+    assert.equal(JSON.stringify(resolved.identity).includes('ghs_'), false);
+  });
 });
