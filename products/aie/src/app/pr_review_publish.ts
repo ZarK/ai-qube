@@ -2,7 +2,7 @@ import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -248,6 +248,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   assertArrayField(raw, 'artifacts', path);
   assertArrayField(raw, 'contextReviewed', path);
   assertArrayField(raw, 'promptStack', path);
+  if (!Array.isArray(raw.preconditions)) throw laneEvidenceFailure(path, 'preconditions must be an array of observed gate-level facts (empty when none were observed).');
   const adapter = raw.adapter;
   if (adapter !== 'local-command' && adapter !== 'local-host') throw laneEvidenceFailure(path, 'adapter must be local-command or local-host.');
   const provenance = raw.runnerProvenance;
@@ -270,6 +271,10 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (completeness === '') {
     throw laneEvidenceFailure(path, 'completeness must be a non-empty self-check stating what was inspected and what was not.');
   }
+  const recommendation = readRecommendation(raw.recommendation ?? raw.status);
+  if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
+    throw laneEvidenceFailure(path, `recommendation ${recommendation} is not valid with status ${raw.status}; ${recommendationStatusRule()}.`);
+  }
   return {
     evidence: raw,
     path,
@@ -280,7 +285,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     completeness,
     profile,
     host: stringField(provenance, 'host') || 'local-review',
-    recommendation: readRecommendation(raw.recommendation ?? raw.status),
+    recommendation,
   };
 }
 

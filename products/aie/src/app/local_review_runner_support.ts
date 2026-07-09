@@ -25,6 +25,7 @@ export interface LaneEvidence {
   promptStack: Array<{ id: string; source: string; sourceCategory?: string; path: string | null; sha256: string | null; trust: string }>;
   toolsUsed: string[];
   completeness: string;
+  preconditions: string[];
   runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
@@ -75,10 +76,11 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `Pull request: #${prNumber}.`,
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at this exact issue evidence path: ${primaryEvidencePath}.`,
-    `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, runnerProvenance, and recordedAt.`,
+    `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, preconditions, runnerProvenance, and recordedAt.`,
     'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, and location.path plus location.line when the finding can be anchored to the PR diff.',
     'Report the complete finding set for this lane at this head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
+    'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
     `Bind local-host evidence to same-user host provenance at this exact path: ${hostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
@@ -286,6 +288,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
     completeness: typeof value.completeness === 'string' ? value.completeness.trim() : '',
+    preconditions: readStringArray(value.preconditions),
     runnerProvenance: {
       runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',
       host: typeof value.runnerProvenance.host === 'string' ? value.runnerProvenance.host : 'unknown-host',
@@ -475,6 +478,7 @@ export function blockedLane(lane: LocalReviewLaneId, status: LocalReviewStatus, 
     promptStack: promptStackEvidence(lane),
     toolsUsed: runner === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
     completeness: '',
+    preconditions: [],
     runnerProvenance: null,
   };
 }

@@ -287,7 +287,7 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
       { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
       { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
       { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
-    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, ...lane })),
+    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, preconditions: [], ...lane })),
   };
 }
 
@@ -445,6 +445,8 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
       contextReviewed: id === 'task-record-compliance' ? contextReviewed : [],
       promptStack: promptStackForLane(id),
       toolsUsed: ['rg'],
+      completeness: `Inspected the ${id} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
       runnerProvenance: withPromptStackProvenance(provenance, promptStackForLane(id)),
     })),
   };
@@ -656,6 +658,7 @@ function fixtureLocalCommand(args) {
       promptStack,
       toolsUsed: runnerKind === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
       completeness: `Inspected the ${lane} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
       runnerProvenance: {
         runnerKind,
         host: runnerKind === 'local-host' ? 'codex' : 'local-command',
@@ -1408,6 +1411,8 @@ describe('PR gate service', () => {
     assert.match(bundle.outputContract, /Enumerate the complete finding set for the lane scope at the current PR head in one pass/);
     assert.match(bundle.outputContract, /Do not stop after the first blocker/);
     assert.match(bundle.outputContract, /completeness self-check/);
+    assert.match(bundle.promptText, /Your verdict is scoped to this lane/);
+    assert.match(bundle.promptText, /as preconditions entries/);
     assert.equal(bundle.promptStackHash, lane.runnerProvenance.promptStackHash);
     assert.equal(bundle.evidencePath, lanePath);
   });
@@ -1515,6 +1520,33 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'review-fixture'), true);
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
+  });
+
+  it('keeps lane verdicts lane-scoped when gate-level CI is red', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    trustReviewCommands(repo);
+    const failingPr = cleanLocalPr({
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/example/repo/actions/runs/100/job/1' }],
+    });
+    const { exec } = makePrExec({
+      prViews: [failingPr],
+      localCommand: args => {
+        const result = fixtureLocalCommand(args);
+        const body = JSON.parse(result.stdout);
+        body.preconditions = ['ci check failing at review time'];
+        return { ...result, stdout: JSON.stringify(body) };
+      },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.localReview.status, 'passed');
+    const lanes = result.localReview.evidence[0].lanes;
+    assert.ok(lanes.length > 0);
+    assert.ok(lanes.every(lane => lane.recommendation === 'approve'));
+    assert.ok(lanes.every(lane => lane.preconditions.includes('ci check failing at review time')));
+    assert.notEqual(result.status, 'complete');
   });
 
   it('publishes local-command review results as provider-visible PR feedback', async () => {
@@ -1935,6 +1967,96 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
+  });
+
+  it('rejects lane evidence publishing with mismatched recommendation and status', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      recommendation: lane.id === 'code-quality' ? 'request-changes' : lane.recommendation,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /recommendation request-changes is not valid with status passed/,
+    );
+  });
+
+  it('rejects lane evidence publishing without a preconditions array', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => {
+      const { preconditions, ...rest } = lane;
+      return {
+        ...rest,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      };
+    });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /preconditions must be an array of observed gate-level facts/,
+    );
+  });
+
+  it('blocks gate aggregation when passed lane evidence lacks a preconditions record', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => {
+      const { preconditions, ...rest } = lane;
+      return {
+        ...rest,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      };
+    });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /passed without a preconditions record/);
+  });
+
+  it('blocks gate aggregation when lane recommendation contradicts status', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    trustReviewCommands(repo);
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr()],
+      localCommand: args => {
+        const result = fixtureLocalCommand(args);
+        const body = JSON.parse(result.stdout);
+        if (body.lane === 'code-quality') body.recommendation = 'request-changes';
+        return { ...result, stdout: JSON.stringify(body) };
+      },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /recommendation request-changes is not valid with status passed/);
   });
 
   it('rejects lane evidence publishing without a completeness self-check', async () => {

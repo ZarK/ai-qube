@@ -73,6 +73,7 @@ export interface LocalReviewLane {
   promptStack: LocalReviewPromptStackItem[];
   toolsUsed: string[];
   completeness: string;
+  preconditions: string[] | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
@@ -254,6 +255,21 @@ function readRecommendation(value: unknown, status: LocalReviewStatus): LocalRev
 function readStatus(value: unknown): LocalReviewStatus {
   if (value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable' || value === 'inconclusive') return value;
   return 'malformed';
+}
+
+const RECOMMENDATION_STATUS_PAIRS: Readonly<Record<LocalReviewRecommendation, readonly LocalReviewStatus[]>> = {
+  approve: ['passed'],
+  'request-changes': ['failed', 'needs-work'],
+  pending: ['pending', 'missing', 'stale'],
+  inconclusive: ['inconclusive', 'unavailable', 'malformed'],
+};
+
+export function validRecommendationStatus(recommendation: LocalReviewRecommendation, status: LocalReviewStatus): boolean {
+  return RECOMMENDATION_STATUS_PAIRS[recommendation].includes(status);
+}
+
+export function recommendationStatusRule(): string {
+  return Object.entries(RECOMMENDATION_STATUS_PAIRS).map(([recommendation, statuses]) => `${recommendation} requires status ${statuses.join(' or ')}`).join('; ');
 }
 
 function readLaneId(value: unknown): LocalReviewLaneId | null {
@@ -527,6 +543,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       promptStack: readPromptStack(entry.promptStack),
       toolsUsed: stringArray(entry.toolsUsed),
       completeness: typeof entry.completeness === 'string' ? redact(entry.completeness.trim()) : '',
+      preconditions: Array.isArray(entry.preconditions) ? stringArray(entry.preconditions) : null,
       runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
@@ -567,11 +584,17 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
     blockers.push(`Local review evidence for ${profile} must include a non-empty top-level promptStack.`);
   }
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
+  for (const lane of lanes) {
+    if (!validRecommendationStatus(lane.recommendation, lane.status)) {
+      blockers.push(`${lane.id} recommendation ${lane.recommendation} is not valid with status ${lane.status}; ${recommendationStatusRule()}.`);
+    }
+  }
   for (const laneId of requiredLanes) {
     const lane = lanesById.get(laneId);
     if (!lane || lane.status !== 'passed') continue;
     if (lane.artifacts.length === 0) blockers.push(`${laneId} passed without artifact references.`);
     if (lane.promptStack.length === 0) blockers.push(`${laneId} passed without promptStack coverage.`);
+    if (lane.preconditions === null) blockers.push(`${laneId} passed without a preconditions record.`);
   }
   const finalGate = lanesById.get('final-gate');
   if (requiredLanes.includes('final-gate') && finalGate) {
@@ -808,6 +831,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         promptStack: readPromptStack(parsed.promptStack),
         toolsUsed: stringArray(parsed.toolsUsed),
         completeness: typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '',
+        preconditions: Array.isArray(parsed.preconditions) ? stringArray(parsed.preconditions) : null,
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };
