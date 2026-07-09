@@ -273,6 +273,39 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(affected.affectedProjects[0].project.kind, 'workspace');
   });
 
+  it('prefers the Python workspace when a root package.json declares workspaces without JS members', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['packages/*'] }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'python-workspace-monorepo');
+    const rootProject = inspected.projects.find(project => project.path === '.');
+    assert.equal(rootProject.packageName, 'fixture-python-root');
+    assert.equal(rootProject.kind, 'workspace');
+    assert.ok(inspected.warnings.some(warning => /Both JavaScript and Python root workspace declarations were detected/.test(warning)));
+
+    const affected = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['uv.lock'],
+    });
+
+    assert.deepEqual(affected.affectedProjects.map(project => project.project.id), ['fixture-python-root']);
+  });
+
+  it('reports an ambiguous layout when JavaScript and Python workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
   it('inspects a single app service layout from fixture root signals', async () => {
     const repo = makeFixtureRepo('single-app-service');
 

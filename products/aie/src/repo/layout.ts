@@ -402,7 +402,7 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   const projects: RepoProject[] = [];
   const jsWorkspace = rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals);
   const pythonWorkspace = rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals);
-  if (pythonWorkspace && !jsWorkspace) {
+  if (pythonWorkspace && (!jsWorkspace || resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals) === 'python')) {
     const packageName = rootPyProject.name;
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (rootPackage) {
@@ -425,11 +425,27 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   return projects;
 }
 
+function resolveWorkspaceConflict(jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): 'javascript' | 'python' | 'conflict' {
+  const jsMembers = jsWorkspaceSignals.resolvedProjectPaths.length;
+  const pythonMembers = pythonWorkspaceSignals.resolvedProjectPaths.length;
+  if (jsMembers > 0 && pythonMembers === 0) return 'javascript';
+  if (pythonMembers > 0 && jsMembers === 0) return 'python';
+  return 'conflict';
+}
+
 function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
-  if (hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json')) return 'javascript-typescript-workspace';
-  if (hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml')) return 'python-workspace-monorepo';
+  const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
+  const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
+  if (jsRootWorkspace && pythonRootWorkspace) {
+    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
+    if (resolved === 'javascript') return 'javascript-typescript-workspace';
+    if (resolved === 'python') return 'python-workspace-monorepo';
+    return 'unknown';
+  }
+  if (jsRootWorkspace) return 'javascript-typescript-workspace';
+  if (pythonRootWorkspace) return 'python-workspace-monorepo';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
@@ -437,6 +453,14 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
 
 function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): string[] {
   const warnings: string[] = [];
+  const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
+  const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
+  if (jsRootWorkspace && pythonRootWorkspace) {
+    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
+    warnings.push(resolved === 'conflict'
+      ? 'Both JavaScript and Python root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.'
+      : `Both JavaScript and Python root workspace declarations were detected; layout classification used the ${resolved === 'python' ? 'Python' : 'JavaScript'} workspace because only it resolves member projects.`);
+  }
   if (!root) warnings.push('Not inside a git repository; layout inspection is incomplete.');
   if (rootSignals.length > 1 && kind === 'unknown') warnings.push(`Multiple root package/build signals were detected (${rootSignals.map(signal => signal.path).join(', ')}); repository layout is ambiguous.`);
   if (jsWorkspaceSignals.markerPaths.length > 0 && !rootSignals.some(signal => signal.path === 'package.json')) warnings.push(`JavaScript workspace marker(s) were detected (${jsWorkspaceSignals.markerPaths.join(', ')}) but no root package.json was found; workspace layout is ambiguous.`);
