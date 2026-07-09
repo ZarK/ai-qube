@@ -299,9 +299,11 @@ function finalizeIdentity(input: {
 }
 
 function installationHasReviewPermission(permissions: Record<string, string> | undefined): boolean {
-  if (!permissions) return true;
+  // Installation-token responses only list granted permissions. Missing
+  // permissions are not granted, so treat an absent pull_requests key as missing.
+  if (!permissions) return false;
   const pullRequests = permissions.pull_requests ?? permissions.pullRequests;
-  if (!pullRequests) return true;
+  if (!pullRequests) return false;
   return pullRequests === 'write' || pullRequests === 'admin';
 }
 

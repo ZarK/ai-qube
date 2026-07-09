@@ -210,6 +210,32 @@ describe('github review publisher', () => {
     assert.match(resolved.identity.fallbackReason ?? '', /permission/i);
   });
 
+  it('treats omitted pull_requests permission as missing review capability', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        // Only contents is granted; omitted permissions are not granted.
+        permissions: { contents: 'read' },
+        accountLogin: 'review-bot[bot]',
+      }),
+      fetchTokenIdentity: async () => ({ login: 'review-bot[bot]', type: 'Bot' }),
+    });
+
+    assert.equal(resolved.identity.permissionStatus, 'missing');
+    assert.equal(resolved.identity.formalEventCapability, false);
+    assert.equal(resolved.identity.publishTransport, 'issue-comment');
+    assert.match(resolved.identity.fallbackReason ?? '', /permission/i);
+  });
+
   it('falls back to user mode without minting secrets into status-only probes', async () => {
     const resolved = await resolveGitHubReviewPublisher({ mode: 'user' }, { mint: false });
     assert.equal(resolved.identity.mode, 'user');
