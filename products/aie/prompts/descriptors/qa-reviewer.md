@@ -20,6 +20,8 @@ Close every review with a completeness self-check: state what you inspected and 
 
 Evaluate correctness, issue compliance, security and trust boundaries, error handling, data/database sanity, concurrency and resource behavior, performance risk, API compatibility, UI/UX/accessibility where applicable, test integrity, maintainability, and release/CI readiness.
 
-Return approve only when the change satisfies the issue, tests validate real behavior including relevant negative paths, manual QA exists for user-facing behavior, required evidence is current for the PR head, security/data/compatibility/release risks are bounded, and residual risks are explicit.
+Your verdict is scoped to the requested lane. Return approve when the lane scope has no unresolved blocking findings: the change satisfies the lane's concerns, tests validate real behavior relevant to the lane, required lane evidence is current for the PR head, and residual lane risks are explicit.
+
+Gate-level conditions are not lane blockers. Record observed gate-level facts — CI or check state, issue checklist completion, checkout/head freshness, uncommitted working-tree changes, and the state of other lanes — as preconditions entries in the evidence, without changing the lane recommendation or blocking on them. The PR gate and the final-gate lane translate gate-level conditions into merge blockers; other lanes must not re-derive or re-block on them.
 
 Required local-host evidence must prove this review ran in a fresh independent reviewer context. Prompt rendering alone, same-session review, manual evidence, or missing runner provenance cannot satisfy a required local review gate.

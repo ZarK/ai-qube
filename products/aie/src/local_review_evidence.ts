@@ -73,6 +73,7 @@ export interface LocalReviewLane {
   promptStack: LocalReviewPromptStackItem[];
   toolsUsed: string[];
   completeness: string;
+  preconditions: string[];
   runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
@@ -254,6 +255,21 @@ function readRecommendation(value: unknown, status: LocalReviewStatus): LocalRev
 function readStatus(value: unknown): LocalReviewStatus {
   if (value === 'passed' || value === 'failed' || value === 'needs-work' || value === 'pending' || value === 'missing' || value === 'stale' || value === 'unavailable' || value === 'inconclusive') return value;
   return 'malformed';
+}
+
+const RECOMMENDATION_STATUS_PAIRS: Readonly<Record<LocalReviewRecommendation, readonly LocalReviewStatus[]>> = {
+  approve: ['passed'],
+  'request-changes': ['failed', 'needs-work'],
+  pending: ['pending', 'missing', 'stale'],
+  inconclusive: ['inconclusive', 'unavailable', 'malformed'],
+};
+
+export function validRecommendationStatus(recommendation: LocalReviewRecommendation, status: LocalReviewStatus): boolean {
+  return RECOMMENDATION_STATUS_PAIRS[recommendation].includes(status);
+}
+
+export function recommendationStatusRule(): string {
+  return Object.entries(RECOMMENDATION_STATUS_PAIRS).map(([recommendation, statuses]) => `${recommendation} requires status ${statuses.join(' or ')}`).join('; ');
 }
 
 function readLaneId(value: unknown): LocalReviewLaneId | null {
@@ -527,6 +543,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       promptStack: readPromptStack(entry.promptStack),
       toolsUsed: stringArray(entry.toolsUsed),
       completeness: typeof entry.completeness === 'string' ? redact(entry.completeness.trim()) : '',
+      preconditions: stringArray(entry.preconditions),
       runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
@@ -808,6 +825,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         promptStack: readPromptStack(parsed.promptStack),
         toolsUsed: stringArray(parsed.toolsUsed),
         completeness: typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '',
+        preconditions: stringArray(parsed.preconditions),
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };

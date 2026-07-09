@@ -233,6 +233,9 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-10-009 | If new review feedback appears, the agent must address it, rerun affected gates, update the PR, and rerun the PR review gate when material changes were made. | Required |
 | FR-10-010 | PR bodies generated or suggested by Executor include issue closure references, supplied or recorded gate status, review agents requested, and remaining risks when applicable. | Desired |
 | FR-10-011 | Executor suggests squash merge as the default merge strategy in instructions and readiness output when repository policy permits; the agent performs the merge. | Required |
+| FR-10-012 | Local review lane verdicts are scoped to the lane: lanes record observed gate-level conditions (CI or check state, issue checklist completion, checkout or head freshness, uncommitted changes, other lanes) as `preconditions` evidence entries and must not convert them into lane blockers or lane recommendation changes. | Required |
+| FR-10-013 | Only `aie pr gate` and the final-gate lane translate gate-level conditions into merge blockers. | Required |
+| FR-10-014 | Lane evidence recommendation and status values are constrained: `approve` requires status `passed`; `request-changes` requires `failed` or `needs-work`; `pending` requires `pending`, `missing`, or `stale`; `inconclusive` requires `inconclusive`, `unavailable`, or `malformed`. Lane review publishing rejects other combinations. | Required |
 
 ---
 

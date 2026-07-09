@@ -1408,6 +1408,8 @@ describe('PR gate service', () => {
     assert.match(bundle.outputContract, /Enumerate the complete finding set for the lane scope at the current PR head in one pass/);
     assert.match(bundle.outputContract, /Do not stop after the first blocker/);
     assert.match(bundle.outputContract, /completeness self-check/);
+    assert.match(bundle.promptText, /Your verdict is scoped to this lane/);
+    assert.match(bundle.promptText, /as preconditions entries/);
     assert.equal(bundle.promptStackHash, lane.runnerProvenance.promptStackHash);
     assert.equal(bundle.evidencePath, lanePath);
   });
@@ -1515,6 +1517,33 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'review-fixture'), true);
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
+  });
+
+  it('keeps lane verdicts lane-scoped when gate-level CI is red', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    trustReviewCommands(repo);
+    const failingPr = cleanLocalPr({
+      statusCheckRollup: [{ name: 'ci', status: 'COMPLETED', conclusion: 'FAILURE', detailsUrl: 'https://github.com/example/repo/actions/runs/100/job/1' }],
+    });
+    const { exec } = makePrExec({
+      prViews: [failingPr],
+      localCommand: args => {
+        const result = fixtureLocalCommand(args);
+        const body = JSON.parse(result.stdout);
+        body.preconditions = ['ci check failing at review time'];
+        return { ...result, stdout: JSON.stringify(body) };
+      },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.localReview.status, 'passed');
+    const lanes = result.localReview.evidence[0].lanes;
+    assert.ok(lanes.length > 0);
+    assert.ok(lanes.every(lane => lane.recommendation === 'approve'));
+    assert.ok(lanes.every(lane => lane.preconditions.includes('ci check failing at review time')));
+    assert.notEqual(result.status, 'complete');
   });
 
   it('publishes local-command review results as provider-visible PR feedback', async () => {
@@ -1935,6 +1964,28 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
+  });
+
+  it('rejects lane evidence publishing with mismatched recommendation and status', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      recommendation: lane.id === 'code-quality' ? 'request-changes' : lane.recommendation,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /recommendation request-changes is not valid with status passed/,
+    );
   });
 
   it('rejects lane evidence publishing without a completeness self-check', async () => {
