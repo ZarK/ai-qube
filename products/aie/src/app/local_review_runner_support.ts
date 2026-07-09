@@ -44,6 +44,7 @@ export function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber
 
 export interface CarryForwardSource {
   fromHeadSha: string;
+  priorRunId: string | null;
   deltaSummary: string;
 }
 
@@ -87,7 +88,7 @@ export async function findCarryForwardSource(input: {
   } catch {
     return null;
   }
-  const candidates: Array<{ fromHeadSha: string; recordedAt: string }> = [];
+  const candidates: Array<{ fromHeadSha: string; priorRunId: string | null; recordedAt: string }> = [];
   for (const directoryName of headDirectories) {
     const path = join(prDirectory, directoryName, `${input.lane}.json`);
     if (!existsSync(path)) continue;
@@ -104,7 +105,9 @@ export async function findCarryForwardSource(input: {
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
-      candidates.push({ fromHeadSha: priorHeadSha, recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '' });
+      const provenance = parsed.runnerProvenance;
+      const priorRunId = [provenance.taskId, provenance.sessionId, provenance.threadId].find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? null;
+      candidates.push({ fromHeadSha: priorHeadSha, priorRunId, recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '' });
     } catch {
       continue;
     }
@@ -123,7 +126,7 @@ export async function findCarryForwardSource(input: {
     const deltaSummary = deltaPaths.length === 0
       ? `no files changed between ${candidate.fromHeadSha} and ${input.headSha}`
       : `${deltaPaths.length} changed file(s) between ${candidate.fromHeadSha} and ${input.headSha} did not touch this lane's scope`;
-    return { fromHeadSha: candidate.fromHeadSha, deltaSummary };
+    return { fromHeadSha: candidate.fromHeadSha, priorRunId: candidate.priorRunId, deltaSummary };
   }
   return null;
 }
@@ -140,7 +143,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
       summary: `Carried forward from approved ${lane} review at ${source.fromHeadSha}. ${typeof prior.summary === 'string' ? prior.summary : ''}`.trim(),
       completeness: `${typeof prior.completeness === 'string' ? prior.completeness : ''} ${carriedNote}`.trim(),
       preconditions: [...(Array.isArray(prior.preconditions) ? prior.preconditions.filter((item): item is string => typeof item === 'string') : []), carriedNote],
-      carriedForward: { fromHeadSha: source.fromHeadSha, deltaSummary: source.deltaSummary },
+      carriedForward: { fromHeadSha: source.fromHeadSha, priorRunId: source.priorRunId, deltaSummary: source.deltaSummary },
       recordedAt: new Date().toISOString(),
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);

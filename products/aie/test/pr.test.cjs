@@ -1575,6 +1575,7 @@ describe('PR gate service', () => {
     assert.match(carried.summary, /Carried forward from approved review at/);
     const carriedEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json'), 'utf8'));
     assert.equal(carriedEvidence.carriedForward.fromHeadSha, priorHead);
+    assert.equal(carriedEvidence.carriedForward.priorRunId, 'test-review-task');
     assert.equal(carriedEvidence.headSha, currentHead);
     assert.equal(result.localReview.status, 'passed');
   });

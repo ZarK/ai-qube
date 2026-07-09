@@ -80,6 +80,7 @@ export interface LocalReviewLane {
 
 export interface LocalReviewCarriedForward {
   fromHeadSha: string;
+  priorRunId: string | null;
   deltaSummary: string;
 }
 
@@ -255,6 +256,7 @@ function readCarriedForward(value: unknown): LocalReviewCarriedForward | null {
   if (typeof value.fromHeadSha !== 'string' || value.fromHeadSha.trim() === '') return null;
   return {
     fromHeadSha: redact(value.fromHeadSha.trim()),
+    priorRunId: typeof value.priorRunId === 'string' && value.priorRunId.trim() !== '' ? redact(value.priorRunId.trim()) : null,
     deltaSummary: typeof value.deltaSummary === 'string' ? redact(value.deltaSummary.trim()) : '',
   };
 }
