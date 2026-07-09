@@ -21,6 +21,7 @@ import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } fro
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
@@ -817,6 +818,17 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   });
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
+  if (!dryRun && config.reviewCarryForwardPublish === 'note') {
+    for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
+      for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
+        try {
+          await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec });
+        } catch (error: unknown) {
+          publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);
+        }
+      }
+    }
+  }
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
   const carriedForwardLanes = config.reviewCarryForwardPublish === 'none' && localReview.status === 'passed'
     ? localReview.evidence.filter(evidence => evidence.status === 'passed').flatMap(evidence => evidence.lanes.filter(lane => lane.carriedForward !== null && lane.status === 'passed' && lane.recommendation === 'approve').map(lane => lane.id))
