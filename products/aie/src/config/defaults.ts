@@ -87,6 +87,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       localAgents: [],
       waitMinutes: 10,
       requestText: '',
+      carryForwardPublish: 'note',
     },
     gates: {
       definitions: [],
@@ -291,6 +292,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       localReviewers: [...policy.reviews.localAgents],
       waitMinutes: policy.reviews.waitMinutes,
       requestText: policy.reviews.requestText,
+      carryForwardPublish: policy.reviews.carryForwardPublish,
     },
     gates: { definitions: policyGateDefinitions(policy.gates) },
     audit: {
@@ -351,6 +353,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     localReviewAgents: [...policy.reviews.localAgents],
     reviewWaitMinutes: policy.reviews.waitMinutes,
     reviewRequestText: policy.reviews.requestText,
+    reviewCarryForwardPublish: policy.reviews.carryForwardPublish,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,

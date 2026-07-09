@@ -45,6 +45,7 @@ export type ReviewAdapterKind = 'github' | 'remote' | 'local' | 'mixed' | 'shado
 export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
 export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
+export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
 
 export interface ReviewPromptFragments {
   repository: string[];
@@ -76,6 +77,7 @@ export interface ReviewLanePolicy {
   tools: string[];
   runner: 'github-comment' | 'github-reviewer' | 'local-command' | 'local-host' | 'manual-evidence';
   command?: string;
+  rereview: ReviewLaneRereviewMode;
 }
 
 export interface ReviewPolicy {
@@ -89,6 +91,7 @@ export interface ReviewPolicy {
   localReviewers: string[];
   waitMinutes: number;
   requestText: string;
+  carryForwardPublish: 'note' | 'none';
 }
 
 export interface GatePolicy {
@@ -223,6 +226,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
       requestText: input.reviews.requestText,
+      carryForwardPublish: input.reviews.carryForwardPublish,
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { ...input.audit },

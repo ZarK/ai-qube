@@ -1,5 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
-import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -279,7 +279,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
@@ -294,9 +294,21 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       tools: readStringArray(entry, 'tools', [], lanePath, errors),
       runner: readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors),
       command: readOptionalNonEmptyString(entry, 'command', `${lanePath}.command`, errors),
+      rereview: readReviewRereviewMode(entry.rereview, defaultRereviewMode(id), `${lanePath}.rereview`, errors),
     });
   });
   return lanes;
+}
+
+export function defaultRereviewMode(laneId: string): ReviewLaneRereviewMode {
+  return laneId === 'final-gate' || laneId === 'issue-compliance' ? 'always-rerun' : 'delta';
+}
+
+function readReviewRereviewMode(value: unknown, defaultValue: ReviewLaneRereviewMode, path: string, errors: ValidationError[]): ReviewLaneRereviewMode {
+  if (value === undefined) return defaultValue;
+  if (value === 'always-rerun' || value === 'delta') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "always-rerun" or "delta"` });
+  return defaultValue;
 }
 
 function readLegacyScriptsPolicy(value: unknown, defaultValue: MigrationPolicy['legacyScripts'], path: string, errors: ValidationError[]): MigrationPolicy['legacyScripts'] {
@@ -646,7 +658,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText', 'carryForwardPublish'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -658,7 +670,15 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
+    carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
   };
+}
+
+function readCarryForwardPublish(value: unknown, defaultValue: 'note' | 'none', path: string, errors: ValidationError[]): 'note' | 'none' {
+  if (value === undefined) return defaultValue;
+  if (value === 'note' || value === 'none') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "note" or "none"` });
+  return defaultValue;
 }
 
 function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: ValidationError[]): GatePolicyConfig {

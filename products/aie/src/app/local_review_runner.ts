@@ -6,7 +6,8 @@ import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
-import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract } from './local_review_runner_support.js';
+import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract } from './local_review_runner_support.js';
+import { defaultRereviewMode } from '../config/schema.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 
@@ -147,6 +148,22 @@ function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, link
   return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and fork_context false. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never reference .qube/aie/reviews/.../prompts/ files. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`${publishCommand}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR reviews/comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
 }
 
+async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], linkedIssueNumbers: readonly number[], written: string[]): Promise<LocalReviewLaneRun | null> {
+  if (runner !== 'local-host' && runner !== 'local-command') return null;
+  const lanePolicy = config.reviewLanes.find(entry => entry.id === lane);
+  if ((lanePolicy?.rereview ?? defaultRereviewMode(lane)) !== 'delta') return null;
+  const contextPatterns = [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements];
+  const source = await findCarryForwardSource({ repoRoot: input.repoRoot, issueNumber, prNumber: input.prNumber, headSha: input.headSha, lane, matchPatterns: lanePolicy?.match ?? [], contextPatterns, expectedFragmentDigest: expectedLaneFragmentDigest(lane), expectedAdapter: runner, requiredCommand: command });
+  if (!source) return null;
+  if (input.dryRun) {
+    return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path]);
+  }
+  const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source);
+  if (!writtenPath) return null;
+  written.push(writtenPath);
+  return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path]);
+}
+
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
   const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const opencode = await probeOpenCodeReviewCapability();
@@ -188,6 +205,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path]));
         continue;
       }
+      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written);
+      if (carried) {
+        lanes.push(carried);
+        continue;
+      }
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
@@ -209,6 +231,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         unavailable.push(`${lane}: ${summary}`);
         produced.push(blockedLane(lane, 'unavailable', summary, blocker, command, issueNumber, input.prNumber, input.repoRoot, input.headSha, runner === 'local-host' ? 'local-host' : 'local-command'));
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt));
+        continue;
+      }
+      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written);
+      if (carried) {
+        lanes.push(carried);
         continue;
       }
       if (runner === 'local-host') {

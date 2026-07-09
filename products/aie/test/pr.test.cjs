@@ -1540,6 +1540,215 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
   });
 
+  it('carries forward an approved lane when the head delta does not touch its scope', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: 'test-hash' }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const carried = result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
+    assert.equal(carried.status, 'completed');
+    assert.match(carried.summary, /Carried forward from approved review at/);
+    const carriedEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json'), 'utf8'));
+    assert.equal(carriedEvidence.carriedForward.fromHeadSha, priorHead);
+    assert.equal(carriedEvidence.carriedForward.priorRunId, 'test-review-task');
+    assert.equal(carriedEvidence.headSha, currentHead);
+    assert.equal(result.localReview.status, 'passed');
+  });
+
+  it('reruns a delta lane when review configuration changed in the head delta', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), '{"version":1}\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), '{"version":1,"policy":{}}\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'review config change'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
+  it('reruns a delta lane when review context instructions changed in the head delta', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    writeFileSync(join(repo, 'AGENTS.md'), '# instructions\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'AGENTS.md'), '# instructions changed\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'update instructions'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
+  it('reruns a delta lane when the current lane runner does not match the prior evidence adapter', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.localReviewAgents = ['local-command'];
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-command', command: 'review-fixture' },
+    ];
+    trustReviewCommands(repo);
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const currentEvidencePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json');
+    if (existsSync(currentEvidencePath)) {
+      const written = JSON.parse(readFileSync(currentEvidencePath, 'utf8'));
+      assert.equal(written.carriedForward, undefined);
+    }
+  });
+
+  it('skips provider publishing for carried evidence when the carry-forward publish policy is none', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewCarryForwardPublish = 'none';
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const carriedTarget = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'def456');
+    mkdirSync(carriedTarget, { recursive: true });
+    const priorLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json'), 'utf8'));
+    const carriedLane = { ...priorLane, headSha: 'def456', carriedForward: { fromHeadSha: 'abc123', deltaSummary: 'no scope paths changed' } };
+    writeFileSync(join(carriedTarget, 'code-quality.json'), `${JSON.stringify(carriedLane, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: 'def456' })] });
+
+    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+
+    assert.equal(result.publish.status, 'skipped');
+    assert.match(result.publish.nextAction, /Carried-forward lane publishing is disabled by policy/);
+  });
+
+  it('reruns lanes with an always-rerun policy instead of carrying forward', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', rereview: 'always-rerun' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
+  it('reruns a delta lane when the head delta touches its scope', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 2;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'change lane scope'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
   it('keeps lane verdicts lane-scoped when gate-level CI is red', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();

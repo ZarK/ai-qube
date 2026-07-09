@@ -21,6 +21,7 @@ import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } fro
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
@@ -801,6 +802,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     includePrompts: options.includeLocalReviewPrompts === true,
     changedPaths,
   });
+  const carryForwardScope = {
+    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+  };
   const localReview = readLocalReviewGate({
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -814,11 +819,33 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     expectedPromptStackHashes: expectedPromptStackHashes(localReviewRunner),
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
+    carryForwardScope,
   });
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
+  const publishedCarriedLanes: string[] = [];
+  if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
+    for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
+      for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
+        try {
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+          if (published.publish.status === 'published' || published.publish.status === 'skipped') publishedCarriedLanes.push(lane.id);
+        } catch (error: unknown) {
+          publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);
+        }
+      }
+    }
+  }
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
-  const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid);
+  const carriedForwardLanes = localReview.status === 'passed'
+    ? [...new Set([
+        ...(config.reviewCarryForwardPublish === 'none'
+          ? localReview.evidence.filter(evidence => evidence.status === 'passed').flatMap(evidence => evidence.lanes.filter(lane => lane.carriedForward !== null && lane.status === 'passed' && lane.recommendation === 'approve').map(lane => lane.id))
+          : []),
+        ...publishedCarriedLanes,
+      ])]
+    : [];
+  const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
   const feedback = prFeedback(finalSnapshot.item);

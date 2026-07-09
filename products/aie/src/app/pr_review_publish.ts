@@ -2,7 +2,8 @@ import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { gitDeltaPathsSync, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { carryForwardDeltaTouched } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -15,6 +16,8 @@ export interface PrReviewPublishOptions {
   dryRun?: boolean;
   repoRoot?: string;
   exec?: PrGateExec;
+  carryForwardPublish?: 'note' | 'none';
+  carryForwardScope?: CarryForwardScope;
 }
 
 export interface PrReviewPublishResult {
@@ -256,12 +259,27 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (provenance.runnerKind !== adapter) throw laneEvidenceFailure(path, 'runnerProvenance runnerKind must match the evidence adapter.');
   if (provenance.freshContext !== true) throw laneEvidenceFailure(path, 'runnerProvenance must record fresh independent reviewer context.');
   if (provenance.promptOnly === true) throw laneEvidenceFailure(path, 'prompt-only review output cannot be published as provider-visible lane feedback.');
-  if (provenance.headSha !== headSha) throw laneEvidenceFailure(path, 'runnerProvenance headSha must match the publish target.');
+  const carriedForwardHead = isRecord(raw.carriedForward) && typeof raw.carriedForward.fromHeadSha === 'string' && raw.carriedForward.fromHeadSha.trim() !== '' ? raw.carriedForward.fromHeadSha.trim() : null;
+  if (carriedForwardHead) {
+    if (provenance.headSha !== carriedForwardHead) throw laneEvidenceFailure(path, 'carried-forward runnerProvenance must reference the prior head it claims.');
+  } else if (provenance.headSha !== headSha) {
+    throw laneEvidenceFailure(path, 'runnerProvenance headSha must match the publish target.');
+  }
   if (typeof provenance.promptStackHash !== 'string' || provenance.promptStackHash.trim() === '') throw laneEvidenceFailure(path, 'runnerProvenance must record a prompt stack hash.');
   if (typeof provenance.taskId !== 'string' && typeof provenance.sessionId !== 'string' && typeof provenance.threadId !== 'string') {
     throw laneEvidenceFailure(path, 'runnerProvenance must record a separate task, session, or thread id.');
   }
-  if (adapter === 'local-host') validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
+  if (adapter === 'local-host') {
+    if (carriedForwardHead) {
+      const prior = loadLaneEvidence(repoRoot, issueNumber, prNumber, carriedForwardHead, lane);
+      if (prior.raw.status !== 'passed' || readRecommendation(prior.raw.recommendation ?? prior.raw.status) !== 'approve') {
+        throw laneEvidenceFailure(path, 'carried-forward evidence must reference an approved prior-head lane record.');
+      }
+      validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, carriedForwardHead, lane, prior.raw, path, provenance);
+    } else {
+      validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
+    }
+  }
   const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === 'string') : [];
   const structuredFindings = readStructuredFindings(raw.findings, path);
   if (blockers.length > 0 && structuredFindings.length === 0) {
@@ -307,6 +325,25 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     throw new Error('publish lane review failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
   const evidence = validateLaneEvidence(repoRoot, issueNumber, options.prNumber, headSha, options.lane);
+  const carriedForward = isRecord(evidence.evidence.carriedForward) && typeof evidence.evidence.carriedForward.fromHeadSha === 'string' ? evidence.evidence.carriedForward.fromHeadSha.trim() : null;
+  if (carriedForward) {
+    if (options.carryForwardPublish === 'none') {
+      return {
+        ok: true,
+        command: 'pr review publish',
+        prNumber: options.prNumber,
+        lane: options.lane,
+        publish: { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: `Carried-forward lane publishing is disabled by policy; local carried evidence for ${options.lane} satisfies the gate.` },
+      };
+    }
+    const deltaPaths = gitDeltaPathsSync(repoRoot, carriedForward, headSha);
+    if (deltaPaths === null) {
+      throw new Error(`publish lane review failed. Likely cause: the carried-forward delta from ${carriedForward} could not be verified with git. Next action: rerun the lane review for the current head instead of carrying it forward.`);
+    }
+    if (carryForwardDeltaTouched(deltaPaths, options.carryForwardScope?.laneMatchPatterns[options.lane] ?? [], options.carryForwardScope?.contextPatterns ?? [])) {
+      throw new Error(`publish lane review failed. Likely cause: the head delta touches the ${options.lane} lane scope or review context, so carried-forward evidence is invalid. Next action: rerun the lane review for the current head.`);
+    }
+  }
   const publishInput = {
     dryRun: options.dryRun ?? false,
     prNumber: options.prNumber,
@@ -331,7 +368,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
-  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot });
+  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {
