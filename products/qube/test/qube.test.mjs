@@ -269,6 +269,11 @@ describe("qube composer CLI", () => {
 
     assert.equal(shortHelp.status, 0, shortHelp.stderr);
     assert.equal(productHelp.status, 0, productHelp.stderr);
+    assert.match(shortHelp.stdout, /Usage:\s*\r?\n\s*qube review/);
+    assert.match(shortHelp.stdout, /Examples:[\s\S]*qube review setup github-app/);
+    assert.match(shortHelp.stdout, /Equivalent paths: `qube aie review` or `aie review`\./);
+    assert.doesNotMatch(shortHelp.stdout, /Usage:\s*\r?\n\s*aie review/);
+    assert.match(productHelp.stdout, /Usage:\s*\r?\n\s*aie review/);
     for (const output of [shortHelp.stdout, productHelp.stdout]) {
       assert.match(output, /review setup github-app/);
       assert.match(output, /review setup token/);
@@ -281,6 +286,26 @@ describe("qube composer CLI", () => {
     assert.ok(["ready", "degraded", "unavailable", "unconfigured"].includes(parsed.readiness));
     assert.equal(typeof parsed.nextAction, "string");
     assert.equal(typeof parsed.probe, "object");
+  });
+
+  it("keeps every short review help surface QUBE-primary", () => {
+    const commands = [
+      ["review"],
+      ["review", "setup"],
+      ["review", "setup", "github-app"],
+      ["review", "setup", "token"],
+      ["review", "doctor"],
+      ["review", "gate"],
+    ];
+
+    for (const command of commands) {
+      const result = runCli([...command, "--help"]);
+      const commandPath = command.join(" ");
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(result.stdout, new RegExp(`Usage:\\s*\\r?\\n\\s*qube ${commandPath}`));
+      assert.match(result.stdout, new RegExp(`Examples:[\\s\\S]*qube ${commandPath}`));
+      assert.doesNotMatch(result.stdout, new RegExp(`Usage:\\s*\\r?\\n\\s*aie ${commandPath}`));
+    }
   });
 
   it("renders concrete short-surface reviewer publisher guidance without writing incomplete config", () => {

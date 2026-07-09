@@ -24,7 +24,7 @@ function makeDirectory() {
 function readyResolver(config, options = {}) {
   const mode = config?.mode ?? 'user';
   return Promise.resolve({
-    accessToken: null,
+    accessToken: options.mint ? 'fixture-access-token' : null,
     identity: {
       mode,
       identityClass: mode === 'github-app' ? 'github-app-installation' : mode === 'token' ? 'fine-grained-token' : 'user',
@@ -35,6 +35,15 @@ function readyResolver(config, options = {}) {
       publishTransport: 'pull-request-review',
       authSource: mode === 'github-app' ? 'github-app-installation' : mode === 'token' ? 'token-env' : 'gh-user',
     },
+  });
+}
+
+function successfulRepositoryProbe() {
+  return Promise.resolve({
+    repository: 'owner/repository',
+    accessible: true,
+    pullRequestPermission: 'write',
+    fallbackReason: null,
   });
 }
 
@@ -196,10 +205,18 @@ describe('review publisher doctor', () => {
       mode: 'token',
       token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
     };
-    const ready = await runReviewDoctor({ config, resolvePublisher: readyResolver, mintProbe: true });
+    const ready = await runReviewDoctor({
+      config,
+      resolvePublisher: readyResolver,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      mintProbe: true,
+    });
     assert.equal(ready.readiness, 'ready');
     assert.equal(ready.probe.attempted, true);
     assert.equal(ready.probe.permissionStatus, 'ok');
+    assert.equal(ready.probe.repository.status, 'ok');
+    assert.equal(ready.probe.repository.repository, 'owner/repository');
+    assert.equal(ready.probe.repository.pullRequestPermission, 'write');
     assert.equal(ready.formalEventCapability, true);
     assert.doesNotMatch(JSON.stringify(ready), /ghp_|github_pat_|BEGIN PRIVATE KEY/);
 
@@ -207,7 +224,7 @@ describe('review publisher doctor', () => {
       config,
       mintProbe: true,
       resolvePublisher: async () => ({
-        accessToken: null,
+        accessToken: 'fixture-access-token',
         identity: {
           mode: 'token', identityClass: 'fine-grained-token', login: 'author-user',
           permissionStatus: 'same-author', formalEventCapability: false,
@@ -215,9 +232,62 @@ describe('review publisher doctor', () => {
           publishTransport: 'issue-comment', authSource: 'token-env',
         },
       }),
+      probeRepositoryAccess: successfulRepositoryProbe,
     });
     assert.equal(sameAuthor.readiness, 'degraded');
     assert.match(sameAuthor.nextAction, /different from the pull request author/);
+  });
+
+  it('reports unavailable when the configured publisher cannot access the current repository', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    const result = await runReviewDoctor({
+      config,
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: async () => ({
+        repository: 'owner/repository',
+        accessible: false,
+        pullRequestPermission: 'unknown',
+        fallbackReason: 'Configured publisher cannot access the current repository owner/repository.',
+      }),
+    });
+
+    assert.equal(result.readiness, 'unavailable');
+    assert.equal(result.permissionStatus, 'missing');
+    assert.equal(result.formalEventCapability, false);
+    assert.equal(result.probe.repository.status, 'failed');
+    assert.equal(result.probe.repository.accessible, false);
+    assert.match(result.nextAction, /Grant the configured publisher access to the current repository/);
+  });
+
+  it('reports degraded when repository access is read-only for pull requests', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    const result = await runReviewDoctor({
+      config,
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      probeRepositoryAccess: async () => ({
+        repository: 'owner/repository',
+        accessible: true,
+        pullRequestPermission: 'read',
+        fallbackReason: 'Pull requests permission is read-only for owner/repository.',
+      }),
+    });
+
+    assert.equal(result.readiness, 'degraded');
+    assert.equal(result.permissionStatus, 'missing');
+    assert.equal(result.formalEventCapability, false);
+    assert.equal(result.probe.repository.status, 'degraded');
+    assert.equal(result.probe.repository.pullRequestPermission, 'read');
+    assert.match(result.nextAction, /Pull requests read\/write permission/);
   });
 
   it('keeps existing review gate help available', () => {

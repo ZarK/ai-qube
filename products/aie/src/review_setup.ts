@@ -1,6 +1,6 @@
 import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode } from './config/index.js';
 import type { GitHubReviewPublisherIdentity, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
-import { resolveGitHubReviewPublisher } from './providers/github_adapter_exports.js';
+import { resolveGitHubReviewPublisher, runGh } from './providers/github_adapter_exports.js';
 
 export const REVIEW_PUBLISHER_ROLE_BOUNDARY = 'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.';
 
@@ -16,12 +16,27 @@ export interface ReviewSetupGuidance {
 
 export type ReviewPublisherReadiness = 'ready' | 'degraded' | 'unavailable' | 'unconfigured';
 
+export type ReviewPullRequestPermission = 'write' | 'read' | 'unknown';
+
+export interface ReviewRepositoryProbeResult {
+  readonly repository: string | null;
+  readonly accessible: boolean;
+  readonly pullRequestPermission: ReviewPullRequestPermission;
+  readonly fallbackReason: string | null;
+}
+
+export interface ReviewRepositoryProbe extends ReviewRepositoryProbeResult {
+  readonly attempted: boolean;
+  readonly status: 'ok' | 'degraded' | 'failed' | 'not-run';
+}
+
 export interface ReviewPublisherProbe {
   readonly attempted: boolean;
   readonly status: 'ok' | 'degraded' | 'failed' | 'not-run';
   readonly permissionStatus: GitHubReviewPublisherIdentity['permissionStatus'] | null;
   readonly formalEventCapability: boolean | null;
   readonly fallbackReason: string | null;
+  readonly repository: ReviewRepositoryProbe;
 }
 
 export interface ReviewDoctorResult {
@@ -46,11 +61,18 @@ export type ReviewPublisherResolver = (
   options?: { readonly cwd?: string; readonly mint?: boolean },
 ) => Promise<ResolvedGitHubReviewPublisher>;
 
+export type ReviewRepositoryAccessProber = (options: {
+  readonly cwd?: string;
+  readonly accessToken: string | null;
+  readonly identity: GitHubReviewPublisherIdentity;
+}) => Promise<ReviewRepositoryProbeResult>;
+
 export interface RunReviewDoctorOptions {
   readonly config: Config | null;
   readonly cwd?: string;
   readonly mintProbe?: boolean;
   readonly resolvePublisher?: ReviewPublisherResolver;
+  readonly probeRepositoryAccess?: ReviewRepositoryAccessProber;
 }
 
 export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
@@ -145,9 +167,132 @@ function unavailableIdentity(mode: GitHubReviewPublisherMode, reason: string): G
   };
 }
 
-function readinessFor(identity: GitHubReviewPublisherIdentity, missingFields: readonly string[], configured: boolean): ReviewPublisherReadiness {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function parseRepositoryName(stdout: string): string | null {
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    return isRecord(parsed) && typeof parsed.nameWithOwner === 'string' && parsed.nameWithOwner.includes('/')
+      ? parsed.nameWithOwner
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function parseRepositoryBody(stdout: string): Record<string, unknown> | null {
+  const bodyStart = stdout.search(/(?:^|\r?\n)\s*\{/);
+  if (bodyStart < 0) return null;
+  const jsonStart = stdout.indexOf('{', bodyStart);
+  try {
+    const parsed = JSON.parse(stdout.slice(jsonStart)) as unknown;
+    return isRecord(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function pullRequestPermissionFrom(identity: GitHubReviewPublisherIdentity): ReviewPullRequestPermission {
+  if (identity.identityClass === 'github-app-installation') {
+    return identity.permissionStatus === 'ok' ? 'write' : identity.permissionStatus === 'missing' ? 'read' : 'unknown';
+  }
+  // Repository role fields do not expose a fine-grained token's Pull requests scope.
+  return 'unknown';
+}
+
+async function probeCurrentRepositoryAccess(options: {
+  readonly cwd?: string;
+  readonly accessToken: string | null;
+  readonly identity: GitHubReviewPublisherIdentity;
+}): Promise<ReviewRepositoryProbeResult> {
+  if (!options.accessToken) {
+    return {
+      repository: null,
+      accessible: false,
+      pullRequestPermission: 'unknown',
+      fallbackReason: 'Configured publisher credential did not yield an access token for the current-repository probe.',
+    };
+  }
+  const repositoryResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], { cwd: options.cwd });
+  const repository = repositoryResult.exitCode === 0 ? parseRepositoryName(repositoryResult.stdout) : null;
+  if (!repository) {
+    return {
+      repository: null,
+      accessible: false,
+      pullRequestPermission: 'unknown',
+      fallbackReason: 'Could not detect the current GitHub repository from the working directory.',
+    };
+  }
+  const accessResult = await runGh([
+    'api',
+    `repos/${repository}`,
+    '--include',
+    '-H',
+    'Accept: application/vnd.github+json',
+  ], { cwd: options.cwd, token: options.accessToken });
+  if (accessResult.exitCode !== 0) {
+    return {
+      repository,
+      accessible: false,
+      pullRequestPermission: 'unknown',
+      fallbackReason: `Configured publisher cannot access the current repository ${repository}.`,
+    };
+  }
+  const repositoryBody = parseRepositoryBody(accessResult.stdout);
+  if (!repositoryBody) {
+    return {
+      repository,
+      accessible: false,
+      pullRequestPermission: 'unknown',
+      fallbackReason: `Current-repository access probe for ${repository} returned an unreadable response.`,
+    };
+  }
+  const pullRequestPermission = pullRequestPermissionFrom(options.identity);
+  return {
+    repository,
+    accessible: true,
+    pullRequestPermission,
+    fallbackReason: pullRequestPermission === 'write'
+      ? null
+      : `Configured publisher can read ${repository} but Pull requests write permission was not confirmed.`,
+  };
+}
+
+function notRunRepositoryProbe(): ReviewRepositoryProbe {
+  return {
+    attempted: false,
+    status: 'not-run',
+    repository: null,
+    accessible: false,
+    pullRequestPermission: 'unknown',
+    fallbackReason: null,
+  };
+}
+
+function repositoryProbe(result: ReviewRepositoryProbeResult): ReviewRepositoryProbe {
+  return {
+    attempted: true,
+    status: !result.accessible ? 'failed' : result.pullRequestPermission === 'write' ? 'ok' : 'degraded',
+    repository: result.repository,
+    accessible: result.accessible,
+    pullRequestPermission: result.pullRequestPermission,
+    fallbackReason: sanitizeReason(result.fallbackReason),
+  };
+}
+
+function readinessFor(
+  identity: GitHubReviewPublisherIdentity,
+  missingFields: readonly string[],
+  configured: boolean,
+  repository: ReviewRepositoryProbe,
+): ReviewPublisherReadiness {
   if (!configured) return 'unconfigured';
   if (missingFields.length > 0 || identity.permissionStatus === 'misconfigured') return 'unavailable';
+  if (identity.permissionStatus === 'same-author') return 'degraded';
+  if (repository.attempted && !repository.accessible) return 'unavailable';
+  if (!repository.attempted || repository.pullRequestPermission !== 'write') return 'degraded';
   if (identity.permissionStatus === 'ok' && identity.formalEventCapability) return 'ready';
   if (identity.permissionStatus === 'missing' && identity.identityClass === 'none') return 'unavailable';
   return 'degraded';
@@ -159,6 +304,8 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
   if (!probe.attempted) return 'Run `qube review doctor --json` without --no-probe after the referenced credential is available locally.';
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
   if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
+  if (probe.repository.attempted && !probe.repository.accessible) return `Grant the configured publisher access to the current repository${probe.repository.repository ? ` ${probe.repository.repository}` : ''}, then rerun \`qube review doctor --json\`.`;
+  if (probe.repository.attempted && probe.repository.pullRequestPermission !== 'write') return 'Grant the configured publisher Pull requests read/write permission for the current repository, then rerun `qube review doctor --json`.';
   if (probe.permissionStatus === 'missing') return mode === 'github-app'
     ? 'Grant the installed GitHub App Pull requests read/write permission, refresh the installation, and rerun `qube review doctor --json`.'
     : 'Grant the fine-grained token Pull requests read/write access to the repository, then rerun `qube review doctor --json`.';
@@ -171,23 +318,56 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   const configured = Boolean(publisher && mode !== 'user');
   const missingFields = publisherMissingFields(publisher);
   const resolver = options.resolvePublisher ?? resolveGitHubReviewPublisher;
+  const repositoryProber = options.probeRepositoryAccess ?? probeCurrentRepositoryAccess;
+  let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
   try {
-    identity = missingFields.length > 0
-      ? unavailableIdentity(mode, `Publisher configuration is incomplete: ${missingFields.join(', ')}.`)
-      : (await resolver(publisher, { cwd: options.cwd, mint: options.mintProbe === true })).identity;
+    if (missingFields.length > 0) {
+      identity = unavailableIdentity(mode, `Publisher configuration is incomplete: ${missingFields.join(', ')}.`);
+    } else {
+      resolved = await resolver(publisher, { cwd: options.cwd, mint: options.mintProbe === true });
+      identity = resolved.identity;
+    }
   } catch (error: unknown) {
     identity = unavailableIdentity(mode, sanitizeReason(error instanceof Error ? error.message : String(error)) ?? 'Publisher resolution failed.');
   }
   identity = { ...identity, fallbackReason: sanitizeReason(identity.fallbackReason) };
   const attempted = configured && missingFields.length === 0 && options.mintProbe === true;
-  const readiness = readinessFor(identity, missingFields, configured);
+  let repository = notRunRepositoryProbe();
+  if (attempted) {
+    try {
+      repository = repositoryProbe(await repositoryProber({
+        cwd: options.cwd,
+        accessToken: resolved?.accessToken ?? null,
+        identity,
+      }));
+    } catch (error: unknown) {
+      repository = repositoryProbe({
+        repository: null,
+        accessible: false,
+        pullRequestPermission: 'unknown',
+        fallbackReason: sanitizeReason(error instanceof Error ? error.message : String(error)) ?? 'Current-repository access probe failed.',
+      });
+    }
+  }
+  const readiness = readinessFor(identity, missingFields, configured, repository);
+  const effectivePermissionStatus = identity.permissionStatus === 'same-author'
+    ? 'same-author'
+    : repository.attempted && (!repository.accessible || repository.pullRequestPermission !== 'write')
+      ? 'missing'
+      : identity.permissionStatus;
+  const formalEventCapability = identity.formalEventCapability
+    && repository.attempted
+    && repository.accessible
+    && repository.pullRequestPermission === 'write';
+  const fallbackReason = identity.fallbackReason ?? repository.fallbackReason;
   const probe: ReviewPublisherProbe = {
     attempted,
     status: !attempted ? 'not-run' : readiness === 'ready' ? 'ok' : readiness === 'degraded' ? 'degraded' : 'failed',
-    permissionStatus: attempted ? identity.permissionStatus : null,
-    formalEventCapability: attempted ? identity.formalEventCapability : null,
-    fallbackReason: attempted ? identity.fallbackReason : null,
+    permissionStatus: attempted ? effectivePermissionStatus : null,
+    formalEventCapability: attempted ? formalEventCapability : null,
+    fallbackReason: attempted ? fallbackReason : null,
+    repository,
   };
   return {
     ok: true,
@@ -196,9 +376,9 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     mode,
     identityClass: identity.identityClass,
     login: identity.login,
-    permissionStatus: identity.permissionStatus,
-    formalEventCapability: identity.formalEventCapability,
-    fallbackReason: identity.fallbackReason,
+    permissionStatus: effectivePermissionStatus,
+    formalEventCapability,
+    fallbackReason,
     missingFields,
     secretReferences: safeSecretReferences(publisher),
     probe,
@@ -218,6 +398,8 @@ export function formatReviewDoctor(result: ReviewDoctorResult): string {
     `Missing fields: ${result.missingFields.join(', ') || 'none'}`,
     `Secret references: ${references}`,
     `Permission probe: ${result.probe.status}`,
+    `Repository probe: ${result.probe.repository.status}${result.probe.repository.repository ? ` (${result.probe.repository.repository})` : ''}`,
+    `Pull requests permission: ${result.probe.repository.pullRequestPermission}`,
     ...(result.fallbackReason ? [`Reason: ${result.fallbackReason}`] : []),
     `Next action: ${result.nextAction}`,
     result.roleBoundary,

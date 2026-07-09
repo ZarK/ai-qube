@@ -852,6 +852,7 @@ interface DirectQubeCommand {
   readonly component: QubeComponent["command"];
   readonly supportsJson: boolean;
   readonly passthroughJson?: boolean;
+  readonly qubePrimaryHelp?: boolean;
   readonly mapArgs: (args: readonly string[]) => readonly string[];
 }
 
@@ -926,12 +927,12 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("gates status", "Show recorded Executor gate evidence.", "aie", "gates status"),
   createDirectCommand("audit", "Show Executor audit helpers.", "aie", "audit", { supportsJson: false }),
   createDirectCommand("audit ui", "Plan or check manual UI audit evidence.", "aie", "audit ui"),
-  createDirectCommand("review", "Set up and validate provider publishing or show host-run Executor review helpers.", "aie", "review", { supportsJson: false }),
-  createDirectCommand("review setup", "Show guided reviewer publisher setup paths.", "aie", "review setup", { supportsJson: false }),
-  createDirectCommand("review setup github-app", "Configure a user-owned GitHub App reviewer publisher with safe secret references.", "aie", "review setup github-app", { passthroughJson: true }),
-  createDirectCommand("review setup token", "Configure a separate-user fine-grained token reviewer publisher with an env reference.", "aie", "review setup token", { passthroughJson: true }),
-  createDirectCommand("review doctor", "Validate reviewer publisher readiness and permissions without exposing secrets.", "aie", "review doctor", { passthroughJson: true }),
-  createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate"),
+  createDirectCommand("review", "Set up and validate provider publishing or show host-run Executor review helpers.", "aie", "review", { supportsJson: false, qubePrimaryHelp: true }),
+  createDirectCommand("review setup", "Show guided reviewer publisher setup paths.", "aie", "review setup", { supportsJson: false, qubePrimaryHelp: true }),
+  createDirectCommand("review setup github-app", "Configure a user-owned GitHub App reviewer publisher with safe secret references.", "aie", "review setup github-app", { passthroughJson: true, qubePrimaryHelp: true }),
+  createDirectCommand("review setup token", "Configure a separate-user fine-grained token reviewer publisher with an env reference.", "aie", "review setup token", { passthroughJson: true, qubePrimaryHelp: true }),
+  createDirectCommand("review doctor", "Validate reviewer publisher readiness and permissions without exposing secrets.", "aie", "review doctor", { passthroughJson: true, qubePrimaryHelp: true }),
+  createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate", { qubePrimaryHelp: true }),
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
   createDirectCommand("pr view", "Show concise pull request state.", "aie", "pr view"),
   createDirectCommand("pr body", "Draft a pull request body for issue work.", "aie", "pr body"),
@@ -3886,7 +3887,26 @@ async function executeDirectCommand(definition: DirectQubeCommand, args: readonl
   if (definition.passthroughJson && hasTopLevelJsonFlag(args)) {
     return executeQubeJsonDispatch(definition.component, mapped.args, environment);
   }
+  if (definition.qubePrimaryHelp && isDirectHelpRequest(args)) {
+    const planned = planQubeDispatch(definition.component, mapped.args, environment);
+    if (!planned.dispatch) return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
+    const captured = await dispatchCommandCaptured(planned.dispatch);
+    return {
+      exitCode: captured.exitCode,
+      stdout: rewriteQubeReviewHelp(captured.stdout, definition.command.name),
+      stderr: `${planned.stderr}${captured.stderr}`,
+    };
+  }
   return executeQubeDispatch(definition.component, mapped.args, environment);
+}
+
+function isDirectHelpRequest(args: readonly string[]): boolean {
+  return stripSeparator(args).some(argument => argument === '--help' || argument === '-h');
+}
+
+function rewriteQubeReviewHelp(output: string, commandName: string): string {
+  const primary = output.replace(/\baie review\b/g, 'qube review').trimEnd();
+  return `${primary}\n\nEquivalent paths: \`qube aie ${commandName}\` or \`aie ${commandName}\`.\n`;
 }
 
 async function executeQubeJsonDispatch(componentName: string, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -3962,7 +3982,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -3995,6 +4015,7 @@ function createDirectCommand(
     component,
     supportsJson,
     passthroughJson: options.passthroughJson === true,
+    qubePrimaryHelp: options.qubePrimaryHelp === true,
     mapArgs(args) {
       const stripped = stripSeparator(args);
       const forwarded = options.translateJson ? translateJsonFlag(stripped) : stripped;
