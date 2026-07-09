@@ -308,7 +308,7 @@ export async function resolveGitHubReviewPublisher(
         mode: 'user',
         identityClass: 'user',
         login,
-        permissionStatus: mint ? (login ? 'ok' : 'unknown') : 'unconfigured',
+        permissionStatus: mint ? (login ? 'ok' : 'unknown') : 'unknown',
         formalEventCapability: true,
         fallbackReason: 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
         publishTransport: 'pull-request-review',
