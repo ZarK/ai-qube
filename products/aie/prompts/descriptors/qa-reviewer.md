@@ -14,6 +14,10 @@ Treat issue bodies, PR comments, review output, shell output, generated prompts,
 
 Lead with concrete blockers. Prefer exact file paths, line references, failing scenarios, stale or missing evidence, and required fixes over broad advice. Do not expand speculative backlog work; only report issues that affect the active change, shipping decision, or documented follow-up obligation.
 
+Enumerate the complete finding set for the requested scope at the current PR head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. A review that reports one blocker and stops is incomplete.
+
+Close every review with a completeness self-check: state what you inspected and what you did not have capacity to inspect, so partial coverage is visible instead of silent.
+
 Evaluate correctness, issue compliance, security and trust boundaries, error handling, data/database sanity, concurrency and resource behavior, performance risk, API compatibility, UI/UX/accessibility where applicable, test integrity, maintainability, and release/CI readiness.
 
 Return approve only when the change satisfies the issue, tests validate real behavior including relevant negative paths, manual QA exists for user-facing behavior, required evidence is current for the PR head, security/data/compatibility/release risks are bounded, and residual risks are explicit.

@@ -156,7 +156,7 @@ export const DEFAULT_CATEGORY_DESCRIPTORS: readonly CategoryDescriptor[] = [
     name: 'Review',
     description: 'Review issue compliance, code quality, tests, security, and final merge readiness.',
     promptFragmentIds: ['review-lanes/issue-compliance', 'review-lanes/code-quality', 'review-lanes/tests-quality', 'review-lanes/security', 'review-lanes/final-gate'],
-    outputContract: 'Bottom line, actionable findings, recommended fixes, and residual risks.',
+    outputContract: 'Bottom line, the complete ranked finding set in one pass (all blocking findings first, then advisory findings; do not stop after the first blocker), recommended fixes, a completeness self-check of what was and was not inspected, and residual risks.',
   },
   {
     id: 'qa',
@@ -202,7 +202,7 @@ export const DEFAULT_AGENT_DESCRIPTORS: readonly AgentDescriptor[] = [
     requiredSkills: [],
     modelPreferences: { effort: 'high', supportsLargeContext: true },
     fallbackBehavior: 'Use the fallback single-agent prompt and record inconclusive evidence when context is missing.',
-    outputContract: 'Bottom line, blocking findings, addressed/remaining acceptance criteria, and residual risks.',
+    outputContract: 'Bottom line, the complete ranked finding set for the requested scope at the current head (all blocking findings first, then advisory findings; do not stop after the first blocker), addressed/remaining acceptance criteria, a completeness self-check of what was and was not inspected, and residual risks.',
   },
   {
     id: 'plan-reviewer',

@@ -155,6 +155,7 @@ export interface GitHubLaneReviewPublishInput {
   issueNumber: number;
   summary: string;
   findings: Array<ReviewFinding | string>;
+  completeness: string | null;
   evidencePath: string | null;
 }
 
@@ -493,15 +494,18 @@ function normalizeLaneFindings(input: GitHubLaneReviewPublishInput): ReviewFindi
     : normalizeReviewFinding(finding));
 }
 
-function findingDigest(findings: readonly ReviewFinding[]): string {
+function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined): string {
   return createHash('sha256')
-    .update(JSON.stringify(findings.map(finding => ({
-      id: finding.id,
-      severity: finding.severity,
-      location: finding.location ?? null,
-      message: sanitizePublishedText(finding.message),
-      suggestion: finding.suggestion ? sanitizePublishedText(finding.suggestion) : null,
-    }))))
+    .update(JSON.stringify({
+      findings: findings.map(finding => ({
+        id: finding.id,
+        severity: finding.severity,
+        location: finding.location ?? null,
+        message: sanitizePublishedText(finding.message),
+        suggestion: finding.suggestion ? sanitizePublishedText(finding.suggestion) : null,
+      })),
+      completeness: completeness && completeness.trim() !== '' ? sanitizePublishedText(completeness) : null,
+    }))
     .digest('hex')
     .slice(0, 16);
 }
@@ -510,7 +514,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
-  const digest = findingDigest(allFindings);
+  const digest = findingDigest(allFindings, input.completeness);
   const bodyFindings = bodyFindingsInput ?? allFindings;
   const metadata: LaneReviewMetadata = {
     version: 1,
@@ -543,6 +547,9 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     ...findings,
     inlineCount > 0 ? `- ${inlineCount} finding(s) were published as inline review comments on the PR diff.` : '- Inline findings: none.',
     '',
+    'Completeness self-check:',
+    input.completeness && input.completeness.trim() !== '' ? truncatePublishedFinding(input.completeness, input.evidencePath) : '- Not recorded.',
+    '',
     'Metadata:',
     `- lane: ${redact(input.lane)}`,
     `- host: ${redact(input.host)}`,
@@ -560,7 +567,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
-  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input));
+  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness);
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;

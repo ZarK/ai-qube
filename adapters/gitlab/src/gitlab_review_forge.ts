@@ -253,12 +253,21 @@ function feedbackSummary(value: string | undefined, fallback: string): string {
   return summary.length > 500 ? summary.slice(0, 500) : summary;
 }
 
+const MAX_PUBLISHED_COMPLETENESS_LENGTH = 12000;
+
+function truncatePublishedCompleteness(value: string): string {
+  const text = redact(value);
+  if (text.length <= MAX_PUBLISHED_COMPLETENESS_LENGTH) return text;
+  const suffix = " [truncated; full self-check retained in local evidence JSON]";
+  return `${text.slice(0, MAX_PUBLISHED_COMPLETENESS_LENGTH - suffix.length).trimEnd()}${suffix}`;
+}
+
 function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: string; runId: string; bodyFindingCount: number } {
   const findings = input.findings.map(finding => redact(typeof finding === "string" ? finding : normalizeReviewFinding(finding).message));
   const runId = laneRunId(input);
   const summary = redact(input.summary);
   const findingDigest = createHash("sha256")
-    .update(JSON.stringify({ summary, findings }))
+    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null }))
     .digest("hex")
     .slice(0, 16);
   const metadata: GitLabMetadata = {
@@ -284,6 +293,7 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     `QUBE ${redact(input.lane)} review: ${input.recommendation}`,
     summary,
     ...findings.map(finding => `- ${finding}`),
+    input.completeness && input.completeness.trim() !== "" ? `Completeness self-check: ${truncatePublishedCompleteness(input.completeness)}` : "",
     input.evidencePath ? `Evidence: ${redact(input.evidencePath)}` : "",
   ].filter(line => line !== "").join("\n");
   return { body, marker: JSON.stringify(metadata), runId, bodyFindingCount: findings.length };

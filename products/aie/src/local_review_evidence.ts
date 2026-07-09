@@ -72,6 +72,7 @@ export interface LocalReviewLane {
   contextReviewed: LocalReviewContextReviewed[];
   promptStack: LocalReviewPromptStackItem[];
   toolsUsed: string[];
+  completeness: string;
   runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
@@ -525,6 +526,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       contextReviewed: readContextReviewed(entry.contextReviewed),
       promptStack: readPromptStack(entry.promptStack),
       toolsUsed: stringArray(entry.toolsUsed),
+      completeness: typeof entry.completeness === 'string' ? redact(entry.completeness.trim()) : '',
       runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
@@ -805,6 +807,7 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         contextReviewed: readContextReviewed(parsed.contextReviewed),
         promptStack: readPromptStack(parsed.promptStack),
         toolsUsed: stringArray(parsed.toolsUsed),
+        completeness: typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '',
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };
