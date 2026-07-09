@@ -1605,6 +1605,22 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
   });
 
+  it('keeps fix batch resolution indeterminate when current-head lane evidence is missing', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: 'def456' })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.fixBatch.resolved.length, 0);
+    assert.match(result.fixBatch.summary, /resolved state is indeterminate/);
+  });
+
   it('carries forward an approved lane when the head delta does not touch its scope', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

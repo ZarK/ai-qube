@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched } from './review_focus.js';
@@ -1268,6 +1268,15 @@ function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prN
     try {
       const headDirs = readdirSync(prRoot, { withFileTypes: true })
         .filter(entry => entry.isDirectory() && entry.name !== currentHeadDir)
+        .map(entry => {
+          try {
+            return { name: entry.name, modifiedAt: statSync(join(prRoot, entry.name)).mtimeMs };
+          } catch {
+            return { name: entry.name, modifiedAt: 0 };
+          }
+        })
+        .sort((left, right) => right.modifiedAt - left.modifiedAt)
+        .slice(0, 5)
         .map(entry => entry.name);
       for (const headDir of headDirs) {
         const timestamp = headDirectoryTimestamp(repoRoot, issueNumber, prNumber, headDir);
@@ -1341,6 +1350,7 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
       }
     }
   }
+  const currentEvidenceLoaded = evidence.some(entry => entry.status !== 'missing' && entry.status !== 'stale' && entry.status !== 'malformed');
   const priorHeadSha = findPriorHeadSha(repoRoot, issueNumbers, prNumber, headSha);
   const priorByHash = priorHeadSha === null ? new Map<string, { laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }>() : readPriorFindingHashes(repoRoot, issueNumbers, prNumber, priorHeadSha);
   const priorHashes = new Set(priorByHash.keys());
@@ -1349,24 +1359,29 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     classification: priorHashes.has(finding.contentHash) ? 'persisting' as const : 'new' as const,
   })).sort(rankFixBatchFindings);
   const currentHashes = new Set(currentByHash.keys());
-  const resolved = [...priorByHash.values()]
-    .filter(entry => !currentHashes.has(entry.contentHash))
-    .map(entry => ({
-      laneId: entry.laneId,
-      contentHash: entry.contentHash,
-      severity: entry.finding.severity,
-      message: entry.finding.message,
-    }))
-    .sort((left, right) => {
-      if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
-      return left.message.localeCompare(right.message);
-    });
+  const resolved = currentEvidenceLoaded
+    ? [...priorByHash.values()]
+      .filter(entry => !currentHashes.has(entry.contentHash))
+      .map(entry => ({
+        laneId: entry.laneId,
+        contentHash: entry.contentHash,
+        severity: entry.finding.severity,
+        message: entry.finding.message,
+      }))
+      .sort((left, right) => {
+        if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+        return left.message.localeCompare(right.message);
+      })
+    : [];
   const blockingCount = findings.filter(finding => finding.severity === 'blocking').length;
   const advisoryCount = findings.filter(finding => finding.severity === 'advisory').length;
   const newCount = findings.filter(finding => finding.classification === 'new').length;
   const persistingCount = findings.filter(finding => finding.classification === 'persisting').length;
   const priorLabel = priorHeadSha ?? 'no prior head';
-  const summary = `${findings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolved.length} resolved since ${priorLabel}.`;
+  const resolvedLabel = currentEvidenceLoaded
+    ? `${resolved.length} resolved since ${priorLabel}.`
+    : 'resolved state is indeterminate because current-head lane evidence is missing or stale.';
+  const summary = `${findings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
   return {
     headSha,
     priorHeadSha,
