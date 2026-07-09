@@ -1605,6 +1605,26 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
   });
 
+  it('keeps distinct same-message findings at different lines in the fix batch', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+          { id: 'finding-b', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 42 } },
+        ] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const parserFindings = result.fixBatch.findings.filter(finding => finding.message === 'Fix the parser crash.');
+    assert.equal(parserFindings.length, 2);
+    assert.deepEqual(parserFindings.map(finding => finding.location.line).sort((a, b) => a - b), [10, 42]);
+  });
+
   it('keeps fix batch resolution indeterminate when current-head lane evidence is missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

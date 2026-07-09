@@ -1336,7 +1336,8 @@ function rankFixBatchFindings(left: FixBatchFinding, right: FixBatchFinding): nu
   const rightClassification = right.classification === 'persisting' ? 0 : 1;
   if (leftClassification !== rightClassification) return leftClassification - rightClassification;
   if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
-  return left.message.localeCompare(right.message);
+  if (left.message !== right.message) return left.message.localeCompare(right.message);
+  return (left.location?.line ?? 0) - (right.location?.line ?? 0);
 }
 
 export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[], prNumber: number, headSha: string, evidence: readonly LocalReviewEvidence[]): FixBatch {
@@ -1345,8 +1346,9 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     for (const lane of entry.lanes) {
       for (const finding of lane.findings) {
         const contentHash = findingContentHash(lane.id, finding);
-        if (currentByHash.has(contentHash)) continue;
-        currentByHash.set(contentHash, toFixBatchFinding(lane.id, finding, contentHash, 'new'));
+        const batchKey = `${contentHash}|${finding.location?.line ?? 'no-line'}|${finding.id}`;
+        if (currentByHash.has(batchKey)) continue;
+        currentByHash.set(batchKey, toFixBatchFinding(lane.id, finding, contentHash, 'new'));
       }
     }
   }
@@ -1358,7 +1360,7 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     ...finding,
     classification: priorHashes.has(finding.contentHash) ? 'persisting' as const : 'new' as const,
   })).sort(rankFixBatchFindings);
-  const currentHashes = new Set(currentByHash.keys());
+  const currentHashes = new Set([...currentByHash.values()].map(finding => finding.contentHash));
   const resolved = currentEvidenceLoaded
     ? [...priorByHash.values()]
       .filter(entry => !currentHashes.has(entry.contentHash))
