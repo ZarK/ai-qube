@@ -256,6 +256,51 @@ describe('github review publisher', () => {
     assert.equal(JSON.stringify(resolved).includes('github_pat_'), false);
   });
 
+  it('forwards probe deadlines into user-mode gh identity lookups', async () => {
+    const controller = new AbortController();
+    let seen;
+    await resolveGitHubReviewPublisher({ mode: 'user' }, {
+      mint: true,
+      timeoutMs: 17,
+      signal: controller.signal,
+      exec: async (args, _cwd, options) => {
+        seen = options;
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ login: 'ambient-user' }),
+          stderr: '',
+        };
+      },
+    });
+    assert.equal(seen?.timeoutMs, 17);
+    assert.equal(seen?.signal, controller.signal);
+  });
+
+  it('status-only mint=false skips token secret and private-key reads', async () => {
+    delete process.env.QUBE_MISSING_REVIEW_TOKEN;
+    const tokenStatus = await resolveGitHubReviewPublisher({
+      mode: 'token',
+      token: { env: 'QUBE_MISSING_REVIEW_TOKEN', login: 'reviewer-bot' },
+    }, { mint: false });
+    assert.equal(tokenStatus.identity.permissionStatus, 'unknown');
+    assert.equal(tokenStatus.identity.login, 'reviewer-bot');
+    assert.equal(tokenStatus.accessToken, null);
+
+    const appStatus = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyPath: 'C:\\does\\not\\exist\\review-app.pem',
+        login: 'review-bot[bot]',
+      },
+    }, { mint: false });
+    assert.equal(appStatus.identity.permissionStatus, 'unknown');
+    assert.equal(appStatus.identity.login, 'review-bot[bot]');
+    assert.equal(appStatus.accessToken, null);
+  });
+
   it('succeeds for a distinct fine-grained token identity with formal events', async () => {
     process.env.QUBE_TEST_REVIEW_TOKEN = 'github_pat_test_token_value_not_for_output_abcdefghijklmnop';
     const resolved = await resolveGitHubReviewPublisher({

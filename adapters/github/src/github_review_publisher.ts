@@ -162,6 +162,7 @@ async function defaultFetchInstallationToken(input: {
   void input.cwd;
   void input.exec;
   // Combine caller signal with a local deadline so hung mint requests cannot block the process.
+  // Keep the controller active through response body consumption so stalled bodies are abortable.
   const controller = new AbortController();
   const onAbort = () => controller.abort();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -172,47 +173,82 @@ async function defaultFetchInstallationToken(input: {
   if (typeof input.timeoutMs === 'number' && input.timeoutMs > 0) {
     timer = setTimeout(() => controller.abort(), input.timeoutMs);
   }
-  let response: Response;
   try {
-    response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
-      method: 'POST',
-      headers: {
-        Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${input.jwt}`,
-        'X-GitHub-Api-Version': '2022-11-28',
-        'User-Agent': 'qube-github-review-publisher',
-      },
-      signal: controller.signal,
-    });
-  } catch (error: unknown) {
-    if (controller.signal.aborted) {
-      throw new Error('GitHub App installation token request timed out or was aborted.');
+    let response: Response;
+    try {
+      response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${input.jwt}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'qube-github-review-publisher',
+        },
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      if (controller.signal.aborted) {
+        throw new Error('GitHub App installation token request timed out or was aborted.');
+      }
+      throw error;
     }
-    throw error;
+    let text: string;
+    try {
+      // Race body consumption against the same abort controller so stalled bodies
+      // cannot outlive the probe deadline after headers have already arrived.
+      text = await new Promise<string>((resolve, reject) => {
+        const onBodyAbort = () => {
+          try { response.body?.cancel(); } catch { /* ignore */ }
+          reject(new Error('GitHub App installation token response body timed out or was aborted.'));
+        };
+        if (controller.signal.aborted) {
+          onBodyAbort();
+          return;
+        }
+        controller.signal.addEventListener('abort', onBodyAbort, { once: true });
+        response.text()
+          .then((value) => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            resolve(value);
+          })
+          .catch((error: unknown) => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            if (controller.signal.aborted) {
+              reject(new Error('GitHub App installation token response body timed out or was aborted.'));
+              return;
+            }
+            reject(error);
+          });
+      });
+    } catch (error: unknown) {
+      if (controller.signal.aborted || (error instanceof Error && /timed out or was aborted/i.test(error.message))) {
+        throw new Error('GitHub App installation token response body timed out or was aborted.');
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('GitHub App installation token response was not valid JSON.');
+    }
+    if (!isRecord(parsed) || typeof parsed.token !== 'string' || parsed.token.trim() === '') {
+      throw new Error('GitHub App installation token response did not include a token.');
+    }
+    const permissions = isRecord(parsed.permissions)
+      ? Object.fromEntries(Object.entries(parsed.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+      : undefined;
+    const accountLogin = isRecord(parsed.account) && typeof parsed.account.login === 'string'
+      ? parsed.account.login
+      : null;
+    return { token: parsed.token, permissions, accountLogin };
   } finally {
     if (timer) clearTimeout(timer);
     if (input.signal) input.signal.removeEventListener('abort', onAbort);
   }
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('GitHub App installation token response was not valid JSON.');
-  }
-  if (!isRecord(parsed) || typeof parsed.token !== 'string' || parsed.token.trim() === '') {
-    throw new Error('GitHub App installation token response did not include a token.');
-  }
-  const permissions = isRecord(parsed.permissions)
-    ? Object.fromEntries(Object.entries(parsed.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-    : undefined;
-  const accountLogin = isRecord(parsed.account) && typeof parsed.account.login === 'string'
-    ? parsed.account.login
-    : null;
-  return { token: parsed.token, permissions, accountLogin };
 }
 
 async function fetchInstallationIdentity(
@@ -279,8 +315,17 @@ async function defaultFetchTokenIdentity(
   }
 }
 
-async function currentGhLogin(cwd?: string, exec?: GhExec): Promise<string | null> {
-  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], { cwd, exec });
+async function currentGhLogin(
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string | null> {
+  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
+    cwd,
+    exec,
+    signal: limits.signal,
+    timeoutMs: limits.timeoutMs,
+  });
   if (result.exitCode !== 0) return null;
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
@@ -361,7 +406,9 @@ export async function resolveGitHubReviewPublisher(
   const mint = options.mint !== false;
 
   if (mode === 'user') {
-    const login = mint ? await currentGhLogin(options.cwd, options.exec) : null;
+    const login = mint
+      ? await currentGhLogin(options.cwd, options.exec, { signal: options.signal, timeoutMs: options.timeoutMs })
+      : null;
     return {
       accessToken: null,
       identity: finalizeIdentity({
@@ -396,24 +443,8 @@ export async function resolveGitHubReviewPublisher(
         }),
       };
     }
-    const key = readPrivateKeyPem(app);
-    if (!key.pem) {
-      return {
-        accessToken: null,
-        identity: finalizeIdentity({
-          mode: 'github-app',
-          identityClass: 'none',
-          login: null,
-          permissionStatus: 'misconfigured',
-          formalEventCapability: false,
-          fallbackReason: key.error ?? 'GitHub App private key is unavailable.',
-          publishTransport: 'issue-comment',
-          authSource: 'none',
-          prAuthorLogin: options.prAuthorLogin,
-        }),
-      };
-    }
 
+    // Status-only probes never read private-key material.
     if (!mint) {
       const configuredLogin = normalizeLogin(app.login ?? null);
       return {
@@ -427,6 +458,24 @@ export async function resolveGitHubReviewPublisher(
           fallbackReason: null,
           publishTransport: 'pull-request-review',
           authSource: 'github-app-installation',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+
+    const key = readPrivateKeyPem(app);
+    if (!key.pem) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'misconfigured',
+          formalEventCapability: false,
+          fallbackReason: key.error ?? 'GitHub App private key is unavailable.',
+          publishTransport: 'issue-comment',
+          authSource: 'none',
           prAuthorLogin: options.prAuthorLogin,
         }),
       };
@@ -515,24 +564,8 @@ export async function resolveGitHubReviewPublisher(
       }),
     };
   }
-  const tokenValue = process.env[tokenEnv];
-  if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
-    return {
-      accessToken: null,
-      identity: finalizeIdentity({
-        mode: 'token',
-        identityClass: 'none',
-        login: null,
-        permissionStatus: 'missing',
-        formalEventCapability: false,
-        fallbackReason: `Fine-grained token env ${tokenEnv} is missing or empty.`,
-        publishTransport: 'issue-comment',
-        authSource: 'none',
-        prAuthorLogin: options.prAuthorLogin,
-      }),
-    };
-  }
 
+  // Status-only probes never read token secret material from the environment.
   if (!mint) {
     const configuredLogin = normalizeLogin(resolvedConfig.token?.login ?? null);
     return {
@@ -546,6 +579,24 @@ export async function resolveGitHubReviewPublisher(
         fallbackReason: null,
         publishTransport: 'pull-request-review',
         authSource: 'token-env',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+
+  const tokenValue = process.env[tokenEnv];
+  if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'none',
+        login: null,
+        permissionStatus: 'missing',
+        formalEventCapability: false,
+        fallbackReason: `Fine-grained token env ${tokenEnv} is missing or empty.`,
+        publishTransport: 'issue-comment',
+        authSource: 'none',
         prAuthorLogin: options.prAuthorLogin,
       }),
     };

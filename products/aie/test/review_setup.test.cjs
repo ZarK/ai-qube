@@ -382,6 +382,40 @@ describe('review publisher doctor', () => {
     assert.match(result.fallbackReason ?? '', /timed out|Publisher identity probe/i);
   });
 
+  it('does not treat missing credential secrets as failures under --no-probe', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_ABSENT_ENV', login: 'reviewer-bot' },
+    };
+    const result = await runReviewDoctor({
+      config,
+      mintProbe: false,
+      resolvePublisher: async (publisherConfig, options = {}) => {
+        assert.equal(options.mint, false);
+        // Status-only path must not require secret material.
+        return {
+          accessToken: null,
+          identity: {
+            mode: 'token',
+            identityClass: 'fine-grained-token',
+            login: 'reviewer-bot',
+            permissionStatus: 'unknown',
+            formalEventCapability: true,
+            fallbackReason: null,
+            publishTransport: 'pull-request-review',
+            authSource: 'token-env',
+          },
+        };
+      },
+    });
+
+    assert.equal(result.probe.attempted, false);
+    assert.equal(result.permissionStatus, 'unknown');
+    assert.notEqual(result.permissionStatus, 'missing');
+    assert.match(result.nextAction, /without --no-probe|credential is available/i);
+  });
+
   it('prioritizes missing credential remediation over repository access messaging', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {
