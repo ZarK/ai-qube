@@ -1,0 +1,59 @@
+{
+  "artifactType": "report",
+  "artifactVersion": 1,
+  "runId": "fixture-run",
+  "finishedAt": "2026-07-10T08:00:00.000Z",
+  "plan": {
+    "input": {
+      "root": "."
+    }
+  },
+  "stages": [
+    {
+      "stageId": "lint",
+      "status": "failed",
+      "diagnostics": [
+        {
+          "code": "no-debugger",
+          "file": "src/changed.ts",
+          "message": "Remove debugger before shipping.",
+          "range": {
+            "startColumn": 1,
+            "startLine": 7
+          },
+          "severity": "error",
+          "source": "biome"
+        },
+        {
+          "code": "no-unused-vars",
+          "file": "src/unchanged.ts",
+          "message": "Remove the unused value.",
+          "range": {
+            "startColumn": 3,
+            "startLine": 11
+          },
+          "severity": "warning",
+          "source": "biome"
+        }
+      ]
+    },
+    {
+      "stageId": "security",
+      "status": "failed",
+      "diagnostics": [
+        {
+          "file": "src/changed.ts",
+          "message": "Review the changed authentication branch.",
+          "severity": "warning",
+          "source": "semgrep"
+        },
+        {
+          "file": "src/changed.ts",
+          "message": "Review the changed authentication branch.",
+          "severity": "warning",
+          "source": "semgrep"
+        }
+      ]
+    }
+  ]
+}
