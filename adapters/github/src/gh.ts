@@ -117,11 +117,21 @@ export interface RunGhOptions {
    * Pass null to force the default gh authentication (clears GH_TOKEN for the child).
    */
   token?: string | null;
+  /** Hard deadline for the gh child process; kills the process when exceeded. */
+  timeoutMs?: number;
+  /** AbortSignal that terminates the gh child when aborted. */
+  signal?: AbortSignal;
 }
 
-export type GhExec = (args: string[], cwd?: string, options?: { token?: string | null }) => Promise<GhRunResult>;
+export type GhExecOptions = {
+  token?: string | null;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+};
 
-async function defaultGhExec(args: string[], cwd = process.cwd(), options: { token?: string | null } = {}): Promise<GhRunResult> {
+export type GhExec = (args: string[], cwd?: string, options?: GhExecOptions) => Promise<GhRunResult>;
+
+async function defaultGhExec(args: string[], cwd = process.cwd(), options: GhExecOptions = {}): Promise<GhRunResult> {
   const redactedArgs = args.map((a) => redact(a));
   const operation = `gh ${redactedArgs.join(' ')}`;
 
@@ -139,12 +149,28 @@ async function defaultGhExec(args: string[], cwd = process.cwd(), options: { tok
       env.GH_TOKEN = options.token;
       delete env.GITHUB_TOKEN;
     }
-    const { stdout, stderr } = await execFileAsync('gh', args, {
+    const execOptions: {
+      cwd: string;
+      encoding: 'utf8';
+      maxBuffer: number;
+      env: NodeJS.ProcessEnv;
+      timeout?: number;
+      killSignal?: NodeJS.Signals;
+      signal?: AbortSignal;
+    } = {
       cwd,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
       env,
-    });
+    };
+    if (typeof options.timeoutMs === 'number' && options.timeoutMs > 0) {
+      execOptions.timeout = options.timeoutMs;
+      execOptions.killSignal = 'SIGTERM';
+    }
+    if (options.signal) {
+      execOptions.signal = options.signal;
+    }
+    const { stdout, stderr } = await execFileAsync('gh', args, execOptions);
     return {
       args: redactedArgs,
       exitCode: 0,
@@ -158,6 +184,16 @@ async function defaultGhExec(args: string[], cwd = process.cwd(), options: { tok
     const stdout = redact(typeof stdoutRaw === 'string' ? stdoutRaw : (Buffer.isBuffer(stdoutRaw) ? stdoutRaw.toString('utf8') : ''));
     const stderr = redact(typeof stderrRaw === 'string' ? stderrRaw : (Buffer.isBuffer(stderrRaw) ? stderrRaw.toString('utf8') : (e.message || '')));
     const code = e.code === 'ENOENT' ? -1 : (e.status ?? (typeof e.code === 'number' ? e.code : 1));
+
+    // Timed-out or aborted children surface as ETXTBSY/AbortError/ETIMEDOUT depending on platform.
+    if (
+      e.code === 'ABORT_ERR'
+      || e.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT'
+      || e.code === 'ETIMEDOUT'
+      || (typeof e.message === 'string' && /aborted|timed? ?out/i.test(e.message))
+    ) {
+      throw new GhNetworkError(operation, stderr || stdout || 'gh invocation timed out or was aborted');
+    }
 
     if (e.code === 'ENOENT' || code === -1) {
       throw new GhNotFoundError(operation);
@@ -202,9 +238,13 @@ export async function runGh(
   args: string[],
   options: RunGhOptions = {}
 ): Promise<GhRunResult> {
-  const { cwd, exec, token } = options;
+  const { cwd, exec, token, timeoutMs, signal } = options;
   const runner = exec ?? defaultGhExec;
-  const result = await runner(args, cwd, token === undefined ? undefined : { token });
+  const execOptions: GhExecOptions | undefined =
+    token === undefined && timeoutMs === undefined && signal === undefined
+      ? undefined
+      : { token, timeoutMs, signal };
+  const result = await runner(args, cwd, execOptions);
   return {
     args: result.args,
     exitCode: result.exitCode,

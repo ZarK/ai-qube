@@ -63,11 +63,17 @@ export interface ResolvePublisherOptions {
    * or calling identity endpoints with publisher credentials. Used by pr view/gate JSON.
    */
   readonly mint?: boolean;
+  /** AbortSignal for live mint/identity probes. */
+  readonly signal?: AbortSignal;
+  /** Hard deadline (ms) for live mint/identity I/O. */
+  readonly timeoutMs?: number;
   readonly fetchInstallationToken?: (input: {
     appId: string;
     installationId: string;
     privateKeyPem: string;
     jwt: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }) => Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }>;
   readonly fetchTokenIdentity?: (token: string) => Promise<{ login: string | null; type: string | null }>;
 }
@@ -146,6 +152,8 @@ async function defaultFetchInstallationToken(input: {
   jwt: string;
   cwd?: string;
   exec?: GhExec;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }> {
   // Mint outside runGh so the installation token is not redacted from stdout
   // (runGh redacts ghs_ tokens before returning). Tokens stay in-memory only.
@@ -153,15 +161,38 @@ async function defaultFetchInstallationToken(input: {
   void input.privateKeyPem;
   void input.cwd;
   void input.exec;
-  const response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${input.jwt}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'qube-github-review-publisher',
-    },
-  });
+  // Combine caller signal with a local deadline so hung mint requests cannot block the process.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (input.signal) {
+    if (input.signal.aborted) controller.abort();
+    else input.signal.addEventListener('abort', onAbort, { once: true });
+  }
+  if (typeof input.timeoutMs === 'number' && input.timeoutMs > 0) {
+    timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  }
+  let response: Response;
+  try {
+    response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
+      method: 'POST',
+      headers: {
+        Accept: 'application/vnd.github+json',
+        Authorization: `Bearer ${input.jwt}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'qube-github-review-publisher',
+      },
+      signal: controller.signal,
+    });
+  } catch (error: unknown) {
+    if (controller.signal.aborted) {
+      throw new Error('GitHub App installation token request timed out or was aborted.');
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (input.signal) input.signal.removeEventListener('abort', onAbort);
+  }
   const text = await response.text();
   if (!response.ok) {
     throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
@@ -184,13 +215,20 @@ async function defaultFetchInstallationToken(input: {
   return { token: parsed.token, permissions, accountLogin };
 }
 
-async function fetchInstallationIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
+async function fetchInstallationIdentity(
+  token: string,
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ login: string | null; type: string | null }> {
   // Installation tokens cannot call /user; resolve the bot identity from /installation.
   try {
     const installation = await runGh(['api', 'installation', '-H', 'Accept: application/vnd.github+json'], {
       cwd,
       exec,
       token,
+      signal: limits.signal,
+      timeoutMs: limits.timeoutMs,
     });
     if (installation.exitCode !== 0) return { login: null, type: null };
     const parsed = JSON.parse(installation.stdout) as unknown;
@@ -207,7 +245,12 @@ async function fetchInstallationIdentity(token: string, cwd?: string, exec?: GhE
   }
 }
 
-async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
+async function defaultFetchTokenIdentity(
+  token: string,
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ login: string | null; type: string | null }> {
   // Production runGh throws on HTTP failures instead of returning exitCode != 0.
   // Catch expected /user failures so installation-token minting can fall back cleanly.
   try {
@@ -215,8 +258,10 @@ async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhE
       cwd,
       exec,
       token,
+      signal: limits.signal,
+      timeoutMs: limits.timeoutMs,
     });
-    if (result.exitCode !== 0) return fetchInstallationIdentity(token, cwd, exec);
+    if (result.exitCode !== 0) return fetchInstallationIdentity(token, cwd, exec, limits);
     try {
       const parsed = JSON.parse(result.stdout) as unknown;
       if (isRecord(parsed) && (typeof parsed.login === 'string' || typeof parsed.type === 'string')) {
@@ -228,9 +273,9 @@ async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhE
     } catch {
       // ignore parse failures
     }
-    return fetchInstallationIdentity(token, cwd, exec);
+    return fetchInstallationIdentity(token, cwd, exec, limits);
   } catch {
-    return fetchInstallationIdentity(token, cwd, exec);
+    return fetchInstallationIdentity(token, cwd, exec, limits);
   }
 }
 
@@ -390,12 +435,15 @@ export async function resolveGitHubReviewPublisher(
     try {
       const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
       const jwt = createGitHubAppJwt(app.appId, key.pem, nowSeconds);
+      const probeLimits = { signal: options.signal, timeoutMs: options.timeoutMs };
       const minted = options.fetchInstallationToken
         ? await options.fetchInstallationToken({
           appId: app.appId,
           installationId: app.installationId,
           privateKeyPem: key.pem,
           jwt,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
         })
         : await defaultFetchInstallationToken({
           appId: app.appId,
@@ -404,11 +452,14 @@ export async function resolveGitHubReviewPublisher(
           jwt,
           cwd: options.cwd,
           exec: options.exec,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
         });
 
+      // Installation tokens cannot call /user; resolve bot identity directly.
       const identityLookup = options.fetchTokenIdentity
         ? await options.fetchTokenIdentity(minted.token)
-        : await defaultFetchTokenIdentity(minted.token, options.cwd, options.exec);
+        : await fetchInstallationIdentity(minted.token, options.cwd, options.exec, probeLimits);
       const login = normalizeLogin(identityLookup.login ?? minted.accountLogin ?? null);
       const hasPermission = installationHasReviewPermission(minted.permissions);
 
@@ -503,7 +554,10 @@ export async function resolveGitHubReviewPublisher(
   try {
     const identityLookup = options.fetchTokenIdentity
       ? await options.fetchTokenIdentity(tokenValue)
-      : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec);
+      : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec, {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      });
     const login = normalizeLogin(identityLookup.login);
     return {
       accessToken: tokenValue,

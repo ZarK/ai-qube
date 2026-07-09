@@ -71,7 +71,7 @@ describe('github review publisher', () => {
     assert.equal(JSON.stringify(withKey.identity).includes('BEGIN'), false);
   });
 
-  it('falls back from throwing /user failures to /installation for app tokens', async () => {
+  it('resolves github-app identity via /installation without a known-invalid /user call', async () => {
     process.env.QUBE_TEST_APP_KEY = privateKey;
     const calls = [];
     const resolved = await resolveGitHubReviewPublisher({
@@ -88,7 +88,7 @@ describe('github review publisher', () => {
         permissions: { pull_requests: 'write' },
         accountLogin: 'review-bot[bot]',
       }),
-      // Production-like runner: throw on /user (installation tokens), succeed on /installation.
+      // Installation tokens use /installation only; /user is not a valid endpoint for them.
       exec: async (args) => {
         calls.push(args.join(' '));
         if (args.includes('user')) {
@@ -109,7 +109,7 @@ describe('github review publisher', () => {
       },
     });
 
-    assert.ok(calls.some(call => call.includes('user')));
+    assert.equal(calls.some(call => call.includes('user')), false);
     assert.ok(calls.some(call => call.includes('installation')));
     assert.equal(resolved.identity.mode, 'github-app');
     assert.equal(resolved.identity.identityClass, 'github-app-installation');

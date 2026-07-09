@@ -25,7 +25,13 @@ function isModuleMissing(error: unknown): boolean {
   return code === 'ERR_MODULE_NOT_FOUND' && error.message.includes('@tjalve/qube-adapter-github');
 }
 
-export async function runGh(args: string[], options: { cwd?: string; exec?: GhExec; token?: string | null } = {}): Promise<GhRunResult> {
+export async function runGh(args: string[], options: {
+  cwd?: string;
+  exec?: GhExec;
+  token?: string | null;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+} = {}): Promise<GhRunResult> {
   const adapter = await loadGitHubAdapter();
   return adapter.runGh(args, options);
 }

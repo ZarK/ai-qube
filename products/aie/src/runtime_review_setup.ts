@@ -98,9 +98,20 @@ function validatePublicIdentifier(value: string | undefined, flag: string): stri
   if (looksLikeCredentialMaterial(value) || value.length > 128) {
     return [`${flag} must be a public identifier, never token or private-key material.`];
   }
-  // App/installation ids are numeric or alphanumerics; logins may include [bot].
+  // Logins may include [bot] and alphanumerics; app/installation ids are validated separately.
   if (!/^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$/.test(value)) {
-    return [`${flag} must be a public identifier such as a numeric app id, installation id, or login.`];
+    return [`${flag} must be a public identifier such as a login or bot slug.`];
+  }
+  return [];
+}
+
+function validateNumericIdentifier(value: string | undefined, flag: string): string[] {
+  if (!value) return [];
+  if (looksLikeCredentialMaterial(value) || value.length > 32) {
+    return [`${flag} must be a numeric identifier, never token or private-key material.`];
+  }
+  if (!/^[1-9][0-9]*$/.test(value)) {
+    return [`${flag} must be a positive decimal GitHub identifier.`];
   }
   return [];
 }
@@ -115,8 +126,8 @@ function validateInputs(input: {
   login?: string;
 }): string[] {
   const errors = [
-    ...validatePublicIdentifier(input.appId, '--app-id'),
-    ...validatePublicIdentifier(input.installationId, '--installation-id'),
+    ...validateNumericIdentifier(input.appId, '--app-id'),
+    ...validateNumericIdentifier(input.installationId, '--installation-id'),
     ...validatePublicIdentifier(input.login, '--login'),
     ...validateEnvironmentName(input.privateKeyEnv, '--private-key-env'),
     ...validatePrivateKeyPath(input.privateKeyPath),

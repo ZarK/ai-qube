@@ -59,13 +59,20 @@ export interface ReviewDoctorResult {
 
 export type ReviewPublisherResolver = (
   config: GitHubReviewPublisherConfig | null | undefined,
-  options?: { readonly cwd?: string; readonly mint?: boolean },
+  options?: {
+    readonly cwd?: string;
+    readonly mint?: boolean;
+    readonly signal?: AbortSignal;
+    readonly timeoutMs?: number;
+  },
 ) => Promise<ResolvedGitHubReviewPublisher>;
 
 export type ReviewRepositoryAccessProber = (options: {
   readonly cwd?: string;
   readonly accessToken: string | null;
   readonly identity: GitHubReviewPublisherIdentity;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }) => Promise<ReviewRepositoryProbeResult>;
 
 export interface RunReviewDoctorOptions {
@@ -208,10 +215,23 @@ function pullRequestPermissionFrom(identity: GitHubReviewPublisherIdentity): Rev
   return 'unknown';
 }
 
+function parseGitHubRemoteRepository(remote: string): string | null {
+  const trimmed = remote.trim();
+  // Accept HTTPS and SSH remotes; strip only a terminal .git suffix so dotted repo names work.
+  const match = trimmed.match(/github\.com[:/]([^/]+)\/([^/]+?)(?:\.git)?$/i);
+  if (!match) return null;
+  const owner = match[1]?.trim();
+  const repo = match[2]?.trim();
+  if (!owner || !repo) return null;
+  return `${owner}/${repo}`;
+}
+
 async function probeCurrentRepositoryAccess(options: {
   readonly cwd?: string;
   readonly accessToken: string | null;
   readonly identity: GitHubReviewPublisherIdentity;
+  readonly signal?: AbortSignal;
+  readonly timeoutMs?: number;
 }): Promise<ReviewRepositoryProbeResult> {
   if (!options.accessToken) {
     return {
@@ -221,22 +241,28 @@ async function probeCurrentRepositoryAccess(options: {
       fallbackReason: 'Configured publisher credential did not yield an access token for the current-repository probe.',
     };
   }
-  // Prefer publisher-credentialed discovery so ambient gh auth cannot mask a valid publisher.
-  const repositoryResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], {
-    cwd: options.cwd,
-    token: options.accessToken,
-  });
-  let repository = repositoryResult.exitCode === 0 ? parseRepositoryName(repositoryResult.stdout) : null;
+  const limits = { signal: options.signal, timeoutMs: options.timeoutMs };
+  // Prefer local origin first to avoid an extra provider round-trip when possible.
+  let repository: string | null = null;
+  try {
+    const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: options.cwd ?? process.cwd(),
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+    repository = parseGitHubRemoteRepository(remote);
+  } catch {
+    repository = null;
+  }
   if (!repository) {
-    // Local git remote fallback does not require ambient provider credentials.
+    // Fall back to publisher-credentialed discovery when local remote is unavailable.
     try {
-      const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
-        cwd: options.cwd ?? process.cwd(),
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'ignore'],
-      }).trim();
-      const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/i);
-      repository = match ? match[1] : null;
+      const repositoryResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], {
+        cwd: options.cwd,
+        token: options.accessToken,
+        ...limits,
+      });
+      repository = repositoryResult.exitCode === 0 ? parseRepositoryName(repositoryResult.stdout) : null;
     } catch {
       repository = null;
     }
@@ -255,7 +281,7 @@ async function probeCurrentRepositoryAccess(options: {
     '--include',
     '-H',
     'Accept: application/vnd.github+json',
-  ], { cwd: options.cwd, token: options.accessToken });
+  ], { cwd: options.cwd, token: options.accessToken, ...limits });
   if (accessResult.exitCode !== 0) {
     return {
       repository,
@@ -337,6 +363,18 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
   if (!probe.attempted) return 'Run `qube review doctor --json` without --no-probe after the referenced credential is available locally.';
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
   if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
+  // Credential resolution failures take priority over repository-access messaging.
+  if (
+    !probe.repository.attempted
+    && (probe.permissionStatus === 'missing' || probe.permissionStatus === 'misconfigured')
+  ) {
+    if (probe.fallbackReason) {
+      return `${probe.fallbackReason} Fix the configured ${mode} credential reference, then rerun \`qube review doctor --json\`.`;
+    }
+    return mode === 'github-app'
+      ? 'Grant the installed GitHub App Pull requests read/write permission, refresh the installation, and rerun `qube review doctor --json`.'
+      : 'Grant the fine-grained token Pull requests read/write access to the repository, then rerun `qube review doctor --json`.';
+  }
   if (probe.repository.attempted && !probe.repository.accessible) return `Grant the configured publisher access to the current repository${probe.repository.repository ? ` ${probe.repository.repository}` : ''}, then rerun \`qube review doctor --json\`.`;
   if (probe.repository.attempted && probe.repository.pullRequestPermission === 'read') {
     return 'Grant the configured publisher Pull requests read/write permission for the current repository, then rerun `qube review doctor --json`.';
@@ -355,13 +393,19 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
 /** Bounded deadline for live publisher identity and repository probes. */
 export const REVIEW_DOCTOR_PROBE_TIMEOUT_MS = 20_000;
 
-async function withProbeTimeout<T>(promise: Promise<T>, label: string, timeoutMs = REVIEW_DOCTOR_PROBE_TIMEOUT_MS): Promise<T> {
+async function withProbeTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+  label: string,
+  timeoutMs = REVIEW_DOCTOR_PROBE_TIMEOUT_MS,
+): Promise<T> {
+  const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      promise,
+      run(controller.signal),
       new Promise<T>((_, reject) => {
         timer = setTimeout(() => {
+          controller.abort();
           reject(new Error(`${label} timed out after ${timeoutMs}ms. Rerun with network available or use --no-probe for offline reference checks.`));
         }, timeoutMs);
       }),
@@ -386,7 +430,12 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
       identity = unavailableIdentity(mode, `Publisher configuration is incomplete: ${missingFields.join(', ')}.`);
     } else {
       resolved = await withProbeTimeout(
-        resolver(publisher, { cwd: options.cwd, mint: options.mintProbe === true }),
+        (signal) => resolver(publisher, {
+          cwd: options.cwd,
+          mint: options.mintProbe === true,
+          signal,
+          timeoutMs: probeTimeoutMs,
+        }),
         'Publisher identity probe',
         probeTimeoutMs,
       );
@@ -398,14 +447,18 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   identity = { ...identity, fallbackReason: sanitizeReason(identity.fallbackReason) };
   const attempted = configured && missingFields.length === 0 && options.mintProbe === true;
   let repository = notRunRepositoryProbe();
-  // Skip repository probing when identity resolution already failed (e.g. probe timeout).
-  if (attempted && resolved) {
+  // Skip repository probing when identity resolution failed or no access token is available
+  // (missing credential env/key must not be reported as a repository-access problem).
+  const canProbeRepository = Boolean(resolved?.accessToken);
+  if (attempted && canProbeRepository && resolved) {
     try {
       repository = repositoryProbe(await withProbeTimeout(
-        repositoryProber({
+        (signal) => repositoryProber({
           cwd: options.cwd,
           accessToken: resolved.accessToken ?? null,
           identity,
+          signal,
+          timeoutMs: probeTimeoutMs,
         }),
         'Current-repository access probe',
         probeTimeoutMs,

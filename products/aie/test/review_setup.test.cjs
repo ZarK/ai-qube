@@ -339,29 +339,98 @@ describe('review publisher doctor', () => {
     assert.doesNotMatch(result.nextAction, /^Grant the fine-grained token Pull requests/);
   });
 
-  it('bounds stalled publisher probes with a deadline', async () => {
+  it('bounds stalled publisher probes with a deadline and aborts active work', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {
       mode: 'token',
       token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
     };
-    const never = () => new Promise(() => {});
+    let aborted = false;
     const started = Date.now();
     const result = await runReviewDoctor({
       config,
       mintProbe: true,
-      resolvePublisher: never,
-      probeRepositoryAccess: never,
-      // Inject a short deadline so the unit test stays fast.
+      resolvePublisher: (_config, options = {}) => new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          resolve({
+            accessToken: 'fixture-access-token',
+            identity: {
+              mode: 'token', identityClass: 'fine-grained-token', login: 'reviewer-bot',
+              permissionStatus: 'ok', formalEventCapability: true, fallbackReason: null,
+              publishTransport: 'pull-request-review', authSource: 'token-env',
+            },
+          });
+        }, 5_000);
+        const onAbort = () => {
+          aborted = true;
+          clearTimeout(timer);
+          // Leave the promise unsettled after abort so the doctor deadline rejection owns the race.
+        };
+        if (options.signal?.aborted) onAbort();
+        else options.signal?.addEventListener('abort', onAbort, { once: true });
+      }),
+      probeRepositoryAccess: () => new Promise(() => {}),
       probeTimeoutMs: 50,
     });
     const elapsed = Date.now() - started;
 
-    assert.ok(elapsed < 5_000, `expected probe deadline well under 5s, took ${elapsed}ms`);
+    assert.ok(elapsed < 1_000, `expected probe deadline well under 1s, took ${elapsed}ms`);
+    assert.equal(aborted, true);
     assert.equal(result.readiness, 'unavailable');
     assert.equal(result.probe.attempted, true);
     assert.equal(result.probe.status, 'failed');
     assert.match(result.fallbackReason ?? '', /timed out|Publisher identity probe/i);
+  });
+
+  it('prioritizes missing credential remediation over repository access messaging', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_MISSING_TOKEN', login: 'reviewer-bot' },
+    };
+    const result = await runReviewDoctor({
+      config,
+      mintProbe: true,
+      resolvePublisher: async () => ({
+        accessToken: null,
+        identity: {
+          mode: 'token',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'missing',
+          formalEventCapability: false,
+          fallbackReason: 'Fine-grained token env QUBE_REVIEW_MISSING_TOKEN is missing or empty.',
+          publishTransport: 'issue-comment',
+          authSource: 'none',
+        },
+      }),
+      probeRepositoryAccess: async () => {
+        throw new Error('repository probe should not run without an access token');
+      },
+    });
+
+    assert.equal(result.probe.repository.attempted, false);
+    assert.equal(result.permissionStatus, 'missing');
+    assert.match(result.nextAction, /QUBE_REVIEW_MISSING_TOKEN is missing or empty/);
+    assert.doesNotMatch(result.nextAction, /Grant the configured publisher access to the current repository/);
+  });
+
+  it('rejects non-numeric GitHub App and installation ids', async () => {
+    const root = makeDirectory();
+    const rejected = await runReviewSetup({
+      mode: 'github-app',
+      config: null,
+      configPath: join(root, '.qube', 'aie', 'config.json'),
+      root,
+      appId: 'not-an-id',
+      installationId: 'also_bad',
+      privateKeyEnv: 'QUBE_REVIEW_APP_KEY',
+      dryRun: true,
+      yes: true,
+      resolvePublisher: readyResolver,
+    });
+    assert.equal(rejected.ok, false);
+    assert.match(rejected.validationErrors.join('\n'), /positive decimal/);
   });
 
   it('keeps existing review gate help available', () => {
