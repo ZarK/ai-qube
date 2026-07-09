@@ -1609,6 +1609,34 @@ describe('PR gate service', () => {
     assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
   });
 
+  it('reruns a delta lane when review context instructions changed in the head delta', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    writeFileSync(join(repo, 'AGENTS.md'), '# instructions\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'AGENTS.md'), '# instructions changed\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'update instructions'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
   it('reruns a delta lane when the current lane runner does not match the prior evidence adapter', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

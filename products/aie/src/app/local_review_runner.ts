@@ -152,7 +152,8 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
   if (runner !== 'local-host' && runner !== 'local-command') return null;
   const lanePolicy = config.reviewLanes.find(entry => entry.id === lane);
   if ((lanePolicy?.rereview ?? defaultRereviewMode(lane)) !== 'delta') return null;
-  const source = await findCarryForwardSource({ repoRoot: input.repoRoot, issueNumber, prNumber: input.prNumber, headSha: input.headSha, lane, matchPatterns: lanePolicy?.match ?? [], expectedFragmentDigest: expectedLaneFragmentDigest(lane), expectedAdapter: runner, requiredCommand: command });
+  const contextPatterns = [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements];
+  const source = await findCarryForwardSource({ repoRoot: input.repoRoot, issueNumber, prNumber: input.prNumber, headSha: input.headSha, lane, matchPatterns: lanePolicy?.match ?? [], contextPatterns, expectedFragmentDigest: expectedLaneFragmentDigest(lane), expectedAdapter: runner, requiredCommand: command });
   if (!source) return null;
   if (input.dryRun) {
     return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path]);

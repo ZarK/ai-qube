@@ -1,7 +1,9 @@
+import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
+import { carryForwardDeltaTouched } from './review_focus.js';
 import { redact } from './redact.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
@@ -82,6 +84,11 @@ export interface LocalReviewCarriedForward {
   fromHeadSha: string;
   priorRunId: string | null;
   deltaSummary: string;
+}
+
+export interface CarryForwardScope {
+  laneMatchPatterns: Readonly<Record<string, readonly string[]>>;
+  contextPatterns: readonly string[];
 }
 
 export interface LocalReviewEvidence {
@@ -693,7 +700,16 @@ function adapterMap(lanes: readonly LocalReviewLane[], adapter: LocalReviewEvide
   return new Map(lanes.map(lane => [lane.id, adapter]));
 }
 
-function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
+function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
+  try {
+    const output = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${fromHeadSha}..${toHeadSha}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
+    return output.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+  } catch {
+    return null;
+  }
+}
+
+function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, adapters: LaneAdapterMap, shadow: boolean, headSha: string, issueNumber: number, prNumber: number, repoRoot: string, expectedPromptStackHashes?: Readonly<Record<string, string>>, evidenceHashes?: ReadonlyMap<LocalReviewLaneId, string>, requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile), carryForwardScope?: CarryForwardScope): string[] {
   if (shadow || requiredLanes.length === 0) return [];
   const blockers: string[] = [];
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
@@ -726,6 +742,12 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
         blockers.push(`${laneId} carried-forward evidence does not reference an approved prior-head lane record.`);
       } else {
         blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha: lane.carriedForward.fromHeadSha, laneId, provenance, evidenceSha256: prior.evidenceSha256 }));
+      }
+      const deltaPaths = gitDeltaPathsSync(repoRoot, lane.carriedForward.fromHeadSha, headSha);
+      if (deltaPaths === null) {
+        blockers.push(`${laneId} carried-forward delta from ${lane.carriedForward.fromHeadSha} could not be verified with git.`);
+      } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [])) {
+        blockers.push(`${laneId} carried-forward evidence is invalid because the head delta touches the lane scope or review context.`);
       }
     } else {
       if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
@@ -912,7 +934,7 @@ function withProviderPublishStatus(lane: LocalReviewLane, status: string | null)
   };
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[]): LocalReviewEvidence | null {
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[], carryForwardScope?: CarryForwardScope): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   if (!existsSync(directory)) return null;
   const requiredLanes = requiredLanesInput ?? requiredLocalReviewLanes(profile);
@@ -952,7 +974,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
   const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack, requiredLanes);
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes);
+  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes, carryForwardScope);
   const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -1155,6 +1177,7 @@ export function readLocalReviewGate(input: {
   expectedPromptStackHashes?: Readonly<Record<string, string>>;
   activeFocuses?: readonly LocalReviewLaneId[];
   providerFirst?: boolean;
+  carryForwardScope?: CarryForwardScope;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
@@ -1169,7 +1192,7 @@ export function readLocalReviewGate(input: {
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = laneEvidenceDirectory(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     const legacyPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes, input.carryForwardScope);
     if (laneEvidence) return laneEvidence;
     if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);

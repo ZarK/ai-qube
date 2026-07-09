@@ -60,6 +60,17 @@ export function pathsTouchPatterns(paths: readonly string[], patterns: readonly 
   return pathMatchesAny(paths, patterns);
 }
 
+export function carryForwardDeltaTouched(deltaPaths: readonly string[], matchPatterns: readonly string[], contextPatterns: readonly string[]): boolean {
+  const normalized = deltaPaths.map(path => normalizePath(path));
+  if (normalized.some(path => path.startsWith('.qube/') && !path.startsWith('.qube/aie/reviews/'))) return true;
+  if (normalized.some(path => {
+    const baseName = path.split('/').pop() ?? '';
+    return baseName === 'AGENTS.md' || baseName === 'CLAUDE.md';
+  })) return true;
+  if (contextPatterns.length > 0 && pathMatchesAny(normalized, contextPatterns)) return true;
+  return matchPatterns.length > 0 ? pathMatchesAny(normalized, matchPatterns) : normalized.length > 0;
+}
+
 function readFocusId(lane: ReviewLanePolicy): LocalReviewLaneId | null {
   return FOCUS_LANE_IDS.has(lane.id as LocalReviewLaneId) ? lane.id as LocalReviewLaneId : null;
 }

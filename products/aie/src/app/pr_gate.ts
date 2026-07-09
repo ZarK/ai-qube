@@ -815,6 +815,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     expectedPromptStackHashes: expectedPromptStackHashes(localReviewRunner),
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
+    carryForwardScope: {
+      laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+      contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    },
   });
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
