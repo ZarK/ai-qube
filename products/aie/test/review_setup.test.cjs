@@ -310,6 +310,60 @@ describe('review publisher doctor', () => {
     assert.match(result.nextAction, /Pull requests read\/write permission/);
   });
 
+  it('preserves unknown fine-grained-token PR permission instead of coercing to missing', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    const result = await runReviewDoctor({
+      config,
+      resolvePublisher: readyResolver,
+      mintProbe: true,
+      // Production default token probe can prove repository access but not PR write.
+      probeRepositoryAccess: async () => ({
+        repository: 'owner/repository',
+        accessible: true,
+        pullRequestPermission: 'unknown',
+        fallbackReason: null,
+      }),
+    });
+
+    assert.equal(result.readiness, 'degraded');
+    assert.equal(result.permissionStatus, 'unknown');
+    assert.equal(result.formalEventCapability, false);
+    assert.equal(result.probe.permissionStatus, 'unknown');
+    assert.equal(result.probe.repository.pullRequestPermission, 'unknown');
+    assert.equal(result.probe.repository.accessible, true);
+    assert.match(result.nextAction, /could not be proven|Confirm the token has Pull requests/i);
+    assert.doesNotMatch(result.nextAction, /^Grant the fine-grained token Pull requests/);
+  });
+
+  it('bounds stalled publisher probes with a deadline', async () => {
+    const config = getDefaults();
+    config.providers.review.publisher = {
+      mode: 'token',
+      token: { env: 'QUBE_REVIEW_TOKEN', login: 'reviewer-bot' },
+    };
+    const never = () => new Promise(() => {});
+    const started = Date.now();
+    const result = await runReviewDoctor({
+      config,
+      mintProbe: true,
+      resolvePublisher: never,
+      probeRepositoryAccess: never,
+      // Inject a short deadline so the unit test stays fast.
+      probeTimeoutMs: 50,
+    });
+    const elapsed = Date.now() - started;
+
+    assert.ok(elapsed < 5_000, `expected probe deadline well under 5s, took ${elapsed}ms`);
+    assert.equal(result.readiness, 'unavailable');
+    assert.equal(result.probe.attempted, true);
+    assert.equal(result.probe.status, 'failed');
+    assert.match(result.fallbackReason ?? '', /timed out|Publisher identity probe/i);
+  });
+
   it('keeps existing review gate help available', () => {
     const gate = binRun(['review', 'gate', '--help']);
     assert.equal(gate.status, 0, gate.stderr);

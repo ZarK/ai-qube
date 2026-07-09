@@ -72,6 +72,8 @@ export interface RunReviewDoctorOptions {
   readonly config: Config | null;
   readonly cwd?: string;
   readonly mintProbe?: boolean;
+  /** Override probe deadline (ms). Defaults to REVIEW_DOCTOR_PROBE_TIMEOUT_MS. Injectable for tests. */
+  readonly probeTimeoutMs?: number;
   readonly resolvePublisher?: ReviewPublisherResolver;
   readonly probeRepositoryAccess?: ReviewRepositoryAccessProber;
 }
@@ -314,9 +316,18 @@ function readinessFor(
   if (missingFields.length > 0 || identity.permissionStatus === 'misconfigured') return 'unavailable';
   if (identity.permissionStatus === 'same-author') return 'degraded';
   if (repository.attempted && !repository.accessible) return 'unavailable';
-  if (!repository.attempted || repository.pullRequestPermission !== 'write') return 'degraded';
-  if (identity.permissionStatus === 'ok' && identity.formalEventCapability) return 'ready';
   if (identity.permissionStatus === 'missing' && identity.identityClass === 'none') return 'unavailable';
+  // Ready only when identity is ok and the repository probe proved pull-request write.
+  if (
+    identity.permissionStatus === 'ok'
+    && identity.formalEventCapability
+    && repository.attempted
+    && repository.accessible
+    && repository.pullRequestPermission === 'write'
+  ) {
+    return 'ready';
+  }
+  // Unknown repository PR permission is degraded, not missing.
   return 'degraded';
 }
 
@@ -327,11 +338,37 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
   if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
   if (probe.repository.attempted && !probe.repository.accessible) return `Grant the configured publisher access to the current repository${probe.repository.repository ? ` ${probe.repository.repository}` : ''}, then rerun \`qube review doctor --json\`.`;
-  if (probe.repository.attempted && probe.repository.pullRequestPermission !== 'write') return 'Grant the configured publisher Pull requests read/write permission for the current repository, then rerun `qube review doctor --json`.';
+  if (probe.repository.attempted && probe.repository.pullRequestPermission === 'read') {
+    return 'Grant the configured publisher Pull requests read/write permission for the current repository, then rerun `qube review doctor --json`.';
+  }
+  if (probe.repository.attempted && probe.repository.pullRequestPermission === 'unknown') {
+    return mode === 'token'
+      ? 'Repository access succeeded, but fine-grained token Pull requests write could not be proven from a read-only probe. Confirm the token has Pull requests read/write on this repository, then rerun `qube review doctor --json` or continue with host-run publish and inspect the provider result.'
+      : 'Repository access succeeded, but pull-request write capability could not be proven. Confirm the GitHub App installation has Pull requests read/write, then rerun `qube review doctor --json`.';
+  }
   if (probe.permissionStatus === 'missing') return mode === 'github-app'
     ? 'Grant the installed GitHub App Pull requests read/write permission, refresh the installation, and rerun `qube review doctor --json`.'
     : 'Grant the fine-grained token Pull requests read/write access to the repository, then rerun `qube review doctor --json`.';
   return `Verify the configured ${mode} credential reference and repository access, then rerun \`qube review doctor --json\`.`;
+}
+
+/** Bounded deadline for live publisher identity and repository probes. */
+export const REVIEW_DOCTOR_PROBE_TIMEOUT_MS = 20_000;
+
+async function withProbeTimeout<T>(promise: Promise<T>, label: string, timeoutMs = REVIEW_DOCTOR_PROBE_TIMEOUT_MS): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => {
+          reject(new Error(`${label} timed out after ${timeoutMs}ms. Rerun with network available or use --no-probe for offline reference checks.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<ReviewDoctorResult> {
@@ -341,13 +378,18 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   const missingFields = publisherMissingFields(publisher);
   const resolver = options.resolvePublisher ?? resolveGitHubReviewPublisher;
   const repositoryProber = options.probeRepositoryAccess ?? probeCurrentRepositoryAccess;
+  const probeTimeoutMs = options.probeTimeoutMs ?? REVIEW_DOCTOR_PROBE_TIMEOUT_MS;
   let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
   try {
     if (missingFields.length > 0) {
       identity = unavailableIdentity(mode, `Publisher configuration is incomplete: ${missingFields.join(', ')}.`);
     } else {
-      resolved = await resolver(publisher, { cwd: options.cwd, mint: options.mintProbe === true });
+      resolved = await withProbeTimeout(
+        resolver(publisher, { cwd: options.cwd, mint: options.mintProbe === true }),
+        'Publisher identity probe',
+        probeTimeoutMs,
+      );
       identity = resolved.identity;
     }
   } catch (error: unknown) {
@@ -356,13 +398,18 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   identity = { ...identity, fallbackReason: sanitizeReason(identity.fallbackReason) };
   const attempted = configured && missingFields.length === 0 && options.mintProbe === true;
   let repository = notRunRepositoryProbe();
-  if (attempted) {
+  // Skip repository probing when identity resolution already failed (e.g. probe timeout).
+  if (attempted && resolved) {
     try {
-      repository = repositoryProbe(await repositoryProber({
-        cwd: options.cwd,
-        accessToken: resolved?.accessToken ?? null,
-        identity,
-      }));
+      repository = repositoryProbe(await withProbeTimeout(
+        repositoryProber({
+          cwd: options.cwd,
+          accessToken: resolved.accessToken ?? null,
+          identity,
+        }),
+        'Current-repository access probe',
+        probeTimeoutMs,
+      ));
     } catch (error: unknown) {
       repository = repositoryProbe({
         repository: null,
@@ -373,11 +420,16 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     }
   }
   const readiness = readinessFor(identity, missingFields, configured, repository);
+  // Do not coerce unobservable fine-grained-token PR permission (unknown) into missing.
   const effectivePermissionStatus = identity.permissionStatus === 'same-author'
     ? 'same-author'
-    : repository.attempted && (!repository.accessible || repository.pullRequestPermission !== 'write')
+    : repository.attempted && !repository.accessible
       ? 'missing'
-      : identity.permissionStatus;
+      : repository.attempted && repository.pullRequestPermission === 'read'
+        ? 'missing'
+        : repository.attempted && repository.pullRequestPermission === 'unknown' && identity.permissionStatus === 'ok'
+          ? 'unknown'
+          : identity.permissionStatus;
   const formalEventCapability = identity.formalEventCapability
     && repository.attempted
     && repository.accessible
