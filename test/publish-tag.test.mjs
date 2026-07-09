@@ -11,7 +11,7 @@ function resolveTag(tag) {
 
 describe("publish tag resolution", () => {
   it("maps package-specific publish tags to a package path and verification command", () => {
-    const result = resolveTag("publish-qube-v0.1.2");
+    const result = resolveTag("publish-qube-v0.2.0");
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -24,7 +24,7 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube",
       packageName: "@tjalve/qube",
-      version: "0.1.2",
+      version: "0.2.0",
       filter: "@tjalve/qube",
       path: "products/qube"
     });
@@ -43,7 +43,7 @@ describe("publish tag resolution", () => {
   });
 
   it("uses the AIQ publish-readiness gate without the full AIQ suite", () => {
-    const result = resolveTag("publish-aiq-v0.2.2");
+    const result = resolveTag("publish-aiq-v0.2.3");
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -78,7 +78,7 @@ describe("publish tag resolution", () => {
   });
 
   it("maps the qube-core first publish tag to the shared core package", () => {
-    const result = resolveTag("publish-qube-core-v0.1.1");
+    const result = resolveTag("publish-qube-core-v0.2.0");
     assert.equal(result.status, 0);
 
     const plan = JSON.parse(result.stdout);
@@ -91,7 +91,7 @@ describe("publish tag resolution", () => {
     }, {
       packageKey: "qube-core",
       packageName: "@tjalve/qube-core",
-      version: "0.1.1",
+      version: "0.2.0",
       filter: "@tjalve/qube-core",
       path: "packages/qube-core"
     });

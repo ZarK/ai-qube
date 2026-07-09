@@ -1,6 +1,6 @@
 # BEGIN EXECUTOR MANAGED SECTION
 # executor-managed-version: 1
-# executor-managed-checksum: b4801f726c42aaede13422ddb9f03c30a25f00d2523e1b03e894ee3f5155683c
+# executor-managed-checksum: 68029b4f81c305ff85346abe9bdb040094e2151bbf0c04b10050602cd875cf89
 name = "qube-review-focus"
 description = "Read-only focused PR reviewer for one QUBE local review lane."
 developer_instructions = """

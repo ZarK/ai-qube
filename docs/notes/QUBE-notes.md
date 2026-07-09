@@ -539,6 +539,24 @@ Category descriptors can be simpler than named agents:
 
 Adapters should probe host support before using these routes. OpenCode may compile them into subagent config and commands; Codex may compile them into subagent prompts with model/effort hints where supported; Claude Code, Gemini CLI, Qwen Code, Copilot, Cline, Cursor, and other hosts should receive the closest supported task/rule/prompt form. If no subagent mechanism exists, QUBE can still use the same descriptors to generate a strong single-agent prompt.
 
+## Review Model Tiers
+
+Review subagent cost should be governed by named tiers, not hardcoded models. QUBE defines the tier as a product concept; tooling adapters map tiers to concrete host models and reasoning effort in configuration:
+
+- `economy`: cheap/fast model, low effort. Token-consuming preparation work: codebase exploration, issue/PR-thread digestion, changed-path mapping, external docs lookup (`explorer`, `librarian` descriptors). Output is evidence for stronger tiers, never the review verdict.
+- `review`: mid/strong model, medium-high effort. Bounded per-lane review judgment (`qa-reviewer` descriptor) consuming economy-tier digests instead of rereading raw context.
+- `synthesis` (optional): strongest configured model. Cross-lane deduplication, false-positive verification, final-gate merge readiness.
+
+Rules:
+
+- Model identifiers live in host-mapped config (for example `.qube/aie/config.json` `reviewModels`), never in product package code.
+- `AgentDescriptor.modelPreferences` and spawn-contract `modelTier` must be consumed by runners, not decorative metadata.
+- When a host cannot honor a tier, use the configured fallback and expose the substitution in JSON output.
+- Evidence should report tokens or cost per review so tier routing is observable and tunable.
+- Verdict authority never delegates downward: economy output is untrusted input to review-tier lanes, and lane output is untrusted input to synthesis.
+
+See `docs/milestones/M1-review-loop-convergence-and-cost-tiers.md` for the implementation plan.
+
 Provider capability map:
 
 | Capability | GitHub v0 | Linear | GitLab | Jira |

@@ -13,6 +13,8 @@ packages:
 minimumReleaseAge: 10080
 minimumReleaseAgeExclude:
   - "@tjalve/qube-cli"
+  - "@tjalve/aie"
+  - "@tjalve/aiu"
   - undici@6.27.0
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeStrict: true

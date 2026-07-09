@@ -124,8 +124,8 @@ test("GitHub rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://github.com/example/repo/issues/2");
 });
 
-test("Linear rendering adapts canonical drafts at the provider edge", () => {
-  const rendered = renderLinearIssueDraft({
+test("Linear rendering adapts canonical drafts at the provider edge", async () => {
+  const rendered = await renderLinearIssueDraft({
     ...sampleDraft,
     providerMetadata: {
       linear: {
@@ -147,8 +147,8 @@ test("Linear rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://linear.app/acme/issue/ENG-2/build-neutral-contracts");
 });
 
-test("GitLab rendering adapts canonical drafts at the provider edge", () => {
-  const rendered = renderGitLabIssueDraft({
+test("GitLab rendering adapts canonical drafts at the provider edge", async () => {
+  const rendered = await renderGitLabIssueDraft({
     ...sampleDraft,
     providerMetadata: {
       gitlab: {
@@ -168,8 +168,8 @@ test("GitLab rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://gitlab.example.com/acme/qube/-/issues/2");
 });
 
-test("Jira rendering adapts canonical drafts at the provider edge", () => {
-  const rendered = renderJiraIssueDraft({
+test("Jira rendering adapts canonical drafts at the provider edge", async () => {
+  const rendered = await renderJiraIssueDraft({
     ...sampleDraft,
     providerMetadata: {
       jira: {
@@ -195,7 +195,7 @@ test("Jira rendering adapts canonical drafts at the provider edge", () => {
   assert.equal(rendered.url, "https://jira.example.com/browse/ENG-2");
 });
 
-test("provider-neutral work item drafts render to GitHub previews and markdown exports", () => {
+test("provider-neutral work item drafts render to GitHub previews and markdown exports", async () => {
   const state = {
     version: 1,
     phase: "work_item_generation",
@@ -228,34 +228,34 @@ test("provider-neutral work item drafts render to GitHub previews and markdown e
     }
   };
 
-  const github = renderWorkItemDrafts(state, "github");
+  const github = await renderWorkItemDrafts(state, "github");
   assert.equal(github.provider, "github");
   assert.deepEqual(github.artifacts, []);
   assert.equal(github.rendered[0].draftId, "draft-foundation");
   assert.deepEqual(github.rendered[0].labels, ["P2-High", "S-Ready", "C-Architecture", "C-Data"]);
 
-  const linear = renderWorkItemDrafts(state, "linear");
+  const linear = await renderWorkItemDrafts(state, "linear");
   assert.equal(linear.provider, "linear");
   assert.deepEqual(linear.artifacts, []);
   assert.equal(linear.rendered[0].draftId, "draft-foundation");
   assert.equal(linear.rendered[0].priority, 2);
   assert.match(linear.rendered[0].description, /^Blocked by: draft-package/m);
 
-  const gitlab = renderWorkItemDrafts(state, "gitlab");
+  const gitlab = await renderWorkItemDrafts(state, "gitlab");
   assert.equal(gitlab.provider, "gitlab");
   assert.deepEqual(gitlab.artifacts, []);
   assert.equal(gitlab.rendered[0].draftId, "draft-foundation");
   assert.deepEqual(gitlab.rendered[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
   assert.match(gitlab.rendered[0].description, /^Blocked by: draft-package/m);
 
-  const jira = renderWorkItemDrafts(state, "jira");
+  const jira = await renderWorkItemDrafts(state, "jira");
   assert.equal(jira.provider, "jira");
   assert.deepEqual(jira.artifacts, []);
   assert.equal(jira.rendered[0].draftId, "draft-foundation");
   assert.equal(jira.rendered[0].priorityName, "High");
   assert.match(jira.rendered[0].description, /^Blocked by: draft-package/m);
 
-  const markdown = renderWorkItemDrafts(state, "markdown", { outputDir: "review/issues" });
+  const markdown = await renderWorkItemDrafts(state, "markdown", { outputDir: "review/issues" });
   assert.equal(markdown.provider, "markdown");
   assert.equal(markdown.artifacts[0].path, "review/issues/draft-foundation.md");
   assert.equal(markdown.artifacts[0].status, "ready");

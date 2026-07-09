@@ -1,7 +1,9 @@
 {
   "name": "@tjalve/aiq",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Staged AIQ code quality gate with agent-facing setup and remediation guidance.",
+  "license": "MIT",
+  "author": "tjalve",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -44,6 +46,12 @@
     }
   },
   "homepage": "https://github.com/ZarK/ai-qube/tree/main/products/aiq/packages/cli#readme",
+  "bugs": {
+    "url": "https://github.com/ZarK/ai-qube/issues"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
   "keywords": ["aiq", "code-quality", "quality-gate", "ai-agents"],
   "files": ["dist", "README.md"],
   "scripts": {
@@ -51,7 +59,7 @@
   },
   "dependencies": {
     "@biomejs/biome": "1.9.4",
-    "@tjalve/qube-cli": "0.1.2",
+    "@tjalve/qube-cli": "0.2.0",
     "htmlhint": "1.9.2",
     "node-sql-parser": "5.4.0",
     "prettier": "3.8.1",

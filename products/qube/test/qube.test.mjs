@@ -32,9 +32,21 @@ import {
   listGrokBuildInstallFiles,
   listGrokBuildInstallNotes,
   planQubeCli,
+  qubeComponents,
   resolveCommand,
   resolveComponentCommand,
 } from "../dist/index.js";
+import {
+  aibExpectedPathPattern,
+  aibUnableVerifyPattern,
+  aibVersion,
+  dependencyVersion,
+  qubePackageName,
+  qubePackageVersion,
+  qubeNpmGlobalInstallPattern,
+  qubePnpmAddCommand,
+  qubePnpmAddPattern,
+} from "./workspace-versions.mjs";
 
 const packageRoot = fileURLToPath(new URL("..", import.meta.url));
 const binPath = fileURLToPath(new URL("../dist/bin/qube.js", import.meta.url));
@@ -119,14 +131,20 @@ function createAcceptedAutoresearchRun(cwd, initialScore = 10, improvedScore = 5
 }
 
 describe("qube composer CLI", () => {
+  it("keeps component package versions aligned with package.json dependencies", () => {
+    for (const component of qubeComponents) {
+      assert.equal(component.packageVersion, dependencyVersion(component.packageName));
+    }
+  });
+
   it("reports package version without invoking component tools", () => {
     const text = runCli(["--version"]);
     assert.equal(text.status, 0);
-    assert.equal(text.stdout.trim(), "0.1.2");
+    assert.equal(text.stdout.trim(), qubePackageVersion);
 
     const short = runCli(["-v"]);
     assert.equal(short.status, 0);
-    assert.equal(short.stdout.trim(), "0.1.2");
+    assert.equal(short.stdout.trim(), qubePackageVersion);
 
     const json = runCli(["-v", "--json"]);
     assert.equal(json.status, 0);
@@ -134,10 +152,10 @@ describe("qube composer CLI", () => {
       ok: true,
       command: "version",
       package: {
-        name: "@tjalve/qube",
-        version: "0.1.2"
+        name: qubePackageName,
+        version: qubePackageVersion
       },
-      version: "0.1.2"
+      version: qubePackageVersion
     });
   });
 
@@ -249,8 +267,8 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.ok, true);
     assert.equal(parsed.command, "install");
     assert.deepEqual(parsed.installPlan.package, {
-      name: "@tjalve/qube",
-      version: "0.1.2"
+      name: qubePackageName,
+      version: qubePackageVersion
     });
     assert.deepEqual(parsed.installPlan.selections, {
       docs: true,
@@ -265,7 +283,7 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.dryRun, true);
     assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.2",
+      qubePnpmAddCommand,
       "pnpm exec qube components"
     ]);
     assert.deepEqual(
@@ -334,7 +352,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: global/);
     assert.match(result.stdout, /Host surface: codex/);
-    assert.match(result.stdout, /npm install --global --ignore-scripts @tjalve\/qube@0\.1\.2/);
+    assert.match(result.stdout, qubeNpmGlobalInstallPattern);
     assert.match(result.stdout, /AGENTS\.md policy notes/);
     assert.match(result.stdout, /Codex host support uses AGENTS\.md/);
     assert.match(result.stdout, /Codex does not use OpenCode-style project command files/);
@@ -500,7 +518,7 @@ describe("qube composer CLI", () => {
     assert.match(result.stdout, /QUBE guided install plan/);
     assert.match(result.stdout, /Scope: local/);
     assert.match(result.stdout, /Host surface: claude-code/);
-    assert.match(result.stdout, /pnpm add -D --save-exact --ignore-scripts @tjalve\/qube@0\.1\.2/);
+    assert.match(result.stdout, qubePnpmAddPattern);
     assert.match(result.stdout, /CLAUDE\.md policy notes/);
     assert.match(result.stdout, /\.claude\/settings\.json hook notes/);
     assert.match(result.stdout, /Claude Code host support uses CLAUDE\.md/);
@@ -535,7 +553,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
-      "pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.2",
+      qubePnpmAddCommand,
       "pnpm exec qube components"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
@@ -1394,7 +1412,7 @@ describe("qube composer CLI", () => {
     const commandPath = path.join(dir, command);
     await mkdir(dir, { recursive: true });
     await writeFile(commandPath, process.platform === "win32" ? "@echo off\r\necho aib %*\r\n" : "#!/usr/bin/env sh\necho aib \"$@\"\n");
-    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.2" })}\n`);
+    await writeFile(path.join(pathPackageRoot, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: aibVersion })}\n`);
     if (process.platform !== "win32") await chmod(commandPath, 0o755);
 
     const env = { PATH: `${dir}${path.delimiter}${process.env.PATH ?? ""}`, OS: process.env.OS };
@@ -1626,7 +1644,7 @@ describe("qube composer CLI", () => {
     await mkdir(packageDir, { recursive: true });
     await writeFile(installCommandPath, process.platform === "win32" ? "@echo off\r\necho install-scoped %*\r\n" : "#!/usr/bin/env sh\necho install-scoped \"$@\"\n");
     await writeFile(pathCommandPath, process.platform === "win32" ? "@echo off\r\necho path %*\r\n" : "#!/usr/bin/env sh\necho path \"$@\"\n");
-    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: "0.1.2" })}\n`);
+    await writeFile(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aib", version: aibVersion })}\n`);
     if (process.platform !== "win32") {
       await chmod(installCommandPath, 0o755);
       await chmod(pathCommandPath, 0o755);
@@ -1639,7 +1657,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(resolution?.commandPath, installCommandPath);
     assert.equal(resolution?.source, "install");
-    assert.equal(resolution?.packageVersion, "0.1.2");
+    assert.equal(resolution?.packageVersion, aibVersion);
     assert.equal(resolveCommand("aib", { cwd: path.resolve("."), env, packageRoot }), installCommandPath);
   });
 
@@ -1658,7 +1676,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /expected @tjalve\/aib@0\.1\.2, found 0\.0\.1/);
+    assert.match(planned.stderr, aibExpectedPathPattern);
     assert.equal(planned.dispatch, undefined);
   });
 
@@ -1680,7 +1698,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(planned.exitCode, 4);
     assert.match(planned.stderr, /Refusing aib from PATH/);
-    assert.match(planned.stderr, /unable to verify @tjalve\/aib@0\.1\.2/);
+    assert.match(planned.stderr, aibUnableVerifyPattern);
     assert.equal(resolveCommand("aib", { cwd, env, packageRoot }), undefined);
   });
 

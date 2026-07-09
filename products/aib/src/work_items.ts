@@ -1,9 +1,13 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import { renderGitLabIssueDraft, type GitLabIssueDraft } from "@tjalve/qube-adapter-gitlab";
-import { renderJiraIssueDraft, type JiraIssueDraft } from "@tjalve/qube-adapter-jira";
-import { renderLinearIssueDraft, type LinearIssueDraft } from "@tjalve/qube-adapter-linear";
-
+import {
+  renderGitLabIssueDraft,
+  renderJiraIssueDraft,
+  renderLinearIssueDraft,
+  type GitLabIssueDraft,
+  type JiraIssueDraft,
+  type LinearIssueDraft
+} from "./adapter_exports.js";
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
 import { renderGitHubIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
@@ -100,11 +104,11 @@ export function writeWorkItemDrafts(
   return result;
 }
 
-export function renderWorkItemDrafts(
+export async function renderWorkItemDrafts(
   state: BootstrapState,
   provider: WorkItemRenderProvider,
   options: { readonly outputDir?: string } = {}
-): WorkItemRenderResult {
+): Promise<WorkItemRenderResult> {
   const drafts = state.planning.workItemDrafts;
   if (drafts.length === 0) {
     throw new TypeError("no work item drafts are recorded in bootstrap state");
@@ -129,10 +133,10 @@ export function renderWorkItemDrafts(
   }
 
   if (provider === "linear") {
-    const rendered = drafts.map((draft) => ({
+    const rendered = await Promise.all(drafts.map(async (draft) => ({
       draftId: draft.draftId,
-      ...renderLinearIssueDraft(draft)
-    }));
+      ...(await renderLinearIssueDraft(draft))
+    })));
     return {
       provider,
       drafts,
@@ -143,10 +147,10 @@ export function renderWorkItemDrafts(
   }
 
   if (provider === "gitlab") {
-    const rendered = drafts.map((draft) => ({
+    const rendered = await Promise.all(drafts.map(async (draft) => ({
       draftId: draft.draftId,
-      ...renderGitLabIssueDraft(draft)
-    }));
+      ...(await renderGitLabIssueDraft(draft))
+    })));
     return {
       provider,
       drafts,
@@ -157,10 +161,10 @@ export function renderWorkItemDrafts(
   }
 
   if (provider === "jira") {
-    const rendered = drafts.map((draft) => ({
+    const rendered = await Promise.all(drafts.map(async (draft) => ({
       draftId: draft.draftId,
-      ...renderJiraIssueDraft(draft)
-    }));
+      ...(await renderJiraIssueDraft(draft))
+    })));
     return {
       provider,
       drafts,
@@ -187,11 +191,11 @@ export function renderWorkItemDrafts(
   };
 }
 
-export function writeRenderedMarkdownWorkItems(
+export async function writeRenderedMarkdownWorkItems(
   state: BootstrapState,
   options: { readonly outputDir?: string; readonly baseDir?: string } = {}
-): WorkItemRenderResult {
-  const result = renderWorkItemDrafts(state, "markdown", options);
+): Promise<WorkItemRenderResult> {
+  const result = await renderWorkItemDrafts(state, "markdown", options);
   const baseDir = resolve(options.baseDir ?? process.cwd());
   for (const item of result.rendered) {
     if (!("path" in item)) continue;
