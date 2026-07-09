@@ -9,7 +9,7 @@ const { basename, join } = require('node:path');
 const { getDefaults } = require('../dist/config/index.js');
 const { renderAgentPrompt } = require('../dist/agent_descriptors.js');
 const { laneContextLines, promptStack, hash: promptTextHashFromLines } = require('../dist/app/local_review_runner_support.js');
-const { localReviewEvidenceSha256 } = require('../dist/local_review_evidence.js');
+const { buildFixBatch, localReviewEvidenceSha256 } = require('../dist/local_review_evidence.js');
 let createGitHubReviewForgeProvider;
 try {
   ({ createGitHubReviewForgeProvider } = require('@tjalve/qube-adapter-github'));
@@ -1070,6 +1070,71 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
   });
 
+  it('aggregates a ranked cross-lane fix batch in pr gate output', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const evidence = localEvidence();
+    const codeQuality = evidence.lanes.find(lane => lane.id === 'code-quality');
+    assert.ok(codeQuality);
+    codeQuality.status = 'needs-work';
+    codeQuality.severity = 'high';
+    codeQuality.recommendation = 'request-changes';
+    codeQuality.blockers = ['Fix the parser crash.'];
+    codeQuality.findings = [
+      { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+      { id: 'finding-b', severity: 'advisory', message: 'Rename the helper.' },
+    ];
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.fixBatch.findings.length, 2);
+    assert.equal(result.fixBatch.findings[0].severity, 'blocking');
+    assert.equal(result.fixBatch.findings[0].message, 'Fix the parser crash.');
+    assert.equal(result.fixBatch.findings[1].severity, 'advisory');
+    assert.equal(result.fixBatch.findings[0].classification, 'new');
+    assert.equal(result.fixBatch.findings[1].classification, 'new');
+    assert.equal(result.fixBatch.priorHeadSha, null);
+    assert.match(result.fixBatch.summary, /2 open finding/);
+  });
+
+  it('classifies findings as new, persisting, and resolved across heads', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    const priorCodeQuality = priorEvidence.lanes.find(lane => lane.id === 'code-quality');
+    assert.ok(priorCodeQuality);
+    priorCodeQuality.findings = [
+      { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+      { id: 'finding-b', severity: 'advisory', message: 'Remove the dead code.' },
+    ];
+    for (const lane of priorEvidence.lanes) lane.recordedAt = '2026-06-20T00:00:00.000Z';
+    writeLocalEvidence(repo, priorEvidence);
+    const currentEvidence = localEvidence();
+    const currentCodeQuality = currentEvidence.lanes.find(lane => lane.id === 'code-quality');
+    assert.ok(currentCodeQuality);
+    currentCodeQuality.findings = [
+      { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+      { id: 'finding-c', severity: 'advisory', message: 'Rename the helper.' },
+    ];
+    writeLocalEvidence(repo, currentEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.fixBatch.findings.length, 2);
+    const persisting = result.fixBatch.findings.find(finding => finding.message === 'Fix the parser crash.');
+    assert.ok(persisting);
+    assert.equal(persisting.classification, 'persisting');
+    const newFinding = result.fixBatch.findings.find(finding => finding.message === 'Rename the helper.');
+    assert.ok(newFinding);
+    assert.equal(newFinding.classification, 'new');
+    assert.equal(result.fixBatch.resolved.length, 1);
+    assert.equal(result.fixBatch.resolved[0].message, 'Remove the dead code.');
+    assert.equal(result.fixBatch.priorHeadSha, 'aaa111');
+  });
+
   it('accepts id-only prompt stack entries in split lane evidence', async () => {
     const repo = makeGitRepo();
     const config = localReviewConfig();
@@ -1538,6 +1603,106 @@ describe('PR gate service', () => {
     assert.equal(calls.some(args => args[0] === 'review-fixture'), true);
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
+  });
+
+  it('keeps distinct same-message findings at different lines in the fix batch', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+          { id: 'finding-b', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 42 } },
+        ] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const parserFindings = result.fixBatch.findings.filter(finding => finding.message === 'Fix the parser crash.');
+    assert.equal(parserFindings.length, 2);
+    assert.deepEqual(parserFindings.map(finding => finding.location.line).sort((a, b) => a - b), [10, 42]);
+  });
+
+  it('accounts for duplicate same-message findings across heads by count', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+          { id: 'finding-b', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 42 } },
+        ], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+    const currentEvidence = localEvidence();
+    currentEvidence.lanes = currentEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+        ] }
+      : lane);
+    writeLocalEvidence(repo, currentEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const parserFindings = result.fixBatch.findings.filter(finding => finding.message === 'Fix the parser crash.');
+    assert.equal(parserFindings.length, 1);
+    assert.equal(parserFindings[0].classification, 'persisting');
+    assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Fix the parser crash.').length, 1);
+  });
+
+  it('resolves prior findings only for issues with completed current evidence', () => {
+    const repo = makeGitRepo();
+    const priorFirstIssue = localEvidence({ headSha: 'aaa111' });
+    priorFirstIssue.lanes = priorFirstIssue.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorFirstIssue);
+    const priorSecondIssue = localEvidence({ issueNumber: 94, headSha: 'aaa111' });
+    priorSecondIssue.lanes = priorSecondIssue.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Remove the dead code.'], findings: [{ id: 'finding-b', severity: 'blocking', message: 'Remove the dead code.', location: { path: 'src/legacy.ts', line: 3 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorSecondIssue);
+
+    const batch = buildFixBatch(repo, [93, 94], 12, 'def456', [
+      { status: 'passed', issueNumber: 93, prNumber: 12, headSha: 'def456', lanes: [] },
+      { status: 'pending', issueNumber: 94, prNumber: 12, headSha: 'def456', lanes: [] },
+    ]);
+
+    assert.equal(batch.resolved.length, 1);
+    assert.equal(batch.resolved[0].message, 'Fix the parser crash.');
+  });
+
+  it('keeps fix batch resolution indeterminate for pending current-head evidence', () => {
+    const repo = makeGitRepo();
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+
+    const batch = buildFixBatch(repo, [93], 12, 'def456', [{ status: 'pending', issueNumber: 93, prNumber: 12, headSha: 'def456', lanes: [] }]);
+
+    assert.equal(batch.resolved.length, 0);
+    assert.match(batch.summary, /resolved state is indeterminate/);
+  });
+
+  it('keeps fix batch resolution indeterminate when current-head lane evidence is missing', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: 'def456' })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.equal(result.fixBatch.resolved.length, 0);
+    assert.match(result.fixBatch.summary, /resolved state is indeterminate/);
   });
 
   it('carries forward an approved lane when the head delta does not touch its scope', async () => {

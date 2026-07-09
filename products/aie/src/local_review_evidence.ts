@@ -1213,6 +1213,191 @@ export function readLocalReviewGate(input: {
   };
 }
 
+export interface FixBatchFinding {
+  laneId: LocalReviewLaneId;
+  findingId: string;
+  contentHash: string;
+  severity: 'blocking' | 'advisory';
+  message: string;
+  location: { path: string; line: number | null } | null;
+  suggestion: string | null;
+  classification: 'new' | 'persisting';
+}
+
+export interface FixBatch {
+  headSha: string;
+  priorHeadSha: string | null;
+  findings: FixBatchFinding[];
+  resolved: Array<{ laneId: LocalReviewLaneId; contentHash: string; severity: 'blocking' | 'advisory'; message: string }>;
+  summary: string;
+}
+
+function findingContentHash(laneId: LocalReviewLaneId, finding: ReviewFinding): string {
+  return hash(JSON.stringify({
+    lane: laneId,
+    severity: finding.severity,
+    message: finding.message,
+    path: finding.location?.path ?? null,
+  })).slice(0, 16);
+}
+
+function headDirectoryTimestamp(repoRoot: string, issueNumber: number, prNumber: number, headDir: string): string | null {
+  const directory = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), headDir);
+  let maxRecordedAt: string | null = null;
+  for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
+    const path = join(directory, `${laneId}.json`);
+    if (!existsSync(path)) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isRecord(parsed)) continue;
+      const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : null;
+      if (recordedAt !== null && (maxRecordedAt === null || recordedAt > maxRecordedAt)) maxRecordedAt = recordedAt;
+    } catch {
+      continue;
+    }
+  }
+  return maxRecordedAt;
+}
+
+function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prNumber: number, headSha: string): string | null {
+  const currentHeadDir = safeSegment(headSha);
+  let priorHeadSha: string | null = null;
+  let newestTimestamp: string | null = null;
+  for (const issueNumber of issueNumbers) {
+    const prRoot = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
+    try {
+      const headDirs = readdirSync(prRoot, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && entry.name !== currentHeadDir)
+        .map(entry => entry.name);
+      for (const headDir of headDirs) {
+        const timestamp = headDirectoryTimestamp(repoRoot, issueNumber, prNumber, headDir);
+        if (timestamp === null) continue;
+        if (newestTimestamp === null || timestamp > newestTimestamp) {
+          newestTimestamp = timestamp;
+          priorHeadSha = headDir;
+        }
+      }
+    } catch {
+      continue;
+    }
+  }
+  return priorHeadSha;
+}
+
+function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], prNumber: number, priorHeadSha: string): Array<{ issueNumber: number; laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> {
+  const priorFindings: Array<{ issueNumber: number; laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> = [];
+  for (const issueNumber of issueNumbers) {
+    const directory = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), priorHeadSha);
+    for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
+      const path = join(directory, `${laneId}.json`);
+      if (!existsSync(path)) continue;
+      const parsed = parseLaneEvidence(path, issueNumber, prNumber, priorHeadSha);
+      if (!parsed || parsed.lane.id !== laneId) continue;
+      for (const finding of parsed.lane.findings) {
+        priorFindings.push({ issueNumber, laneId, finding, contentHash: findingContentHash(laneId, finding) });
+      }
+    }
+  }
+  return priorFindings;
+}
+
+function toFixBatchFinding(laneId: LocalReviewLaneId, finding: ReviewFinding, contentHash: string, classification: 'new' | 'persisting'): FixBatchFinding {
+  return {
+    laneId,
+    findingId: finding.id,
+    contentHash,
+    severity: finding.severity,
+    message: finding.message,
+    location: finding.location?.path ? { path: finding.location.path, line: finding.location.line ?? null } : null,
+    suggestion: finding.suggestion ?? null,
+    classification,
+  };
+}
+
+function rankFixBatchFindings(left: FixBatchFinding, right: FixBatchFinding): number {
+  const leftSeverity = left.severity === 'blocking' ? 0 : 1;
+  const rightSeverity = right.severity === 'blocking' ? 0 : 1;
+  if (leftSeverity !== rightSeverity) return leftSeverity - rightSeverity;
+  const leftClassification = left.classification === 'persisting' ? 0 : 1;
+  const rightClassification = right.classification === 'persisting' ? 0 : 1;
+  if (leftClassification !== rightClassification) return leftClassification - rightClassification;
+  if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+  if (left.message !== right.message) return left.message.localeCompare(right.message);
+  return (left.location?.line ?? 0) - (right.location?.line ?? 0);
+}
+
+export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[], prNumber: number, headSha: string, evidence: readonly LocalReviewEvidence[]): FixBatch {
+  const currentByHash = new Map<string, FixBatchFinding>();
+  for (const entry of evidence) {
+    for (const lane of entry.lanes) {
+      for (const finding of lane.findings) {
+        const contentHash = findingContentHash(lane.id, finding);
+        const batchKey = `${contentHash}|${finding.location?.line ?? 'no-line'}|${finding.id}`;
+        if (currentByHash.has(batchKey)) continue;
+        currentByHash.set(batchKey, toFixBatchFinding(lane.id, finding, contentHash, 'new'));
+      }
+    }
+  }
+  const completedIssueNumbers = new Set(evidence
+    .filter(entry => entry.status === 'passed' || entry.status === 'failed' || entry.status === 'needs-work')
+    .map(entry => entry.issueNumber)
+    .filter((issueNumber): issueNumber is number => issueNumber !== null));
+  const currentEvidenceLoaded = completedIssueNumbers.size > 0;
+  const priorHeadSha = findPriorHeadSha(repoRoot, issueNumbers, prNumber, headSha);
+  const priorFindings = priorHeadSha === null ? [] : readPriorFindings(repoRoot, issueNumbers, prNumber, priorHeadSha);
+  const priorRemaining = new Map<string, number>();
+  for (const entry of priorFindings) priorRemaining.set(entry.contentHash, (priorRemaining.get(entry.contentHash) ?? 0) + 1);
+  const orderedCurrent = [...currentByHash.values()].sort((left, right) => {
+    if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+    if (left.message !== right.message) return left.message.localeCompare(right.message);
+    return (left.location?.line ?? 0) - (right.location?.line ?? 0);
+  });
+  const findings = orderedCurrent.map(finding => {
+    const remaining = priorRemaining.get(finding.contentHash) ?? 0;
+    if (remaining > 0) {
+      priorRemaining.set(finding.contentHash, remaining - 1);
+      return { ...finding, classification: 'persisting' as const };
+    }
+    return { ...finding, classification: 'new' as const };
+  }).sort(rankFixBatchFindings);
+  const resolved = currentEvidenceLoaded
+    ? priorFindings
+      .filter(entry => {
+        if (!completedIssueNumbers.has(entry.issueNumber)) return false;
+        const remaining = priorRemaining.get(entry.contentHash) ?? 0;
+        if (remaining <= 0) return false;
+        priorRemaining.set(entry.contentHash, remaining - 1);
+        return true;
+      })
+      .map(entry => ({
+        laneId: entry.laneId,
+        contentHash: entry.contentHash,
+        severity: entry.finding.severity,
+        message: entry.finding.message,
+      }))
+      .sort((left, right) => {
+        if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+        return left.message.localeCompare(right.message);
+      })
+    : [];
+  const blockingCount = findings.filter(finding => finding.severity === 'blocking').length;
+  const advisoryCount = findings.filter(finding => finding.severity === 'advisory').length;
+  const newCount = findings.filter(finding => finding.classification === 'new').length;
+  const persistingCount = findings.filter(finding => finding.classification === 'persisting').length;
+  const priorLabel = priorHeadSha ?? 'no prior head';
+  const resolvedLabel = currentEvidenceLoaded
+    ? `${resolved.length} resolved since ${priorLabel}.`
+    : 'resolved state is indeterminate because current-head lane evidence is missing or stale.';
+  const summary = `${findings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
+  return {
+    headSha,
+    priorHeadSha,
+    findings,
+    resolved,
+    summary,
+  };
+}
+
 export function readLocalIssueReviewGate(input: {
   repoRoot: string;
   issueNumber: number;
