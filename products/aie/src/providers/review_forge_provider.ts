@@ -22,6 +22,7 @@ export interface ReviewForgePullRequest {
   state: string;
   url: string;
   headRefOid: string;
+  authorLogin?: string | null;
   reviewDecision: string;
   mergeStateStatus: string;
   mergeable: string;
@@ -100,7 +101,20 @@ export interface ReviewForgeLocalReviewPublishResult {
 
 export interface ReviewForgeLaneReviewPublishInput extends ReviewLaneReviewPublishInput {}
 
-export interface ReviewForgeLaneReviewPublishResult extends ReviewLaneReviewPublishResult {}
+export interface ReviewForgeLaneReviewPublishResult extends ReviewLaneReviewPublishResult {
+  publisher?: ReviewForgePublisherIdentity;
+}
+
+export interface ReviewForgePublisherIdentity {
+  mode: 'user' | 'github-app' | 'token';
+  identityClass: 'user' | 'github-app-installation' | 'fine-grained-token' | 'none';
+  login: string | null;
+  permissionStatus: 'ok' | 'missing' | 'unknown' | 'same-author' | 'unconfigured' | 'misconfigured';
+  formalEventCapability: boolean;
+  fallbackReason: string | null;
+  publishTransport: 'pull-request-review' | 'issue-comment';
+  authSource: 'gh-user' | 'github-app-installation' | 'token-env' | 'none';
+}
 
 export interface ReviewForgeProviderCapabilities {
   loadReview: boolean;
@@ -126,6 +140,7 @@ export interface ReviewForgeProvider {
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
 

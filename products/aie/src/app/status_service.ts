@@ -159,7 +159,7 @@ export async function createStatusContext(options: { cwd?: string } = {}): Promi
   const policy = configToExecutorPolicy(config);
   const workProvider = await createWorkProvider(config.providers.work.kind, workProviderOptions(config, { cwd: options.cwd }));
   const repositoryProvider = createLocalGitRepositoryProvider({ cwd: options.cwd });
-  const reviewForgeProvider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.cwd, reviewAgents: config.reviewAgents });
+  const reviewForgeProvider = await createReviewForgeProvider(config.providers.review.kind, { cwd: options.cwd, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
   return {
     configLoad,
     config,

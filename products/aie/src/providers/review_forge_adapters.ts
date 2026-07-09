@@ -25,6 +25,21 @@ export interface ReviewForgeAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
   readonly reviewAgents?: readonly string[];
+  /** GitHub review publisher identity config (secret references only). */
+  readonly publisher?: {
+    mode: 'user' | 'github-app' | 'token';
+    githubApp?: {
+      appId: string;
+      installationId: string;
+      privateKeyPath?: string;
+      privateKeyEnv?: string;
+      login?: string;
+    };
+    token?: {
+      env: string;
+      login?: string;
+    };
+  } | null;
 }
 
 export interface ReviewForgeAdapterMetadata {
@@ -154,6 +169,7 @@ interface LoadedReviewForgeProvider {
   publishLocalReviewFeedback?(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
   publishLaneReviewFeedback(item: ReviewItem, input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
+  describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<import('./review_forge_provider.js').ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
 }
 
@@ -204,6 +220,9 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     publishLaneReviewFeedback: (item, input) => provider.publishLaneReviewFeedback(item, input),
     publishLaneReviewFeedbackForPullRequest: provider.publishLaneReviewFeedbackForPullRequest
       ? (input) => provider.publishLaneReviewFeedbackForPullRequest!(input)
+      : undefined,
+    describeReviewPublisher: provider.describeReviewPublisher
+      ? (prAuthorLogin, options) => provider.describeReviewPublisher!(prAuthorLogin, options)
       : undefined,
     resolveReviewThreads: provider.resolveReviewThreads
       ? (input) => provider.resolveReviewThreads!(input)

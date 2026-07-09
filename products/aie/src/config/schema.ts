@@ -1,7 +1,7 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
-import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
+import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -490,6 +490,111 @@ function readWorkProviderSelection(input: Record<string, unknown>, defaultValue:
   };
 }
 
+function readGitHubAppPublisherConfig(value: unknown, path: string, errors: ValidationError[]): GitHubAppPublisherConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return undefined;
+  }
+  rejectUnknownKeys(value, ['appId', 'installationId', 'privateKeyPath', 'privateKeyEnv', 'login'], path, errors);
+  const appId = readOptionalNonEmptyString(value, 'appId', `${path}.appId`, errors);
+  const installationId = readOptionalNonEmptyString(value, 'installationId', `${path}.installationId`, errors);
+  const privateKeyPath = readOptionalNonEmptyString(value, 'privateKeyPath', `${path}.privateKeyPath`, errors);
+  const privateKeyEnv = readOptionalNonEmptyString(value, 'privateKeyEnv', `${path}.privateKeyEnv`, errors);
+  const login = readOptionalNonEmptyString(value, 'login', `${path}.login`, errors);
+  if (!appId || !installationId) {
+    errors.push({ kind: 'invalid', path, message: `${path} requires appId and installationId` });
+    return undefined;
+  }
+  if (!privateKeyPath && !privateKeyEnv) {
+    errors.push({ kind: 'invalid', path, message: `${path} requires privateKeyPath or privateKeyEnv (never store private key material in config)` });
+    return undefined;
+  }
+  if (privateKeyPath && privateKeyEnv) {
+    errors.push({ kind: 'invalid', path, message: `${path} accepts only one of privateKeyPath or privateKeyEnv` });
+  }
+  // Reject values that look like embedded PEMs or tokens rather than paths/env names.
+  if (privateKeyEnv && (privateKeyEnv.includes('BEGIN') || privateKeyEnv.includes('\n') || privateKeyEnv.length > 128)) {
+    errors.push({ kind: 'invalid', path: `${path}.privateKeyEnv`, message: `${path}.privateKeyEnv must be an environment variable name, not key material` });
+    return undefined;
+  }
+  if (privateKeyPath && (privateKeyPath.includes('BEGIN') || privateKeyPath.includes('\n'))) {
+    errors.push({ kind: 'invalid', path: `${path}.privateKeyPath`, message: `${path}.privateKeyPath must be a filesystem path, not key material` });
+    return undefined;
+  }
+  return {
+    appId,
+    installationId,
+    ...(privateKeyPath ? { privateKeyPath } : {}),
+    ...(privateKeyEnv ? { privateKeyEnv } : {}),
+    ...(login ? { login } : {}),
+  };
+}
+
+function readGitHubTokenPublisherConfig(value: unknown, path: string, errors: ValidationError[]): GitHubTokenPublisherConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return undefined;
+  }
+  rejectUnknownKeys(value, ['env', 'login'], path, errors);
+  const env = readOptionalNonEmptyString(value, 'env', `${path}.env`, errors);
+  const login = readOptionalNonEmptyString(value, 'login', `${path}.login`, errors);
+  if (!env) {
+    errors.push({ kind: 'invalid', path: `${path}.env`, message: `${path}.env is required and must be an environment variable name` });
+    return undefined;
+  }
+  if (env.includes('BEGIN') || env.includes('\n') || env.startsWith('ghp_') || env.startsWith('github_pat_') || env.length > 128) {
+    errors.push({ kind: 'invalid', path: `${path}.env`, message: `${path}.env must be an environment variable name, not a token value` });
+    return undefined;
+  }
+  return { env, ...(login ? { login } : {}) };
+}
+
+function readGitHubReviewPublisherConfig(value: unknown, path: string, errors: ValidationError[]): GitHubReviewPublisherConfig | undefined {
+  if (value === undefined) return undefined;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
+    return undefined;
+  }
+  rejectUnknownKeys(value, ['mode', 'githubApp', 'token'], path, errors);
+  let mode: GitHubReviewPublisherMode = 'user';
+  if (value.mode === 'user' || value.mode === 'github-app' || value.mode === 'token') {
+    mode = value.mode;
+  } else if (value.mode !== undefined) {
+    errors.push({ kind: 'invalid', path: `${path}.mode`, message: `${path}.mode must be user, github-app, or token` });
+  }
+  const githubApp = readGitHubAppPublisherConfig(value.githubApp, `${path}.githubApp`, errors);
+  const token = readGitHubTokenPublisherConfig(value.token, `${path}.token`, errors);
+  if (mode === 'github-app' && !githubApp) {
+    errors.push({ kind: 'invalid', path: `${path}.githubApp`, message: `${path}.githubApp is required when mode is github-app` });
+  }
+  if (mode === 'token' && !token) {
+    errors.push({ kind: 'invalid', path: `${path}.token`, message: `${path}.token is required when mode is token` });
+  }
+  return {
+    mode,
+    ...(githubApp ? { githubApp } : {}),
+    ...(token ? { token } : {}),
+  };
+}
+
+function readReviewProviderSelection(input: Record<string, unknown>, defaultValue: ReviewProviderSelection, errors: ValidationError[]): ReviewProviderSelection {
+  const path = 'providers.review';
+  const section = readPlainObject(input, 'review', 'providers', errors);
+  if (!section) return { ...defaultValue };
+  rejectUnknownKeys(section, ['kind', 'publisher'], path, errors);
+  const selection = readProviderSelection(input, 'review', defaultValue, ['github', 'gitlab'], errors, ['kind', 'publisher']) as ReviewProviderSelection;
+  const publisher = readGitHubReviewPublisherConfig(section.publisher, `${path}.publisher`, errors);
+  if (publisher && selection.kind !== 'github') {
+    errors.push({ kind: 'invalid', path: `${path}.publisher`, message: `${path}.publisher is only supported when providers.review.kind is github` });
+  }
+  return {
+    ...selection,
+    ...(publisher && selection.kind === 'github' ? { publisher } : {}),
+  };
+}
+
 function readProviderCapabilities(input: Record<string, unknown>, defaultValue: ProviderCapabilityPolicy, errors: ValidationError[]): ProviderCapabilityPolicy {
   const section = readPlainObject(input, 'capabilities', 'providers', errors);
   if (!section) return { ...defaultValue };
@@ -512,7 +617,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
   rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'capabilities'], 'providers', errors);
   return {
     work: readWorkProviderSelection(value, defaultValue.work, errors),
-    review: readProviderSelection(value, 'review', defaultValue.review, ['github', 'gitlab'], errors),
+    review: readReviewProviderSelection(value, defaultValue.review, errors),
     repository: readProviderSelection(value, 'repository', defaultValue.repository, ['local-git'], errors),
     ci: readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors),
     layout: readProviderSelection(value, 'layout', defaultValue.layout, ['local'], errors),

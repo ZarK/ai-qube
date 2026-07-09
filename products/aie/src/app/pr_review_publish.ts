@@ -367,7 +367,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
   return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
 }
 

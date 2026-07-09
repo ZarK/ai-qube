@@ -28,7 +28,7 @@ const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('.
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
-const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
+const prViewFields = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-pr-gate-'));
@@ -2924,12 +2924,12 @@ describe('PR gate service', () => {
     assert.deepEqual(laneMetadata.map(item => item.lane).sort(), ['code-quality', 'performance']);
   });
 
-  it('does not satisfy host lanes from legacy issue-comment lane metadata', async () => {
+  it('satisfies host lanes from intentional issue-comment lane metadata when formal events are unavailable', async () => {
     const provider = createGitHubReviewForgeProvider({
       exec: makePrExec({
         prViews: [cleanLocalPr({
           comments: [
-            laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'legacy-comment-run', summary: 'legacy comment lane passed', inline: 'issue-comment' }),
+            laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'comment-state-run', summary: 'comment-state lane passed', inline: 'issue-comment' }),
           ],
         })],
       }).exec,
@@ -2939,7 +2939,8 @@ describe('PR gate service', () => {
     const observations = observeReviewParticipants(snapshot.item, [{ id: 'lane:code-quality', handle: '@QUBEReview (code-quality)', kind: 'host-lane', transport: 'host-lane', externalService: false, laneId: 'code-quality' }], 'abc123');
 
     assert.equal(snapshot.item.trustedMetadata.trustedLaneReviews[0].inline, 'issue-comment');
-    assert.equal(observations[0].received, false);
+    assert.equal(observations[0].received, true);
+    assert.equal(observations[0].recommendation, 'approve');
   });
 
   it('falls back to a body-only pull request review when GitHub rejects inline review publish', async () => {

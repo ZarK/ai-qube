@@ -40,6 +40,16 @@ export interface ReviewLaneReviewPublishResult {
   inlineCommentUrls?: string[];
   failure: string | null;
   nextAction: string;
+  publisher?: {
+    mode: 'user' | 'github-app' | 'token';
+    identityClass: 'user' | 'github-app-installation' | 'fine-grained-token' | 'none';
+    login: string | null;
+    permissionStatus: 'ok' | 'missing' | 'unknown' | 'same-author' | 'unconfigured' | 'misconfigured';
+    formalEventCapability: boolean;
+    fallbackReason: string | null;
+    publishTransport: 'pull-request-review' | 'issue-comment';
+    authSource: 'gh-user' | 'github-app-installation' | 'token-env' | 'none';
+  };
 }
 
 export interface ReviewProviderPlanOptions {

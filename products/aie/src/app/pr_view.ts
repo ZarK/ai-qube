@@ -97,6 +97,7 @@ export interface PrViewResult {
   state: ReviewItem['state'];
   reviewDecision: ReviewItem['reviewDecision'];
   mergeability: ReviewItem['mergeability'];
+  reviewPublisher: import('../providers/review_forge_provider.js').ReviewForgePublisherIdentity | null;
   feedback: PrViewFeedback[];
   mergeBlockers: PrViewMergeBlock[];
   reviewThreads: PrViewThread[];
@@ -278,13 +279,16 @@ function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability'
 
 export async function runPrViewService(options: PrViewOptions): Promise<PrViewResult> {
   const config = await loadConfig(options.repoRoot ?? process.cwd()) ?? getDefaults();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
   const mergeBlockers = prMergeBlockers(snapshot.item);
   const reviewThreads = prReviewThreads(snapshot.item);
   const laneReviews = prLaneReviews(snapshot.item);
   const checks = prChecks(snapshot.item);
+  const reviewPublisher = provider.describeReviewPublisher
+    ? await provider.describeReviewPublisher(snapshot.pr.authorLogin ?? null, { mint: false })
+    : null;
   const partial = {
     reviewDecision: snapshot.item.reviewDecision,
     mergeability: snapshot.item.mergeability,
@@ -299,6 +303,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
     state: snapshot.item.state,
     reviewDecision: snapshot.item.reviewDecision,
     mergeability: snapshot.item.mergeability,
+    reviewPublisher,
     feedback,
     mergeBlockers,
     reviewThreads,
