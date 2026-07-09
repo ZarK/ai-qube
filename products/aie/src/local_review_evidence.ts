@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched } from './review_focus.js';
@@ -1268,21 +1268,10 @@ function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prN
     try {
       const headDirs = readdirSync(prRoot, { withFileTypes: true })
         .filter(entry => entry.isDirectory() && entry.name !== currentHeadDir)
-        .map(entry => {
-          try {
-            return { name: entry.name, modifiedAt: statSync(join(prRoot, entry.name)).mtimeMs };
-          } catch {
-            return { name: entry.name, modifiedAt: 0 };
-          }
-        })
-        .sort((left, right) => right.modifiedAt - left.modifiedAt)
         .map(entry => entry.name);
-      let validCandidates = 0;
       for (const headDir of headDirs) {
-        if (validCandidates >= 5) break;
         const timestamp = headDirectoryTimestamp(repoRoot, issueNumber, prNumber, headDir);
         if (timestamp === null) continue;
-        validCandidates += 1;
         if (newestTimestamp === null || timestamp > newestTimestamp) {
           newestTimestamp = timestamp;
           priorHeadSha = headDir;
@@ -1295,8 +1284,8 @@ function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prN
   return priorHeadSha;
 }
 
-function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], prNumber: number, priorHeadSha: string): Array<{ laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> {
-  const priorFindings: Array<{ laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> = [];
+function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], prNumber: number, priorHeadSha: string): Array<{ issueNumber: number; laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> {
+  const priorFindings: Array<{ issueNumber: number; laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> = [];
   for (const issueNumber of issueNumbers) {
     const directory = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), priorHeadSha);
     for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
@@ -1305,7 +1294,7 @@ function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], pr
       const parsed = parseLaneEvidence(path, issueNumber, prNumber, priorHeadSha);
       if (!parsed || parsed.lane.id !== laneId) continue;
       for (const finding of parsed.lane.findings) {
-        priorFindings.push({ laneId, finding, contentHash: findingContentHash(laneId, finding) });
+        priorFindings.push({ issueNumber, laneId, finding, contentHash: findingContentHash(laneId, finding) });
       }
     }
   }
@@ -1349,7 +1338,11 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
       }
     }
   }
-  const currentEvidenceLoaded = evidence.some(entry => entry.status === 'passed' || entry.status === 'failed' || entry.status === 'needs-work');
+  const completedIssueNumbers = new Set(evidence
+    .filter(entry => entry.status === 'passed' || entry.status === 'failed' || entry.status === 'needs-work')
+    .map(entry => entry.issueNumber)
+    .filter((issueNumber): issueNumber is number => issueNumber !== null));
+  const currentEvidenceLoaded = completedIssueNumbers.size > 0;
   const priorHeadSha = findPriorHeadSha(repoRoot, issueNumbers, prNumber, headSha);
   const priorFindings = priorHeadSha === null ? [] : readPriorFindings(repoRoot, issueNumbers, prNumber, priorHeadSha);
   const priorRemaining = new Map<string, number>();
@@ -1370,6 +1363,7 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
   const resolved = currentEvidenceLoaded
     ? priorFindings
       .filter(entry => {
+        if (!completedIssueNumbers.has(entry.issueNumber)) return false;
         const remaining = priorRemaining.get(entry.contentHash) ?? 0;
         if (remaining <= 0) return false;
         priorRemaining.set(entry.contentHash, remaining - 1);

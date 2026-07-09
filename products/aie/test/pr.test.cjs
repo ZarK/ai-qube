@@ -1653,6 +1653,28 @@ describe('PR gate service', () => {
     assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Fix the parser crash.').length, 1);
   });
 
+  it('resolves prior findings only for issues with completed current evidence', () => {
+    const repo = makeGitRepo();
+    const priorFirstIssue = localEvidence({ headSha: 'aaa111' });
+    priorFirstIssue.lanes = priorFirstIssue.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [{ id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorFirstIssue);
+    const priorSecondIssue = localEvidence({ issueNumber: 94, headSha: 'aaa111' });
+    priorSecondIssue.lanes = priorSecondIssue.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Remove the dead code.'], findings: [{ id: 'finding-b', severity: 'blocking', message: 'Remove the dead code.', location: { path: 'src/legacy.ts', line: 3 } }], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorSecondIssue);
+
+    const batch = buildFixBatch(repo, [93, 94], 12, 'def456', [
+      { status: 'passed', issueNumber: 93, prNumber: 12, headSha: 'def456', lanes: [] },
+      { status: 'pending', issueNumber: 94, prNumber: 12, headSha: 'def456', lanes: [] },
+    ]);
+
+    assert.equal(batch.resolved.length, 1);
+    assert.equal(batch.resolved[0].message, 'Fix the parser crash.');
+  });
+
   it('keeps fix batch resolution indeterminate for pending current-head evidence', () => {
     const repo = makeGitRepo();
     const priorEvidence = localEvidence({ headSha: 'aaa111' });
