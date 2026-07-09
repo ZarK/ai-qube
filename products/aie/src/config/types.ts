@@ -114,6 +114,7 @@ export interface ReviewConfig {
   localAgents: string[];
   waitMinutes: number;
   requestText: string;
+  carryForwardPublish: 'note' | 'none';
 }
 
 export interface GatePolicyConfig {
@@ -196,6 +197,7 @@ export interface Config extends ConfigFileShape {
   localReviewAgents: string[];
   reviewWaitMinutes: number;
   reviewRequestText: string;
+  reviewCarryForwardPublish: 'note' | 'none';
   opencodeCommandAlias: boolean;
   manualUiAudit: boolean;
   uiAuditAppLaunch: string;

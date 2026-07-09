@@ -91,6 +91,7 @@ export interface ReviewPolicy {
   localReviewers: string[];
   waitMinutes: number;
   requestText: string;
+  carryForwardPublish: 'note' | 'none';
 }
 
 export interface GatePolicy {
@@ -225,6 +226,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
       requestText: input.reviews.requestText,
+      carryForwardPublish: input.reviews.carryForwardPublish,
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { ...input.audit },

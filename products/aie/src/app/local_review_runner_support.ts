@@ -75,6 +75,8 @@ export async function findCarryForwardSource(input: {
   lane: LocalReviewLaneId;
   matchPatterns: readonly string[];
   expectedFragmentDigest: string;
+  expectedAdapter: 'local-host' | 'local-command';
+  requiredCommand: string | null;
 }): Promise<CarryForwardSource | null> {
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
   let headDirectories: string[];
@@ -96,6 +98,8 @@ export async function findCarryForwardSource(input: {
       if ((parsed.lane ?? parsed.id) !== input.lane) continue;
       if (parsed.status !== 'passed' || parsed.recommendation !== 'approve') continue;
       if (isRecord(parsed.carriedForward)) continue;
+      if (parsed.adapter !== input.expectedAdapter) continue;
+      if (input.requiredCommand !== null && !(Array.isArray(parsed.commands) && parsed.commands.includes(input.requiredCommand))) continue;
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
@@ -106,9 +110,14 @@ export async function findCarryForwardSource(input: {
     }
   }
   candidates.sort((first, second) => second.recordedAt.localeCompare(first.recordedAt));
-  for (const candidate of candidates) {
+  for (const candidate of candidates.slice(0, 5)) {
     const deltaPaths = await gitDeltaPaths(input.repoRoot, candidate.fromHeadSha, input.headSha);
     if (deltaPaths === null) continue;
+    const reviewConfigTouched = deltaPaths.some(deltaPath => {
+      const normalized = deltaPath.replace(/\\/g, '/');
+      return normalized.startsWith('.qube/') && !normalized.startsWith('.qube/aie/reviews/');
+    });
+    if (reviewConfigTouched) continue;
     const touched = input.matchPatterns.length > 0 ? pathsTouchPatterns(deltaPaths, input.matchPatterns) : deltaPaths.length > 0;
     if (touched) continue;
     const deltaSummary = deltaPaths.length === 0

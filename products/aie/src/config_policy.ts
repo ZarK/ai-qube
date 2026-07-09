@@ -55,6 +55,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
       localReviewers: [...config.localReviewAgents],
       waitMinutes: config.reviewWaitMinutes,
       requestText: config.reviewRequestText,
+      carryForwardPublish: config.reviewCarryForwardPublish,
     },
     gates: { definitions: gates.map(gate => ({ key: gate.name, name: gate.name, command: gate.command, stage: gate.stage, required: gate.required, externalService: gate.externalService, supplyChainSensitive: isSupplyChainSensitive(gate.command) })) },
     audit: { manualUiAudit: config.manualUiAudit, appLaunch: config.uiAuditAppLaunch, target: config.uiAuditTarget },

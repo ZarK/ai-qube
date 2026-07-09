@@ -818,7 +818,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
-  const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid);
+  const carriedForwardLanes = config.reviewCarryForwardPublish === 'none'
+    ? localReview.evidence.flatMap(evidence => evidence.lanes.filter(lane => lane.carriedForward !== null && lane.status === 'passed').map(lane => lane.id))
+    : [];
+  const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
   const feedback = prFeedback(finalSnapshot.item);

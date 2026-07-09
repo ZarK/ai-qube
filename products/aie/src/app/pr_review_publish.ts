@@ -15,6 +15,7 @@ export interface PrReviewPublishOptions {
   dryRun?: boolean;
   repoRoot?: string;
   exec?: PrGateExec;
+  carryForwardPublish?: 'note' | 'none';
 }
 
 export interface PrReviewPublishResult {
@@ -322,6 +323,15 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     throw new Error('publish lane review failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
   const evidence = validateLaneEvidence(repoRoot, issueNumber, options.prNumber, headSha, options.lane);
+  if (options.carryForwardPublish === 'none' && isRecord(evidence.evidence.carriedForward)) {
+    return {
+      ok: true,
+      command: 'pr review publish',
+      prNumber: options.prNumber,
+      lane: options.lane,
+      publish: { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: `Carried-forward lane publishing is disabled by policy; local carried evidence for ${options.lane} satisfies the gate.` },
+    };
+  }
   const publishInput = {
     dryRun: options.dryRun ?? false,
     prNumber: options.prNumber,
@@ -346,7 +356,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents });
-  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot });
+  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {

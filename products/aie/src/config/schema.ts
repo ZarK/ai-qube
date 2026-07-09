@@ -658,7 +658,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText', 'carryForwardPublish'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -670,7 +670,15 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
+    carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
   };
+}
+
+function readCarryForwardPublish(value: unknown, defaultValue: 'note' | 'none', path: string, errors: ValidationError[]): 'note' | 'none' {
+  if (value === undefined) return defaultValue;
+  if (value === 'note' || value === 'none') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "note" or "none"` });
+  return defaultValue;
 }
 
 function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: ValidationError[]): GatePolicyConfig {

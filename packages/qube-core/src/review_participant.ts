@@ -235,7 +235,7 @@ function laneReviewRecord(item: ReviewItem, laneId: string, headSha: string): { 
   return aggregate ?? null;
 }
 
-export function observeReviewParticipants(item: ReviewItem, participants: readonly ReviewParticipant[], headSha: string): ReviewParticipantObservation[] {
+export function observeReviewParticipants(item: ReviewItem, participants: readonly ReviewParticipant[], headSha: string, carriedForwardLanes: readonly string[] = []): ReviewParticipantObservation[] {
   const comments = trustedComments(item);
   const requests = trustedReviewRequests(item);
   const reviews = trustedLatestReviews(item);
@@ -279,6 +279,18 @@ export function observeReviewParticipants(item: ReviewItem, participants: readon
 
     const laneId = participant.laneId ?? "";
     const laneRecord = laneReviewRecord(item, laneId, headSha);
+    if (laneRecord === null && carriedForwardLanes.includes(laneId)) {
+      return {
+        participant,
+        requestedForHead: true,
+        pending: false,
+        stale: false,
+        received: true,
+        recommendation: "approve",
+        summary: "Carried forward from a prior approved review; provider publishing is suppressed by policy.",
+        url: null,
+      };
+    }
     const received = laneRecord !== null;
     const recommendation = received
       ? readRecommendation(laneRecord.recommendation) ?? laneRecommendationFromAggregate(laneRecord, laneId, headSha)
