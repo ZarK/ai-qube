@@ -93,13 +93,31 @@ function validatePrivateKeyPath(value: string | undefined): string[] {
   return [];
 }
 
+function validatePublicIdentifier(value: string | undefined, flag: string): string[] {
+  if (!value) return [];
+  if (looksLikeCredentialMaterial(value) || value.length > 128) {
+    return [`${flag} must be a public identifier, never token or private-key material.`];
+  }
+  // App/installation ids are numeric or alphanumerics; logins may include [bot].
+  if (!/^[A-Za-z0-9][A-Za-z0-9._\[\]-]*$/.test(value)) {
+    return [`${flag} must be a public identifier such as a numeric app id, installation id, or login.`];
+  }
+  return [];
+}
+
 function validateInputs(input: {
   mode: ReviewSetupMode;
+  appId?: string;
+  installationId?: string;
   privateKeyEnv?: string;
   privateKeyPath?: string;
   tokenEnv?: string;
+  login?: string;
 }): string[] {
   const errors = [
+    ...validatePublicIdentifier(input.appId, '--app-id'),
+    ...validatePublicIdentifier(input.installationId, '--installation-id'),
+    ...validatePublicIdentifier(input.login, '--login'),
     ...validateEnvironmentName(input.privateKeyEnv, '--private-key-env'),
     ...validatePrivateKeyPath(input.privateKeyPath),
     ...validateEnvironmentName(input.tokenEnv, '--token-env'),
@@ -191,7 +209,8 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
     privateKeyPath: trimmed(options.privateKeyPath),
     tokenEnv: trimmed(options.tokenEnv),
   };
-  let validationErrors = validateInputs({ mode: options.mode, ...values });
+  const login = trimmed(options.login);
+  let validationErrors = validateInputs({ mode: options.mode, ...values, login });
   if (validationErrors.length > 0) {
     return {
       ok: false, command, mode: options.mode, applied: false, dryRun: options.dryRun === true, configPath: options.configPath,
@@ -207,7 +226,7 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
     : !values.appId || !values.installationId || (!values.privateKeyEnv && !values.privateKeyPath);
   const prompted = Boolean(interactive && needsPrompt);
   if (prompted) await promptForMissing(options.mode, values, options.prompt as ReviewSetupPromptFunction);
-  validationErrors = validateInputs({ mode: options.mode, ...values });
+  validationErrors = validateInputs({ mode: options.mode, ...values, login });
   if (validationErrors.length > 0) {
     return {
       ok: false, command, mode: options.mode, applied: false, dryRun: options.dryRun === true, configPath: options.configPath,
@@ -216,7 +235,7 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
     };
   }
 
-  const publisher = buildPublisher({ mode: options.mode, ...values, login: trimmed(options.login) });
+  const publisher = buildPublisher({ mode: options.mode, ...values, login });
   const missingFields = publisherMissingFields(publisher);
   const applyIntended = options.yes === true || prompted;
   // Guidance-only invocations succeed without apply. Explicit apply intent that cannot

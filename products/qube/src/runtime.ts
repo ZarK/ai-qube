@@ -3884,9 +3884,7 @@ async function executeDirectCommand(definition: DirectQubeCommand, args: readonl
   if ("error" in mapped) {
     return { exitCode: mapped.error.exitCode, stdout: mapped.error.stdout, stderr: mapped.error.stderr };
   }
-  if (definition.passthroughJson && hasTopLevelJsonFlag(args)) {
-    return executeQubeJsonDispatch(definition.component, mapped.args, environment);
-  }
+  // Help must win over JSON so combined --help --json still returns human help.
   if (definition.qubePrimaryHelp && isDirectHelpRequest(args)) {
     const planned = planQubeDispatch(definition.component, mapped.args, environment);
     if (!planned.dispatch) return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
@@ -3896,6 +3894,9 @@ async function executeDirectCommand(definition: DirectQubeCommand, args: readonl
       stdout: rewriteQubeReviewHelp(captured.stdout, definition.command.name),
       stderr: `${planned.stderr}${captured.stderr}`,
     };
+  }
+  if (definition.passthroughJson && hasTopLevelJsonFlag(args)) {
+    return executeQubeJsonDispatch(definition.component, mapped.args, environment);
   }
   return executeQubeDispatch(definition.component, mapped.args, environment);
 }

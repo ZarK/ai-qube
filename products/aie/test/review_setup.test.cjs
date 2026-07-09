@@ -145,6 +145,12 @@ describe('review publisher setup execution', () => {
     assert.match(rejectedToken.validationErrors.join('\n'), /environment variable name/);
     assert.match(rejectedOauthToken.validationErrors.join('\n'), /environment variable name/);
     assert.match(rejectedAppToken.validationErrors.join('\n'), /environment variable name/);
+
+    const rejectedLogin = await runReviewSetup({
+      mode: 'token', config: null, configPath, root, tokenEnv: 'QUBE_REVIEW_TOKEN', login: 'gho_FAKE_LOGIN_TOKEN_1234567890', yes: true,
+    });
+    assert.equal(rejectedLogin.ok, false);
+    assert.match(rejectedLogin.validationErrors.join('\n'), /public identifier|credential/i);
   });
 
   it('explains token fallback and stores only the environment variable name', async () => {
