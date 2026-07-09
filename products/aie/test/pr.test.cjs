@@ -912,6 +912,24 @@ describe('PR gate service', () => {
     assert.equal(prViewFields.split(',').includes('reviews'), true);
   });
 
+  it('posts a marker-only request comment for the host review participant', async () => {
+    const config = getDefaults();
+    config.reviewAgents = ['QUBEReview', '@coderabbitai'];
+    config.reviewRequestText = 'Please inspect review-risky changes.';
+    const { exec } = makePrExec({ prViews: [basePr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    const hostAction = result.actions.find(action => action.target === '@QUBEReview');
+    assert.match(hostAction.body, /aie:pr-gate:qubereview:abc123/);
+    assert.match(hostAction.body, /Executor recorded a configured PR reviewer request/);
+    assert.doesNotMatch(hostAction.body, /@QUBEReview review/);
+    assert.doesNotMatch(hostAction.body, /Please inspect review-risky changes/);
+    const remoteAction = result.actions.find(action => action.target === '@coderabbitai');
+    assert.match(remoteAction.body, /@coderabbitai review/);
+    assert.match(remoteAction.body, /Please inspect review-risky changes/);
+  });
+
   it('omits non-actionable provider summaries from PR gate feedback', async () => {
     const config = getDefaults();
     config.reviewAgents = ['@coderabbitai', '@cubic-dev-ai'];
