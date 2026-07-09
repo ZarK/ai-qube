@@ -1,4 +1,4 @@
-import type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult } from '@tjalve/qube-adapter-github';
+import type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult, GitHubReviewPublisherConfig, ResolvePublisherOptions, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 
 export type { GitHubIssue, GitHubMilestone, GhExec, GhRunResult };
 
@@ -38,6 +38,14 @@ export async function getIssue(issueNumber: number, options: { cwd?: string; exe
 export async function listOpenIssues(options: { cwd?: string; exec?: GhExec; limit?: number; includeAssignees?: boolean } = {}): Promise<GitHubIssue[]> {
   const adapter = await loadGitHubAdapter();
   return adapter.listOpenIssues(options);
+}
+
+export async function resolveGitHubReviewPublisher(
+  config: GitHubReviewPublisherConfig | null | undefined,
+  options: ResolvePublisherOptions = {},
+): Promise<ResolvedGitHubReviewPublisher> {
+  const adapter = await loadGitHubAdapter();
+  return adapter.resolveGitHubReviewPublisher(config, options);
 }
 
 export function isGhExecutionError(error: unknown): error is Error & { stderr?: string; stdout?: string; exitCode?: number; kind?: string } {

@@ -167,7 +167,7 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       dryRun: command.supportsDryRun ? { supported: true } : { supported: false, reason: 'Command does not support dry-run mode.' },
       noColor: false,
       nonInteractive: true,
-      ttyPrompt: false,
+      ttyPrompt: command.name === 'review setup github-app' || command.name === 'review setup token',
     },
     mutation: command.mutationTargets.length > 0 ? { categories: command.mutationTargets } : undefined,
     externalServices: (command.externalServices ?? []).map(service => ({

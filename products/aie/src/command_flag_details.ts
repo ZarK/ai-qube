@@ -4,6 +4,35 @@ export const GATE_STAGE_OPTIONS = ['all', 'pre-pr', 'pre-merge'];
 export const PR_REVIEW_AGENT_VALUES = ['copilot', 'cubic', 'coderabbit', 'custom', 'local'];
 export const REVIEW_AGENT_VALUES = ['oracle', 'opencode-oracle', 'fallback-oracle', 'custom', 'local'];
 
+export const REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--app-id', type: 'string', description: 'Public GitHub App id' },
+  { name: '--installation-id', type: 'string', description: 'Public GitHub App installation id' },
+  { name: '--private-key-env', type: 'string', description: 'Environment variable name containing the private key PEM; never pass the PEM value' },
+  { name: '--private-key-path', type: 'string', description: 'Local private key path; never place key material in config' },
+  { name: '--login', type: 'string', description: 'Optional public bot login used for trust matching' },
+  { name: '--yes', type: 'boolean', description: 'Apply the config write non-interactively when required flags are complete', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the setup plan without writing config or minting credentials', default: false },
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free setup output', default: false },
+  { name: '--no-probe', type: 'boolean', description: 'Skip the final read-only publisher identity and permission probe', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const REVIEW_SETUP_TOKEN_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--token-env', type: 'string', description: 'Environment variable name containing the fine-grained token; token values are rejected' },
+  { name: '--login', type: 'string', description: 'Optional public reviewer login used for trust matching' },
+  { name: '--yes', type: 'boolean', description: 'Apply the config write non-interactively when required flags are complete', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the setup plan without writing config or probing credentials', default: false },
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free setup output', default: false },
+  { name: '--no-probe', type: 'boolean', description: 'Skip the final read-only publisher identity and permission probe', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
+export const REVIEW_DOCTOR_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free publisher readiness output', default: false },
+  { name: '--no-probe', type: 'boolean', description: 'Inspect configured references without minting or using publisher credentials', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable init plan or result', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show planned local file changes without writing', default: false },

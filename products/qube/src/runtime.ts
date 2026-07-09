@@ -851,6 +851,7 @@ interface DirectQubeCommand {
   readonly command: ReturnType<typeof defineCommand>;
   readonly component: QubeComponent["command"];
   readonly supportsJson: boolean;
+  readonly passthroughJson?: boolean;
   readonly mapArgs: (args: readonly string[]) => readonly string[];
 }
 
@@ -925,7 +926,11 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("gates status", "Show recorded Executor gate evidence.", "aie", "gates status"),
   createDirectCommand("audit", "Show Executor audit helpers.", "aie", "audit", { supportsJson: false }),
   createDirectCommand("audit ui", "Plan or check manual UI audit evidence.", "aie", "audit ui"),
-  createDirectCommand("review", "Show Executor review helpers.", "aie", "review", { supportsJson: false }),
+  createDirectCommand("review", "Set up and validate provider publishing or show host-run Executor review helpers.", "aie", "review", { supportsJson: false }),
+  createDirectCommand("review setup", "Show guided reviewer publisher setup paths.", "aie", "review setup", { supportsJson: false }),
+  createDirectCommand("review setup github-app", "Configure a user-owned GitHub App reviewer publisher with safe secret references.", "aie", "review setup github-app", { passthroughJson: true }),
+  createDirectCommand("review setup token", "Configure a separate-user fine-grained token reviewer publisher with an env reference.", "aie", "review setup token", { passthroughJson: true }),
+  createDirectCommand("review doctor", "Validate reviewer publisher readiness and permissions without exposing secrets.", "aie", "review doctor", { passthroughJson: true }),
   createDirectCommand("review gate", "Render configured review-agent gate prompts.", "aie", "review gate"),
   createDirectCommand("pr", "Show Executor pull request helpers.", "aie", "pr", { supportsJson: false }),
   createDirectCommand("pr view", "Show concise pull request state.", "aie", "pr view"),
@@ -3878,7 +3883,21 @@ async function executeDirectCommand(definition: DirectQubeCommand, args: readonl
   if ("error" in mapped) {
     return { exitCode: mapped.error.exitCode, stdout: mapped.error.stdout, stderr: mapped.error.stderr };
   }
+  if (definition.passthroughJson && hasTopLevelJsonFlag(args)) {
+    return executeQubeJsonDispatch(definition.component, mapped.args, environment);
+  }
   return executeQubeDispatch(definition.component, mapped.args, environment);
+}
+
+async function executeQubeJsonDispatch(componentName: string, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const planned = planQubeDispatch(componentName, componentArgs, environment);
+  if (!planned.dispatch) return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  const captured = await dispatchCommandCaptured(planned.dispatch);
+  return {
+    exitCode: captured.exitCode,
+    jsonStdout: captured.stdout,
+    stderr: `${planned.stderr}${captured.stderr}`,
+  };
 }
 
 function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): { readonly args: readonly string[] } | { readonly error: CliExecution } {
@@ -3943,7 +3962,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -3975,6 +3994,7 @@ function createDirectCommand(
     }),
     component,
     supportsJson,
+    passthroughJson: options.passthroughJson === true,
     mapArgs(args) {
       const stripped = stripSeparator(args);
       const forwarded = options.translateJson ? translateJsonFlag(stripped) : stripped;
@@ -4479,6 +4499,27 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
       resolve(1);
     });
+  });
+}
+
+function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  return new Promise(resolve => {
+    const [command, args] = spawnInput(request);
+    const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });
+    let stdout = '';
+    let stderr = '';
+    child.stdout.setEncoding('utf8');
+    child.stderr.setEncoding('utf8');
+    child.stdout.on('data', chunk => { stdout += chunk; });
+    child.stderr.on('data', chunk => { stderr += chunk; });
+    child.on('exit', (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      resolve({ exitCode: code ?? 1, stdout, stderr });
+    });
+    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n` }));
   });
 }
 

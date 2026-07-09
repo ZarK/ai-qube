@@ -174,6 +174,9 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /work-items render\s+Render work item drafts for a provider\./);
     assert.match(help.stdout, /queue\s+Show the Executor issue queue\./);
     assert.match(help.stdout, /start\s+Start or resume Executor issue work\./);
+    assert.match(help.stdout, /review setup github-app\s+Configure a user-owned GitHub App reviewer publisher/);
+    assert.match(help.stdout, /review setup token\s+Configure a separate-user fine-grained token reviewer publisher/);
+    assert.match(help.stdout, /review doctor\s+Validate reviewer publisher readiness/);
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
     assert.match(help.stdout, /doctor\s+Run Quality Control diagnostics\./);
@@ -238,7 +241,7 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(schema.stdout);
     assert.equal(parsed.package.name, "@tjalve/qube");
     const commandNames = parsed.commands.map(command => command.name);
-    for (const command of ["install", "autoresearch", "oneshot", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
+    for (const command of ["install", "autoresearch", "oneshot", "make-it-so", "idea", "spec draft", "milestones", "work-items render", "queue", "start", "branch create", "review setup", "review setup github-app", "review setup token", "review doctor", "review gate", "pr gate", "app start", "check", "quality status", "evidence", "status"]) {
       assert.ok(commandNames.includes(command), `expected ${command} in QUBE schema`);
     }
     const installCommand = parsed.commands.find(command => command.name === "install");
@@ -257,6 +260,45 @@ describe("qube composer CLI", () => {
     );
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component])).status, "aiu");
     assert.deepEqual(Object.fromEntries(parsed.sections.directCommands.map(command => [command.command, command.component]))["pr gate"], "aie");
+  });
+
+  it("routes short reviewer publisher help and JSON doctor output to Executor", () => {
+    const shortHelp = runCli(["review", "--help"]);
+    const productHelp = runCli(["aie", "review", "--help"]);
+    const doctor = runCli(["review", "doctor", "--json", "--no-probe"]);
+
+    assert.equal(shortHelp.status, 0, shortHelp.stderr);
+    assert.equal(productHelp.status, 0, productHelp.stderr);
+    for (const output of [shortHelp.stdout, productHelp.stdout]) {
+      assert.match(output, /review setup github-app/);
+      assert.match(output, /review setup token/);
+      assert.match(output, /review doctor/);
+      assert.match(output, /review gate/);
+    }
+    assert.equal(doctor.status, 0, doctor.stderr);
+    const parsed = JSON.parse(doctor.stdout);
+    assert.equal(parsed.command, "review doctor");
+    assert.ok(["ready", "degraded", "unavailable", "unconfigured"].includes(parsed.readiness));
+    assert.equal(typeof parsed.nextAction, "string");
+    assert.equal(typeof parsed.probe, "object");
+  });
+
+  it("renders concrete short-surface reviewer publisher guidance without writing incomplete config", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-review-setup-"));
+    const githubApp = runCli(["review", "setup", "github-app"], { cwd });
+    const token = runCli(["review", "setup", "token"], { cwd });
+
+    assert.equal(githubApp.status, 0, githubApp.stderr);
+    assert.match(githubApp.stdout, /Pull requests: Read and write/);
+    assert.match(githubApp.stdout, /Contents: Read-only/);
+    assert.match(githubApp.stdout, /private key.*outside repository files/i);
+    assert.match(githubApp.stdout, /installation id/i);
+    assert.match(githubApp.stdout, /Review compute remains host-run/);
+    assert.equal(token.status, 0, token.stderr);
+    assert.match(token.stdout, /separate GitHub user or bot account/i);
+    assert.match(token.stdout, /formal review event/i);
+    assert.match(token.stdout, /--token-env/);
+    assert.equal(existsSync(path.join(cwd, ".qube", "aie", "config.json")), false);
   });
 
   it("renders a non-interactive guided install plan as JSON", () => {
