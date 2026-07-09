@@ -113,7 +113,49 @@ describe('github review publisher', () => {
     assert.ok(calls.some(call => call.includes('installation')));
     assert.equal(resolved.identity.mode, 'github-app');
     assert.equal(resolved.identity.identityClass, 'github-app-installation');
-    assert.equal(resolved.identity.login, 'review-bot');
+    // Bot actor comes from app_slug, not the installation target account login.
+    assert.equal(resolved.identity.login, 'review-bot[bot]');
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');
+  });
+
+  it('prefers app slug bot identity over installation target account login', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      prAuthorLogin: 'alice',
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+      }),
+      exec: async (args) => {
+        if (args.includes('user')) {
+          const error = new Error('HTTP 403');
+          error.status = 1;
+          error.stderr = 'Resource not accessible by integration';
+          throw error;
+        }
+        if (args.includes('installation')) {
+          return {
+            args,
+            exitCode: 0,
+            stdout: JSON.stringify({ account: { login: 'alice', type: 'User' }, app_slug: 'review-bot' }),
+            stderr: '',
+          };
+        }
+        return { args, exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    assert.equal(resolved.identity.login, 'review-bot[bot]');
     assert.equal(resolved.identity.permissionStatus, 'ok');
     assert.equal(resolved.identity.formalEventCapability, true);
     assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');

@@ -195,11 +195,13 @@ async function fetchInstallationIdentity(token: string, cwd?: string, exec?: GhE
     if (installation.exitCode !== 0) return { login: null, type: null };
     const parsed = JSON.parse(installation.stdout) as unknown;
     if (!isRecord(parsed)) return { login: null, type: null };
+    // Installation tokens act as the GitHub App bot, not the installation target
+    // account (user/org). Prefer app_slug for the bot actor login.
+    const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug.trim() : '';
+    if (slug !== '') return { login: `${slug}[bot]`, type: 'Bot' };
     const account = isRecord(parsed.account) ? parsed.account : null;
-    const login = account && typeof account.login === 'string' ? account.login : null;
-    const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug : null;
-    const botLogin = login ?? (slug ? `${slug}[bot]` : null);
-    return { login: botLogin, type: 'Bot' };
+    const accountLogin = account && typeof account.login === 'string' ? account.login : null;
+    return { login: accountLogin, type: 'Bot' };
   } catch {
     return { login: null, type: null };
   }
