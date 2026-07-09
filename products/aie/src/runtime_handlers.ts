@@ -1,4 +1,5 @@
 import type { RuntimeCommandHandler } from '@tjalve/qube-cli/runtime';
+import { createInterface } from 'node:readline/promises';
 import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/pr_body.js';
 import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
@@ -28,6 +29,8 @@ import { formatStatusHuman } from './renderers/status_renderer.js';
 import { formatViewHuman } from './renderers/view_renderer.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from './review.js';
+import { formatReviewDoctor, runReviewDoctor } from './review_setup.js';
+import { formatReviewSetup, runReviewSetup, type ReviewSetupMode, type ReviewSetupPromptFunction } from './runtime_review_setup.js';
 import { startIssue } from './start/index.js';
 import { switchIssue } from './switch/index.js';
 import { viewIssue } from './view.js';
@@ -331,6 +334,58 @@ async function handleConfigCommand(context: Parameters<RuntimeCommandHandler>[0]
   if (command === 'pr view') return handlePrView(context);
   if (command === 'pr body') return handlePrBody(context);
   return handlePrGate(context);
+}
+
+async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], mode: ReviewSetupMode) {
+  const command = `review setup ${mode}`;
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, command, loaded, 'Fix the selected Executor config, then rerun reviewer publisher setup.');
+  let closePrompt: (() => void) | undefined;
+  let prompt: ReviewSetupPromptFunction | undefined;
+  if (process.stdin.isTTY && !readBooleanFlag(context, 'yes') && !readBooleanFlag(context, 'json')) {
+    const terminal = createInterface({ input: process.stdin, output: process.stderr, terminal: true });
+    closePrompt = () => terminal.close();
+    prompt = question => terminal.question(`${question.message}: `);
+  }
+  try {
+    const result = await runReviewSetup({
+      mode,
+      config: loaded.config ?? null,
+      configPath: loaded.path,
+      root: loaded.root,
+      appId: stringFlag(context, 'app-id'),
+      installationId: stringFlag(context, 'installation-id'),
+      privateKeyEnv: stringFlag(context, 'private-key-env'),
+      privateKeyPath: stringFlag(context, 'private-key-path'),
+      tokenEnv: stringFlag(context, 'token-env'),
+      login: stringFlag(context, 'login'),
+      yes: readBooleanFlag(context, 'yes'),
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      json: readBooleanFlag(context, 'json'),
+      noProbe: readBooleanFlag(context, 'no-probe'),
+      isTTY: process.stdin.isTTY === true,
+      prompt,
+    });
+    if (!result.ok) return commandFailure(context, result, formatReviewSetup(result));
+    return commandResult(context, result, formatReviewSetup(result));
+  } catch (error: unknown) {
+    const cause = error instanceof Error ? error.message : String(error);
+    const message = `Failed to run \`aie ${command}\`. Likely cause: ${cause}. Next action: rerun with --dry-run --json and safe credential references only.`;
+    return commandFailure(context, { ok: false, command, error: message }, message);
+  } finally {
+    closePrompt?.();
+  }
+}
+
+async function handleReviewDoctor(context: Parameters<RuntimeCommandHandler>[0]) {
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'review doctor', loaded, 'Fix the selected Executor config, then rerun reviewer publisher doctor.');
+  const result = await runReviewDoctor({
+    config: loaded.config ?? null,
+    cwd: loaded.root,
+    mintProbe: !readBooleanFlag(context, 'no-probe'),
+  });
+  return commandResult(context, result, formatReviewDoctor(result));
 }
 
 async function handlePrThreadResolve(context: Parameters<RuntimeCommandHandler>[0]) {
@@ -684,7 +739,24 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'run wait': handleRunWait,
   'run status': handleRunStatus,
   'run stop': handleRunStop,
-  review: topic(['Use `aie review gate <issue> --prompt`, `aie review gate <issue> --dry-run`, or `aie review gate <issue> --json`.', 'Review helpers render prompts and evidence requirements; Executor never invokes host-only reviewers or treats review output as policy.']),
+  review: topic([
+    'Review publisher and host-run review paths:',
+    '  aie review setup github-app  Preferred distinct GitHub App publisher identity.',
+    '  aie review setup token       Separate-user fine-grained token fallback.',
+    '  aie review doctor            Validate publisher readiness and permissions.',
+    '  aie review gate <issue>      Render host-run review prompts and evidence requirements.',
+    'When using QUBE, `qube review ...` is the equivalent short surface.',
+    'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.',
+  ]),
+  'review setup': topic([
+    'Reviewer publisher setup paths:',
+    '  aie review setup github-app  Preferred user-owned GitHub App installation.',
+    '  aie review setup token       Separate-user fine-grained token fallback.',
+    'Run either command without flags for concrete guidance, or use --help for non-interactive flags.',
+  ]),
+  'review setup github-app': context => handleReviewSetup(context, 'github-app'),
+  'review setup token': context => handleReviewSetup(context, 'token'),
+  'review doctor': handleReviewDoctor,
   'review gate': context => handleConfigCommand(context, 'review gate'),
   schema: handleSchema,
   start: handleStart,

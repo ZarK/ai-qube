@@ -71,6 +71,96 @@ describe('github review publisher', () => {
     assert.equal(JSON.stringify(withKey.identity).includes('BEGIN'), false);
   });
 
+  it('resolves github-app identity via /installation without a known-invalid /user call', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const calls = [];
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'review-bot[bot]',
+      }),
+      // Installation tokens use /installation only; /user is not a valid endpoint for them.
+      exec: async (args) => {
+        calls.push(args.join(' '));
+        if (args.includes('user')) {
+          const error = new Error('gh api user failed');
+          error.status = 1;
+          error.stderr = 'HTTP 403: Resource not accessible by integration';
+          throw error;
+        }
+        if (args.includes('installation')) {
+          return {
+            args,
+            exitCode: 0,
+            stdout: JSON.stringify({ account: { login: 'review-bot' }, app_slug: 'review-bot' }),
+            stderr: '',
+          };
+        }
+        return { args, exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    assert.equal(calls.some(call => call.includes('user')), false);
+    assert.ok(calls.some(call => call.includes('installation')));
+    assert.equal(resolved.identity.mode, 'github-app');
+    assert.equal(resolved.identity.identityClass, 'github-app-installation');
+    // Bot actor comes from app_slug, not the installation target account login.
+    assert.equal(resolved.identity.login, 'review-bot[bot]');
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');
+  });
+
+  it('prefers app slug bot identity over installation target account login', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      prAuthorLogin: 'alice',
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+      }),
+      exec: async (args) => {
+        if (args.includes('user')) {
+          const error = new Error('HTTP 403');
+          error.status = 1;
+          error.stderr = 'Resource not accessible by integration';
+          throw error;
+        }
+        if (args.includes('installation')) {
+          return {
+            args,
+            exitCode: 0,
+            stdout: JSON.stringify({ account: { login: 'alice', type: 'User' }, app_slug: 'review-bot' }),
+            stderr: '',
+          };
+        }
+        return { args, exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    assert.equal(resolved.identity.login, 'review-bot[bot]');
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');
+  });
+
   it('uses fine-grained token env and reports same-author downgrade', async () => {
     process.env.QUBE_TEST_REVIEW_TOKEN = 'github_pat_test_token_value_not_for_output_abcdefghijklmnop';
     const resolved = await resolveGitHubReviewPublisher({
@@ -120,6 +210,32 @@ describe('github review publisher', () => {
     assert.match(resolved.identity.fallbackReason ?? '', /permission/i);
   });
 
+  it('treats omitted pull_requests permission as missing review capability', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        // Only contents is granted; omitted permissions are not granted.
+        permissions: { contents: 'read' },
+        accountLogin: 'review-bot[bot]',
+      }),
+      fetchTokenIdentity: async () => ({ login: 'review-bot[bot]', type: 'Bot' }),
+    });
+
+    assert.equal(resolved.identity.permissionStatus, 'missing');
+    assert.equal(resolved.identity.formalEventCapability, false);
+    assert.equal(resolved.identity.publishTransport, 'issue-comment');
+    assert.match(resolved.identity.fallbackReason ?? '', /permission/i);
+  });
+
   it('falls back to user mode without minting secrets into status-only probes', async () => {
     const resolved = await resolveGitHubReviewPublisher({ mode: 'user' }, { mint: false });
     assert.equal(resolved.identity.mode, 'user');
@@ -138,6 +254,51 @@ describe('github review publisher', () => {
     assert.equal(resolved.identity.formalEventCapability, false);
     assert.match(resolved.identity.fallbackReason ?? '', /QUBE_MISSING_REVIEW_TOKEN/);
     assert.equal(JSON.stringify(resolved).includes('github_pat_'), false);
+  });
+
+  it('forwards probe deadlines into user-mode gh identity lookups', async () => {
+    const controller = new AbortController();
+    let seen;
+    await resolveGitHubReviewPublisher({ mode: 'user' }, {
+      mint: true,
+      timeoutMs: 17,
+      signal: controller.signal,
+      exec: async (args, _cwd, options) => {
+        seen = options;
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ login: 'ambient-user' }),
+          stderr: '',
+        };
+      },
+    });
+    assert.equal(seen?.timeoutMs, 17);
+    assert.equal(seen?.signal, controller.signal);
+  });
+
+  it('status-only mint=false skips token secret and private-key reads', async () => {
+    delete process.env.QUBE_MISSING_REVIEW_TOKEN;
+    const tokenStatus = await resolveGitHubReviewPublisher({
+      mode: 'token',
+      token: { env: 'QUBE_MISSING_REVIEW_TOKEN', login: 'reviewer-bot' },
+    }, { mint: false });
+    assert.equal(tokenStatus.identity.permissionStatus, 'unknown');
+    assert.equal(tokenStatus.identity.login, 'reviewer-bot');
+    assert.equal(tokenStatus.accessToken, null);
+
+    const appStatus = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyPath: 'C:\\does\\not\\exist\\review-app.pem',
+        login: 'review-bot[bot]',
+      },
+    }, { mint: false });
+    assert.equal(appStatus.identity.permissionStatus, 'unknown');
+    assert.equal(appStatus.identity.login, 'review-bot[bot]');
+    assert.equal(appStatus.accessToken, null);
   });
 
   it('succeeds for a distinct fine-grained token identity with formal events', async () => {

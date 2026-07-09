@@ -63,11 +63,17 @@ export interface ResolvePublisherOptions {
    * or calling identity endpoints with publisher credentials. Used by pr view/gate JSON.
    */
   readonly mint?: boolean;
+  /** AbortSignal for live mint/identity probes. */
+  readonly signal?: AbortSignal;
+  /** Hard deadline (ms) for live mint/identity I/O. */
+  readonly timeoutMs?: number;
   readonly fetchInstallationToken?: (input: {
     appId: string;
     installationId: string;
     privateKeyPem: string;
     jwt: string;
+    signal?: AbortSignal;
+    timeoutMs?: number;
   }) => Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }>;
   readonly fetchTokenIdentity?: (token: string) => Promise<{ login: string | null; type: string | null }>;
 }
@@ -146,6 +152,8 @@ async function defaultFetchInstallationToken(input: {
   jwt: string;
   cwd?: string;
   exec?: GhExec;
+  signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }> {
   // Mint outside runGh so the installation token is not redacted from stdout
   // (runGh redacts ghs_ tokens before returning). Tokens stay in-memory only.
@@ -153,82 +161,171 @@ async function defaultFetchInstallationToken(input: {
   void input.privateKeyPem;
   void input.cwd;
   void input.exec;
-  const response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
-    method: 'POST',
-    headers: {
-      Accept: 'application/vnd.github+json',
-      Authorization: `Bearer ${input.jwt}`,
-      'X-GitHub-Api-Version': '2022-11-28',
-      'User-Agent': 'qube-github-review-publisher',
-    },
-  });
-  const text = await response.text();
-  if (!response.ok) {
-    throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
+  // Combine caller signal with a local deadline so hung mint requests cannot block the process.
+  // Keep the controller active through response body consumption so stalled bodies are abortable.
+  const controller = new AbortController();
+  const onAbort = () => controller.abort();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  if (input.signal) {
+    if (input.signal.aborted) controller.abort();
+    else input.signal.addEventListener('abort', onAbort, { once: true });
   }
-  let parsed: unknown;
+  if (typeof input.timeoutMs === 'number' && input.timeoutMs > 0) {
+    timer = setTimeout(() => controller.abort(), input.timeoutMs);
+  }
   try {
-    parsed = JSON.parse(text);
-  } catch {
-    throw new Error('GitHub App installation token response was not valid JSON.');
+    let response: Response;
+    try {
+      response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
+        method: 'POST',
+        headers: {
+          Accept: 'application/vnd.github+json',
+          Authorization: `Bearer ${input.jwt}`,
+          'X-GitHub-Api-Version': '2022-11-28',
+          'User-Agent': 'qube-github-review-publisher',
+        },
+        signal: controller.signal,
+      });
+    } catch (error: unknown) {
+      if (controller.signal.aborted) {
+        throw new Error('GitHub App installation token request timed out or was aborted.');
+      }
+      throw error;
+    }
+    let text: string;
+    try {
+      // Race body consumption against the same abort controller so stalled bodies
+      // cannot outlive the probe deadline after headers have already arrived.
+      // Do not call response.body.cancel() after response.text() starts: Node's
+      // Fetch marks the stream locked and cancel() then rejects asynchronously.
+      text = await new Promise<string>((resolve, reject) => {
+        const abortError = () => new Error('GitHub App installation token response body timed out or was aborted.');
+        const onBodyAbort = () => reject(abortError());
+        if (controller.signal.aborted) {
+          onBodyAbort();
+          return;
+        }
+        controller.signal.addEventListener('abort', onBodyAbort, { once: true });
+        response.text()
+          .then((value) => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            resolve(value);
+          })
+          .catch((error: unknown) => {
+            controller.signal.removeEventListener('abort', onBodyAbort);
+            if (controller.signal.aborted) {
+              reject(abortError());
+              return;
+            }
+            reject(error);
+          });
+      });
+    } catch (error: unknown) {
+      if (controller.signal.aborted || (error instanceof Error && /timed out or was aborted/i.test(error.message))) {
+        throw new Error('GitHub App installation token response body timed out or was aborted.');
+      }
+      throw error;
+    }
+    if (!response.ok) {
+      throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      throw new Error('GitHub App installation token response was not valid JSON.');
+    }
+    if (!isRecord(parsed) || typeof parsed.token !== 'string' || parsed.token.trim() === '') {
+      throw new Error('GitHub App installation token response did not include a token.');
+    }
+    const permissions = isRecord(parsed.permissions)
+      ? Object.fromEntries(Object.entries(parsed.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+      : undefined;
+    const accountLogin = isRecord(parsed.account) && typeof parsed.account.login === 'string'
+      ? parsed.account.login
+      : null;
+    return { token: parsed.token, permissions, accountLogin };
+  } finally {
+    if (timer) clearTimeout(timer);
+    if (input.signal) input.signal.removeEventListener('abort', onAbort);
   }
-  if (!isRecord(parsed) || typeof parsed.token !== 'string' || parsed.token.trim() === '') {
-    throw new Error('GitHub App installation token response did not include a token.');
-  }
-  const permissions = isRecord(parsed.permissions)
-    ? Object.fromEntries(Object.entries(parsed.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
-    : undefined;
-  const accountLogin = isRecord(parsed.account) && typeof parsed.account.login === 'string'
-    ? parsed.account.login
-    : null;
-  return { token: parsed.token, permissions, accountLogin };
 }
 
-async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
-  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
-    cwd,
-    exec,
-    token,
-  });
-  if (result.exitCode !== 0) {
-    // Installation tokens cannot call /user; try /installation.
+async function fetchInstallationIdentity(
+  token: string,
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ login: string | null; type: string | null }> {
+  // Installation tokens cannot call /user; resolve the bot identity from /installation.
+  try {
     const installation = await runGh(['api', 'installation', '-H', 'Accept: application/vnd.github+json'], {
       cwd,
       exec,
       token,
+      signal: limits.signal,
+      timeoutMs: limits.timeoutMs,
     });
-    if (installation.exitCode === 0) {
-      try {
-        const parsed = JSON.parse(installation.stdout) as unknown;
-        if (isRecord(parsed)) {
-          const account = isRecord(parsed.account) ? parsed.account : null;
-          const login = account && typeof account.login === 'string' ? account.login : null;
-          const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug : null;
-          const botLogin = login ?? (slug ? `${slug}[bot]` : null);
-          return { login: botLogin, type: 'Bot' };
-        }
-      } catch {
-        // fall through
-      }
-    }
+    if (installation.exitCode !== 0) return { login: null, type: null };
+    const parsed = JSON.parse(installation.stdout) as unknown;
+    if (!isRecord(parsed)) return { login: null, type: null };
+    // Installation tokens act as the GitHub App bot, not the installation target
+    // account (user/org). Prefer app_slug for the bot actor login.
+    const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug.trim() : '';
+    if (slug !== '') return { login: `${slug}[bot]`, type: 'Bot' };
+    const account = isRecord(parsed.account) ? parsed.account : null;
+    const accountLogin = account && typeof account.login === 'string' ? account.login : null;
+    return { login: accountLogin, type: 'Bot' };
+  } catch {
     return { login: null, type: null };
   }
-  try {
-    const parsed = JSON.parse(result.stdout) as unknown;
-    if (isRecord(parsed)) {
-      return {
-        login: typeof parsed.login === 'string' ? parsed.login : null,
-        type: typeof parsed.type === 'string' ? parsed.type : null,
-      };
-    }
-  } catch {
-    // ignore
-  }
-  return { login: null, type: null };
 }
 
-async function currentGhLogin(cwd?: string, exec?: GhExec): Promise<string | null> {
-  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], { cwd, exec });
+async function defaultFetchTokenIdentity(
+  token: string,
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<{ login: string | null; type: string | null }> {
+  // Production runGh throws on HTTP failures instead of returning exitCode != 0.
+  // Catch expected /user failures so installation-token minting can fall back cleanly.
+  try {
+    const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
+      cwd,
+      exec,
+      token,
+      signal: limits.signal,
+      timeoutMs: limits.timeoutMs,
+    });
+    if (result.exitCode !== 0) return fetchInstallationIdentity(token, cwd, exec, limits);
+    try {
+      const parsed = JSON.parse(result.stdout) as unknown;
+      if (isRecord(parsed) && (typeof parsed.login === 'string' || typeof parsed.type === 'string')) {
+        return {
+          login: typeof parsed.login === 'string' ? parsed.login : null,
+          type: typeof parsed.type === 'string' ? parsed.type : null,
+        };
+      }
+    } catch {
+      // ignore parse failures
+    }
+    return fetchInstallationIdentity(token, cwd, exec, limits);
+  } catch {
+    return fetchInstallationIdentity(token, cwd, exec, limits);
+  }
+}
+
+async function currentGhLogin(
+  cwd?: string,
+  exec?: GhExec,
+  limits: { signal?: AbortSignal; timeoutMs?: number } = {},
+): Promise<string | null> {
+  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
+    cwd,
+    exec,
+    signal: limits.signal,
+    timeoutMs: limits.timeoutMs,
+  });
   if (result.exitCode !== 0) return null;
   try {
     const parsed = JSON.parse(result.stdout) as unknown;
@@ -292,9 +389,11 @@ function finalizeIdentity(input: {
 }
 
 function installationHasReviewPermission(permissions: Record<string, string> | undefined): boolean {
-  if (!permissions) return true;
+  // Installation-token responses only list granted permissions. Missing
+  // permissions are not granted, so treat an absent pull_requests key as missing.
+  if (!permissions) return false;
   const pullRequests = permissions.pull_requests ?? permissions.pullRequests;
-  if (!pullRequests) return true;
+  if (!pullRequests) return false;
   return pullRequests === 'write' || pullRequests === 'admin';
 }
 
@@ -307,7 +406,9 @@ export async function resolveGitHubReviewPublisher(
   const mint = options.mint !== false;
 
   if (mode === 'user') {
-    const login = mint ? await currentGhLogin(options.cwd, options.exec) : null;
+    const login = mint
+      ? await currentGhLogin(options.cwd, options.exec, { signal: options.signal, timeoutMs: options.timeoutMs })
+      : null;
     return {
       accessToken: null,
       identity: finalizeIdentity({
@@ -342,24 +443,8 @@ export async function resolveGitHubReviewPublisher(
         }),
       };
     }
-    const key = readPrivateKeyPem(app);
-    if (!key.pem) {
-      return {
-        accessToken: null,
-        identity: finalizeIdentity({
-          mode: 'github-app',
-          identityClass: 'none',
-          login: null,
-          permissionStatus: 'misconfigured',
-          formalEventCapability: false,
-          fallbackReason: key.error ?? 'GitHub App private key is unavailable.',
-          publishTransport: 'issue-comment',
-          authSource: 'none',
-          prAuthorLogin: options.prAuthorLogin,
-        }),
-      };
-    }
 
+    // Status-only probes never read private-key material.
     if (!mint) {
       const configuredLogin = normalizeLogin(app.login ?? null);
       return {
@@ -378,15 +463,36 @@ export async function resolveGitHubReviewPublisher(
       };
     }
 
+    const key = readPrivateKeyPem(app);
+    if (!key.pem) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'misconfigured',
+          formalEventCapability: false,
+          fallbackReason: key.error ?? 'GitHub App private key is unavailable.',
+          publishTransport: 'issue-comment',
+          authSource: 'none',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+
     try {
       const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
       const jwt = createGitHubAppJwt(app.appId, key.pem, nowSeconds);
+      const probeLimits = { signal: options.signal, timeoutMs: options.timeoutMs };
       const minted = options.fetchInstallationToken
         ? await options.fetchInstallationToken({
           appId: app.appId,
           installationId: app.installationId,
           privateKeyPem: key.pem,
           jwt,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
         })
         : await defaultFetchInstallationToken({
           appId: app.appId,
@@ -395,11 +501,14 @@ export async function resolveGitHubReviewPublisher(
           jwt,
           cwd: options.cwd,
           exec: options.exec,
+          signal: options.signal,
+          timeoutMs: options.timeoutMs,
         });
 
+      // Installation tokens cannot call /user; resolve bot identity directly.
       const identityLookup = options.fetchTokenIdentity
         ? await options.fetchTokenIdentity(minted.token)
-        : await defaultFetchTokenIdentity(minted.token, options.cwd, options.exec);
+        : await fetchInstallationIdentity(minted.token, options.cwd, options.exec, probeLimits);
       const login = normalizeLogin(identityLookup.login ?? minted.accountLogin ?? null);
       const hasPermission = installationHasReviewPermission(minted.permissions);
 
@@ -455,24 +564,8 @@ export async function resolveGitHubReviewPublisher(
       }),
     };
   }
-  const tokenValue = process.env[tokenEnv];
-  if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
-    return {
-      accessToken: null,
-      identity: finalizeIdentity({
-        mode: 'token',
-        identityClass: 'none',
-        login: null,
-        permissionStatus: 'missing',
-        formalEventCapability: false,
-        fallbackReason: `Fine-grained token env ${tokenEnv} is missing or empty.`,
-        publishTransport: 'issue-comment',
-        authSource: 'none',
-        prAuthorLogin: options.prAuthorLogin,
-      }),
-    };
-  }
 
+  // Status-only probes never read token secret material from the environment.
   if (!mint) {
     const configuredLogin = normalizeLogin(resolvedConfig.token?.login ?? null);
     return {
@@ -491,10 +584,31 @@ export async function resolveGitHubReviewPublisher(
     };
   }
 
+  const tokenValue = process.env[tokenEnv];
+  if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'none',
+        login: null,
+        permissionStatus: 'missing',
+        formalEventCapability: false,
+        fallbackReason: `Fine-grained token env ${tokenEnv} is missing or empty.`,
+        publishTransport: 'issue-comment',
+        authSource: 'none',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+
   try {
     const identityLookup = options.fetchTokenIdentity
       ? await options.fetchTokenIdentity(tokenValue)
-      : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec);
+      : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec, {
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+      });
     const login = normalizeLogin(identityLookup.login);
     return {
       accessToken: tokenValue,
