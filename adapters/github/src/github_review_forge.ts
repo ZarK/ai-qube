@@ -1354,7 +1354,8 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
   const id = reviewerId(input.name);
   const headRefOid = getJsonString(input.item.trustedMetadata.headRefOid) ?? 'UNKNOWN';
   const skipped = input.requestedForHead || input.pending;
-  const body = trigger === 'github-reviewer'
+  const hostParticipant = id === reviewerId(QUBE_REVIEW_SERVICE_NAME);
+  const body = trigger === 'github-reviewer' || hostParticipant
     ? (agent?.reviewerMarkerBodyFor(input.name, headRefOid) ?? reviewerMarkerBodyFor(input.name, headRefOid))
     : (agent?.commentBodyFor(input.name, input.policy, headRefOid) ?? commentBodyFor(input.name, input.policy, headRefOid));
   return createAction({
@@ -1362,7 +1363,7 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
     kind: 'request-review',
     target: { kind: 'review-item', id: input.item.key.id },
     mutation: 'review-provider',
-    description: skipped ? `${handle} is already requested or has reviewed the current PR head.` : trigger === 'github-reviewer' ? `Request ${handle} as a GitHub pull request reviewer and record an idempotency marker for head ${headRefOid}.` : `Post an idempotent PR comment to trigger ${handle} for head ${headRefOid}.`,
+    description: skipped ? `${handle} is already requested or has reviewed the current PR head.` : trigger === 'github-reviewer' ? `Request ${handle} as a GitHub pull request reviewer and record an idempotency marker for head ${headRefOid}.` : hostParticipant ? `Post an idempotent marker-only PR comment recording the ${handle} host review request for head ${headRefOid}.` : `Post an idempotent PR comment to trigger ${handle} for head ${headRefOid}.`,
     expectedResult: skipped ? `${handle} review request remains idempotent for the current PR head.` : `${handle} is requested for PR review without trusting review feedback as workflow authority.`,
     status: skipped ? 'skipped' : 'planned',
     details: {
