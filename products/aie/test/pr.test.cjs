@@ -1644,6 +1644,9 @@ describe('PR gate service', () => {
 
     const fallbackLane = fallbackResult.localReviewRunner.lanes.find(entry => entry.spawnContract);
     assert.match(fallbackLane.spawnContract.tierSubstitution, /host default model applies/);
+    assert.equal(result.localReviewRunner.modelTiers.review.model, 'gpt-5.5-codex');
+    assert.match(result.localReviewRunner.modelTiers.economy.substitution, /review tier model was substituted/);
+    assert.match(fallbackResult.localReviewRunner.modelTiers.synthesis.substitution, /host default model applies/);
   });
 
   it('accounts for duplicate same-message findings across heads by count', async () => {

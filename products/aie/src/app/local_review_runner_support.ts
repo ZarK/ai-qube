@@ -287,12 +287,13 @@ export function buildLocalReviewSpawnContract(input: {
   promptStackHash: string;
   promptText: string;
   publishCommand: string;
+  modelTier?: 'review' | 'economy';
   tierResolution?: ReviewModelTierResolution;
 }): LocalReviewSpawnContract {
   return {
     agentType: input.hostAgentType,
     forkContext: false,
-    modelTier: 'review',
+    modelTier: input.modelTier ?? 'review',
     model: input.tierResolution?.model ?? null,
     effort: input.tierResolution?.effort ?? null,
     tierSubstitution: input.tierResolution?.substitution ?? null,

@@ -347,13 +347,14 @@ describe('config validation', () => {
     assert.deepEqual(result.config.reviewModels.synthesis, {});
 
     const invalid = defaultFile();
-    invalid.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'max' } }, economy: { codex: { model: '' } } };
+    invalid.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'max' } }, economy: { codex: { model: '' } }, synthesis: { codex: { model: 'bad"model"\ninjection' } } };
 
     const invalidResult = validateConfig(invalid);
 
     assert.equal(invalidResult.ok, false);
     assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.review.codex.effort'));
     assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.economy.codex.model'));
+    assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.synthesis.codex.model'));
   });
 
   it('rejects invalid branch naming policy at config load time', () => {

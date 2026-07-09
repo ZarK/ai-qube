@@ -46,6 +46,7 @@ export interface LocalReviewRunResult {
   evidenceRoot: string;
   codex: CodexReviewCapability;
   opencode: OpenCodeReviewCapability;
+  modelTiers: { review: ReviewModelTierResolution; economy: ReviewModelTierResolution; synthesis: ReviewModelTierResolution };
   lanes: LocalReviewLaneRun[];
   written: string[];
   unavailable: string[];
@@ -173,17 +174,22 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const contextLines = input.contextLines ?? [];
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
+  const modelTiers = {
+    review: resolveReviewModelTier(config.reviewModels, 'review', 'codex'),
+    economy: resolveReviewModelTier(config.reviewModels, 'economy', 'codex'),
+    synthesis: resolveReviewModelTier(config.reviewModels, 'synthesis', 'codex'),
+  };
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
   const lanes: LocalReviewLaneRun[] = [];
   const written: string[] = [];
   const unavailable: string[] = [];
-  const reviewTierResolution = resolveReviewModelTier(config.reviewModels, 'review', 'codex');
+  const reviewTierResolution = modelTiers.review;
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
@@ -303,6 +309,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     evidenceRoot,
     codex,
     opencode,
+    modelTiers,
     lanes,
     written,
     unavailable,

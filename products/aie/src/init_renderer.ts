@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { renderAgentInstructions, renderCodexReviewFocusAgent, renderMakeItSoCommand } from './init_content.js';
+import { renderAgentInstructions, renderClaudeReviewFocusAgent, renderCodexReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeReviewFocusAgent } from './init_content.js';
 
 export interface InitRenderContext {
   workspaceAieRunner?: string | null;
@@ -58,6 +58,8 @@ function commandBody(config: Config, target: CommandTarget, context: InitRenderC
   const workspaceRunner = context.workspaceAieRunner ?? null;
   if (target.renderer === 'make-it-so') return renderMakeItSoCommand(config);
   if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent(config);
+  if (target.renderer === 'claude-review-focus-agent') return renderClaudeReviewFocusAgent(config);
+  if (target.renderer === 'opencode-review-focus-agent') return renderOpenCodeReviewFocusAgent(config);
   const exhaustive: never = target.renderer;
   throw new Error(`Unsupported init command renderer ${exhaustive as CommandRenderer}. Next action: use a supported Executor host profile command target.`);
 }

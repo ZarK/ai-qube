@@ -305,6 +305,32 @@ describe('init service', () => {
     assert.match(agent, /model_reasoning_effort = "high"/);
   });
 
+  it('renders review-focus agents with tier models for Claude Code and OpenCode hosts', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = {
+      review: {
+        'claude-code': { model: 'claude-sonnet-5' },
+        opencode: { model: 'anthropic/claude-sonnet-5' },
+      },
+    };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const claudeAgent = readFileSync(join(repo, '.claude', 'agents', 'qube-review-focus.md'), 'utf8');
+    assert.match(claudeAgent, /name: qube-review-focus/);
+    assert.match(claudeAgent, /model: claude-sonnet-5/);
+    const opencodeAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
+    assert.match(opencodeAgent, /mode: subagent/);
+    assert.match(opencodeAgent, /model: anthropic\/claude-sonnet-5/);
+  });
+
   it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
@@ -720,7 +746,7 @@ describe('init service', () => {
     assert.ok(codex);
     assert.ok(claude);
     assert.equal(opencode.supportsProjectCommands, true);
-    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md')]);
+    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md')]);
     assert.equal(codex.supportsProjectCommands, true);
     assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);

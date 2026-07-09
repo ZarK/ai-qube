@@ -698,13 +698,13 @@ function readReviewModelTierMap(value: unknown, path: string, errors: Validation
       continue;
     }
     rejectUnknownKeys(binding, ['model', 'effort'], `${path}.${host}`, errors);
-    const model = typeof binding.model === 'string' && binding.model.trim() !== '' ? binding.model.trim() : null;
+    const model = typeof binding.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(binding.model.trim()) ? binding.model.trim() : null;
     if (model === null) {
-      errors.push({ kind: 'invalid', path: `${path}.${host}.model`, message: `${path}.${host}.model must be a non-empty string` });
+      errors.push({ kind: 'invalid', path: `${path}.${host}.model`, message: `${path}.${host}.model must be a model identifier using letters, digits, dots, dashes, underscores, colons, or slashes` });
       continue;
     }
     let effort: 'low' | 'medium' | 'high' | null = null;
-    if (binding.effort !== undefined) {
+    if (binding.effort !== undefined && binding.effort !== null) {
       if (binding.effort === 'low' || binding.effort === 'medium' || binding.effort === 'high') effort = binding.effort;
       else errors.push({ kind: 'invalid', path: `${path}.${host}.effort`, message: `${path}.${host}.effort must be "low", "medium", or "high"` });
     }
