@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { carryForwardDeltaTouched } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 
@@ -217,6 +218,9 @@ export interface LocalReviewSpawnContract {
   agentType: string;
   forkContext: false;
   modelTier: 'review' | 'economy';
+  model: string | null;
+  effort: string | null;
+  tierSubstitution: string | null;
   lane: LocalReviewLaneId;
   issueNumber: number;
   prNumber: number;
@@ -224,6 +228,22 @@ export interface LocalReviewSpawnContract {
   promptStackHash: string;
   taskPrompt: string;
   publishCommand: string;
+}
+
+export interface ReviewModelTierResolution {
+  model: string | null;
+  effort: string | null;
+  substitution: string | null;
+}
+
+export function resolveReviewModelTier(models: ReviewModelsPolicy, tier: ReviewModelTierId, host: ReviewModelHostId): ReviewModelTierResolution {
+  const configured = models[tier][host];
+  if (configured) return { model: configured.model, effort: configured.effort, substitution: null };
+  if (tier !== 'review') {
+    const reviewBinding = models.review[host];
+    if (reviewBinding) return { model: reviewBinding.model, effort: reviewBinding.effort, substitution: `The ${tier} tier is not configured for ${host}; the review tier model was substituted.` };
+  }
+  return { model: null, effort: null, substitution: `The ${tier} tier is not configured for ${host}; the host default model applies.` };
 }
 
 export function buildLocalReviewPublishCommand(cliPrefix: string, prNumber: number, lane: LocalReviewLaneId, issueNumber: number): string {
@@ -267,11 +287,16 @@ export function buildLocalReviewSpawnContract(input: {
   promptStackHash: string;
   promptText: string;
   publishCommand: string;
+  modelTier?: 'review' | 'economy';
+  tierResolution?: ReviewModelTierResolution;
 }): LocalReviewSpawnContract {
   return {
     agentType: input.hostAgentType,
     forkContext: false,
-    modelTier: 'review',
+    modelTier: input.modelTier ?? 'review',
+    model: input.tierResolution?.model ?? null,
+    effort: input.tierResolution?.effort ?? null,
+    tierSubstitution: input.tierResolution?.substitution ?? null,
     lane: input.lane,
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,

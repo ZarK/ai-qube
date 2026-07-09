@@ -332,6 +332,42 @@ describe('config validation', () => {
     assert.ok(result.errors.some((error) => error.path === 'policy.supplyChain.packageAgeDays'));
   });
 
+  it('parses reviewModels tiers and rejects invalid tier bindings', () => {
+    const input = defaultFile();
+    input.policy.reviews.models = {
+      review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } },
+      economy: { codex: { model: 'gpt-5-mini' } },
+    };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.config.reviewModels.review.codex, { model: 'gpt-5.5-codex', effort: 'high' });
+    assert.deepEqual(result.config.reviewModels.economy.codex, { model: 'gpt-5-mini', effort: null });
+    assert.deepEqual(result.config.reviewModels.synthesis, {});
+
+    const invalid = defaultFile();
+    invalid.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'max' } }, economy: { codex: { model: '' } }, synthesis: { codex: { model: 'bad"model"\ninjection' } } };
+
+    const invalidResult = validateConfig(invalid);
+
+    assert.equal(invalidResult.ok, false);
+    assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.review.codex.effort'));
+    assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.economy.codex.model'));
+    assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.synthesis.codex.model'));
+  });
+
+  it('deep-clones review model bindings in cloneConfigFile', () => {
+    const { cloneConfigFile } = require('../dist/config/index.js');
+    const original = defaultFile();
+    original.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } }, economy: {}, synthesis: {} };
+
+    const cloned = cloneConfigFile(original);
+    cloned.policy.reviews.models.review.codex.model = 'mutated-model';
+
+    assert.equal(original.policy.reviews.models.review.codex.model, 'gpt-5.5-codex');
+  });
+
   it('rejects invalid branch naming policy at config load time', () => {
     const input = defaultFile();
     input.policy.branch.naming = 'issue/<number> missing slug';

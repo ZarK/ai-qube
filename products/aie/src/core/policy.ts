@@ -46,6 +46,22 @@ export type ReviewProfileKind = 'remote-compatible' | 'local-standard' | 'local-
 export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
 export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
+export type ReviewModelTierId = 'review' | 'economy' | 'synthesis';
+export type ReviewModelHostId = 'codex' | 'claude-code' | 'opencode';
+export type ReviewModelEffort = 'low' | 'medium' | 'high';
+
+export interface ReviewModelBinding {
+  model: string;
+  effort: ReviewModelEffort | null;
+}
+
+export type ReviewModelTierMap = Partial<Record<ReviewModelHostId, ReviewModelBinding>>;
+
+export interface ReviewModelsPolicy {
+  review: ReviewModelTierMap;
+  economy: ReviewModelTierMap;
+  synthesis: ReviewModelTierMap;
+}
 
 export interface ReviewPromptFragments {
   repository: string[];
@@ -92,6 +108,7 @@ export interface ReviewPolicy {
   waitMinutes: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
+  models: ReviewModelsPolicy;
 }
 
 export interface GatePolicy {
@@ -227,6 +244,11 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
       requestText: input.reviews.requestText,
       carryForwardPublish: input.reviews.carryForwardPublish,
+      models: {
+        review: { ...(input.reviews.models?.review ?? {}) },
+        economy: { ...(input.reviews.models?.economy ?? {}) },
+        synthesis: { ...(input.reviews.models?.synthesis ?? {}) },
+      },
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { ...input.audit },

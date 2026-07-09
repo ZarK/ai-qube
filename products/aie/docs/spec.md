@@ -236,6 +236,9 @@ Executor coordinates deterministic workflow state and renders guidance for agent
 | FR-10-012 | Local review lane verdicts are scoped to the lane: lanes record observed gate-level conditions (CI or check state, issue checklist completion, checkout or head freshness, uncommitted changes, other lanes) as `preconditions` evidence entries and must not convert them into lane blockers or lane recommendation changes. | Required |
 | FR-10-013 | Only `aie pr gate` and the final-gate lane translate gate-level conditions into merge blockers. | Required |
 | FR-10-014 | Lane evidence recommendation and status values are constrained: `approve` requires status `passed`; `request-changes` requires `failed` or `needs-work`; `pending` requires `pending`, `missing`, or `stale`; `inconclusive` requires `inconclusive`, `unavailable`, or `malformed`. Lane review publishing rejects other combinations. | Required |
+| FR-10-015 | `policy.reviews.models` configures review model tiers (`review`, `economy`, `synthesis`), each mapping hosts (`codex`, `claude-code`, `opencode`) to a model id and optional reasoning effort (`low`, `medium`, `high`). | Required |
+| FR-10-016 | Host adapters render configured tier model and effort into the agent definitions they install (the Codex review-focus agent TOML today), and lane spawn contracts carry the resolved tier model, effort, and any substitution. | Required |
+| FR-10-017 | When a tier is not configured for a host, the review tier binding substitutes for non-review tiers and the host default model applies otherwise; the substitution is visible in `pr gate --json` spawn contracts. | Required |
 
 ---
 

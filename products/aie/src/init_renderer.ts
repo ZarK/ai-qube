@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { renderAgentInstructions, renderCodexReviewFocusAgent, renderMakeItSoCommand } from './init_content.js';
+import { renderAgentInstructions, renderClaudeReviewFocusAgent, renderCodexReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeReviewFocusAgent } from './init_content.js';
 
 export interface InitRenderContext {
   workspaceAieRunner?: string | null;
@@ -43,21 +43,23 @@ function groupInstructionTargets(profiles: AgentHostProfile[]): GroupedInstructi
   return [...byPath.values()].sort((left, right) => left.target.path.localeCompare(right.target.path));
 }
 
-function codexLocalReviewEnabled(config: Config): boolean {
-  return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.localReviewAgents.includes('codex');
+function hostLocalReviewEnabled(config: Config, hostId: AgentHostId): boolean {
+  return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.localReviewAgents.includes(hostId);
 }
 
-function commandEnabled(config: Config, target: CommandTarget): boolean {
+function commandEnabled(config: Config, target: CommandTarget, hostId: AgentHostId): boolean {
   if (target.enabledBy === 'always') return true;
   if (target.enabledBy === 'opencodeCommandAlias') return config.opencodeCommandAlias;
-  if (target.enabledBy === 'codexLocalReview') return codexLocalReviewEnabled(config);
+  if (target.enabledBy === 'hostLocalReview') return hostLocalReviewEnabled(config, hostId);
   return false;
 }
 
 function commandBody(config: Config, target: CommandTarget, context: InitRenderContext): string {
   const workspaceRunner = context.workspaceAieRunner ?? null;
   if (target.renderer === 'make-it-so') return renderMakeItSoCommand(config);
-  if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent();
+  if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent(config);
+  if (target.renderer === 'claude-review-focus-agent') return renderClaudeReviewFocusAgent(config);
+  if (target.renderer === 'opencode-review-focus-agent') return renderOpenCodeReviewFocusAgent(config);
   const exhaustive: never = target.renderer;
   throw new Error(`Unsupported init command renderer ${exhaustive as CommandRenderer}. Next action: use a supported Executor host profile command target.`);
 }
@@ -76,7 +78,7 @@ export function renderInitFiles(config: Config, profiles: AgentHostProfile[], co
 
   const warnings: string[] = [];
   for (const profile of profiles) {
-    const enabledCommandTargets = profile.commandTargets.filter(target => commandEnabled(config, target));
+    const enabledCommandTargets = profile.commandTargets.filter(target => commandEnabled(config, target, profile.id));
     if (!profile.supportsProjectCommands) {
       const instructionTargets = profile.instructionTargets.map(target => target.path).join(', ');
       warnings.push(`${profile.displayName} project command files are not installed; ${profile.displayName} uses the managed ${instructionTargets} always-loaded instructions.`);
@@ -84,7 +86,7 @@ export function renderInitFiles(config: Config, profiles: AgentHostProfile[], co
       warnings.push(`${profile.displayName} project command files are configured but none are enabled for the current review policy.`);
     }
     for (const target of profile.commandTargets) {
-      if (!commandEnabled(config, target)) continue;
+      if (!commandEnabled(config, target, profile.id)) continue;
       files.push({
         id: target.id,
         relativePath: target.path,

@@ -9,14 +9,14 @@ export interface InstructionTarget {
   description: string;
 }
 
-export type CommandRenderer = 'make-it-so' | 'codex-review-focus-agent';
+export type CommandRenderer = 'make-it-so' | 'codex-review-focus-agent' | 'claude-review-focus-agent' | 'opencode-review-focus-agent';
 
 export interface CommandTarget {
   id: string;
   path: string;
   description: string;
   optional: boolean;
-  enabledBy: 'always' | 'opencodeCommandAlias' | 'codexLocalReview';
+  enabledBy: 'always' | 'opencodeCommandAlias' | 'hostLocalReview';
   renderer: CommandRenderer;
 }
 
@@ -82,11 +82,20 @@ const OPENCODE_COMMAND_ALIAS: CommandTarget = {
   renderer: 'make-it-so',
 };
 
+const OPENCODE_REVIEW_FOCUS_AGENT: CommandTarget = {
+  id: 'opencode-review-focus-agent',
+  path: pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'),
+  description: 'OpenCode read-only subagent for one focused local PR review lane.',
+  optional: false,
+  enabledBy: 'hostLocalReview',
+  renderer: 'opencode-review-focus-agent',
+};
+
 const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   id: 'opencode',
   displayName: 'OpenCode',
   instructionTargets: [AGENTS_INSTRUCTIONS],
-  commandTargets: [OPENCODE_COMMAND, OPENCODE_COMMAND_ALIAS],
+  commandTargets: [OPENCODE_COMMAND, OPENCODE_COMMAND_ALIAS, OPENCODE_REVIEW_FOCUS_AGENT],
   todo: {
     tools: ['todowrite', 'todoread'],
     fallback: 'Use a visible checklist only if the host todo tools are unavailable.',

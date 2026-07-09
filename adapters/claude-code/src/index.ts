@@ -55,14 +55,14 @@ export interface InstructionTarget {
   readonly description: string;
 }
 
-export type CommandRenderer = "make-it-so" | "codex-review-focus-agent";
+export type CommandRenderer = "make-it-so" | "codex-review-focus-agent" | "claude-review-focus-agent" | "opencode-review-focus-agent";
 
 export interface CommandTarget {
   readonly id: string;
   readonly path: string;
   readonly description: string;
   readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "codexLocalReview";
+  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
   readonly renderer: CommandRenderer;
 }
 
@@ -112,11 +112,20 @@ const CLAUDE_INSTRUCTIONS: InstructionTarget = Object.freeze({
   description: "Always-loaded Executor instructions for Claude Code.",
 });
 
+const CLAUDE_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
+  id: "claude-review-focus-agent",
+  path: ".claude/agents/qube-review-focus.md",
+  description: "Claude Code read-only subagent for one focused local PR review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "claude-review-focus-agent",
+});
+
 export const claudeCodeHostProfile: AgentHostProfile = Object.freeze({
   id: "claude-code",
   displayName: "Claude Code",
   instructionTargets: Object.freeze([CLAUDE_INSTRUCTIONS]),
-  commandTargets: Object.freeze([]),
+  commandTargets: Object.freeze([CLAUDE_REVIEW_FOCUS_AGENT]),
   todo: Object.freeze({
     tools: CLAUDE_CODE_TODO_TOOLS,
     fallback: "Use an explicit visible checklist if the host todo tools are unavailable.",

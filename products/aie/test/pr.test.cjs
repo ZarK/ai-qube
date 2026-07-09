@@ -1625,6 +1625,30 @@ describe('PR gate service', () => {
     assert.deepEqual(parserFindings.map(finding => finding.location.line).sort((a, b) => a - b), [10, 42]);
   });
 
+  it('carries resolved review tier model and substitution in spawn contracts', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewModels = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } }, economy: {}, synthesis: {} };
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.spawnContract);
+    assert.equal(lane.spawnContract.model, 'gpt-5.5-codex');
+    assert.equal(lane.spawnContract.effort, 'high');
+    assert.equal(lane.spawnContract.tierSubstitution, null);
+
+    const fallbackConfig = localHostConfig(null);
+    const fallbackExec = makePrExec({ prViews: [cleanLocalPr()] }).exec;
+    const fallbackResult = await runPrGate(fallbackConfig, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec: fallbackExec });
+
+    const fallbackLane = fallbackResult.localReviewRunner.lanes.find(entry => entry.spawnContract);
+    assert.match(fallbackLane.spawnContract.tierSubstitution, /host default model applies/);
+    assert.equal(result.localReviewRunner.modelTiers.review.model, 'gpt-5.5-codex');
+    assert.match(result.localReviewRunner.modelTiers.economy.substitution, /review tier model was substituted/);
+    assert.match(fallbackResult.localReviewRunner.modelTiers.synthesis.substitution, /host default model applies/);
+  });
+
   it('accounts for duplicate same-message findings across heads by count', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

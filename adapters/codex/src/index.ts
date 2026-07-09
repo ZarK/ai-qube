@@ -46,7 +46,7 @@ export interface CommandTarget {
   readonly path: string;
   readonly description: string;
   readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "codexLocalReview";
+  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
   readonly renderer: CommandRenderer;
 }
 
@@ -93,7 +93,7 @@ const CODEX_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   path: pathPosix.join(".codex", "agents", "qube-review-focus.toml"),
   description: "Codex read-only subagent for one focused local PR review lane.",
   optional: false,
-  enabledBy: "codexLocalReview",
+  enabledBy: "hostLocalReview",
   renderer: "codex-review-focus-agent",
 });
 

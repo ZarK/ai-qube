@@ -1,5 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
-import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -658,7 +658,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText', 'carryForwardPublish'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText', 'carryForwardPublish', 'models'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -671,6 +671,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
     carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
+    models: readReviewModels(value.models, 'policy.reviews.models', errors),
   };
 }
 
@@ -679,6 +680,51 @@ function readCarryForwardPublish(value: unknown, defaultValue: 'note' | 'none', 
   if (value === 'note' || value === 'none') return value;
   errors.push({ kind: 'invalid', path, message: `${path} must be "note" or "none"` });
   return defaultValue;
+}
+
+function readReviewModelTierMap(value: unknown, path: string, errors: ValidationError[]): ReviewModelsPolicy['review'] {
+  if (value === undefined) return {};
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object mapping hosts to model bindings` });
+    return {};
+  }
+  rejectUnknownKeys(value, ['codex', 'claude-code', 'opencode'], path, errors);
+  const tierMap: ReviewModelsPolicy['review'] = {};
+  for (const host of ['codex', 'claude-code', 'opencode'] as const) {
+    const binding = value[host];
+    if (binding === undefined) continue;
+    if (!isPlainObject(binding)) {
+      errors.push({ kind: 'invalid', path: `${path}.${host}`, message: `${path}.${host} must be an object with model and optional effort` });
+      continue;
+    }
+    rejectUnknownKeys(binding, ['model', 'effort'], `${path}.${host}`, errors);
+    const model = typeof binding.model === 'string' && /^[A-Za-z0-9][A-Za-z0-9._:/-]*$/.test(binding.model.trim()) ? binding.model.trim() : null;
+    if (model === null) {
+      errors.push({ kind: 'invalid', path: `${path}.${host}.model`, message: `${path}.${host}.model must be a model identifier using letters, digits, dots, dashes, underscores, colons, or slashes` });
+      continue;
+    }
+    let effort: 'low' | 'medium' | 'high' | null = null;
+    if (binding.effort !== undefined && binding.effort !== null) {
+      if (binding.effort === 'low' || binding.effort === 'medium' || binding.effort === 'high') effort = binding.effort;
+      else errors.push({ kind: 'invalid', path: `${path}.${host}.effort`, message: `${path}.${host}.effort must be "low", "medium", or "high"` });
+    }
+    tierMap[host] = { model, effort };
+  }
+  return tierMap;
+}
+
+function readReviewModels(value: unknown, path: string, errors: ValidationError[]): ReviewModelsPolicy {
+  if (value === undefined) return { review: {}, economy: {}, synthesis: {} };
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object with review, economy, and synthesis tiers` });
+    return { review: {}, economy: {}, synthesis: {} };
+  }
+  rejectUnknownKeys(value, ['review', 'economy', 'synthesis'], path, errors);
+  return {
+    review: readReviewModelTierMap(value.review, `${path}.review`, errors),
+    economy: readReviewModelTierMap(value.economy, `${path}.economy`, errors),
+    synthesis: readReviewModelTierMap(value.synthesis, `${path}.synthesis`, errors),
+  };
 }
 
 function readGates(value: unknown, defaultValue: GatePolicyConfig, errors: ValidationError[]): GatePolicyConfig {

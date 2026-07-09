@@ -287,6 +287,77 @@ describe('init service', () => {
     assert.doesNotMatch(agent, /<!--/);
   });
 
+  it('renders configured review tier model and effort into the Codex review agent', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } } };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(agent, /model = "gpt-5\.5-codex"/);
+    assert.match(agent, /model_reasoning_effort = "high"/);
+  });
+
+  it('renders review-focus agents with tier models and effort for Claude Code and OpenCode hosts', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['claude-code', 'opencode'];
+    config.policy.reviews.models = {
+      review: {
+        'claude-code': { model: 'claude-sonnet-5', effort: 'low' },
+        opencode: { model: 'anthropic/claude-sonnet-5', effort: 'high' },
+      },
+    };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const claudeAgent = readFileSync(join(repo, '.claude', 'agents', 'qube-review-focus.md'), 'utf8');
+    assert.match(claudeAgent, /name: qube-review-focus/);
+    assert.match(claudeAgent, /model: claude-sonnet-5/);
+    assert.match(claudeAgent, /effort: low/);
+    const opencodeAgent = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md'), 'utf8');
+    assert.match(opencodeAgent, /mode: subagent/);
+    assert.match(opencodeAgent, /model: anthropic\/claude-sonnet-5/);
+    assert.match(opencodeAgent, /reasoningEffort: high/);
+  });
+
+  it('enables each review-focus agent by its own host in local review agents', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['claude-code'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const claudeOnly = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+    assert.equal(claudeOnly.ok, true);
+    assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-focus.md')), true);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
+    assert.equal(existsSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md')), false);
+
+    const opencodeRepo = makeGitRepo();
+    config.policy.reviews.localAgents = ['opencode'];
+    writeFileSync(join(opencodeRepo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const opencodeOnly = await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: opencodeRepo });
+    assert.equal(opencodeOnly.ok, true);
+    assert.equal(existsSync(join(opencodeRepo, '.opencode', 'agent', 'qube-review-focus.md')), true);
+    assert.equal(existsSync(join(opencodeRepo, '.codex', 'agents', 'qube-review-focus.toml')), false);
+  });
+
   it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
@@ -702,7 +773,7 @@ describe('init service', () => {
     assert.ok(codex);
     assert.ok(claude);
     assert.equal(opencode.supportsProjectCommands, true);
-    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md')]);
+    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md')]);
     assert.equal(codex.supportsProjectCommands, true);
     assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);

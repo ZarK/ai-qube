@@ -29,14 +29,14 @@ export interface InstructionTarget {
   readonly description: string;
 }
 
-export type CommandRenderer = "make-it-so" | "codex-review-focus-agent";
+export type CommandRenderer = "make-it-so" | "codex-review-focus-agent" | "claude-review-focus-agent" | "opencode-review-focus-agent";
 
 export interface CommandTarget {
   readonly id: string;
   readonly path: string;
   readonly description: string;
   readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "codexLocalReview";
+  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
   readonly renderer: CommandRenderer;
 }
 
