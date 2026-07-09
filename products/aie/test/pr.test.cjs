@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { basename, join } = require('node:path');
 
@@ -1402,6 +1402,34 @@ describe('PR gate service', () => {
     assert.match(result.localReviewRunner.lanes[0].promptText, /Issue #93 checklist:/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Check ci:/);
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
+  });
+
+  it('folds changed-file AIQ findings into local review spawn prompts for verification', async () => {
+    const repo = makeGitRepo();
+    const sourcePath = join(repo, 'src', 'changed.ts');
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(sourcePath, 'export const changed = false;\n');
+    commitTrustedBase(repo);
+    writeFileSync(sourcePath, 'export const changed = true;\n');
+    const reportPath = join(repo, '.qube', 'aiq', 'out', 'aiq.report.json');
+    mkdirSync(join(repo, '.qube', 'aiq', 'out'), { recursive: true });
+    copyFileSync(join(__dirname, 'fixtures', 'aiq-report.json'), reportPath);
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+    const lane = result.localReviewRunner.lanes.find(entry => entry.spawnContract);
+
+    assert.ok(lane);
+    assert.match(lane.promptText, /Pre-collected AIQ static findings/);
+    assert.match(lane.spawnPrompt, /VERIFY against the current head/);
+    assert.match(lane.promptText, /"rule":"biome\/no-debugger"/);
+    assert.match(lane.promptText, /"path":"src\/changed\.ts"/);
+    assert.match(lane.promptText, /"line":7/);
+    assert.match(lane.promptText, /"kind":"aiq-finding"/);
+    assert.match(lane.promptText, /add its evidenceLink object verbatim to evidence artifacts/);
+    assert.match(lane.promptText, /Do not add a supplied AIQ defect to findings\[\] as a new finding/);
+    assert.doesNotMatch(lane.promptText, /src\/unchanged\.ts/);
   });
 
   it('keeps local-host prompt hashes stable across mutable PR context', async () => {

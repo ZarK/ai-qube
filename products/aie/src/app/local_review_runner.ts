@@ -8,6 +8,7 @@ import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { defaultRereviewMode } from '../config/schema.js';
+import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 
@@ -171,7 +172,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
-  const contextLines = input.contextLines ?? [];
+  const aiqFindings = loadAiqReviewFindings(input.repoRoot, input.changedPaths ?? []);
+  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings)];
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   const modelTiers = {
