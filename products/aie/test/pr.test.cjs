@@ -1540,6 +1540,99 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
   });
 
+  it('carries forward an approved lane when the head delta does not touch its scope', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: 'test-hash' }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const carried = result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
+    assert.equal(carried.status, 'completed');
+    assert.match(carried.summary, /Carried forward from approved review at/);
+    const carriedEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json'), 'utf8'));
+    assert.equal(carriedEvidence.carriedForward.fromHeadSha, priorHead);
+    assert.equal(carriedEvidence.headSha, currentHead);
+    assert.equal(result.localReview.status, 'passed');
+  });
+
+  it('reruns lanes with an always-rerun policy instead of carrying forward', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', rereview: 'always-rerun' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
+  it('reruns a delta lane when the head delta touches its scope', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality');
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 2;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'change lane scope'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(lane.status, 'pending');
+    assert.equal(existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json')), false);
+  });
+
   it('keeps lane verdicts lane-scoped when gate-level CI is red', async () => {
     const repo = makeGitRepo();
     const config = localCommandConfig();

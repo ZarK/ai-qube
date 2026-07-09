@@ -1,9 +1,10 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
+import { pathsTouchPatterns } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
@@ -39,6 +40,107 @@ function laneEvidenceDirectory(repoRoot: string, issueNumber: number, prNumber: 
 
 export function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
+}
+
+export interface CarryForwardSource {
+  fromHeadSha: string;
+  deltaSummary: string;
+}
+
+function builtinFragmentDigest(entries: ReadonlyArray<Record<string, unknown>>): string {
+  const builtin = entries
+    .filter(entry => entry.source === 'builtin' || entry.source === 'repo-configured')
+    .map(entry => ({ id: typeof entry.id === 'string' ? entry.id : '', sha256: typeof entry.sha256 === 'string' ? entry.sha256 : '' }));
+  return hash(JSON.stringify(builtin));
+}
+
+export function expectedLaneFragmentDigest(lane: LocalReviewLaneId): string {
+  return builtinFragmentDigest(promptStack(lane).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
+}
+
+async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
+  try {
+    const result = await execFileAsync('git', ['-C', repoRoot, 'diff', '--name-only', `${fromHeadSha}..${toHeadSha}`], { maxBuffer: 16 * 1024 * 1024 });
+    return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');
+  } catch {
+    return null;
+  }
+}
+
+export async function findCarryForwardSource(input: {
+  repoRoot: string;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  lane: LocalReviewLaneId;
+  matchPatterns: readonly string[];
+  expectedFragmentDigest: string;
+}): Promise<CarryForwardSource | null> {
+  const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
+  let headDirectories: string[];
+  try {
+    headDirectories = readdirSync(prDirectory, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && entry.name !== safeSegment(input.headSha))
+      .map(entry => entry.name);
+  } catch {
+    return null;
+  }
+  const candidates: Array<{ fromHeadSha: string; recordedAt: string }> = [];
+  for (const directoryName of headDirectories) {
+    const path = join(prDirectory, directoryName, `${input.lane}.json`);
+    if (!existsSync(path)) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isRecord(parsed)) continue;
+      if ((parsed.version ?? parsed.schemaVersion) !== 1) continue;
+      if ((parsed.lane ?? parsed.id) !== input.lane) continue;
+      if (parsed.status !== 'passed' || parsed.recommendation !== 'approve') continue;
+      if (isRecord(parsed.carriedForward)) continue;
+      const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
+      if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
+      if (!isRecord(parsed.runnerProvenance)) continue;
+      if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
+      candidates.push({ fromHeadSha: priorHeadSha, recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '' });
+    } catch {
+      continue;
+    }
+  }
+  candidates.sort((first, second) => second.recordedAt.localeCompare(first.recordedAt));
+  for (const candidate of candidates) {
+    const deltaPaths = await gitDeltaPaths(input.repoRoot, candidate.fromHeadSha, input.headSha);
+    if (deltaPaths === null) continue;
+    const touched = input.matchPatterns.length > 0 ? pathsTouchPatterns(deltaPaths, input.matchPatterns) : deltaPaths.length > 0;
+    if (touched) continue;
+    const deltaSummary = deltaPaths.length === 0
+      ? `no files changed between ${candidate.fromHeadSha} and ${input.headSha}`
+      : `${deltaPaths.length} changed file(s) between ${candidate.fromHeadSha} and ${input.headSha} did not touch this lane's scope`;
+    return { fromHeadSha: candidate.fromHeadSha, deltaSummary };
+  }
+  return null;
+}
+
+export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, source: CarryForwardSource): string | null {
+  const priorPath = laneEvidencePath(repoRoot, issueNumber, prNumber, source.fromHeadSha, lane);
+  try {
+    const prior: unknown = JSON.parse(readFileSync(priorPath, 'utf8'));
+    if (!isRecord(prior)) return null;
+    const carriedNote = `Carried forward: ${source.deltaSummary}.`;
+    const body = {
+      ...prior,
+      headSha,
+      summary: `Carried forward from approved ${lane} review at ${source.fromHeadSha}. ${typeof prior.summary === 'string' ? prior.summary : ''}`.trim(),
+      completeness: `${typeof prior.completeness === 'string' ? prior.completeness : ''} ${carriedNote}`.trim(),
+      preconditions: [...(Array.isArray(prior.preconditions) ? prior.preconditions.filter((item): item is string => typeof item === 'string') : []), carriedNote],
+      carriedForward: { fromHeadSha: source.fromHeadSha, deltaSummary: source.deltaSummary },
+      recordedAt: new Date().toISOString(),
+    };
+    const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+    return path;
+  } catch {
+    return null;
+  }
 }
 
 export function reviewSessionLockPath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {

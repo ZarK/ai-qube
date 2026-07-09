@@ -256,12 +256,27 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (provenance.runnerKind !== adapter) throw laneEvidenceFailure(path, 'runnerProvenance runnerKind must match the evidence adapter.');
   if (provenance.freshContext !== true) throw laneEvidenceFailure(path, 'runnerProvenance must record fresh independent reviewer context.');
   if (provenance.promptOnly === true) throw laneEvidenceFailure(path, 'prompt-only review output cannot be published as provider-visible lane feedback.');
-  if (provenance.headSha !== headSha) throw laneEvidenceFailure(path, 'runnerProvenance headSha must match the publish target.');
+  const carriedForwardHead = isRecord(raw.carriedForward) && typeof raw.carriedForward.fromHeadSha === 'string' && raw.carriedForward.fromHeadSha.trim() !== '' ? raw.carriedForward.fromHeadSha.trim() : null;
+  if (carriedForwardHead) {
+    if (provenance.headSha !== carriedForwardHead) throw laneEvidenceFailure(path, 'carried-forward runnerProvenance must reference the prior head it claims.');
+  } else if (provenance.headSha !== headSha) {
+    throw laneEvidenceFailure(path, 'runnerProvenance headSha must match the publish target.');
+  }
   if (typeof provenance.promptStackHash !== 'string' || provenance.promptStackHash.trim() === '') throw laneEvidenceFailure(path, 'runnerProvenance must record a prompt stack hash.');
   if (typeof provenance.taskId !== 'string' && typeof provenance.sessionId !== 'string' && typeof provenance.threadId !== 'string') {
     throw laneEvidenceFailure(path, 'runnerProvenance must record a separate task, session, or thread id.');
   }
-  if (adapter === 'local-host') validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
+  if (adapter === 'local-host') {
+    if (carriedForwardHead) {
+      const prior = loadLaneEvidence(repoRoot, issueNumber, prNumber, carriedForwardHead, lane);
+      if (prior.raw.status !== 'passed' || readRecommendation(prior.raw.recommendation ?? prior.raw.status) !== 'approve') {
+        throw laneEvidenceFailure(path, 'carried-forward evidence must reference an approved prior-head lane record.');
+      }
+      validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, carriedForwardHead, lane, prior.raw, path, provenance);
+    } else {
+      validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);
+    }
+  }
   const blockers = Array.isArray(raw.blockers) ? raw.blockers.filter((item): item is string => typeof item === 'string') : [];
   const structuredFindings = readStructuredFindings(raw.findings, path);
   if (blockers.length > 0 && structuredFindings.length === 0) {

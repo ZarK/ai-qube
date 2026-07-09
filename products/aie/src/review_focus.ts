@@ -56,6 +56,10 @@ function pathMatchesAny(changedPaths: readonly string[], patterns: readonly stri
   return changedPaths.some(path => patterns.some(pattern => simpleGlobMatch(path, pattern)));
 }
 
+export function pathsTouchPatterns(paths: readonly string[], patterns: readonly string[]): boolean {
+  return pathMatchesAny(paths, patterns);
+}
+
 function readFocusId(lane: ReviewLanePolicy): LocalReviewLaneId | null {
   return FOCUS_LANE_IDS.has(lane.id as LocalReviewLaneId) ? lane.id as LocalReviewLaneId : null;
 }

@@ -74,7 +74,13 @@ export interface LocalReviewLane {
   toolsUsed: string[];
   completeness: string;
   preconditions: string[] | null;
+  carriedForward: LocalReviewCarriedForward | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
+}
+
+export interface LocalReviewCarriedForward {
+  fromHeadSha: string;
+  deltaSummary: string;
 }
 
 export interface LocalReviewEvidence {
@@ -242,6 +248,15 @@ function artifactArray(value: unknown): string[] {
 function readSeverity(value: unknown): LocalReviewSeverity {
   if (value === 'none' || value === 'low' || value === 'medium' || value === 'high' || value === 'critical') return value;
   return 'none';
+}
+
+function readCarriedForward(value: unknown): LocalReviewCarriedForward | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.fromHeadSha !== 'string' || value.fromHeadSha.trim() === '') return null;
+  return {
+    fromHeadSha: redact(value.fromHeadSha.trim()),
+    deltaSummary: typeof value.deltaSummary === 'string' ? redact(value.deltaSummary.trim()) : '',
+  };
 }
 
 function readRecommendation(value: unknown, status: LocalReviewStatus): LocalReviewRecommendation {
@@ -544,6 +559,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       toolsUsed: stringArray(entry.toolsUsed),
       completeness: typeof entry.completeness === 'string' ? redact(entry.completeness.trim()) : '',
       preconditions: Array.isArray(entry.preconditions) ? stringArray(entry.preconditions) : null,
+      carriedForward: readCarriedForward(entry.carriedForward),
       runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
     });
   }
@@ -692,17 +708,27 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
     if (provenance.runnerKind !== adapter) blockers.push(`${laneId} runner provenance kind ${provenance.runnerKind} does not match evidence adapter ${adapter}.`);
     if (!provenance.freshContext) blockers.push(`${laneId} did not record fresh independent reviewer context.`);
     if (provenance.promptOnly) blockers.push(`${laneId} was prompt-only output and cannot satisfy a required local review gate.`);
-    if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
     if (!provenance.taskId && !provenance.sessionId && !provenance.threadId) blockers.push(`${laneId} runner provenance did not record a separate task, session, or thread id.`);
     if (!provenance.promptStackHash) {
       blockers.push(`${laneId} runner provenance did not record a prompt stack hash.`);
-    } else {
+    } else if (!lane.carriedForward) {
       const expectedPromptStackHash = explicitExpectedPromptHash({ issueNumber, laneId, expectedPromptStackHashes });
       if (expectedPromptStackHash && provenance.promptStackHash !== expectedPromptStackHash) {
         blockers.push(`${laneId} runner provenance prompt stack hash does not match the current QUBE prompt stack.`);
       }
     }
-    blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha, laneId, provenance, evidenceSha256: evidenceHashes?.get(laneId) ?? null }));
+    if (lane.carriedForward) {
+      if (provenance.headSha !== lane.carriedForward.fromHeadSha) blockers.push(`${laneId} carried-forward provenance does not reference the prior head it claims.`);
+      const prior = readApprovedLaneEvidenceAt(repoRoot, issueNumber, prNumber, lane.carriedForward.fromHeadSha, laneId);
+      if (!prior) {
+        blockers.push(`${laneId} carried-forward evidence does not reference an approved prior-head lane record.`);
+      } else {
+        blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha: lane.carriedForward.fromHeadSha, laneId, provenance, evidenceSha256: prior.evidenceSha256 }));
+      }
+    } else {
+      if (provenance.headSha !== headSha) blockers.push(`${laneId} runner provenance did not record the current PR head SHA.`);
+      blockers.push(...trustedLocalHostBlockers({ repoRoot, issueNumber, prNumber, headSha, laneId, provenance, evidenceSha256: evidenceHashes?.get(laneId) ?? null }));
+    }
   }
   return blockers;
 }
@@ -832,12 +858,23 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
         toolsUsed: stringArray(parsed.toolsUsed),
         completeness: typeof parsed.completeness === 'string' ? redact(parsed.completeness.trim()) : '',
         preconditions: Array.isArray(parsed.preconditions) ? stringArray(parsed.preconditions) : null,
+        carriedForward: readCarriedForward(parsed.carriedForward),
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
       },
     };
   } catch {
     return null;
   }
+}
+
+export function readApprovedLaneEvidenceAt(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, laneId: LocalReviewLaneId): { evidenceSha256: string } | null {
+  const path = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeSegment(headSha), `${laneId}.json`);
+  if (!existsSync(path)) return null;
+  const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+  if (!parsed) return null;
+  if (parsed.lane.id !== laneId || parsed.lane.status !== 'passed' || parsed.lane.recommendation !== 'approve') return null;
+  if (parsed.lane.carriedForward) return null;
+  return { evidenceSha256: parsed.evidenceSha256 };
 }
 
 function readLocalReviewPublishEvidence(directory: string, issueNumber: number, prNumber: number, headSha: string): LocalReviewPublishEvidence | null {
