@@ -184,47 +184,52 @@ async function defaultFetchInstallationToken(input: {
   return { token: parsed.token, permissions, accountLogin };
 }
 
-async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
-  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
-    cwd,
-    exec,
-    token,
-  });
-  if (result.exitCode !== 0) {
-    // Installation tokens cannot call /user; try /installation.
+async function fetchInstallationIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
+  // Installation tokens cannot call /user; resolve the bot identity from /installation.
+  try {
     const installation = await runGh(['api', 'installation', '-H', 'Accept: application/vnd.github+json'], {
       cwd,
       exec,
       token,
     });
-    if (installation.exitCode === 0) {
-      try {
-        const parsed = JSON.parse(installation.stdout) as unknown;
-        if (isRecord(parsed)) {
-          const account = isRecord(parsed.account) ? parsed.account : null;
-          const login = account && typeof account.login === 'string' ? account.login : null;
-          const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug : null;
-          const botLogin = login ?? (slug ? `${slug}[bot]` : null);
-          return { login: botLogin, type: 'Bot' };
-        }
-      } catch {
-        // fall through
-      }
-    }
+    if (installation.exitCode !== 0) return { login: null, type: null };
+    const parsed = JSON.parse(installation.stdout) as unknown;
+    if (!isRecord(parsed)) return { login: null, type: null };
+    const account = isRecord(parsed.account) ? parsed.account : null;
+    const login = account && typeof account.login === 'string' ? account.login : null;
+    const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug : null;
+    const botLogin = login ?? (slug ? `${slug}[bot]` : null);
+    return { login: botLogin, type: 'Bot' };
+  } catch {
     return { login: null, type: null };
   }
+}
+
+async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
+  // Production runGh throws on HTTP failures instead of returning exitCode != 0.
+  // Catch expected /user failures so installation-token minting can fall back cleanly.
   try {
-    const parsed = JSON.parse(result.stdout) as unknown;
-    if (isRecord(parsed)) {
-      return {
-        login: typeof parsed.login === 'string' ? parsed.login : null,
-        type: typeof parsed.type === 'string' ? parsed.type : null,
-      };
+    const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
+      cwd,
+      exec,
+      token,
+    });
+    if (result.exitCode !== 0) return fetchInstallationIdentity(token, cwd, exec);
+    try {
+      const parsed = JSON.parse(result.stdout) as unknown;
+      if (isRecord(parsed) && (typeof parsed.login === 'string' || typeof parsed.type === 'string')) {
+        return {
+          login: typeof parsed.login === 'string' ? parsed.login : null,
+          type: typeof parsed.type === 'string' ? parsed.type : null,
+        };
+      }
+    } catch {
+      // ignore parse failures
     }
+    return fetchInstallationIdentity(token, cwd, exec);
   } catch {
-    // ignore
+    return fetchInstallationIdentity(token, cwd, exec);
   }
-  return { login: null, type: null };
 }
 
 async function currentGhLogin(cwd?: string, exec?: GhExec): Promise<string | null> {

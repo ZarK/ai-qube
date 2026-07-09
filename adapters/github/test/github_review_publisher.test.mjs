@@ -71,6 +71,54 @@ describe('github review publisher', () => {
     assert.equal(JSON.stringify(withKey.identity).includes('BEGIN'), false);
   });
 
+  it('falls back from throwing /user failures to /installation for app tokens', async () => {
+    process.env.QUBE_TEST_APP_KEY = privateKey;
+    const calls = [];
+    const resolved = await resolveGitHubReviewPublisher({
+      mode: 'github-app',
+      githubApp: {
+        appId: '99',
+        installationId: '1001',
+        privateKeyEnv: 'QUBE_TEST_APP_KEY',
+      },
+    }, {
+      mint: true,
+      fetchInstallationToken: async () => ({
+        token: 'ghs_test_installation_token_value_not_for_output',
+        permissions: { pull_requests: 'write' },
+        accountLogin: 'review-bot[bot]',
+      }),
+      // Production-like runner: throw on /user (installation tokens), succeed on /installation.
+      exec: async (args) => {
+        calls.push(args.join(' '));
+        if (args.includes('user')) {
+          const error = new Error('gh api user failed');
+          error.status = 1;
+          error.stderr = 'HTTP 403: Resource not accessible by integration';
+          throw error;
+        }
+        if (args.includes('installation')) {
+          return {
+            args,
+            exitCode: 0,
+            stdout: JSON.stringify({ account: { login: 'review-bot' }, app_slug: 'review-bot' }),
+            stderr: '',
+          };
+        }
+        return { args, exitCode: 0, stdout: '{}', stderr: '' };
+      },
+    });
+
+    assert.ok(calls.some(call => call.includes('user')));
+    assert.ok(calls.some(call => call.includes('installation')));
+    assert.equal(resolved.identity.mode, 'github-app');
+    assert.equal(resolved.identity.identityClass, 'github-app-installation');
+    assert.equal(resolved.identity.login, 'review-bot');
+    assert.equal(resolved.identity.permissionStatus, 'ok');
+    assert.equal(resolved.identity.formalEventCapability, true);
+    assert.equal(resolved.accessToken, 'ghs_test_installation_token_value_not_for_output');
+  });
+
   it('uses fine-grained token env and reports same-author downgrade', async () => {
     process.env.QUBE_TEST_REVIEW_TOKEN = 'github_pat_test_token_value_not_for_output_abcdefghijklmnop';
     const resolved = await resolveGitHubReviewPublisher({
