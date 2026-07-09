@@ -1,0 +1,536 @@
+import { createSign, createPrivateKey } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+
+import { redact, runGh, type GhExec, type GhRunResult } from './gh.js';
+
+export type GitHubReviewPublisherMode = 'user' | 'github-app' | 'token';
+export type GitHubReviewPublisherIdentityClass = 'user' | 'github-app-installation' | 'fine-grained-token' | 'none';
+export type GitHubReviewPublisherPermissionStatus =
+  | 'ok'
+  | 'missing'
+  | 'unknown'
+  | 'same-author'
+  | 'unconfigured'
+  | 'misconfigured';
+export type GitHubReviewPublisherTransport = 'pull-request-review' | 'issue-comment';
+
+export interface GitHubAppPublisherConfig {
+  readonly appId: string;
+  readonly installationId: string;
+  readonly privateKeyPath?: string;
+  readonly privateKeyEnv?: string;
+}
+
+export interface GitHubTokenPublisherConfig {
+  readonly env: string;
+}
+
+export interface GitHubReviewPublisherConfig {
+  readonly mode: GitHubReviewPublisherMode;
+  readonly githubApp?: GitHubAppPublisherConfig;
+  readonly token?: GitHubTokenPublisherConfig;
+}
+
+/** Public, secret-free publisher status for JSON output. */
+export interface GitHubReviewPublisherIdentity {
+  readonly mode: GitHubReviewPublisherMode;
+  readonly identityClass: GitHubReviewPublisherIdentityClass;
+  readonly login: string | null;
+  readonly permissionStatus: GitHubReviewPublisherPermissionStatus;
+  readonly formalEventCapability: boolean;
+  readonly fallbackReason: string | null;
+  readonly publishTransport: GitHubReviewPublisherTransport;
+  readonly authSource: 'gh-user' | 'github-app-installation' | 'token-env' | 'none';
+}
+
+export interface ResolvedGitHubReviewPublisher {
+  readonly identity: GitHubReviewPublisherIdentity;
+  /** Short-lived token for API calls; never serialize this object into JSON output. */
+  readonly accessToken: string | null;
+}
+
+export interface ResolvePublisherOptions {
+  readonly cwd?: string;
+  readonly exec?: GhExec;
+  readonly prAuthorLogin?: string | null;
+  readonly nowSeconds?: number;
+  /**
+   * When false, report configured publisher status without minting installation tokens
+   * or calling identity endpoints with publisher credentials. Used by pr view/gate JSON.
+   */
+  readonly mint?: boolean;
+  readonly fetchInstallationToken?: (input: {
+    appId: string;
+    installationId: string;
+    privateKeyPem: string;
+    jwt: string;
+  }) => Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }>;
+  readonly fetchTokenIdentity?: (token: string) => Promise<{ login: string | null; type: string | null }>;
+}
+
+const DEFAULT_PUBLISHER_CONFIG: GitHubReviewPublisherConfig = Object.freeze({ mode: 'user' });
+
+export function defaultGitHubReviewPublisherConfig(): GitHubReviewPublisherConfig {
+  return { ...DEFAULT_PUBLISHER_CONFIG };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeLogin(login: string | null | undefined): string | null {
+  if (typeof login !== 'string') return null;
+  const trimmed = login.trim().replace(/^@/, '');
+  return trimmed === '' ? null : trimmed;
+}
+
+function loginsEqual(left: string | null | undefined, right: string | null | undefined): boolean {
+  const a = normalizeLogin(left);
+  const b = normalizeLogin(right);
+  if (!a || !b) return false;
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+function base64Url(input: Buffer | string): string {
+  const buffer = typeof input === 'string' ? Buffer.from(input, 'utf8') : input;
+  return buffer.toString('base64url');
+}
+
+export function createGitHubAppJwt(appId: string, privateKeyPem: string, nowSeconds = Math.floor(Date.now() / 1000)): string {
+  const header = { alg: 'RS256', typ: 'JWT' };
+  const payload = {
+    iat: nowSeconds - 60,
+    exp: nowSeconds + 9 * 60,
+    iss: appId,
+  };
+  const encodedHeader = base64Url(JSON.stringify(header));
+  const encodedPayload = base64Url(JSON.stringify(payload));
+  const signingInput = `${encodedHeader}.${encodedPayload}`;
+  const key = createPrivateKey(privateKeyPem);
+  const signer = createSign('RSA-SHA256');
+  signer.update(signingInput);
+  signer.end();
+  const signature = signer.sign(key);
+  return `${signingInput}.${base64Url(signature)}`;
+}
+
+function readPrivateKeyPem(config: GitHubAppPublisherConfig): { pem: string | null; error: string | null } {
+  if (config.privateKeyEnv) {
+    const value = process.env[config.privateKeyEnv];
+    if (typeof value === 'string' && value.trim() !== '') {
+      return { pem: value.includes('\\n') ? value.replace(/\\n/g, '\n') : value, error: null };
+    }
+    return { pem: null, error: `GitHub App private key env ${config.privateKeyEnv} is missing or empty.` };
+  }
+  if (config.privateKeyPath) {
+    if (!existsSync(config.privateKeyPath)) {
+      return { pem: null, error: `GitHub App private key path does not exist.` };
+    }
+    try {
+      return { pem: readFileSync(config.privateKeyPath, 'utf8'), error: null };
+    } catch (error: unknown) {
+      return { pem: null, error: `GitHub App private key path could not be read: ${error instanceof Error ? error.message : String(error)}` };
+    }
+  }
+  return { pem: null, error: 'GitHub App publisher requires privateKeyPath or privateKeyEnv.' };
+}
+
+async function defaultFetchInstallationToken(input: {
+  appId: string;
+  installationId: string;
+  privateKeyPem: string;
+  jwt: string;
+  cwd?: string;
+  exec?: GhExec;
+}): Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }> {
+  const result = await runGh([
+    'api',
+    `app/installations/${input.installationId}/access_tokens`,
+    '--method',
+    'POST',
+    '-H',
+    'Accept: application/vnd.github+json',
+    '-H',
+    `Authorization: Bearer ${input.jwt}`,
+  ], { cwd: input.cwd, exec: input.exec, token: null });
+  if (result.exitCode !== 0) {
+    throw new Error(redact(result.stderr || result.stdout || 'GitHub App installation token request failed'));
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    throw new Error('GitHub App installation token response was not valid JSON.');
+  }
+  if (!isRecord(parsed) || typeof parsed.token !== 'string' || parsed.token.trim() === '') {
+    throw new Error('GitHub App installation token response did not include a token.');
+  }
+  const permissions = isRecord(parsed.permissions)
+    ? Object.fromEntries(Object.entries(parsed.permissions).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+    : undefined;
+  const accountLogin = isRecord(parsed.account) && typeof parsed.account.login === 'string'
+    ? parsed.account.login
+    : null;
+  return { token: parsed.token, permissions, accountLogin };
+}
+
+async function defaultFetchTokenIdentity(token: string, cwd?: string, exec?: GhExec): Promise<{ login: string | null; type: string | null }> {
+  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], {
+    cwd,
+    exec,
+    token,
+  });
+  if (result.exitCode !== 0) {
+    // Installation tokens cannot call /user; try /installation.
+    const installation = await runGh(['api', 'installation', '-H', 'Accept: application/vnd.github+json'], {
+      cwd,
+      exec,
+      token,
+    });
+    if (installation.exitCode === 0) {
+      try {
+        const parsed = JSON.parse(installation.stdout) as unknown;
+        if (isRecord(parsed)) {
+          const account = isRecord(parsed.account) ? parsed.account : null;
+          const login = account && typeof account.login === 'string' ? account.login : null;
+          const slug = typeof parsed.app_slug === 'string' ? parsed.app_slug : null;
+          const botLogin = login ?? (slug ? `${slug}[bot]` : null);
+          return { login: botLogin, type: 'Bot' };
+        }
+      } catch {
+        // fall through
+      }
+    }
+    return { login: null, type: null };
+  }
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    if (isRecord(parsed)) {
+      return {
+        login: typeof parsed.login === 'string' ? parsed.login : null,
+        type: typeof parsed.type === 'string' ? parsed.type : null,
+      };
+    }
+  } catch {
+    // ignore
+  }
+  return { login: null, type: null };
+}
+
+async function currentGhLogin(cwd?: string, exec?: GhExec): Promise<string | null> {
+  const result = await runGh(['api', 'user', '-H', 'Accept: application/vnd.github+json'], { cwd, exec });
+  if (result.exitCode !== 0) return null;
+  try {
+    const parsed = JSON.parse(result.stdout) as unknown;
+    if (isRecord(parsed) && typeof parsed.login === 'string') return parsed.login;
+  } catch {
+    // ignore
+  }
+  return null;
+}
+
+function unconfiguredIdentity(fallbackReason: string | null = null): GitHubReviewPublisherIdentity {
+  return {
+    mode: 'user',
+    identityClass: 'user',
+    login: null,
+    permissionStatus: 'unconfigured',
+    formalEventCapability: false,
+    fallbackReason: fallbackReason ?? 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
+    publishTransport: 'pull-request-review',
+    authSource: 'gh-user',
+  };
+}
+
+function finalizeIdentity(input: {
+  mode: GitHubReviewPublisherMode;
+  identityClass: GitHubReviewPublisherIdentityClass;
+  login: string | null;
+  permissionStatus: GitHubReviewPublisherPermissionStatus;
+  formalEventCapability: boolean;
+  fallbackReason: string | null;
+  publishTransport: GitHubReviewPublisherTransport;
+  authSource: GitHubReviewPublisherIdentity['authSource'];
+  prAuthorLogin?: string | null;
+}): GitHubReviewPublisherIdentity {
+  let permissionStatus = input.permissionStatus;
+  let formalEventCapability = input.formalEventCapability;
+  let fallbackReason = input.fallbackReason;
+  let publishTransport = input.publishTransport;
+
+  if (input.login && input.prAuthorLogin && loginsEqual(input.login, input.prAuthorLogin)) {
+    permissionStatus = 'same-author';
+    formalEventCapability = false;
+    publishTransport = 'issue-comment';
+    fallbackReason = 'Configured reviewer identity is the pull request author; formal PR review events are unavailable, so publishing degrades to comment-state publication.';
+  } else if (permissionStatus === 'missing') {
+    formalEventCapability = false;
+    publishTransport = 'issue-comment';
+    fallbackReason = fallbackReason ?? 'Configured reviewer identity lacks pull request review permissions; publishing degrades to comment-state publication.';
+  }
+
+  return {
+    mode: input.mode,
+    identityClass: input.identityClass,
+    login: input.login ? redact(input.login) : null,
+    permissionStatus,
+    formalEventCapability,
+    fallbackReason,
+    publishTransport,
+    authSource: input.authSource,
+  };
+}
+
+function installationHasReviewPermission(permissions: Record<string, string> | undefined): boolean {
+  if (!permissions) return true;
+  const pullRequests = permissions.pull_requests ?? permissions.pullRequests;
+  if (!pullRequests) return true;
+  return pullRequests === 'write' || pullRequests === 'admin';
+}
+
+export async function resolveGitHubReviewPublisher(
+  config: GitHubReviewPublisherConfig | null | undefined,
+  options: ResolvePublisherOptions = {},
+): Promise<ResolvedGitHubReviewPublisher> {
+  const resolvedConfig = config ?? defaultGitHubReviewPublisherConfig();
+  const mode = resolvedConfig.mode ?? 'user';
+  const mint = options.mint !== false;
+
+  if (mode === 'user') {
+    const login = mint ? await currentGhLogin(options.cwd, options.exec) : null;
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'user',
+        identityClass: 'user',
+        login,
+        permissionStatus: mint ? (login ? 'ok' : 'unknown') : 'unconfigured',
+        formalEventCapability: true,
+        fallbackReason: 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
+        publishTransport: 'pull-request-review',
+        authSource: 'gh-user',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+
+  if (mode === 'github-app') {
+    const app = resolvedConfig.githubApp;
+    if (!app?.appId || !app.installationId) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'misconfigured',
+          formalEventCapability: false,
+          fallbackReason: 'GitHub App publisher is selected but appId/installationId are incomplete; falling back to authenticated gh user comment publication.',
+          publishTransport: 'issue-comment',
+          authSource: 'none',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+    const key = readPrivateKeyPem(app);
+    if (!key.pem) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'misconfigured',
+          formalEventCapability: false,
+          fallbackReason: key.error ?? 'GitHub App private key is unavailable.',
+          publishTransport: 'issue-comment',
+          authSource: 'none',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+
+    if (!mint) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'github-app-installation',
+          login: null,
+          permissionStatus: 'unknown',
+          formalEventCapability: true,
+          fallbackReason: null,
+          publishTransport: 'pull-request-review',
+          authSource: 'github-app-installation',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+
+    try {
+      const nowSeconds = options.nowSeconds ?? Math.floor(Date.now() / 1000);
+      const jwt = createGitHubAppJwt(app.appId, key.pem, nowSeconds);
+      const minted = options.fetchInstallationToken
+        ? await options.fetchInstallationToken({
+          appId: app.appId,
+          installationId: app.installationId,
+          privateKeyPem: key.pem,
+          jwt,
+        })
+        : await defaultFetchInstallationToken({
+          appId: app.appId,
+          installationId: app.installationId,
+          privateKeyPem: key.pem,
+          jwt,
+          cwd: options.cwd,
+          exec: options.exec,
+        });
+
+      const identityLookup = options.fetchTokenIdentity
+        ? await options.fetchTokenIdentity(minted.token)
+        : await defaultFetchTokenIdentity(minted.token, options.cwd, options.exec);
+      const login = normalizeLogin(identityLookup.login ?? minted.accountLogin ?? null);
+      const hasPermission = installationHasReviewPermission(minted.permissions);
+
+      return {
+        accessToken: minted.token,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'github-app-installation',
+          login,
+          permissionStatus: hasPermission ? 'ok' : 'missing',
+          formalEventCapability: hasPermission,
+          fallbackReason: hasPermission
+            ? null
+            : 'GitHub App installation lacks pull_requests write permission; formal review events are unavailable.',
+          publishTransport: hasPermission ? 'pull-request-review' : 'issue-comment',
+          authSource: 'github-app-installation',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    } catch (error: unknown) {
+      return {
+        accessToken: null,
+        identity: finalizeIdentity({
+          mode: 'github-app',
+          identityClass: 'none',
+          login: null,
+          permissionStatus: 'missing',
+          formalEventCapability: false,
+          fallbackReason: redact(error instanceof Error ? error.message : String(error)),
+          publishTransport: 'issue-comment',
+          authSource: 'none',
+          prAuthorLogin: options.prAuthorLogin,
+        }),
+      };
+    }
+  }
+
+  // mode === 'token'
+  const tokenEnv = resolvedConfig.token?.env;
+  if (!tokenEnv) {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'none',
+        login: null,
+        permissionStatus: 'misconfigured',
+        formalEventCapability: false,
+        fallbackReason: 'Fine-grained token publisher is selected but token.env is missing.',
+        publishTransport: 'issue-comment',
+        authSource: 'none',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+  const tokenValue = process.env[tokenEnv];
+  if (typeof tokenValue !== 'string' || tokenValue.trim() === '') {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'none',
+        login: null,
+        permissionStatus: 'missing',
+        formalEventCapability: false,
+        fallbackReason: `Fine-grained token env ${tokenEnv} is missing or empty.`,
+        publishTransport: 'issue-comment',
+        authSource: 'none',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+
+  if (!mint) {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'fine-grained-token',
+        login: null,
+        permissionStatus: 'unknown',
+        formalEventCapability: true,
+        fallbackReason: null,
+        publishTransport: 'pull-request-review',
+        authSource: 'token-env',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+
+  try {
+    const identityLookup = options.fetchTokenIdentity
+      ? await options.fetchTokenIdentity(tokenValue)
+      : await defaultFetchTokenIdentity(tokenValue, options.cwd, options.exec);
+    const login = normalizeLogin(identityLookup.login);
+    return {
+      accessToken: tokenValue,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'fine-grained-token',
+        login,
+        permissionStatus: login ? 'ok' : 'unknown',
+        formalEventCapability: true,
+        fallbackReason: null,
+        publishTransport: 'pull-request-review',
+        authSource: 'token-env',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  } catch (error: unknown) {
+    return {
+      accessToken: null,
+      identity: finalizeIdentity({
+        mode: 'token',
+        identityClass: 'none',
+        login: null,
+        permissionStatus: 'missing',
+        formalEventCapability: false,
+        fallbackReason: redact(error instanceof Error ? error.message : String(error)),
+        publishTransport: 'issue-comment',
+        authSource: 'none',
+        prAuthorLogin: options.prAuthorLogin,
+      }),
+    };
+  }
+}
+
+export function publicPublisherIdentity(identity: GitHubReviewPublisherIdentity): GitHubReviewPublisherIdentity {
+  return {
+    mode: identity.mode,
+    identityClass: identity.identityClass,
+    login: identity.login,
+    permissionStatus: identity.permissionStatus,
+    formalEventCapability: identity.formalEventCapability,
+    fallbackReason: identity.fallbackReason,
+    publishTransport: identity.publishTransport,
+    authSource: identity.authSource,
+  };
+}
+
+export function emptyPublisherIdentity(): GitHubReviewPublisherIdentity {
+  return unconfiguredIdentity();
+}
+
+export type { GhRunResult };

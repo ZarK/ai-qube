@@ -148,6 +148,7 @@ export interface PrGateResult {
   localReview: LocalReviewGate;
   fixBatch: FixBatch;
   localReviewPublish: ReviewForgeLocalReviewPublishResult;
+  reviewPublisher: import('../providers/review_forge_provider.js').ReviewForgePublisherIdentity | null;
   reviewParticipants: ReviewParticipantObservation[];
   reviewParticipantRollup: ReviewParticipantRollup | null;
   issueChecklists: IssueChecklistSummary[];
@@ -750,7 +751,7 @@ async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = reviewRequestPolicy(config);
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
   const repoRoot = options.repoRoot ?? process.cwd();
   const localReviewContextCache = new Map<string, Promise<string[]>>();
   const changedPaths = await changedReviewPaths(config, repoRoot);
@@ -824,6 +825,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   });
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
+  const reviewPublisher = provider.describeReviewPublisher
+    ? await provider.describeReviewPublisher(null, { mint: false })
+    : null;
   const publishUnavailable: string[] = [];
   const publishedCarriedLanes: string[] = [];
   if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
@@ -877,6 +881,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     localReview,
     fixBatch,
     localReviewPublish,
+    reviewPublisher,
     reviewParticipants: reviewParticipantObservations,
     reviewParticipantRollup,
     issueChecklists,
@@ -925,6 +930,10 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
   if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);
+  if (result.reviewPublisher) {
+    lines.push(`Review publisher: mode=${result.reviewPublisher.mode}; identity=${result.reviewPublisher.identityClass}; formalEvents=${result.reviewPublisher.formalEventCapability ? 'yes' : 'no'}; permission=${result.reviewPublisher.permissionStatus}.`);
+    if (result.reviewPublisher.fallbackReason) lines.push(`- publisher fallback: ${result.reviewPublisher.fallbackReason}`);
+  }
   lines.push(`Fix batch: ${result.fixBatch.summary}`);
   if (result.reviewParticipantRollup) {
     lines.push(`Provider review participants: received=${result.reviewParticipantRollup.receivedCount}/${result.reviewParticipantRollup.expectedCount}; host lanes=${result.reviewParticipantRollup.hostLaneReceived}/${result.reviewParticipantRollup.hostLaneExpected}.`);

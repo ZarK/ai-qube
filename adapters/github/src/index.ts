@@ -397,3 +397,21 @@ export {
   type GitHubLocalReviewPublishStatus,
   type GitHubReviewProvider,
 } from "./github_review_forge.js";
+
+export {
+  createGitHubAppJwt,
+  defaultGitHubReviewPublisherConfig,
+  emptyPublisherIdentity,
+  publicPublisherIdentity,
+  resolveGitHubReviewPublisher,
+  type GitHubAppPublisherConfig,
+  type GitHubReviewPublisherConfig,
+  type GitHubReviewPublisherIdentity,
+  type GitHubReviewPublisherIdentityClass,
+  type GitHubReviewPublisherMode,
+  type GitHubReviewPublisherPermissionStatus,
+  type GitHubReviewPublisherTransport,
+  type GitHubTokenPublisherConfig,
+  type ResolvedGitHubReviewPublisher,
+  type ResolvePublisherOptions,
+} from "./github_review_publisher.js";

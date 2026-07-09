@@ -28,7 +28,7 @@ const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('.
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
-const prViewFields = 'number,title,state,url,headRefOid,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
+const prViewFields = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 
 function makeGitRepo() {
   const repo = mkdtempSync(join(tmpdir(), 'aie-pr-gate-'));

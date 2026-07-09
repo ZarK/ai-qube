@@ -12,6 +12,33 @@ export interface ProviderSelection<K extends string> {
   kind: K;
 }
 
+export type GitHubReviewPublisherMode = 'user' | 'github-app' | 'token';
+
+export interface GitHubAppPublisherConfig {
+  appId: string;
+  installationId: string;
+  /** Local filesystem path to the GitHub App private key. Never store key material here. */
+  privateKeyPath?: string;
+  /** Environment variable name that holds the private key PEM. Never store key material here. */
+  privateKeyEnv?: string;
+}
+
+export interface GitHubTokenPublisherConfig {
+  /** Environment variable name that holds a fine-grained personal access token. */
+  env: string;
+}
+
+export interface GitHubReviewPublisherConfig {
+  mode: GitHubReviewPublisherMode;
+  githubApp?: GitHubAppPublisherConfig;
+  token?: GitHubTokenPublisherConfig;
+}
+
+export interface ReviewProviderSelection extends ProviderSelection<ReviewProviderKind> {
+  /** GitHub-only reviewer identity used for provider-visible publish, not for host review compute. */
+  publisher?: GitHubReviewPublisherConfig;
+}
+
 export type JiraWorkStatus = 'in-progress' | 'ready' | 'blocked' | 'unknown';
 export type JiraWorkPriority = 'critical' | 'high' | 'medium' | 'low' | 'none';
 export type JiraLinkRelation = 'blocker' | 'blockedBy' | 'ignore';
@@ -53,7 +80,7 @@ export interface ProviderCapabilityPolicy {
 
 export interface ProviderSelections {
   work: WorkProviderSelection;
-  review: ProviderSelection<ReviewProviderKind>;
+  review: ReviewProviderSelection;
   repository: ProviderSelection<RepositoryProviderKind>;
   ci: ProviderSelection<CiProviderKind>;
   layout: ProviderSelection<LayoutProviderKind>;

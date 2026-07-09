@@ -368,6 +368,65 @@ describe('config validation', () => {
     assert.equal(original.policy.reviews.models.review.codex.model, 'gpt-5.5-codex');
   });
 
+  it('accepts github review publisher secret references and rejects embedded secrets', () => {
+    const validApp = defaultFile();
+    validApp.providers.review = {
+      kind: 'github',
+      publisher: {
+        mode: 'github-app',
+        githubApp: {
+          appId: '123',
+          installationId: '456',
+          privateKeyEnv: 'QUBE_GITHUB_APP_PRIVATE_KEY',
+        },
+      },
+    };
+    const validAppResult = validateConfig(validApp);
+    assert.equal(validAppResult.ok, true);
+    assert.equal(validAppResult.config.providers.review.publisher.mode, 'github-app');
+    assert.equal(validAppResult.config.providers.review.publisher.githubApp.privateKeyEnv, 'QUBE_GITHUB_APP_PRIVATE_KEY');
+
+    const validToken = defaultFile();
+    validToken.providers.review = {
+      kind: 'github',
+      publisher: {
+        mode: 'token',
+        token: { env: 'QUBE_GITHUB_REVIEW_TOKEN' },
+      },
+    };
+    const validTokenResult = validateConfig(validToken);
+    assert.equal(validTokenResult.ok, true);
+    assert.equal(validTokenResult.config.providers.review.publisher.mode, 'token');
+
+    const embedded = defaultFile();
+    embedded.providers.review = {
+      kind: 'github',
+      publisher: {
+        mode: 'token',
+        token: { env: 'github_pat_this_is_not_an_env_name_abcdefghijklmnop' },
+      },
+    };
+    const embeddedResult = validateConfig(embedded);
+    assert.equal(embeddedResult.ok, false);
+    assert.ok(embeddedResult.errors.some((error) => error.path === 'providers.review.publisher.token.env'));
+
+    const pemEnv = defaultFile();
+    pemEnv.providers.review = {
+      kind: 'github',
+      publisher: {
+        mode: 'github-app',
+        githubApp: {
+          appId: '123',
+          installationId: '456',
+          privateKeyEnv: '-----BEGIN PRIVATE KEY-----\nabc\n-----END PRIVATE KEY-----',
+        },
+      },
+    };
+    const pemResult = validateConfig(pemEnv);
+    assert.equal(pemResult.ok, false);
+    assert.ok(pemResult.errors.some((error) => error.path === 'providers.review.publisher.githubApp.privateKeyEnv'));
+  });
+
   it('rejects invalid branch naming policy at config load time', () => {
     const input = defaultFile();
     input.policy.branch.naming = 'issue/<number> missing slug';

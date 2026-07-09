@@ -107,23 +107,43 @@ export class GhMalformedOutputError extends Error {
   }
 }
 
-export type GhExec = (args: string[], cwd?: string) => Promise<GhRunResult>;
+export interface RunGhOptions {
+  cwd?: string;
+  exec?: GhExec;
+  /**
+   * Optional short-lived token for this invocation only.
+   * Sets GH_TOKEN in the process environment for the child call when the default
+   * exec is used. Never include this value in returned args or logs.
+   * Pass null to force the default gh authentication (clears GH_TOKEN for the child).
+   */
+  token?: string | null;
+}
 
-async function defaultGhExec(args: string[], cwd = process.cwd()): Promise<GhRunResult> {
+export type GhExec = (args: string[], cwd?: string, options?: { token?: string | null }) => Promise<GhRunResult>;
+
+async function defaultGhExec(args: string[], cwd = process.cwd(), options: { token?: string | null } = {}): Promise<GhRunResult> {
   const redactedArgs = args.map((a) => redact(a));
   const operation = `gh ${redactedArgs.join(' ')}`;
 
   try {
+    const env: NodeJS.ProcessEnv = {
+      ...process.env,
+      GH_PAGER: '',
+      CLICOLOR: '0',
+      NO_COLOR: '1',
+    };
+    if (options.token === null) {
+      delete env.GH_TOKEN;
+      delete env.GITHUB_TOKEN;
+    } else if (typeof options.token === 'string' && options.token.trim() !== '') {
+      env.GH_TOKEN = options.token;
+      delete env.GITHUB_TOKEN;
+    }
     const { stdout, stderr } = await execFileAsync('gh', args, {
       cwd,
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
-      env: {
-        ...process.env,
-        GH_PAGER: '',
-        CLICOLOR: '0',
-        NO_COLOR: '1',
-      },
+      env,
     });
     return {
       args: redactedArgs,
@@ -180,11 +200,11 @@ async function defaultGhExec(args: string[], cwd = process.cwd()): Promise<GhRun
 
 export async function runGh(
   args: string[],
-  options: { cwd?: string; exec?: GhExec } = {}
+  options: RunGhOptions = {}
 ): Promise<GhRunResult> {
-  const { cwd, exec } = options;
+  const { cwd, exec, token } = options;
   const runner = exec ?? defaultGhExec;
-  const result = await runner(args, cwd);
+  const result = await runner(args, cwd, token === undefined ? undefined : { token });
   return {
     args: result.args,
     exitCode: result.exitCode,

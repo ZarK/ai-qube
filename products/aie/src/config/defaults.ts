@@ -168,7 +168,22 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
     version: input.version,
     providers: {
       work: cloneWorkProviderSelection(input.providers.work),
-      review: { ...input.providers.review },
+      review: {
+        ...input.providers.review,
+        ...(input.providers.review.publisher
+          ? {
+            publisher: {
+              mode: input.providers.review.publisher.mode,
+              ...(input.providers.review.publisher.githubApp
+                ? { githubApp: { ...input.providers.review.publisher.githubApp } }
+                : {}),
+              ...(input.providers.review.publisher.token
+                ? { token: { ...input.providers.review.publisher.token } }
+                : {}),
+            },
+          }
+          : {}),
+      },
       repository: { ...input.providers.repository },
       ci: { ...input.providers.ci },
       layout: { ...input.providers.layout },
