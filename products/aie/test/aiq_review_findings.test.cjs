@@ -72,4 +72,53 @@ describe('AIQ review findings', () => {
     assert.equal(loadAiqReviewFindings(repo, ['src/changed.ts']), null);
     assert.deepEqual(aiqReviewContextLines(null), []);
   });
+
+  it('keeps same-line different-column diagnostics distinct and honors explicit report paths', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-columns-'));
+    const custom = join(repo, 'artifacts', 'downloaded-aiq.report.json');
+    mkdirSync(dirname(custom), { recursive: true });
+    const report = JSON.parse(readFileSync(fixturePath, 'utf8'));
+    report.stages[0].diagnostics.push({
+      code: 'no-debugger',
+      file: 'src/changed.ts',
+      message: 'Second diagnostic on the same line.',
+      range: { startColumn: 12, startLine: 7 },
+      severity: 'error',
+      source: 'biome',
+    });
+    writeFileSync(custom, `${JSON.stringify(report, null, 2)}\n`);
+
+    const loaded = loadAiqReviewFindings(repo, ['src/changed.ts'], { reportPath: custom });
+    assert.ok(loaded);
+    assert.equal(loaded.reportPath, 'artifacts/downloaded-aiq.report.json');
+    const sameLine = loaded.findings.filter(finding => finding.path === 'src/changed.ts' && finding.line === 7);
+    assert.ok(sameLine.length >= 2);
+    assert.equal(new Set(sameLine.map(finding => finding.id)).size, sameLine.length);
+    assert.ok(sameLine.some(finding => finding.column === 1));
+    assert.ok(sameLine.some(finding => finding.column === 12));
+  });
+
+  it('bounds multi-finding prompt context with truncation metadata', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-bound-'));
+    const reportPath = copyFixture(repo);
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    for (let index = 0; index < 80; index += 1) {
+      report.stages[0].diagnostics.push({
+        code: `rule-${index}`,
+        file: 'src/changed.ts',
+        message: `Synthetic finding ${index} ${'x'.repeat(200)}`,
+        range: { startColumn: 1, startLine: index + 20 },
+        severity: 'warning',
+        source: 'fixture',
+      });
+    }
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    const loaded = loadAiqReviewFindings(repo, ['src/changed.ts']);
+    const context = aiqReviewContextLines(loaded).join('\n');
+    assert.ok(loaded.findings.length > 40);
+    assert.match(context, /truncated by the review prompt budget/);
+    assert.ok(Buffer.byteLength(context, 'utf8') <= 30_000);
+    const findingLines = context.split('\n').filter(line => line.startsWith('AIQ finding:'));
+    assert.ok(findingLines.length <= 40);
+  });
 });
