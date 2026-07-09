@@ -234,7 +234,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
@@ -266,6 +266,10 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (blockers.length > 0 && structuredFindings.length === 0) {
     throw laneEvidenceFailure(path, 'blocking lane evidence must include structured findings[] entries for provider-visible review publishing.');
   }
+  const completeness = stringField(raw, 'completeness');
+  if (completeness === '') {
+    throw laneEvidenceFailure(path, 'completeness must be a non-empty self-check stating what was inspected and what was not.');
+  }
   return {
     evidence: raw,
     path,
@@ -273,6 +277,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     summary,
     blockers,
     findings: structuredFindings,
+    completeness,
     profile,
     host: stringField(provenance, 'host') || 'local-review',
     recommendation: readRecommendation(raw.recommendation ?? raw.status),
@@ -309,6 +314,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     issueNumber,
     summary: evidence.summary,
     findings: evidence.findings,
+    completeness: evidence.completeness,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest

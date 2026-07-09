@@ -151,6 +151,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly issueNumber: number;
   readonly summary: string;
   readonly findings: readonly (ReviewFinding | string)[];
+  readonly completeness?: string | null;
   readonly evidencePath: string | null;
 }
 

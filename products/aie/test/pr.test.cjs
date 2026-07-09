@@ -190,7 +190,7 @@ function promptForLane(id, contextLines = [`Run local review lane ${id}.`]) {
     categoryId: 'review',
     laneIds: [id],
     contextLines,
-    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context.',
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
 
@@ -287,7 +287,7 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
       { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
       { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
       { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
-    ],
+    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, ...lane })),
   };
 }
 
@@ -655,6 +655,7 @@ function fixtureLocalCommand(args) {
       ],
       promptStack,
       toolsUsed: runnerKind === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
+      completeness: `Inspected the ${lane} lane scope at this head; nothing was left uninspected.`,
       runnerProvenance: {
         runnerKind,
         host: runnerKind === 'local-host' ? 'codex' : 'local-command',
@@ -1404,6 +1405,9 @@ describe('PR gate service', () => {
     assert.ok(lane.artifacts.some(artifact => typeof artifact.path === 'string' && artifact.path.endsWith('issue-compliance.raw-output.json')));
     assert.match(bundle.promptText, /Run local review lane issue-compliance/);
     assert.match(bundle.outputContract, /Return JSON local review lane evidence/);
+    assert.match(bundle.outputContract, /Enumerate the complete finding set for the lane scope at the current PR head in one pass/);
+    assert.match(bundle.outputContract, /Do not stop after the first blocker/);
+    assert.match(bundle.outputContract, /completeness self-check/);
     assert.equal(bundle.promptStackHash, lane.runnerProvenance.promptStackHash);
     assert.equal(bundle.evidencePath, lanePath);
   });
@@ -1922,6 +1926,8 @@ describe('PR gate service', () => {
     assert.equal(result.publish.status, 'planned');
     assert.equal(result.publish.publishKind, 'pull-request-review');
     assert.match(result.publish.body ?? '', /QUBE review \(code-quality\): approve/);
+    assert.match(result.publish.body ?? '', /Completeness self-check:/);
+    assert.match(result.publish.body ?? '', /Inspected the code-quality lane scope at this head/);
     assert.match(result.publish.body ?? '', /- evidence: \.qube\/aie\/reviews\/93\/12\/abc123\/code-quality\.json/);
     assert.ok(calls.some(call => call.join(' ') === `pr view 12 --json ${prViewFields}`));
     assert.equal(calls.some(call => call.join(' ') === 'pr diff 12 --patch'), false);
@@ -1929,6 +1935,28 @@ describe('PR gate service', () => {
     assert.equal(calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'), false);
     assert.equal(calls.some(call => call[0] === 'api' && call[1] === 'graphql'), false);
     assert.equal(calls.some(call => call[0] === 'api' && /^repos\/example\/repo\/commits\//.test(call[1] ?? '')), false);
+  });
+
+  it('rejects lane evidence publishing without a completeness self-check', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      completeness: '',
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /completeness must be a non-empty self-check/,
+    );
   });
 
   it('reuses full PR review snapshots across same-head legacy lane publish fallback commands', async () => {

@@ -284,6 +284,7 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     `QUBE ${redact(input.lane)} review: ${input.recommendation}`,
     summary,
     ...findings.map(finding => `- ${finding}`),
+    input.completeness && input.completeness.trim() !== "" ? `Completeness self-check: ${redact(input.completeness)}` : "",
     input.evidencePath ? `Evidence: ${redact(input.evidencePath)}` : "",
   ].filter(line => line !== "").join("\n");
   return { body, marker: JSON.stringify(metadata), runId, bodyFindingCount: findings.length };
