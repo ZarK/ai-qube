@@ -147,22 +147,28 @@ async function defaultFetchInstallationToken(input: {
   cwd?: string;
   exec?: GhExec;
 }): Promise<{ token: string; permissions?: Record<string, string>; accountLogin?: string | null }> {
-  const result = await runGh([
-    'api',
-    `app/installations/${input.installationId}/access_tokens`,
-    '--method',
-    'POST',
-    '-H',
-    'Accept: application/vnd.github+json',
-    '-H',
-    `Authorization: Bearer ${input.jwt}`,
-  ], { cwd: input.cwd, exec: input.exec, token: null });
-  if (result.exitCode !== 0) {
-    throw new Error(redact(result.stderr || result.stdout || 'GitHub App installation token request failed'));
+  // Mint outside runGh so the installation token is not redacted from stdout
+  // (runGh redacts ghs_ tokens before returning). Tokens stay in-memory only.
+  void input.appId;
+  void input.privateKeyPem;
+  void input.cwd;
+  void input.exec;
+  const response = await fetch(`https://api.github.com/app/installations/${input.installationId}/access_tokens`, {
+    method: 'POST',
+    headers: {
+      Accept: 'application/vnd.github+json',
+      Authorization: `Bearer ${input.jwt}`,
+      'X-GitHub-Api-Version': '2022-11-28',
+      'User-Agent': 'qube-github-review-publisher',
+    },
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    throw new Error(redact(text || `GitHub App installation token request failed with status ${response.status}`));
   }
   let parsed: unknown;
   try {
-    parsed = JSON.parse(result.stdout);
+    parsed = JSON.parse(text);
   } catch {
     throw new Error('GitHub App installation token response was not valid JSON.');
   }
