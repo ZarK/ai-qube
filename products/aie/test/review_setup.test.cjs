@@ -185,15 +185,19 @@ describe('review publisher setup execution', () => {
     assert.equal(JSON.parse(readFileSync(configPath, 'utf8')).providers.review.publisher.githubApp.privateKeyEnv, 'QUBE_INTERACTIVE_APP_KEY');
   });
 
-  it('returns guidance with missing flags non-interactively without failing or writing config', async () => {
+  it('returns guidance with missing flags non-interactively without writing config', async () => {
     const root = makeDirectory();
     const configPath = join(root, '.qube', 'aie', 'config.json');
-    const result = await runReviewSetup({ mode: 'github-app', config: null, configPath, root, yes: true, appId: '123' });
+    const guidanceOnly = await runReviewSetup({ mode: 'github-app', config: null, configPath, root, appId: '123' });
+    assert.equal(guidanceOnly.ok, true);
+    assert.equal(guidanceOnly.applied, false);
+    assert.deepEqual(guidanceOnly.missingFields, ['--installation-id', '--private-key-env or --private-key-path']);
 
-    assert.equal(result.ok, true);
-    assert.equal(result.applied, false);
-    assert.deepEqual(result.missingFields, ['--installation-id', '--private-key-env or --private-key-path']);
-    assert.match(result.nextAction, /--installation-id/);
+    const applyIntended = await runReviewSetup({ mode: 'github-app', config: null, configPath, root, yes: true, appId: '123' });
+    assert.equal(applyIntended.ok, false);
+    assert.equal(applyIntended.applied, false);
+    assert.deepEqual(applyIntended.missingFields, ['--installation-id', '--private-key-env or --private-key-path']);
+    assert.match(applyIntended.nextAction, /--installation-id/);
     assert.throws(() => readFileSync(configPath, 'utf8'));
   });
 });

@@ -218,7 +218,28 @@ export async function runReviewSetup(options: RunReviewSetupOptions): Promise<Re
 
   const publisher = buildPublisher({ mode: options.mode, ...values, login: trimmed(options.login) });
   const missingFields = publisherMissingFields(publisher);
-  const shouldApply = missingFields.length === 0 && options.dryRun !== true && (options.yes === true || prompted);
+  const applyIntended = options.yes === true || prompted;
+  // Guidance-only invocations succeed without apply. Explicit apply intent that cannot
+  // produce a complete publisher config is a false-success and must fail.
+  if (missingFields.length > 0 && applyIntended) {
+    return {
+      ok: false,
+      command,
+      mode: options.mode,
+      applied: false,
+      dryRun: options.dryRun === true,
+      configPath: options.configPath,
+      publisher,
+      secretReferences: safeSecretReferences(publisher),
+      missingFields,
+      validationErrors: [],
+      guidance,
+      doctor: null,
+      nextAction: nextAction({ mode: options.mode, missingFields, applied: false, dryRun: options.dryRun === true, yes: options.yes === true }),
+      roleBoundary: REVIEW_PUBLISHER_ROLE_BOUNDARY,
+    };
+  }
+  const shouldApply = missingFields.length === 0 && options.dryRun !== true && applyIntended;
   const plannedConfig = configWithPublisher(options.config, publisher);
   if (shouldApply) await (options.writeConfig ?? defaultWriteConfig)(options.configPath, formatConfigFile(plannedConfig));
   const doctor = missingFields.length === 0

@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode } from './config/index.js';
 import type { GitHubReviewPublisherIdentity, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 import { resolveGitHubReviewPublisher, runGh } from './providers/github_adapter_exports.js';
@@ -218,14 +219,32 @@ async function probeCurrentRepositoryAccess(options: {
       fallbackReason: 'Configured publisher credential did not yield an access token for the current-repository probe.',
     };
   }
-  const repositoryResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], { cwd: options.cwd });
-  const repository = repositoryResult.exitCode === 0 ? parseRepositoryName(repositoryResult.stdout) : null;
+  // Prefer publisher-credentialed discovery so ambient gh auth cannot mask a valid publisher.
+  const repositoryResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], {
+    cwd: options.cwd,
+    token: options.accessToken,
+  });
+  let repository = repositoryResult.exitCode === 0 ? parseRepositoryName(repositoryResult.stdout) : null;
+  if (!repository) {
+    // Local git remote fallback does not require ambient provider credentials.
+    try {
+      const remote = execFileSync('git', ['remote', 'get-url', 'origin'], {
+        cwd: options.cwd ?? process.cwd(),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      }).trim();
+      const match = remote.match(/github\.com[:/]([^/]+\/[^/.]+?)(?:\.git)?$/i);
+      repository = match ? match[1] : null;
+    } catch {
+      repository = null;
+    }
+  }
   if (!repository) {
     return {
       repository: null,
       accessible: false,
       pullRequestPermission: 'unknown',
-      fallbackReason: 'Could not detect the current GitHub repository from the working directory.',
+      fallbackReason: 'Could not detect the current GitHub repository using the publisher credential or local git remote.',
     };
   }
   const accessResult = await runGh([
