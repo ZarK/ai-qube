@@ -287,6 +287,24 @@ describe('init service', () => {
     assert.doesNotMatch(agent, /<!--/);
   });
 
+  it('renders configured review tier model and effort into the Codex review agent', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } } };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(agent, /model = "gpt-5\.5-codex"/);
+    assert.match(agent, /model_reasoning_effort = "high"/);
+  });
+
   it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();

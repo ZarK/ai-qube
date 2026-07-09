@@ -6,7 +6,7 @@ import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
-import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract } from './local_review_runner_support.js';
+import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { defaultRereviewMode } from '../config/schema.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
@@ -115,14 +115,14 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath]): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution): LocalReviewLaneRun {
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand));
   const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand));
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && promptText.trim() !== ''
-    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand })
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, tierResolution })
     : null;
   return {
     issueNumber,
@@ -183,6 +183,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const lanes: LocalReviewLaneRun[] = [];
   const written: string[] = [];
   const unavailable: string[] = [];
+  const reviewTierResolution = resolveReviewModelTier(config.reviewModels, 'review', 'codex');
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane)));
@@ -213,7 +214,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path]));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], reviewTierResolution));
     }
   }
 
@@ -224,7 +225,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, cliPrefix, contextLines, includePrompt);
+      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], reviewTierResolution);
       if (command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';

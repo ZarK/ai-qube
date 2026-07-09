@@ -88,6 +88,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       waitMinutes: 10,
       requestText: '',
       carryForwardPublish: 'note',
+      models: { review: {}, economy: {}, synthesis: {} },
     },
     gates: {
       definitions: [],
@@ -293,6 +294,11 @@ export function configFromFile(input: ConfigFileShape): Config {
       waitMinutes: policy.reviews.waitMinutes,
       requestText: policy.reviews.requestText,
       carryForwardPublish: policy.reviews.carryForwardPublish,
+      models: {
+        review: { ...policy.reviews.models.review },
+        economy: { ...policy.reviews.models.economy },
+        synthesis: { ...policy.reviews.models.synthesis },
+      },
     },
     gates: { definitions: policyGateDefinitions(policy.gates) },
     audit: {
@@ -354,6 +360,11 @@ export function configFromFile(input: ConfigFileShape): Config {
     reviewWaitMinutes: policy.reviews.waitMinutes,
     reviewRequestText: policy.reviews.requestText,
     reviewCarryForwardPublish: policy.reviews.carryForwardPublish,
+    reviewModels: {
+      review: { ...policy.reviews.models.review },
+      economy: { ...policy.reviews.models.economy },
+      synthesis: { ...policy.reviews.models.synthesis },
+    },
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,

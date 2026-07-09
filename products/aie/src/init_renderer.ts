@@ -57,7 +57,7 @@ function commandEnabled(config: Config, target: CommandTarget): boolean {
 function commandBody(config: Config, target: CommandTarget, context: InitRenderContext): string {
   const workspaceRunner = context.workspaceAieRunner ?? null;
   if (target.renderer === 'make-it-so') return renderMakeItSoCommand(config);
-  if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent();
+  if (target.renderer === 'codex-review-focus-agent') return renderCodexReviewFocusAgent(config);
   const exhaustive: never = target.renderer;
   throw new Error(`Unsupported init command renderer ${exhaustive as CommandRenderer}. Next action: use a supported Executor host profile command target.`);
 }

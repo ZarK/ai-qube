@@ -485,10 +485,14 @@ Go.
 `;
 }
 
-export function renderCodexReviewFocusAgent(): string {
+export function renderCodexReviewFocusAgent(config?: Config): string {
+  const reviewBinding = config?.reviewModels.review.codex;
+  const modelLines = reviewBinding
+    ? `model = "${reviewBinding.model}"\n${reviewBinding.effort ? `model_reasoning_effort = "${reviewBinding.effort}"\n` : ''}`
+    : '';
   return `name = "qube-review-focus"
 description = "Read-only focused PR reviewer for one QUBE local review lane."
-developer_instructions = """
+${modelLines}developer_instructions = """
 You are an independent read-only PR reviewer for exactly one QUBE review focus lane.
 
 Run only the inline spawn prompt the main agent gives you. Do not read separate prompt files. Do not edit source, tests, docs, config, package metadata, PR body, or issue content. You may write only the lane evidence JSON and host-provenance JSON paths named in the inline lane prompt.

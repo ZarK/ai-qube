@@ -1,4 +1,4 @@
-import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewLanePolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, MigrationPolicy, ReviewAdapterKind, ReviewContextSources, ReviewLanePolicy, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 
 export const DEFAULT_CONFIG_VERSION = 1;
 
@@ -115,6 +115,7 @@ export interface ReviewConfig {
   waitMinutes: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
+  models: ReviewModelsPolicy;
 }
 
 export interface GatePolicyConfig {
@@ -198,6 +199,7 @@ export interface Config extends ConfigFileShape {
   reviewWaitMinutes: number;
   reviewRequestText: string;
   reviewCarryForwardPublish: 'note' | 'none';
+  reviewModels: ReviewModelsPolicy;
   opencodeCommandAlias: boolean;
   manualUiAudit: boolean;
   uiAuditAppLaunch: string;
