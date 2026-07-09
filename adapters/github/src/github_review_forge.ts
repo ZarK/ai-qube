@@ -548,7 +548,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     inlineCount > 0 ? `- ${inlineCount} finding(s) were published as inline review comments on the PR diff.` : '- Inline findings: none.',
     '',
     'Completeness self-check:',
-    input.completeness && input.completeness.trim() !== '' ? sanitizePublishedText(input.completeness) : '- Not recorded.',
+    input.completeness && input.completeness.trim() !== '' ? truncatePublishedFinding(input.completeness, input.evidencePath) : '- Not recorded.',
     '',
     'Metadata:',
     `- lane: ${redact(input.lane)}`,
