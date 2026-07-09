@@ -196,11 +196,11 @@ async function defaultFetchInstallationToken(input: {
     try {
       // Race body consumption against the same abort controller so stalled bodies
       // cannot outlive the probe deadline after headers have already arrived.
+      // Do not call response.body.cancel() after response.text() starts: Node's
+      // Fetch marks the stream locked and cancel() then rejects asynchronously.
       text = await new Promise<string>((resolve, reject) => {
-        const onBodyAbort = () => {
-          try { response.body?.cancel(); } catch { /* ignore */ }
-          reject(new Error('GitHub App installation token response body timed out or was aborted.'));
-        };
+        const abortError = () => new Error('GitHub App installation token response body timed out or was aborted.');
+        const onBodyAbort = () => reject(abortError());
         if (controller.signal.aborted) {
           onBodyAbort();
           return;
@@ -214,7 +214,7 @@ async function defaultFetchInstallationToken(input: {
           .catch((error: unknown) => {
             controller.signal.removeEventListener('abort', onBodyAbort);
             if (controller.signal.aborted) {
-              reject(new Error('GitHub App installation token response body timed out or was aborted.'));
+              reject(abortError());
               return;
             }
             reject(error);

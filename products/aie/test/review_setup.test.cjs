@@ -382,6 +382,23 @@ describe('review publisher doctor', () => {
     assert.match(result.fallbackReason ?? '', /timed out|Publisher identity probe/i);
   });
 
+  it('skips live publisher resolution when no distinct publisher is configured', async () => {
+    let resolverCalls = 0;
+    const result = await runReviewDoctor({
+      config: getDefaults(),
+      mintProbe: true,
+      resolvePublisher: async () => {
+        resolverCalls += 1;
+        throw new Error('unconfigured doctor must not resolve a live publisher');
+      },
+      probeTimeoutMs: 50,
+    });
+    assert.equal(resolverCalls, 0);
+    assert.equal(result.readiness, 'unconfigured');
+    assert.equal(result.probe.attempted, false);
+    assert.match(result.nextAction, /review setup github-app|review setup token/i);
+  });
+
   it('does not treat missing credential secrets as failures under --no-probe', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {

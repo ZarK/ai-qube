@@ -426,7 +426,20 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
   let resolved: ResolvedGitHubReviewPublisher | null = null;
   let identity: GitHubReviewPublisherIdentity;
   try {
-    if (missingFields.length > 0) {
+    if (!configured) {
+      // Default user publisher is unconfigured for distinct review publishing.
+      // Do not mint or call live identity endpoints for this no-op readiness path.
+      identity = {
+        mode: 'user',
+        identityClass: 'user',
+        login: null,
+        permissionStatus: 'unconfigured',
+        formalEventCapability: false,
+        fallbackReason: 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
+        publishTransport: 'pull-request-review',
+        authSource: 'gh-user',
+      };
+    } else if (missingFields.length > 0) {
       identity = unavailableIdentity(mode, `Publisher configuration is incomplete: ${missingFields.join(', ')}.`);
     } else {
       resolved = await withProbeTimeout(
