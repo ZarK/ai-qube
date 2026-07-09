@@ -122,6 +122,39 @@ describe('AIQ review findings', () => {
     assert.ok(findingLines.length <= 40);
   });
 
+  it('prefers errors over earlier path-ordered warnings when applying prompt caps', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-severity-'));
+    const reportPath = copyFixture(repo);
+    const report = JSON.parse(readFileSync(reportPath, 'utf8'));
+    report.stages = [{
+      stageId: 'lint',
+      status: 'failed',
+      diagnostics: [
+        ...Array.from({ length: 45 }, (_, index) => ({
+          code: `warn-${index}`,
+          file: `aaa/path-${String(index).padStart(2, '0')}.ts`,
+          message: `warning ${index}`,
+          range: { startColumn: 1, startLine: 1 },
+          severity: 'warning',
+          source: 'fixture',
+        })),
+        {
+          code: 'late-error',
+          file: 'zzz/late.ts',
+          message: 'late severe finding',
+          range: { startColumn: 1, startLine: 9 },
+          severity: 'error',
+          source: 'fixture',
+        },
+      ],
+    }];
+    writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`);
+    const loaded = loadAiqReviewFindings(repo, []);
+    const context = aiqReviewContextLines(loaded).join('\n');
+    assert.match(context, /late-error/);
+    assert.match(context, /late severe finding/);
+  });
+
   it('uses UTF-8 byte budget and preserves outside-repo report identity', () => {
     const repo = mkdtempSync(join(tmpdir(), 'aie-aiq-external-'));
     const externalRoot = mkdtempSync(join(tmpdir(), 'aie-aiq-external-report-'));

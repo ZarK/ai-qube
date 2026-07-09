@@ -289,18 +289,29 @@ export function aiqReviewContextLines(report: AiqReviewFindings | null): string[
     'Do not add a supplied AIQ defect to findings[] as a new finding. Only defects not represented by a supplied AIQ id belong in findings[]. This prevents duplicate publication.',
   ];
 
+  const severityRank = (severity: AiqReviewFinding['severity']): number =>
+    severity === 'error' ? 0 : severity === 'warning' ? 1 : 2;
+  // Prefer severe findings when applying caps so lower-severity noise cannot hide errors.
+  const ranked = [...report.findings].sort((first, second) =>
+    severityRank(first.severity) - severityRank(second.severity)
+      || (first.path ?? '').localeCompare(second.path ?? '')
+      || (first.line ?? 0) - (second.line ?? 0)
+      || (first.column ?? 0) - (second.column ?? 0)
+      || first.rule.localeCompare(second.rule)
+      || first.contentHash.localeCompare(second.contentHash));
+
   const selected: AiqReviewFinding[] = [];
   let truncatedFindingCount = 0;
   let usedBytes = utf8Bytes(header.join('\n'));
-  for (const finding of report.findings) {
+  for (const finding of ranked) {
     if (selected.length >= AIQ_REVIEW_MAX_FINDINGS) {
-      truncatedFindingCount = report.findings.length - selected.length;
+      truncatedFindingCount = ranked.length - selected.length;
       break;
     }
     const line = `AIQ finding: ${JSON.stringify(finding)}.`;
     const nextBytes = usedBytes + utf8Bytes(line) + 1;
     if (nextBytes > AIQ_REVIEW_MAX_CONTEXT_BYTES) {
-      truncatedFindingCount = report.findings.length - selected.length;
+      truncatedFindingCount = ranked.length - selected.length;
       break;
     }
     selected.push(finding);
