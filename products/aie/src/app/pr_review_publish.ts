@@ -248,6 +248,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   assertArrayField(raw, 'artifacts', path);
   assertArrayField(raw, 'contextReviewed', path);
   assertArrayField(raw, 'promptStack', path);
+  if (!Array.isArray(raw.preconditions)) throw laneEvidenceFailure(path, 'preconditions must be an array of observed gate-level facts (empty when none were observed).');
   const adapter = raw.adapter;
   if (adapter !== 'local-command' && adapter !== 'local-host') throw laneEvidenceFailure(path, 'adapter must be local-command or local-host.');
   const provenance = raw.runnerProvenance;

@@ -584,6 +584,11 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
     blockers.push(`Local review evidence for ${profile} must include a non-empty top-level promptStack.`);
   }
   const lanesById = new Map(lanes.map(lane => [lane.id, lane]));
+  for (const lane of lanes) {
+    if (!validRecommendationStatus(lane.recommendation, lane.status)) {
+      blockers.push(`${lane.id} recommendation ${lane.recommendation} is not valid with status ${lane.status}; ${recommendationStatusRule()}.`);
+    }
+  }
   for (const laneId of requiredLanes) {
     const lane = lanesById.get(laneId);
     if (!lane || lane.status !== 'passed') continue;

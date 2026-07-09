@@ -287,7 +287,7 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
       { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
       { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
       { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
-    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, ...lane })),
+    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, preconditions: [], ...lane })),
   };
 }
 
@@ -656,6 +656,7 @@ function fixtureLocalCommand(args) {
       promptStack,
       toolsUsed: runnerKind === 'local-host' ? ['codex', 'local-host'] : ['local-command'],
       completeness: `Inspected the ${lane} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
       runnerProvenance: {
         runnerKind,
         host: runnerKind === 'local-host' ? 'codex' : 'local-command',
@@ -1986,6 +1987,50 @@ describe('PR gate service', () => {
       () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
       /recommendation request-changes is not valid with status passed/,
     );
+  });
+
+  it('rejects lane evidence publishing without a preconditions array', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => {
+      const { preconditions, ...rest } = lane;
+      return {
+        ...rest,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      };
+    });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /preconditions must be an array of observed gate-level facts/,
+    );
+  });
+
+  it('blocks gate aggregation when lane recommendation contradicts status', async () => {
+    const repo = makeGitRepo();
+    const config = localCommandConfig();
+    trustReviewCommands(repo);
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr()],
+      localCommand: args => {
+        const result = fixtureLocalCommand(args);
+        const body = JSON.parse(result.stdout);
+        if (body.lane === 'code-quality') body.recommendation = 'request-changes';
+        return { ...result, stdout: JSON.stringify(body) };
+      },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /recommendation request-changes is not valid with status passed/);
   });
 
   it('rejects lane evidence publishing without a completeness self-check', async () => {
