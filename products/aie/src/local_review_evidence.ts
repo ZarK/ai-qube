@@ -700,7 +700,7 @@ function adapterMap(lanes: readonly LocalReviewLane[], adapter: LocalReviewEvide
   return new Map(lanes.map(lane => [lane.id, adapter]));
 }
 
-function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
+export function gitDeltaPathsSync(repoRoot: string, fromHeadSha: string, toHeadSha: string): string[] | null {
   try {
     const output = execFileSync('git', ['-C', repoRoot, 'diff', '--name-only', `${fromHeadSha}..${toHeadSha}`], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 });
     return output.split(/\r?\n/).map(line => line.trim()).filter(line => line !== '');

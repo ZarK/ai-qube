@@ -2,7 +2,8 @@ import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { gitDeltaPathsSync, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { carryForwardDeltaTouched } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -16,6 +17,7 @@ export interface PrReviewPublishOptions {
   repoRoot?: string;
   exec?: PrGateExec;
   carryForwardPublish?: 'note' | 'none';
+  carryForwardScope?: CarryForwardScope;
 }
 
 export interface PrReviewPublishResult {
@@ -323,14 +325,24 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     throw new Error('publish lane review failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
   const evidence = validateLaneEvidence(repoRoot, issueNumber, options.prNumber, headSha, options.lane);
-  if (options.carryForwardPublish === 'none' && isRecord(evidence.evidence.carriedForward)) {
-    return {
-      ok: true,
-      command: 'pr review publish',
-      prNumber: options.prNumber,
-      lane: options.lane,
-      publish: { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: `Carried-forward lane publishing is disabled by policy; local carried evidence for ${options.lane} satisfies the gate.` },
-    };
+  const carriedForward = isRecord(evidence.evidence.carriedForward) && typeof evidence.evidence.carriedForward.fromHeadSha === 'string' ? evidence.evidence.carriedForward.fromHeadSha.trim() : null;
+  if (carriedForward) {
+    if (options.carryForwardPublish === 'none') {
+      return {
+        ok: true,
+        command: 'pr review publish',
+        prNumber: options.prNumber,
+        lane: options.lane,
+        publish: { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: `Carried-forward lane publishing is disabled by policy; local carried evidence for ${options.lane} satisfies the gate.` },
+      };
+    }
+    const deltaPaths = gitDeltaPathsSync(repoRoot, carriedForward, headSha);
+    if (deltaPaths === null) {
+      throw new Error(`publish lane review failed. Likely cause: the carried-forward delta from ${carriedForward} could not be verified with git. Next action: rerun the lane review for the current head instead of carrying it forward.`);
+    }
+    if (carryForwardDeltaTouched(deltaPaths, options.carryForwardScope?.laneMatchPatterns[options.lane] ?? [], options.carryForwardScope?.contextPatterns ?? [])) {
+      throw new Error(`publish lane review failed. Likely cause: the head delta touches the ${options.lane} lane scope or review context, so carried-forward evidence is invalid. Next action: rerun the lane review for the current head.`);
+    }
   }
   const publishInput = {
     dryRun: options.dryRun ?? false,

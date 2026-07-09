@@ -802,6 +802,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     includePrompts: options.includeLocalReviewPrompts === true,
     changedPaths,
   });
+  const carryForwardScope = {
+    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+  };
   const localReview = readLocalReviewGate({
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -815,18 +819,17 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     expectedPromptStackHashes: expectedPromptStackHashes(localReviewRunner),
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
-    carryForwardScope: {
-      laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
-      contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
-    },
+    carryForwardScope,
   });
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
-  if (!dryRun && config.reviewCarryForwardPublish === 'note') {
+  const publishedCarriedLanes: string[] = [];
+  if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
       for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
         try {
-          await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec });
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+          if (published.publish.status === 'published' || published.publish.status === 'skipped') publishedCarriedLanes.push(lane.id);
         } catch (error: unknown) {
           publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);
         }
@@ -834,8 +837,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     }
   }
   const reviewParticipants = resolveReviewParticipants({ adapter: config.reviewAdapter, remoteReviewers: policy.reviews.reviewers, activeLanes: hostReviewLanes, remoteReviewAgentAdapters });
-  const carriedForwardLanes = config.reviewCarryForwardPublish === 'none' && localReview.status === 'passed'
-    ? localReview.evidence.filter(evidence => evidence.status === 'passed').flatMap(evidence => evidence.lanes.filter(lane => lane.carriedForward !== null && lane.status === 'passed' && lane.recommendation === 'approve').map(lane => lane.id))
+  const carriedForwardLanes = localReview.status === 'passed'
+    ? [...new Set([
+        ...(config.reviewCarryForwardPublish === 'none'
+          ? localReview.evidence.filter(evidence => evidence.status === 'passed').flatMap(evidence => evidence.lanes.filter(lane => lane.carriedForward !== null && lane.status === 'passed' && lane.recommendation === 'approve').map(lane => lane.id))
+          : []),
+        ...publishedCarriedLanes,
+      ])]
     : [];
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
