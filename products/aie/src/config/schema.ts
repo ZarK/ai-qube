@@ -496,11 +496,12 @@ function readGitHubAppPublisherConfig(value: unknown, path: string, errors: Vali
     errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
     return undefined;
   }
-  rejectUnknownKeys(value, ['appId', 'installationId', 'privateKeyPath', 'privateKeyEnv'], path, errors);
+  rejectUnknownKeys(value, ['appId', 'installationId', 'privateKeyPath', 'privateKeyEnv', 'login'], path, errors);
   const appId = readOptionalNonEmptyString(value, 'appId', `${path}.appId`, errors);
   const installationId = readOptionalNonEmptyString(value, 'installationId', `${path}.installationId`, errors);
   const privateKeyPath = readOptionalNonEmptyString(value, 'privateKeyPath', `${path}.privateKeyPath`, errors);
   const privateKeyEnv = readOptionalNonEmptyString(value, 'privateKeyEnv', `${path}.privateKeyEnv`, errors);
+  const login = readOptionalNonEmptyString(value, 'login', `${path}.login`, errors);
   if (!appId || !installationId) {
     errors.push({ kind: 'invalid', path, message: `${path} requires appId and installationId` });
     return undefined;
@@ -526,6 +527,7 @@ function readGitHubAppPublisherConfig(value: unknown, path: string, errors: Vali
     installationId,
     ...(privateKeyPath ? { privateKeyPath } : {}),
     ...(privateKeyEnv ? { privateKeyEnv } : {}),
+    ...(login ? { login } : {}),
   };
 }
 
@@ -535,8 +537,9 @@ function readGitHubTokenPublisherConfig(value: unknown, path: string, errors: Va
     errors.push({ kind: 'invalid', path, message: `${path} must be an object` });
     return undefined;
   }
-  rejectUnknownKeys(value, ['env'], path, errors);
+  rejectUnknownKeys(value, ['env', 'login'], path, errors);
   const env = readOptionalNonEmptyString(value, 'env', `${path}.env`, errors);
+  const login = readOptionalNonEmptyString(value, 'login', `${path}.login`, errors);
   if (!env) {
     errors.push({ kind: 'invalid', path: `${path}.env`, message: `${path}.env is required and must be an environment variable name` });
     return undefined;
@@ -545,7 +548,7 @@ function readGitHubTokenPublisherConfig(value: unknown, path: string, errors: Va
     errors.push({ kind: 'invalid', path: `${path}.env`, message: `${path}.env must be an environment variable name, not a token value` });
     return undefined;
   }
-  return { env };
+  return { env, ...(login ? { login } : {}) };
 }
 
 function readGitHubReviewPublisherConfig(value: unknown, path: string, errors: ValidationError[]): GitHubReviewPublisherConfig | undefined {

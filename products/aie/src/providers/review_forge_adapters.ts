@@ -33,9 +33,11 @@ export interface ReviewForgeAdapterOptions {
       installationId: string;
       privateKeyPath?: string;
       privateKeyEnv?: string;
+      login?: string;
     };
     token?: {
       env: string;
+      login?: string;
     };
   } | null;
 }

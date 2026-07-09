@@ -21,11 +21,15 @@ export interface GitHubAppPublisherConfig {
   privateKeyPath?: string;
   /** Environment variable name that holds the private key PEM. Never store key material here. */
   privateKeyEnv?: string;
+  /** Optional public bot login for load-path trust matching only (not a secret). */
+  login?: string;
 }
 
 export interface GitHubTokenPublisherConfig {
   /** Environment variable name that holds a fine-grained personal access token. */
   env: string;
+  /** Optional public login for load-path trust matching only (not a secret). */
+  login?: string;
 }
 
 export interface GitHubReviewPublisherConfig {

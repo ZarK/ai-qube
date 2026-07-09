@@ -19,10 +19,14 @@ export interface GitHubAppPublisherConfig {
   readonly installationId: string;
   readonly privateKeyPath?: string;
   readonly privateKeyEnv?: string;
+  /** Optional public bot login used only for trust matching on load paths (never a secret). */
+  readonly login?: string;
 }
 
 export interface GitHubTokenPublisherConfig {
   readonly env: string;
+  /** Optional public login used only for trust matching on load paths (never a secret). */
+  readonly login?: string;
 }
 
 export interface GitHubReviewPublisherConfig {

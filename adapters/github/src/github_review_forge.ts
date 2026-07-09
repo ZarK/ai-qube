@@ -534,12 +534,18 @@ function findingDigest(findings: readonly ReviewFinding[], completeness: string 
     .slice(0, 16);
 }
 
-function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?: readonly ReviewFinding[], inlineCount = 0): { body: string; marker: string; runId: string; bodyFindingCount: number; inlineCommentCount: number } {
+function laneReviewBody(
+  input: GitHubLaneReviewPublishInput,
+  bodyFindingsInput?: readonly ReviewFinding[],
+  inlineCount = 0,
+  publishKind: 'pull-request-review' | 'issue-comment' = 'pull-request-review',
+): { body: string; marker: string; runId: string; bodyFindingCount: number; inlineCommentCount: number } {
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
   const digest = findingDigest(allFindings, input.completeness);
   const bodyFindings = bodyFindingsInput ?? allFindings;
+  const inline = publishKind === 'issue-comment' ? 'issue-comment' : 'review-api';
   const metadata: LaneReviewMetadata = {
     version: 1,
     head: input.headSha,
@@ -552,7 +558,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     recommendation: input.recommendation,
     status: input.status,
     summary,
-    inline: 'review-api',
+    inline,
     inlineCommentCount: inlineCount,
     bodyFindingCount: bodyFindings.length,
     findingDigest: digest,
@@ -581,7 +587,7 @@ function laneReviewBody(input: GitHubLaneReviewPublishInput, bodyFindingsInput?:
     `- issue: #${input.issueNumber}`,
     `- run id: ${runId}`,
     `- finding digest: ${digest}`,
-    `- publish kind: pull-request-review`,
+    `- publish kind: ${publishKind}`,
     `- inline comments: ${inlineCount}`,
     input.evidencePath ? `- evidence: ${redact(input.evidencePath)}` : '- evidence: optional local audit only',
   ].join('\n');
@@ -595,7 +601,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
-    if (review.inline !== 'review-api') return false;
+    if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
     return review.head === input.headSha
       && review.lane === input.lane
       && review.runId === runId
@@ -1637,7 +1643,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
-      const { body, marker, runId, bodyFindingCount } = laneReviewBody(input, allFindings, 0);
+      const { body, marker, runId, bodyFindingCount } = laneReviewBody(input, allFindings, 0, 'issue-comment');
       try {
         const commentResult = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], ghOptions);
         if (commentResult.exitCode !== 0) {
@@ -2059,11 +2065,11 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
   /**
    * Authors trusted for QUBE marker comments/reviews on load paths.
-   * Never mints installation tokens or publisher credentials here — mint only on publish.
-   * When a distinct publisher is configured, also trust any author with a valid
-   * qube-pr-review / local-review marker body so bot/token-published lanes remain visible.
+   * Concrete allowlist only (never trust-all markers). Never mints credentials here.
+   * Distinct publisher logins come from process cache (set on publish) or optional
+   * non-secret configured login fields when present.
    */
-  private async trustedAuthorsForLoad(): Promise<string[] | 'any-valid-marker'> {
+  private async trustedAuthorsForLoad(): Promise<string[]> {
     const authors: string[] = [];
     try {
       const login = await this.currentLogin();
@@ -2071,36 +2077,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     } catch {
       // optional on load
     }
-    const mode = this.options.publisher?.mode ?? 'user';
-    if (mode === 'user') return authors.length > 0 ? authors : [];
-
-    if (this.cachedPublisherLogin !== undefined) {
-      if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) {
-        authors.push(this.cachedPublisherLogin);
-      }
-      // Distinct publisher: also accept valid markers from other identities (e.g. app bot)
-      // without reminting on every pr view/gate load.
-      return 'any-valid-marker';
+    const configuredLogin = this.options.publisher?.githubApp && 'login' in (this.options.publisher.githubApp as object)
+      ? (this.options.publisher.githubApp as { login?: string }).login
+      : this.options.publisher?.token && 'login' in (this.options.publisher.token as object)
+        ? (this.options.publisher.token as { login?: string }).login
+        : undefined;
+    if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '' && !authors.some(author => authorMatches(author, configuredLogin))) {
+      authors.push(configuredLogin.trim());
     }
-
-    try {
-      const publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
-        cwd: this.options.cwd,
-        exec: this.options.exec,
-        mint: false,
-      });
-      if (publisher.identity.login) {
-        this.cachedPublisherLogin = publisher.identity.login;
-        if (!authors.some(author => authorMatches(author, publisher.identity.login!))) {
-          authors.push(publisher.identity.login);
-        }
-      } else {
-        this.cachedPublisherLogin = null;
-      }
-    } catch {
-      this.cachedPublisherLogin = null;
+    if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) {
+      authors.push(this.cachedPublisherLogin);
     }
-    return 'any-valid-marker';
+    return authors;
   }
 
   private async currentLogin(): Promise<string> {

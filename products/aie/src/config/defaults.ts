@@ -180,6 +180,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
               ...(input.providers.review.publisher.token
                 ? { token: { ...input.providers.review.publisher.token } }
                 : {}),
+              // login fields clone via object spread above
             },
           }
           : {}),
