@@ -279,7 +279,7 @@ describe('init service', () => {
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Configured review adapter: local/);
     assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
-    assert.match(agents, /spawn one independent Codex subagent per lane/);
+    assert.match(agents, /spawn one independent fresh-context Codex review subagent per lane/);
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
     assert.match(agent, /read-only PR reviewer/);
