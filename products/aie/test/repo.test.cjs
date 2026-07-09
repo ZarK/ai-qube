@@ -227,6 +227,87 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
   });
 
+  it('inspects a Python workspace monorepo layout with projects and local signals', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'python-workspace-monorepo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'packages/core', 'services/api']);
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-python-root');
+    assert.equal(result.projects.find(project => project.path === 'packages/core').packageName, 'fixture-python-core');
+    assert.equal(result.projects.find(project => project.path === 'services/api').packageName, 'fixture-python-api');
+    assert.deepEqual(result.lockfiles, []);
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml' && marker.section === 'tool.hatch'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'pyproject.toml' && marker.section === 'tool.uv'));
+    assert.ok(result.rootMarkers.every(marker => !marker.path.includes('#')));
+    assert.ok(result.projects.filter(project => project.path !== '.').every(project => project.packageManager === null));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'uv.lock'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'tox.ini'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'noxfile.py'));
+  });
+
+  it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'python-workspace-monorepo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'packages/core', 'services/api']);
+    const rootProject = inspected.projects.find(project => project.path === '.');
+    assert.equal(rootProject.id, 'fixture-python-root');
+    assert.equal(rootProject.kind, 'workspace');
+    assert.equal(rootProject.packageName, 'fixture-python-root');
+    assert.equal(rootProject.packageManager, null);
+
+    const affected = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['uv.lock'],
+    });
+
+    assert.equal(affected.layout.kind, 'python-workspace-monorepo');
+    assert.deepEqual(affected.affectedProjects.map(project => project.project.id), ['fixture-python-root']);
+    assert.equal(affected.affectedProjects[0].project.packageName, 'fixture-python-root');
+    assert.equal(affected.affectedProjects[0].project.kind, 'workspace');
+  });
+
+  it('prefers the Python workspace when a root package.json declares workspaces without JS members', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['packages/*'] }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'python-workspace-monorepo');
+    const rootProject = inspected.projects.find(project => project.path === '.');
+    assert.equal(rootProject.packageName, 'fixture-python-root');
+    assert.equal(rootProject.kind, 'workspace');
+    assert.ok(inspected.warnings.some(warning => /Both JavaScript and Python root workspace declarations were detected/.test(warning)));
+
+    const affected = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['uv.lock'],
+    });
+
+    assert.deepEqual(affected.affectedProjects.map(project => project.project.id), ['fixture-python-root']);
+  });
+
+  it('reports an ambiguous layout when JavaScript and Python workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
   it('inspects a single app service layout from fixture root signals', async () => {
     const repo = makeFixtureRepo('single-app-service');
 
@@ -318,6 +399,24 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.suggestedGates.includes('dependency-review'));
   });
 
+  it('maps changed paths to affected Python workspace projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('python-workspace');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['packages/core/src/fixture_core/__init__.py', 'services/api/pyproject.toml', 'uv.lock'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'python-workspace-monorepo');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-python-root', 'fixture-python-core', 'fixture-python-api']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture-python-root').changedPaths, ['uv.lock']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'fixture-python-core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'fixture-python-api').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
   it('does not treat nested lockfiles as root project changes', async () => {
     const repo = makeFixtureRepo('js-workspace');
 
@@ -359,6 +458,18 @@ describe('repo layout inspection and affected scope', () => {
     assert.deepEqual(result.projects.map(project => project.path), ['apps/web']);
     assert.ok(result.rootMarkers.some(marker => marker.path === 'turbo.json'));
     assert.ok(result.warnings.some(warning => warning.includes('no root package.json was found')));
+  });
+
+  it('does not classify Python tooling markers without a root pyproject as a workspace', async () => {
+    const repo = makeFixtureRepo('ambiguous-python-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['packages/core']);
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'uv.lock'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'tox.ini'));
+    assert.ok(result.warnings.some(warning => warning.includes('no root pyproject.toml was found')));
   });
 
   it('uses configured base ref when changed paths are not provided', async () => {

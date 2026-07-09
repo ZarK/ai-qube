@@ -11,6 +11,12 @@ interface PackageJson {
   readonly scripts?: unknown;
 }
 
+interface PyProject {
+  readonly name: string | null;
+  readonly workspacePatterns: readonly string[];
+  readonly toolSections: readonly string[];
+}
+
 interface RootBuildSignal {
   readonly path: string;
   readonly markerKind: RepoRootMarker['kind'];
@@ -21,6 +27,13 @@ interface RootBuildSignal {
 interface JsWorkspaceSignals {
   readonly declaredPatterns: readonly string[];
   readonly markerPaths: readonly string[];
+  readonly resolvedProjectPaths: readonly string[];
+}
+
+interface PythonWorkspaceSignals {
+  readonly declaredPatterns: readonly string[];
+  readonly markerPaths: readonly string[];
+  readonly toolSections: readonly string[];
   readonly resolvedProjectPaths: readonly string[];
 }
 
@@ -37,6 +50,8 @@ const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
 
 const JS_WORKSPACE_MARKER_FILES = ['pnpm-workspace.yaml', 'turbo.json', 'nx.json', 'lerna.json'] as const;
 const JS_WORKSPACE_PROJECT_DIRS = ['apps', 'packages', 'products', 'adapters', 'plugins'] as const;
+const PYTHON_WORKSPACE_MARKER_FILES = ['uv.lock', 'poetry.lock', 'pdm.lock', 'tox.ini', 'noxfile.py'] as const;
+const PYTHON_WORKSPACE_PROJECT_DIRS = ['apps', 'packages', 'services', 'libs'] as const;
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -117,6 +132,69 @@ function readPackageJson(root: string, path = 'package.json'): PackageJson | nul
   }
 }
 
+function readPyProject(root: string, path = 'pyproject.toml'): PyProject | null {
+  const text = readTextFile(root, path);
+  if (text === null) return null;
+  return {
+    name: pyProjectName(text),
+    workspacePatterns: pythonWorkspacePatterns(text),
+    toolSections: pythonToolSections(text),
+  };
+}
+
+function pyProjectName(text: string): string | null {
+  let section = '';
+  let projectName: string | null = null;
+  let poetryName: string | null = null;
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim();
+      continue;
+    }
+    const nameMatch = line.match(/^\s*name\s*=\s*["']([^"']+)["']/);
+    if (!nameMatch) continue;
+    if (section === 'project') projectName = nameMatch[1].trim();
+    if (section === 'tool.poetry') poetryName = nameMatch[1].trim();
+  }
+  return projectName ?? poetryName;
+}
+
+function pythonWorkspacePatterns(text: string): string[] {
+  const patterns: string[] = [];
+  let section = '';
+  let collectingMembers = false;
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    if (sectionMatch) {
+      section = sectionMatch[1].trim();
+      collectingMembers = false;
+      continue;
+    }
+    const inWorkspaceSection = section === 'tool.uv.workspace' || section === 'tool.pdm.workspace';
+    if (!inWorkspaceSection) continue;
+    if (line.match(/^\s*members\s*=\s*\[/)) collectingMembers = true;
+    if (collectingMembers || line.match(/^\s*members\s*=/)) {
+      for (const match of line.matchAll(/["']([^"']+)["']/g)) patterns.push(match[1]);
+    }
+    if (collectingMembers && line.includes(']')) collectingMembers = false;
+  }
+  return [...new Set(patterns)].sort();
+}
+
+function pythonToolSections(text: string): string[] {
+  const sections = new Set<string>();
+  for (const line of text.split(/\r?\n/)) {
+    const sectionMatch = line.match(/^\s*\[([^\]]+)\]\s*$/);
+    const section = sectionMatch?.[1].trim();
+    if (section === 'tool.poetry' || section?.startsWith('tool.poetry.')) sections.add('tool.poetry');
+    if (section === 'tool.hatch' || section?.startsWith('tool.hatch.')) sections.add('tool.hatch');
+    if (section === 'tool.pdm' || section?.startsWith('tool.pdm.')) sections.add('tool.pdm');
+    if (section === 'tool.uv' || section?.startsWith('tool.uv.')) sections.add('tool.uv');
+  }
+  return [...sections].sort();
+}
+
 function readWorkspacePatterns(packageJson: PackageJson | null, root: string): string[] {
   const workspaces = packageJson?.workspaces;
   const patterns: string[] = [];
@@ -134,13 +212,13 @@ function readWorkspacePatterns(packageJson: PackageJson | null, root: string): s
   return [...new Set(patterns)].sort();
 }
 
-function expandWorkspacePattern(root: string, pattern: string): string[] {
+function expandWorkspacePattern(root: string, pattern: string, manifestName: string): string[] {
   const normalized = portablePath(pattern).replace(/\/+$/, '');
   if (normalized.includes('**') || normalized.startsWith('!')) return [];
   if (!normalized.includes('*')) {
     const projectPath = resolve(root, normalized);
     const relativeProjectPath = repoRelativePath(root, projectPath);
-    return relativeProjectPath !== null && existsSync(join(projectPath, 'package.json')) ? [relativeProjectPath] : [];
+    return relativeProjectPath !== null && existsSync(join(projectPath, manifestName)) ? [relativeProjectPath] : [];
   }
   const starIndex = normalized.indexOf('*');
   const prefix = normalized.slice(0, starIndex).replace(/\/+$/, '');
@@ -152,7 +230,7 @@ function expandWorkspacePattern(root: string, pattern: string): string[] {
     .filter(entry => entry.isDirectory())
     .map(entry => resolve(base, entry.name, suffix))
     .map(path => ({ path, relativePath: repoRelativePath(root, path) }))
-    .filter(candidate => candidate.relativePath !== null && existsSync(join(candidate.path, 'package.json')))
+    .filter(candidate => candidate.relativePath !== null && existsSync(join(candidate.path, manifestName)))
     .map(candidate => candidate.relativePath as string);
 }
 
@@ -252,7 +330,7 @@ function detectJsWorkspaceSignals(root: string | null, rootPackage: PackageJson 
   const declaredPatterns = readWorkspacePatterns(rootPackage, root);
   const markerPaths = JS_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path)));
   const resolvedProjectPaths = [...new Set([
-    ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern)),
+    ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'package.json')),
     ...JS_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
       const directory = join(root, directoryName);
       if (!existsSync(directory)) return [];
@@ -268,7 +346,29 @@ function hasJsWorkspaceSignals(signals: JsWorkspaceSignals): boolean {
   return signals.declaredPatterns.length > 0 || signals.markerPaths.length > 0 || signals.resolvedProjectPaths.length > 0;
 }
 
-function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoRootMarker[] {
+function detectPythonWorkspaceSignals(root: string | null, rootPyProject: PyProject | null): PythonWorkspaceSignals {
+  if (!root) return { declaredPatterns: [], markerPaths: [], toolSections: [], resolvedProjectPaths: [] };
+  const declaredPatterns = [...(rootPyProject?.workspacePatterns ?? [])];
+  const markerPaths = PYTHON_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path))).sort();
+  const toolSections = [...(rootPyProject?.toolSections ?? [])].sort();
+  const resolvedProjectPaths = [...new Set([
+    ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'pyproject.toml')),
+    ...PYTHON_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
+      const directory = join(root, directoryName);
+      if (!existsSync(directory)) return [];
+      return readdirSync(directory, { withFileTypes: true })
+        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'pyproject.toml')))
+        .map(entry => portablePath(join(directoryName, entry.name)));
+    }),
+  ])].sort();
+  return { declaredPatterns, markerPaths, toolSections, resolvedProjectPaths };
+}
+
+function hasPythonWorkspaceSignals(signals: PythonWorkspaceSignals): boolean {
+  return signals.declaredPatterns.length > 0 || signals.resolvedProjectPaths.length > 0;
+}
+
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
@@ -276,11 +376,13 @@ function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildS
     { path: 'tsconfig.json', kind: 'build' },
     { path: 'docs', kind: 'docs' },
     ...jsWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
+    ...pythonWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
+    ...pythonWorkspaceSignals.toolSections.map(section => ({ path: 'pyproject.toml', kind: 'workspace' as const, section })),
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
     .filter(marker => existsSync(join(root, marker.path)))
-    .filter((marker, index, markers) => markers.findIndex(other => other.path === marker.path) === index);
+    .filter((marker, index, markers) => markers.findIndex(other => other.path === marker.path && other.section === marker.section) === index);
 }
 
 function detectCiHints(root: string | null): RepoCiHint[] {
@@ -296,13 +398,22 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoProject[] {
   const rootPackage = readPackageJson(root);
-  const paths = [...jsWorkspaceSignals.resolvedProjectPaths];
+  const rootPyProject = readPyProject(root);
+  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths])].sort();
   const projects: RepoProject[] = [];
-  if (rootPackage) {
+  const jsWorkspace = rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals);
+  const pythonWorkspace = rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals);
+  if (pythonWorkspace && (!jsWorkspace || resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals) === 'python')) {
+    const packageName = rootPyProject.name;
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (rootPackage) {
     const packageName = typeof rootPackage.name === 'string' ? rootPackage.name : null;
-    projects.push({ id: projectId('.', packageName), path: '.', kind: hasJsWorkspaceSignals(jsWorkspaceSignals) ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+    projects.push({ id: projectId('.', packageName), path: '.', kind: jsWorkspace ? 'workspace' : 'app', packageName, packageManager: packageManagerForPath(packageManagers, '.'), gates: gatesForProject('.') });
+  } else if (rootPyProject) {
+    const packageName = rootPyProject.name;
+    projects.push({ id: projectId('.', packageName), path: '.', kind: pythonWorkspace ? 'workspace' : 'app', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);
@@ -310,30 +421,58 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   }
   for (const path of paths) {
     const packageJson = readPackageJson(root, `${path}/package.json`);
-    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : null;
-    projects.push({ id: projectId(path, packageName), path, kind: 'package', packageName, packageManager: packageManagerForPath(packageManagers, path), gates: gatesForProject(path) });
+    const pyProject = readPyProject(root, `${path}/pyproject.toml`);
+    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? null;
+    projects.push({ id: projectId(path, packageName), path, kind: 'package', packageName, packageManager: packageJson ? packageManagerForPath(packageManagers, path) : null, gates: gatesForProject(path) });
   }
   return projects;
 }
 
-function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): RepoLayoutKind {
+function resolveWorkspaceConflict(jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): 'javascript' | 'python' | 'conflict' {
+  const jsMembers = jsWorkspaceSignals.resolvedProjectPaths.length;
+  const pythonMembers = pythonWorkspaceSignals.resolvedProjectPaths.length;
+  if (jsMembers > 0 && pythonMembers === 0) return 'javascript';
+  if (pythonMembers > 0 && jsMembers === 0) return 'python';
+  return 'conflict';
+}
+
+function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
-  if (hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json')) return 'javascript-typescript-workspace';
+  const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
+  const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
+  if (jsRootWorkspace && pythonRootWorkspace) {
+    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
+    if (resolved === 'javascript') return 'javascript-typescript-workspace';
+    if (resolved === 'python') return 'python-workspace-monorepo';
+    return 'unknown';
+  }
+  if (jsRootWorkspace) return 'javascript-typescript-workspace';
+  if (pythonRootWorkspace) return 'python-workspace-monorepo';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals): string[] {
   const warnings: string[] = [];
+  const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
+  const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
+  if (jsRootWorkspace && pythonRootWorkspace) {
+    const resolved = resolveWorkspaceConflict(jsWorkspaceSignals, pythonWorkspaceSignals);
+    warnings.push(resolved === 'conflict'
+      ? 'Both JavaScript and Python root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.'
+      : `Both JavaScript and Python root workspace declarations were detected; layout classification used the ${resolved === 'python' ? 'Python' : 'JavaScript'} workspace because only it resolves member projects.`);
+  }
   if (!root) warnings.push('Not inside a git repository; layout inspection is incomplete.');
   if (rootSignals.length > 1 && kind === 'unknown') warnings.push(`Multiple root package/build signals were detected (${rootSignals.map(signal => signal.path).join(', ')}); repository layout is ambiguous.`);
   if (jsWorkspaceSignals.markerPaths.length > 0 && !rootSignals.some(signal => signal.path === 'package.json')) warnings.push(`JavaScript workspace marker(s) were detected (${jsWorkspaceSignals.markerPaths.join(', ')}) but no root package.json was found; workspace layout is ambiguous.`);
+  if ((pythonWorkspaceSignals.markerPaths.length > 0 || pythonWorkspaceSignals.resolvedProjectPaths.length > 0) && !rootSignals.some(signal => signal.path === 'pyproject.toml')) warnings.push(`Python workspace marker(s) were detected (${[...pythonWorkspaceSignals.markerPaths, ...pythonWorkspaceSignals.resolvedProjectPaths].join(', ')}) but no root pyproject.toml was found; workspace layout is ambiguous.`);
   if (kind === 'javascript-typescript-workspace' && jsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('JavaScript workspace signals were detected, but no member package roots were resolved.');
+  if (kind === 'python-workspace-monorepo' && pythonWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Python workspace signals were detected, but no member package roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
-  if (kind !== 'javascript-typescript-workspace' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
+  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
     warnings.push('Affected-scope mapping is conservative for this layout kind.');
   }
   return warnings;
@@ -345,15 +484,17 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const packageManagers = detectPackageManagers(root);
   const rootSignals = detectRootBuildSignals(root, packageManagers);
   const rootPackage = root ? readPackageJson(root) : null;
+  const rootPyProject = root ? readPyProject(root) : null;
   const jsWorkspaceSignals = detectJsWorkspaceSignals(root, rootPackage);
-  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals);
-  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals) : [];
+  const pythonWorkspaceSignals = detectPythonWorkspaceSignals(root, rootPyProject);
+  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
     ...pathSignals(root, ['dist', 'build', 'coverage', 'generated'], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals);
+  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals);
   return {
     kind,
     root,
@@ -365,7 +506,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals)],
   };
 }
 
@@ -387,7 +528,7 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|go\.mod$|pom\.xml$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|\.csproj$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];
