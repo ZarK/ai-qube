@@ -36,7 +36,7 @@ export interface CommandTarget {
   readonly path: string;
   readonly description: string;
   readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "codexLocalReview";
+  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
   readonly renderer: CommandRenderer;
 }
 

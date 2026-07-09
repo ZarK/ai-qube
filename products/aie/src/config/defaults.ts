@@ -1,4 +1,4 @@
-import type { ExecutorPolicy } from '../core/policy.js';
+import type { ExecutorPolicy, ReviewModelsPolicy } from '../core/policy.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
 import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
@@ -154,6 +154,15 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
   };
 }
 
+function cloneReviewModelTierMap(tierMap: ReviewModelsPolicy['review'] | undefined): ReviewModelsPolicy['review'] {
+  const cloned: ReviewModelsPolicy['review'] = {};
+  for (const host of ['codex', 'claude-code', 'opencode'] as const) {
+    const binding = tierMap?.[host];
+    if (binding) cloned[host] = { ...binding };
+  }
+  return cloned;
+}
+
 export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
   return {
     version: input.version,
@@ -204,6 +213,13 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
         })),
         agents: [...input.policy.reviews.agents],
         localAgents: [...input.policy.reviews.localAgents],
+        ...(input.policy.reviews.models !== undefined ? {
+          models: {
+            review: cloneReviewModelTierMap(input.policy.reviews.models.review),
+            economy: cloneReviewModelTierMap(input.policy.reviews.models.economy),
+            synthesis: cloneReviewModelTierMap(input.policy.reviews.models.synthesis),
+          },
+        } : {}),
       },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),

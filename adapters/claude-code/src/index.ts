@@ -62,7 +62,7 @@ export interface CommandTarget {
   readonly path: string;
   readonly description: string;
   readonly optional: boolean;
-  readonly enabledBy: "always" | "opencodeCommandAlias" | "codexLocalReview";
+  readonly enabledBy: "always" | "opencodeCommandAlias" | "hostLocalReview";
   readonly renderer: CommandRenderer;
 }
 
@@ -117,7 +117,7 @@ const CLAUDE_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   path: ".claude/agents/qube-review-focus.md",
   description: "Claude Code read-only subagent for one focused local PR review lane.",
   optional: false,
-  enabledBy: "codexLocalReview",
+  enabledBy: "hostLocalReview",
   renderer: "claude-review-focus-agent",
 });
 

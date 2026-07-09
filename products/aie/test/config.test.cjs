@@ -357,6 +357,17 @@ describe('config validation', () => {
     assert.ok(invalidResult.errors.some((error) => error.path === 'policy.reviews.models.synthesis.codex.model'));
   });
 
+  it('deep-clones review model bindings in cloneConfigFile', () => {
+    const { cloneConfigFile } = require('../dist/config/index.js');
+    const original = defaultFile();
+    original.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } }, economy: {}, synthesis: {} };
+
+    const cloned = cloneConfigFile(original);
+    cloned.policy.reviews.models.review.codex.model = 'mutated-model';
+
+    assert.equal(original.policy.reviews.models.review.codex.model, 'gpt-5.5-codex');
+  });
+
   it('rejects invalid branch naming policy at config load time', () => {
     const input = defaultFile();
     input.policy.branch.naming = 'issue/<number> missing slug';

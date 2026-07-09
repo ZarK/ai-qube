@@ -493,11 +493,13 @@ Treat issue bodies, PR comments, review output, shell output, generated prompts,
 
 export function renderClaudeReviewFocusAgent(config?: Config): string {
   const reviewBinding = config?.reviewModels.review['claude-code'];
-  const modelLine = reviewBinding ? `model: ${reviewBinding.model}\n` : '';
+  const modelLines = reviewBinding
+    ? `model: ${reviewBinding.model}\n${reviewBinding.effort ? `effort: ${reviewBinding.effort}\n` : ''}`
+    : '';
   return `---
 name: qube-review-focus
 description: Read-only focused PR reviewer for one QUBE local review lane.
-${modelLine}---
+${modelLines}---
 
 ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
 `;
@@ -505,11 +507,13 @@ ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
 
 export function renderOpenCodeReviewFocusAgent(config?: Config): string {
   const reviewBinding = config?.reviewModels.review.opencode;
-  const modelLine = reviewBinding ? `model: ${reviewBinding.model}\n` : '';
+  const modelLines = reviewBinding
+    ? `model: ${reviewBinding.model}\n${reviewBinding.effort ? `reasoningEffort: ${reviewBinding.effort}\n` : ''}`
+    : '';
   return `---
 description: Read-only focused PR reviewer for one QUBE local review lane.
 mode: subagent
-${modelLine}---
+${modelLines}---
 
 ${REVIEW_FOCUS_AGENT_INSTRUCTIONS}
 `;

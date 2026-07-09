@@ -16,7 +16,7 @@ export interface CommandTarget {
   path: string;
   description: string;
   optional: boolean;
-  enabledBy: 'always' | 'opencodeCommandAlias' | 'codexLocalReview';
+  enabledBy: 'always' | 'opencodeCommandAlias' | 'hostLocalReview';
   renderer: CommandRenderer;
 }
 
@@ -87,7 +87,7 @@ const OPENCODE_REVIEW_FOCUS_AGENT: CommandTarget = {
   path: pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'),
   description: 'OpenCode read-only subagent for one focused local PR review lane.',
   optional: false,
-  enabledBy: 'codexLocalReview',
+  enabledBy: 'hostLocalReview',
   renderer: 'opencode-review-focus-agent',
 };
 
