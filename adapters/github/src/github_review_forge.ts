@@ -915,6 +915,7 @@ function normalizePr(raw: RawPrView, mergeUiState: RawMergeUiState | null = null
     state: raw.state,
     url: redact(raw.url),
     headRefOid: redact(raw.headRefOid ?? 'UNKNOWN'),
+    authorLogin: raw.author?.login ? redact(raw.author.login) : null,
     reviewDecision: rawReviewDecision(raw.reviewDecision),
     mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
     mergeable: raw.mergeable ?? 'UNKNOWN',
@@ -2077,11 +2078,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     } catch {
       // optional on load
     }
-    const configuredLogin = this.options.publisher?.githubApp && 'login' in (this.options.publisher.githubApp as object)
-      ? (this.options.publisher.githubApp as { login?: string }).login
-      : this.options.publisher?.token && 'login' in (this.options.publisher.token as object)
-        ? (this.options.publisher.token as { login?: string }).login
-        : undefined;
+    const configuredLogin = this.options.publisher?.githubApp?.login ?? this.options.publisher?.token?.login;
     if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '' && !authors.some(author => authorMatches(author, configuredLogin))) {
       authors.push(configuredLogin.trim());
     }

@@ -355,12 +355,13 @@ export async function resolveGitHubReviewPublisher(
     }
 
     if (!mint) {
+      const configuredLogin = normalizeLogin(app.login ?? null);
       return {
         accessToken: null,
         identity: finalizeIdentity({
           mode: 'github-app',
           identityClass: 'github-app-installation',
-          login: null,
+          login: configuredLogin,
           permissionStatus: 'unknown',
           formalEventCapability: true,
           fallbackReason: null,
@@ -467,12 +468,13 @@ export async function resolveGitHubReviewPublisher(
   }
 
   if (!mint) {
+    const configuredLogin = normalizeLogin(resolvedConfig.token?.login ?? null);
     return {
       accessToken: null,
       identity: finalizeIdentity({
         mode: 'token',
         identityClass: 'fine-grained-token',
-        login: null,
+        login: configuredLogin,
         permissionStatus: 'unknown',
         formalEventCapability: true,
         fallbackReason: null,

@@ -826,7 +826,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const reviewPublisher = provider.describeReviewPublisher
-    ? await provider.describeReviewPublisher(null, { mint: false })
+    ? await provider.describeReviewPublisher(finalSnapshot.pr.authorLogin ?? null, { mint: false })
     : null;
   const publishUnavailable: string[] = [];
   const publishedCarriedLanes: string[] = [];

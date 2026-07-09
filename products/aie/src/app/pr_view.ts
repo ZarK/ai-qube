@@ -287,7 +287,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
   const laneReviews = prLaneReviews(snapshot.item);
   const checks = prChecks(snapshot.item);
   const reviewPublisher = provider.describeReviewPublisher
-    ? await provider.describeReviewPublisher(null, { mint: false })
+    ? await provider.describeReviewPublisher(snapshot.pr.authorLogin ?? null, { mint: false })
     : null;
   const partial = {
     reviewDecision: snapshot.item.reviewDecision,

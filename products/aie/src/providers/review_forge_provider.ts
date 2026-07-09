@@ -22,6 +22,7 @@ export interface ReviewForgePullRequest {
   state: string;
   url: string;
   headRefOid: string;
+  authorLogin?: string | null;
   reviewDecision: string;
   mergeStateStatus: string;
   mergeable: string;
