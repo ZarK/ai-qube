@@ -258,7 +258,7 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
   const runId = laneRunId(input);
   const summary = redact(input.summary);
   const findingDigest = createHash("sha256")
-    .update(JSON.stringify({ summary, findings }))
+    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null }))
     .digest("hex")
     .slice(0, 16);
   const metadata: GitLabMetadata = {

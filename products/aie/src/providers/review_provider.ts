@@ -23,7 +23,7 @@ export interface ReviewLaneReviewPublishInput {
   issueNumber: number;
   summary: string;
   findings: Array<ReviewFinding | string>;
-  completeness?: string | null;
+  completeness: string | null;
   evidencePath: string | null;
 }
 
