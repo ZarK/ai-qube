@@ -1625,6 +1625,34 @@ describe('PR gate service', () => {
     assert.deepEqual(parserFindings.map(finding => finding.location.line).sort((a, b) => a - b), [10, 42]);
   });
 
+  it('accounts for duplicate same-message findings across heads by count', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+          { id: 'finding-b', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 42 } },
+        ], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+    const currentEvidence = localEvidence();
+    currentEvidence.lanes = currentEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Fix the parser crash.'], findings: [
+          { id: 'finding-a', severity: 'blocking', message: 'Fix the parser crash.', location: { path: 'src/parser.ts', line: 10 } },
+        ] }
+      : lane);
+    writeLocalEvidence(repo, currentEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const parserFindings = result.fixBatch.findings.filter(finding => finding.message === 'Fix the parser crash.');
+    assert.equal(parserFindings.length, 1);
+    assert.equal(parserFindings[0].classification, 'persisting');
+    assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Fix the parser crash.').length, 1);
+  });
+
   it('keeps fix batch resolution indeterminate when current-head lane evidence is missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

@@ -1293,8 +1293,8 @@ function findPriorHeadSha(repoRoot: string, issueNumbers: readonly number[], prN
   return priorHeadSha;
 }
 
-function readPriorFindingHashes(repoRoot: string, issueNumbers: readonly number[], prNumber: number, priorHeadSha: string): Map<string, { laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> {
-  const priorByHash = new Map<string, { laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }>();
+function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], prNumber: number, priorHeadSha: string): Array<{ laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> {
+  const priorFindings: Array<{ laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }> = [];
   for (const issueNumber of issueNumbers) {
     const directory = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), priorHeadSha);
     for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
@@ -1304,15 +1304,14 @@ function readPriorFindingHashes(repoRoot: string, issueNumbers: readonly number[
         const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
         if (!isRecord(parsed)) continue;
         for (const finding of readFindings(parsed.findings)) {
-          const contentHash = findingContentHash(laneId, finding);
-          if (!priorByHash.has(contentHash)) priorByHash.set(contentHash, { laneId, finding, contentHash });
+          priorFindings.push({ laneId, finding, contentHash: findingContentHash(laneId, finding) });
         }
       } catch {
         continue;
       }
     }
   }
-  return priorByHash;
+  return priorFindings;
 }
 
 function toFixBatchFinding(laneId: LocalReviewLaneId, finding: ReviewFinding, contentHash: string, classification: 'new' | 'persisting'): FixBatchFinding {
@@ -1354,16 +1353,30 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
   }
   const currentEvidenceLoaded = evidence.some(entry => entry.status !== 'missing' && entry.status !== 'stale' && entry.status !== 'malformed');
   const priorHeadSha = findPriorHeadSha(repoRoot, issueNumbers, prNumber, headSha);
-  const priorByHash = priorHeadSha === null ? new Map<string, { laneId: LocalReviewLaneId; finding: ReviewFinding; contentHash: string }>() : readPriorFindingHashes(repoRoot, issueNumbers, prNumber, priorHeadSha);
-  const priorHashes = new Set(priorByHash.keys());
-  const findings = [...currentByHash.values()].map(finding => ({
-    ...finding,
-    classification: priorHashes.has(finding.contentHash) ? 'persisting' as const : 'new' as const,
-  })).sort(rankFixBatchFindings);
-  const currentHashes = new Set([...currentByHash.values()].map(finding => finding.contentHash));
+  const priorFindings = priorHeadSha === null ? [] : readPriorFindings(repoRoot, issueNumbers, prNumber, priorHeadSha);
+  const priorRemaining = new Map<string, number>();
+  for (const entry of priorFindings) priorRemaining.set(entry.contentHash, (priorRemaining.get(entry.contentHash) ?? 0) + 1);
+  const orderedCurrent = [...currentByHash.values()].sort((left, right) => {
+    if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+    if (left.message !== right.message) return left.message.localeCompare(right.message);
+    return (left.location?.line ?? 0) - (right.location?.line ?? 0);
+  });
+  const findings = orderedCurrent.map(finding => {
+    const remaining = priorRemaining.get(finding.contentHash) ?? 0;
+    if (remaining > 0) {
+      priorRemaining.set(finding.contentHash, remaining - 1);
+      return { ...finding, classification: 'persisting' as const };
+    }
+    return { ...finding, classification: 'new' as const };
+  }).sort(rankFixBatchFindings);
   const resolved = currentEvidenceLoaded
-    ? [...priorByHash.values()]
-      .filter(entry => !currentHashes.has(entry.contentHash))
+    ? priorFindings
+      .filter(entry => {
+        const remaining = priorRemaining.get(entry.contentHash) ?? 0;
+        if (remaining <= 0) return false;
+        priorRemaining.set(entry.contentHash, remaining - 1);
+        return true;
+      })
       .map(entry => ({
         laneId: entry.laneId,
         contentHash: entry.contentHash,
