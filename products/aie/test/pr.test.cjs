@@ -445,6 +445,8 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
       contextReviewed: id === 'task-record-compliance' ? contextReviewed : [],
       promptStack: promptStackForLane(id),
       toolsUsed: ['rg'],
+      completeness: `Inspected the ${id} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
       runnerProvenance: withPromptStackProvenance(provenance, promptStackForLane(id)),
     })),
   };
@@ -2011,6 +2013,30 @@ describe('PR gate service', () => {
       () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
       /preconditions must be an array of observed gate-level facts/,
     );
+  });
+
+  it('blocks gate aggregation when passed lane evidence lacks a preconditions record', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => {
+      const { preconditions, ...rest } = lane;
+      return {
+        ...rest,
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      };
+    });
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /passed without a preconditions record/);
   });
 
   it('blocks gate aggregation when lane recommendation contradicts status', async () => {

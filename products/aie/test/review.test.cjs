@@ -80,6 +80,8 @@ function writeLocalLaneReview(repo, issueNumber) {
       surfaces: ['PR'],
       contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
       promptStack: [{ id: `builtin:${lane}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
+      completeness: `Inspected the ${lane} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
       runnerProvenance: {
         runnerKind: 'local-command',
         host: 'local-command',
