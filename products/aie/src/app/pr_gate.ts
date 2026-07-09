@@ -17,7 +17,7 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { readLocalReviewGate, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -146,6 +146,7 @@ export interface PrGateResult {
   checkDiagnostics: PrGateCheckDiagnostic[];
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
+  fixBatch: FixBatch;
   localReviewPublish: ReviewForgeLocalReviewPublishResult;
   reviewParticipants: ReviewParticipantObservation[];
   reviewParticipantRollup: ReviewParticipantRollup | null;
@@ -821,6 +822,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
     carryForwardScope,
   });
+  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   const publishUnavailable: string[] = [];
   const publishedCarriedLanes: string[] = [];
@@ -873,6 +875,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     checkDiagnostics,
     localReviewRunner,
     localReview,
+    fixBatch,
     localReviewPublish,
     reviewParticipants: reviewParticipantObservations,
     reviewParticipantRollup,
@@ -922,6 +925,7 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
   if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);
+  lines.push(`Fix batch: ${result.fixBatch.summary}`);
   if (result.reviewParticipantRollup) {
     lines.push(`Provider review participants: received=${result.reviewParticipantRollup.receivedCount}/${result.reviewParticipantRollup.expectedCount}; host lanes=${result.reviewParticipantRollup.hostLaneReceived}/${result.reviewParticipantRollup.hostLaneExpected}.`);
     for (const participant of result.reviewParticipants) {
