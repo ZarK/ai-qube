@@ -48,6 +48,13 @@ export interface WorkRoleScenarios {
   readonly maxListRequests?: number;
   /** Optional malformed list payload transport; suite expects non-silent failure. */
   readonly createMalformedTransport?: () => unknown | Promise<unknown>;
+  /**
+   * Required when the provider advertises commentMutations, reviewIntegration, or
+   * ciMergeStatus so true flags cannot pass without observed behavior.
+   */
+  readonly observeCommentMutations?: (provider: WorkProvider) => void | Promise<void>;
+  readonly observeReviewIntegration?: (provider: WorkProvider) => void | Promise<void>;
+  readonly observeCiMergeStatus?: (provider: WorkProvider) => void | Promise<void>;
 }
 
 /** Shared review-forge scenario inputs. */
@@ -627,6 +634,28 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
       } as never);
       assert.ok(Array.isArray(applied), "apply must return action results when applyLifecycleMutations is true.");
     }
+  }
+
+  if (caps.commentMutations === true) {
+    assert.ok(
+      scenarios.observeCommentMutations,
+      "commentMutations=true requires workScenarios.observeCommentMutations so the suite observes the advertised behavior.",
+    );
+    await scenarios.observeCommentMutations(provider);
+  }
+  if (caps.reviewIntegration === true) {
+    assert.ok(
+      scenarios.observeReviewIntegration,
+      "reviewIntegration=true requires workScenarios.observeReviewIntegration so the suite observes the advertised behavior.",
+    );
+    await scenarios.observeReviewIntegration(provider);
+  }
+  if (caps.ciMergeStatus === true) {
+    assert.ok(
+      scenarios.observeCiMergeStatus,
+      "ciMergeStatus=true requires workScenarios.observeCiMergeStatus so the suite observes the advertised behavior.",
+    );
+    await scenarios.observeCiMergeStatus(provider);
   }
 
   if (scenarios.createLargeResultTransport) {

@@ -274,6 +274,37 @@ describe("adapter conformance testkit", () => {
     })), /must be true when adapter declares|listOpenWork must be true|requires work capability flag|loadWork must be true/);
   });
 
+  it("fails when commentMutations is true without an observation hook", async () => {
+    const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
+    const items = [
+      workItem("1", { body: "- [x] a\n- [ ] b", checklist: { total: 2, completed: 1 }, status: "ready", priority: "high" }),
+      workItem("2", {
+        status: "blocked",
+        priority: "low",
+        body: "- [ ] blocked",
+        checklist: { total: 1, completed: 0 },
+        blockers: [{ providerId: "fixture", id: "1" }],
+      }),
+    ];
+    await assert.rejects(() => verifyAdapterHarness(defineAdapterHarness({
+      adapter: workAdapter(),
+      roles: {
+        work: defineWorkProviderHarness({
+          fixtureRoot: root,
+          fixtureFiles: ["fixtures/work.json"],
+          createFixtureTransport: () => items,
+          createSubject: transport => createWorkProvider(transport, { commentMutations: true }),
+          workScenarios: {
+            statusPolicy: { labels: { priorities: [], statuses: [] } },
+            createLargeResultTransport: () => items,
+            expectedLargeResultCount: 2,
+            createMalformedTransport: () => items,
+          },
+        }),
+      },
+    })), /observeCommentMutations/);
+  });
+
   it("runs shared work suite against multi-item fixtures and rejects silent malformed lists", async () => {
     const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
     const items = [
@@ -331,6 +362,7 @@ describe("adapter conformance testkit", () => {
     }));
     assert.ok(listRequests >= 1);
   });
+
 
   it("rejects duplicate capability ids", () => {
     assert.throws(() => defineAdapterHarness({

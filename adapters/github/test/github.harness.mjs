@@ -72,6 +72,26 @@ const work = defineWorkProviderHarness({
       }
       return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
     },
+    observeCommentMutations: async provider => {
+      // GitHub mutates issue comments through apply on lifecycle plans that carry comment actions.
+      const items = await provider.listOpenWorkItems();
+      const plan = provider.planStart(items[0], statusPolicy);
+      assert.equal(typeof provider.apply, "function");
+      assert.ok(plan && typeof plan.id === "string");
+      assert.equal(provider.capabilities().commentMutations, true);
+    },
+    observeReviewIntegration: async provider => {
+      // Review integration is advertised only when the work provider can load work that review forge keys can reference.
+      const items = await provider.listOpenWorkItems();
+      assert.ok(items.every(item => item.key.providerId === "github"));
+      assert.equal(provider.capabilities().reviewIntegration, true);
+    },
+    observeCiMergeStatus: async provider => {
+      // CI merge status is advertised with work keys that CI checks can attach to via trusted metadata.
+      const items = await provider.listOpenWorkItems();
+      assert.ok(items.every(item => item.trustedMetadata && typeof item.trustedMetadata === "object"));
+      assert.equal(provider.capabilities().ciMergeStatus, true);
+    },
   },
   capabilityCases: [
     {
