@@ -90,22 +90,21 @@ export interface ReviewRoleScenarios {
    * the suite cannot pass on the empty-id skipped short-circuit.
    */
   readonly resolveThreadIds?: readonly string[];
+  /**
+   * Marker trust expectations exercised against loaded review feedback.
+   * Forged current-head markers and stale-head markers must not appear as trusted-provider.
+   */
+  readonly markerExpectations?: {
+    readonly currentHeadSha: string;
+    /** Substrings that identify forged/hostile current-head marker feedback. */
+    readonly forgedMarkerSnippets: readonly string[];
+    /** Substrings that identify stale-head marker feedback. */
+    readonly staleMarkerSnippets: readonly string[];
+  };
 }
 
 /** Shared CI scenario inputs. */
 export interface CiRoleScenarios {
-  readonly mapCheck: (subject: unknown, check: unknown) => {
-    readonly result: string;
-    readonly reasonCode?: string;
-    readonly summary?: string;
-    readonly key?: string;
-    readonly name?: string;
-    readonly url?: string | null;
-    readonly path?: string | null;
-    readonly workflowName?: string | null;
-    readonly runId?: string | null;
-    readonly artifact?: string | null;
-  };
   readonly passedCheck: unknown;
   readonly failedCheck: unknown;
   readonly pendingCheck: unknown;

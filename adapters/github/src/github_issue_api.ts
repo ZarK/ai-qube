@@ -121,8 +121,62 @@ function normalizeIssue(raw: RawGhIssue): GitHubIssue {
   };
 }
 
-export async function listOpenIssues(options: { cwd?: string; exec?: GhExec; limit?: number; includeAssignees?: boolean } = {}): Promise<GitHubIssue[]> {
-  const { cwd, exec, limit = 1000 } = options;
+function isRestIssueArray(value: unknown): value is Record<string, unknown>[] {
+  return Array.isArray(value) && value.every(item => !!item && typeof item === 'object' && typeof (item as Record<string, unknown>).number === 'number');
+}
+
+function restIssueToRaw(rest: Record<string, unknown>): RawGhIssue {
+  const labels = Array.isArray(rest.labels)
+    ? rest.labels.map(label => {
+        if (typeof label === 'string') return { name: label };
+        const record = label as Record<string, unknown>;
+        return { name: typeof record.name === 'string' ? record.name : String(record.name ?? '') };
+      })
+    : [];
+  const assignees = Array.isArray(rest.assignees)
+    ? rest.assignees.map(assignee => {
+        const record = assignee as Record<string, unknown>;
+        return { login: typeof record.login === 'string' ? record.login : String(record.login ?? '') };
+      })
+    : [];
+  const milestoneRaw = rest.milestone;
+  let milestone: RawGhMilestone | null = null;
+  if (milestoneRaw && typeof milestoneRaw === 'object') {
+    const milestoneRecord = milestoneRaw as Record<string, unknown>;
+    milestone = {
+      number: Number(milestoneRecord.number),
+      title: String(milestoneRecord.title ?? ''),
+      state: typeof milestoneRecord.state === 'string' ? milestoneRecord.state : undefined,
+      dueOn: (milestoneRecord.due_on as string | null | undefined) ?? (milestoneRecord.dueOn as string | null | undefined) ?? null,
+    };
+  }
+  return {
+    number: Number(rest.number),
+    title: String(rest.title ?? ''),
+    body: typeof rest.body === 'string' ? rest.body : '',
+    state: String(rest.state ?? 'open'),
+    labels,
+    assignees,
+    milestone,
+    url: String(rest.html_url ?? rest.url ?? ''),
+  };
+}
+
+/**
+ * List open issues. Default path uses a single high-limit `gh issue list`.
+ * When pageSize is set, pages through the GitHub REST issues API until a short page.
+ */
+export async function listOpenIssues(options: {
+  cwd?: string;
+  exec?: GhExec;
+  limit?: number;
+  pageSize?: number;
+  includeAssignees?: boolean;
+} = {}): Promise<GitHubIssue[]> {
+  const { cwd, exec, limit = 1000, pageSize } = options;
+  if (pageSize !== undefined && pageSize > 0) {
+    return listOpenIssuesPaged({ cwd, exec, pageSize, includeAssignees: options.includeAssignees });
+  }
   const args = [
     'issue',
     'list',
@@ -140,6 +194,41 @@ export async function listOpenIssues(options: { cwd?: string; exec?: GhExec; lim
   }
   const raw = parseGhJson<RawGhIssue[]>(result.stdout, 'gh issue list', isRawGhIssueArray);
   return raw.map(normalizeIssue);
+}
+
+async function listOpenIssuesPaged(options: {
+  cwd?: string;
+  exec?: GhExec;
+  pageSize: number;
+  includeAssignees?: boolean;
+}): Promise<GitHubIssue[]> {
+  const { cwd, exec, pageSize } = options;
+  const repoResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], { cwd, exec });
+  if (repoResult.exitCode !== 0) {
+    throw new GhExecutionError('gh repo view', repoResult.exitCode, repoResult.stderr || repoResult.stdout);
+  }
+  const repo = parseGhJson<{ nameWithOwner: string }>(
+    repoResult.stdout,
+    'gh repo view',
+    (value): value is { nameWithOwner: string } =>
+      !!value && typeof value === 'object' && typeof (value as Record<string, unknown>).nameWithOwner === 'string',
+  );
+  const all: GitHubIssue[] = [];
+  for (let page = 1; page <= 100; page += 1) {
+    const path = `repos/${repo.nameWithOwner}/issues?state=open&per_page=${pageSize}&page=${page}`;
+    const result = await runGh(['api', path], { cwd, exec });
+    if (result.exitCode !== 0) {
+      throw new GhExecutionError(`gh api ${path}`, result.exitCode, result.stderr || result.stdout);
+    }
+    const restIssues = parseGhJson<Record<string, unknown>[]>(result.stdout, `gh api ${path}`, isRestIssueArray);
+    // Issues API includes pull requests; keep only pure issues for work-queue mapping.
+    const pureIssues = restIssues.filter(issue => !('pull_request' in issue && issue.pull_request));
+    for (const rest of pureIssues) {
+      all.push(normalizeIssue(restIssueToRaw(rest)));
+    }
+    if (restIssues.length < pageSize) break;
+  }
+  return all;
 }
 
 export async function getIssue(

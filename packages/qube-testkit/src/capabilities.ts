@@ -93,8 +93,15 @@ export function assertCapabilityFlagsMatchDeclarations(
       }
     }
     if (declaration.support === "unsupported") {
-      // Any true related flag contradicts an unsupported declaration for that owned behavior.
+      // Shared flags may remain true when another supported declaration still requires them.
+      // Only reject flags that no supported declaration still owns.
       for (const flag of requiredFlags) {
+        const stillRequired = (adapter.capabilities ?? []).some(other =>
+          other.id !== declaration.id
+          && other.support === "supported"
+          && (mapping[other.id] ?? []).includes(flag),
+        );
+        if (stillRequired) continue;
         assert.notEqual(
           flagRecord[flag],
           true,

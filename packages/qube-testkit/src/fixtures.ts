@@ -8,6 +8,8 @@ import type { MutationBoundary, RoleHarness } from "./types.js";
 
 /** Marks a transport as fixture-isolated so offline mutation suites can apply safely. */
 export const FIXTURE_TRANSPORT_MARKER = Symbol.for("qube-testkit.fixture-transport");
+/** Binds a constructed provider subject to the exact fixture transport it must use. */
+export const FIXTURE_BOUND_TRANSPORT = Symbol.for("qube-testkit.fixture-bound-transport");
 
 export function markFixtureTransport<T>(transport: T): T {
   assert.ok(
@@ -30,14 +32,44 @@ export function isFixtureTransport(transport: unknown): boolean {
 }
 
 /**
+ * Bind a provider subject to the marked fixture transport it was constructed with.
+ * Offline mutation suites require this so a marked dummy transport cannot authorize a live provider.
+ */
+export function bindFixtureSubject<T extends object>(subject: T, transport: unknown): T {
+  assert.ok(
+    subject !== null && typeof subject === "object",
+    "bindFixtureSubject requires an object provider subject.",
+  );
+  assert.equal(
+    isFixtureTransport(transport),
+    true,
+    "bindFixtureSubject requires markFixtureTransport(...) for the transport argument.",
+  );
+  Object.defineProperty(subject, FIXTURE_BOUND_TRANSPORT, {
+    value: transport,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return subject;
+}
+
+export function boundFixtureTransport(subject: unknown): unknown {
+  if (!subject || (typeof subject !== "object" && typeof subject !== "function")) return undefined;
+  return (subject as Record<symbol, unknown>)[FIXTURE_BOUND_TRANSPORT];
+}
+
+/**
  * Enforce mutation isolation before provider.apply runs in the shared suites.
- * Fixture-only mode requires a marked fixture transport. Live opt-in requires an env gate.
+ * Fixture-only mode requires a marked transport bound onto the constructed subject.
+ * Live opt-in requires an env gate.
  */
 export function assertMutationAllowed(
   boundary: MutationBoundary | undefined,
   transport: unknown,
   role: string,
-  liveMutationEnvVar?: string,
+  liveMutationEnvVar: string | undefined,
+  subject: unknown,
 ): void {
   assert.ok(
     boundary === "fixture-only" || boundary === "live-opt-in",
@@ -48,6 +80,11 @@ export function assertMutationAllowed(
       isFixtureTransport(transport),
       true,
       `${role} fixture-only mutations require createFixtureTransport() to return markFixtureTransport(...).`,
+    );
+    assert.equal(
+      boundFixtureTransport(subject),
+      transport,
+      `${role} createSubject must return bindFixtureSubject(provider, transport) so apply() is bound to the fixture transport.`,
     );
     return;
   }

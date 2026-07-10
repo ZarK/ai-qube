@@ -137,7 +137,7 @@ export async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness:
     assert.ok(complete && Array.isArray(complete.actions), "planComplete must return an action plan when planLifecycleMutations is true.");
     assert.ok(complete.actions.length > 0, "planComplete must plan at least one action when planLifecycleMutations is true.");
     if (caps.applyLifecycleMutations === true) {
-      assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar);
+      assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar, provider);
       const applied = await provider.apply(start);
       assert.ok(Array.isArray(applied), "apply must return action results when applyLifecycleMutations is true.");
       assert.equal(applied.length, start.actions.length, "apply must return one result per planned lifecycle action.");
@@ -149,7 +149,7 @@ export async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness:
   }
 
   if (caps.commentMutations === true) {
-    assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar);
+    assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar, provider);
     const items = await openWorkItems();
     assert.ok(items.length > 0, "commentMutations requires at least one work item.");
     const item = items[0];

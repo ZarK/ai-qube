@@ -21,7 +21,9 @@ export {
 
 export {
   markFixtureTransport,
+  bindFixtureSubject,
   FIXTURE_TRANSPORT_MARKER,
+  FIXTURE_BOUND_TRANSPORT,
 } from "./fixtures.js";
 
 export {

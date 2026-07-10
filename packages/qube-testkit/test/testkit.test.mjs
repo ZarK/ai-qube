@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+  bindFixtureSubject,
   defineAdapterHarness,
   defineCiProviderHarness,
   defineWorkProviderHarness,
@@ -131,9 +132,17 @@ function ciHarness(run, fixtureRoot = makeFixtureRoot()) {
     fixtureRoot,
     fixtureFiles: ["fixtures/check.json"],
     createFixtureTransport: () => ({ status: "success" }),
-    createSubject: fixture => fixture,
+    createSubject: fixture => ({
+      fixture,
+      mapCheck: check => ({
+        result: check?.status === "success" ? "passed" : check?.status === "pending" ? "pending" : "failed",
+        reasonCode: check?.status === "success" ? "ok" : "failed",
+        summary: "fixture check",
+        name: "fixture-check",
+        workflowName: "fixture-workflow",
+      }),
+    }),
     ciScenarios: {
-      mapCheck: (_subject, check) => ({ result: check?.status === "success" ? "passed" : "failed" }),
       passedCheck: { status: "success" },
       failedCheck: { status: "failure" },
       pendingCheck: { status: "pending" },
@@ -185,9 +194,8 @@ describe("adapter conformance testkit", () => {
           fixtureRoot: makeFixtureRoot(),
           fixtureFiles: ["fixtures/check.json"],
           createFixtureTransport: () => ({}),
-          createSubject: fixture => fixture,
+          createSubject: () => ({ mapCheck: () => ({ result: "passed", name: "x", summary: "s", workflowName: "w" }) }),
           ciScenarios: {
-            mapCheck: () => ({ result: "passed" }),
             passedCheck: {},
             failedCheck: {},
             pendingCheck: {},
@@ -216,9 +224,8 @@ describe("adapter conformance testkit", () => {
           fixtureRoot: makeFixtureRoot(),
           fixtureFiles: ["fixtures/does-not-exist.json"],
           createFixtureTransport: () => ({}),
-          createSubject: fixture => fixture,
+          createSubject: () => ({ mapCheck: () => ({ result: "passed", name: "x", summary: "s", workflowName: "w" }) }),
           ciScenarios: {
-            mapCheck: () => ({ result: "passed" }),
             passedCheck: {},
             failedCheck: {},
             pendingCheck: {},
@@ -238,9 +245,8 @@ describe("adapter conformance testkit", () => {
           fixtureRoot: makeFixtureRoot(),
           fixtureFiles: ["fixtures/check.json"],
           createFixtureTransport: () => ({}),
-          createSubject: fixture => fixture,
+          createSubject: () => ({ mapCheck: () => ({ result: "passed", name: "x", summary: "s", workflowName: "w" }) }),
           ciScenarios: {
-            mapCheck: () => ({ result: "passed" }),
             passedCheck: {},
             failedCheck: {},
             pendingCheck: {},
@@ -271,11 +277,11 @@ describe("adapter conformance testkit", () => {
           fixtureFiles: ["fixtures/work.json"],
           mutationBoundary: "fixture-only",
           createFixtureTransport: () => markFixtureTransport({ items }),
-          createSubject: transport => createWorkProvider(transport.items, {
+          createSubject: transport => bindFixtureSubject(createWorkProvider(transport.items, {
             listOpenWork: false,
             loadWork: false,
             planStatusSync: false,
-          }),
+          }), transport),
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
             createLargeResultTransport: () => markFixtureTransport({ items, listRequests: 0 }),
@@ -323,7 +329,7 @@ describe("adapter conformance testkit", () => {
               },
             };
             if (transport.multiPage) {
-              return {
+              return bindFixtureSubject({
                 ...base,
                 async listOpenWorkItems() {
                   const pageSize = 1;
@@ -336,15 +342,15 @@ describe("adapter conformance testkit", () => {
                   }
                   return all;
                 },
-              };
+              }, transport);
             }
-            return {
+            return bindFixtureSubject({
               ...base,
               async listOpenWorkItems() {
                 transport.listRequests += 1;
                 return base.listOpenWorkItems();
               },
-            };
+            }, transport);
           },
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
@@ -393,16 +399,16 @@ describe("adapter conformance testkit", () => {
           createFixtureTransport: () => markFixtureTransport({ items, listRequests: 0 }),
           createSubject: transport => {
             if (transport.items === "malformed") {
-              return {
+              return bindFixtureSubject({
                 ...createWorkProvider([]),
                 async listOpenWorkItems() {
                   throw new Error("malformed fixture payload");
                 },
-              };
+              }, transport);
             }
             const provider = createWorkProvider(transport.items);
             if (transport.multiPage) {
-              return {
+              return bindFixtureSubject({
                 ...provider,
                 async listOpenWorkItems() {
                   const pageSize = 2;
@@ -416,16 +422,16 @@ describe("adapter conformance testkit", () => {
                   }
                   return all;
                 },
-              };
+              }, transport);
             }
-            return {
+            return bindFixtureSubject({
               ...provider,
               async listOpenWorkItems() {
                 transport.listRequests += 1;
                 listRequests = transport.listRequests;
                 return provider.listOpenWorkItems();
               },
-            };
+            }, transport);
           },
           getListRequestCount: transport => transport.listRequests,
           workScenarios: {
@@ -544,9 +550,16 @@ describe("adapter conformance testkit", () => {
           fixtureRoot: makeFixtureRoot(),
           fixtureFiles: ["fixtures/check.json"],
           createFixtureTransport: () => ({}),
-          createSubject: fixture => fixture,
+          createSubject: () => ({
+            mapCheck: check => ({
+              result: check?.status === "success" ? "passed" : "failed",
+              reasonCode: "x",
+              summary: "s",
+              name: "n",
+              workflowName: "w",
+            }),
+          }),
           ciScenarios: {
-            mapCheck: () => ({ result: "passed" }),
             passedCheck: { status: "success" },
             failedCheck: { status: "failure" },
             pendingCheck: { status: "pending" },

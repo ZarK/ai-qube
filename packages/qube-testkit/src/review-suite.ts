@@ -101,7 +101,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
       assert.ok(action.kind, "Review request plan actions must declare a kind.");
     }
     if (caps.applyReviewRequests === true) {
-      assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar);
+      assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar, provider);
       assert.ok(plan.actions.length > 0, "applyReviewRequests observation requires a non-empty plan.");
       const applied = await provider.apply(plan);
       assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
@@ -185,6 +185,32 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
     for (const feedback of snapshot.item.feedback) {
       assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider");
       assert.ok(feedback.summary.trim().length > 0);
+    }
+
+    if (scenarios.markerExpectations) {
+      const { forgedMarkerSnippets, staleMarkerSnippets } = scenarios.markerExpectations;
+      assert.ok(forgedMarkerSnippets.length > 0, "markerExpectations.forgedMarkerSnippets must be non-empty.");
+      assert.ok(staleMarkerSnippets.length > 0, "markerExpectations.staleMarkerSnippets must be non-empty.");
+      const feedbackText = snapshot.item.feedback.map(row => `${row.summary}\n${row.author ?? ""}`);
+      for (const snippet of forgedMarkerSnippets) {
+        const matches = snapshot.item.feedback.filter(row =>
+          row.summary.includes(snippet) || (row.author ?? "").includes(snippet),
+        );
+        assert.ok(matches.length > 0, `Forged marker snippet ${snippet} must appear in loaded review feedback.`);
+        assert.ok(
+          matches.every(row => row.trust === "untrusted"),
+          `Forged marker snippet ${snippet} must never be classified as trusted-provider.`,
+        );
+      }
+      for (const snippet of staleMarkerSnippets) {
+        const matches = snapshot.item.feedback.filter(row => row.summary.includes(snippet));
+        assert.ok(matches.length > 0, `Stale marker snippet ${snippet} must appear in loaded review feedback.`);
+        assert.ok(
+          matches.every(row => row.trust === "untrusted"),
+          `Stale-head marker snippet ${snippet} must never be classified as trusted-provider for the current head.`,
+        );
+      }
+      assert.ok(feedbackText.length > 0);
     }
   }
 
