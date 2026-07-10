@@ -55,6 +55,7 @@
     "@tjalve/qube-core": "workspace:*"
   },
   "devDependencies": {
+    "@tjalve/qube-testkit": "workspace:*",
     "@types/node": "24.12.2",
     "typescript": "6.0.3"
   }

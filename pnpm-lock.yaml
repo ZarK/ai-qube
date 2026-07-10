@@ -46,6 +46,9 @@ importers:
         specifier: workspace:*
         version: link:../../packages/qube-core
     devDependencies:
+      '@tjalve/qube-testkit':
+        specifier: workspace:*
+        version: link:../../packages/qube-testkit
       '@types/node':
         specifier: 24.12.2
         version: 24.12.2
@@ -135,6 +138,19 @@ importers:
         version: 6.0.3
 
   packages/qube-core:
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
+  packages/qube-testkit:
+    dependencies:
+      '@tjalve/qube-core':
+        specifier: workspace:*
+        version: link:../qube-core
     devDependencies:
       '@types/node':
         specifier: 24.12.2

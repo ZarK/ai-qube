@@ -1,0 +1,20 @@
+{
+  "passed": {
+    "name": "core",
+    "status": "COMPLETED",
+    "conclusion": "SUCCESS",
+    "workflowName": "CI"
+  },
+  "failed": {
+    "name": "core",
+    "status": "COMPLETED",
+    "conclusion": "FAILURE",
+    "workflowName": "CI"
+  },
+  "pending": {
+    "name": "core",
+    "status": "IN_PROGRESS",
+    "conclusion": null,
+    "workflowName": "CI"
+  }
+}

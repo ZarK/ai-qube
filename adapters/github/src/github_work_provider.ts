@@ -11,6 +11,11 @@ export interface GitHubWorkProviderOptions {
   exec?: GhExec;
   cwd?: string;
   limit?: number;
+  /**
+   * When set, listOpenWorkItems pages through open issues with this page size
+   * via the GitHub issues REST API instead of a single high-limit list call.
+   */
+  listPageSize?: number;
   includeAssignees?: boolean;
 }
 
@@ -115,7 +120,11 @@ export class GitHubWorkProvider {
   }
 
   async listOpenWorkItems(): Promise<WorkItem[]> {
-    const issues = await listOpenIssues({ ...this.options, includeAssignees: this.includeAssignees() });
+    const issues = await listOpenIssues({
+      ...this.options,
+      includeAssignees: this.includeAssignees(),
+      pageSize: this.options.listPageSize,
+    });
     return attachBlockedBy(issues.map(githubIssueToWorkItem));
   }
 
