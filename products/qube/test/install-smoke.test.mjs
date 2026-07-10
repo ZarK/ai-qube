@@ -139,6 +139,12 @@ async function createFakeComponentTarball(component, root, packDir) {
       ].join("\n")
     );
   }
+  if (component.name === "@tjalve/aie") {
+    await writeFile(
+      path.join(componentRoot, "index.js"),
+      "export function validateConfig(config) { return { ok: true, errors: [], config }; }\n"
+    );
+  }
   await writeFile(
     path.join(componentRoot, "package.json"),
     `${JSON.stringify(
@@ -146,7 +152,7 @@ async function createFakeComponentTarball(component, root, packDir) {
         name: component.name,
         version: component.version,
         type: "module",
-        ...(component.name === "@tjalve/aib" ? {
+        ...(["@tjalve/aib", "@tjalve/aie"].includes(component.name) ? {
           main: "index.js",
           exports: {
             ".": "./index.js"

@@ -591,7 +591,7 @@ describe("qube composer CLI", () => {
       version: 1,
       providers: {
         work: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://runtime.example.com" } },
-        review: { kind: "gitlab" },
+        review: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://runtime.example.com" } },
         ci: { kind: "github" },
         connections: { gitlab: { projectId: "registry/project", baseUrl: "https://doctor.example.com" } },
       },
@@ -611,10 +611,37 @@ describe("qube composer CLI", () => {
     assert.equal(result.connections.length, 2);
   });
 
+  it("probes distinct role connections for the same adapter independently", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-distinct-role-connections-"));
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://work.example.com" } },
+        review: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://review.example.com" } },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+    const gitLabUrls = [];
+    const result = await runConnectionDoctor({
+      cwd,
+      probe: async (contract, options) => {
+        if (contract.adapterId === "gitlab") gitLabUrls.push(options.config.baseUrl);
+        return { adapterId: contract.adapterId, probeId: contract.probe.id, status: "pass", authMethod: contract.authMethod, summary: "passed", verifyCommand: contract.probe.verifyCommand, readOnly: true };
+      },
+    });
+    assert.deepEqual(gitLabUrls.sort(), ["https://review.example.com", "https://work.example.com"]);
+    assert.deepEqual(result.connections.filter(connection => connection.adapterId === "gitlab").map(connection => connection.connectionId), ["work:gitlab", "review:gitlab"]);
+  });
+
   it("fails doctor for malformed or structurally invalid Executor config", () => {
     const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-quality-"));
     createQualityDoctorShim(qualityRoot);
-    const cases = ["{not-json", JSON.stringify({ version: 1, providers: { work: "github" } })];
+    const cases = [
+      "{not-json",
+      JSON.stringify({ version: 1, providers: { work: "github" } }),
+      JSON.stringify({ version: 1, providers: { work: { kind: "linear", connection: { teamId: false } }, review: { kind: "github" }, ci: { kind: "github" } } }),
+    ];
     for (const configText of cases) {
       const cwd = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-"));
       mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });

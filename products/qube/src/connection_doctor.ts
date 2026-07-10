@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { execFile } from "node:child_process";
+import { validateConfig } from "@tjalve/aie";
 
 import {
   gitLabConnectionContract,
@@ -32,7 +33,11 @@ export interface ConnectionDoctorResult {
   readonly status: ConnectionProbeStatus;
   readonly configPath: string | null;
   readonly summary: string;
-  readonly connections: readonly ConnectionProbeResult[];
+  readonly connections: readonly ConnectionDoctorProbeResult[];
+}
+
+export interface ConnectionDoctorProbeResult extends ConnectionProbeResult {
+  readonly connectionId: string;
 }
 
 export interface ConnectionDoctorOptions {
@@ -65,15 +70,17 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
     });
   }
 
-  const configError = connectionConfigError(config);
-  if (configError) {
+  const validated = validateConfig(config);
+  if (!validated.ok || !validated.config) {
+    const firstError = validated.errors[0];
     return Object.freeze({
       status: "fail",
       configPath,
-      summary: `Executor config is invalid: ${configError}`,
+      summary: `Executor config is invalid${firstError ? ` at ${firstError.path}: ${firstError.message}` : "."}`,
       connections: Object.freeze([]),
     });
   }
+  config = validated.config;
 
   const configured = configuredConnections(config);
   if (configured.length === 0) {
@@ -86,12 +93,15 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
   }
 
   const probe = options.probe ?? runConnectionProbe;
-  const results = await Promise.all(configured.map(({ contract, config: connectionConfig }) => probe(contract, {
+  const results = await Promise.all(configured.map(async ({ contract, config: connectionConfig, connectionId }) => Object.freeze({
+    ...await probe(contract, {
     mode: options.mode ?? "live",
     env: options.env ?? process.env,
     config: connectionConfig,
     exec: executeCommand,
     fetch: fetchConnection,
+    }),
+    connectionId,
   })));
   const status = rollupStatus(results);
   return Object.freeze({
@@ -110,72 +120,54 @@ export function formatConnectionDoctor(result: ConnectionDoctorResult): string {
   const lines = ["Connections:"];
   if (result.connections.length === 0) lines.push(`- unverified: ${result.summary}`);
   for (const connection of result.connections) {
-    lines.push(`- ${connection.adapterId}: ${connection.status} — ${connection.summary}`);
+    lines.push(`- ${connection.connectionId}: ${connection.status} — ${connection.summary}`);
     lines.push(`  Verify: ${connection.verifyCommand}`);
   }
   return `${lines.join("\n")}\n`;
 }
 
-function configuredConnections(config: unknown): readonly { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>> }[] {
+function configuredConnections(config: unknown): readonly { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>>; readonly connectionId: string }[] {
   if (!isRecord(config) || !isRecord(config.providers)) return [];
   const providers = config.providers;
-  const configured = new Map<string, { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>> }>();
-  const selections = [providers.work, providers.review, providers.ci].filter(isRecord);
-  for (const selection of selections) {
+  const registry = isRecord(providers.connections) ? providers.connections : {};
+  const configured: { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>>; readonly connectionId: string }[] = [];
+  const signatures = new Set<string>();
+  const selectedAdapterIds = new Set<string>();
+  const selections = [["work", providers.work], ["review", providers.review], ["ci", providers.ci]] as const;
+  for (const [role, selectionValue] of selections) {
+    if (!isRecord(selectionValue)) continue;
+    const selection = selectionValue;
     if (typeof selection.kind !== "string") continue;
     const contract = CONNECTIONS.get(selection.kind);
     if (!contract) continue;
+    selectedAdapterIds.add(contract.adapterId);
+    const sharedValue = registry[selection.kind];
+    const sharedConfig = isRecord(sharedValue) ? sharedValue : {};
     const adapterValue = selection[selection.kind];
     const adapterConfig = isRecord(adapterValue) ? adapterValue : {};
     const connectionValue = selection.connection;
     const connectionConfig = isRecord(connectionValue) ? connectionValue : {};
-    const existing = configured.get(contract.adapterId);
-    configured.set(contract.adapterId, {
-      contract,
-      config: Object.freeze({ ...existing?.config, ...selection, ...adapterConfig, ...connectionConfig }),
-    });
+    const resolvedConfig = Object.freeze({ ...sharedConfig, ...adapterConfig, ...connectionConfig });
+    const signature = connectionSignature(contract.adapterId, resolvedConfig);
+    if (signatures.has(signature)) continue;
+    signatures.add(signature);
+    configured.push({ contract, config: resolvedConfig, connectionId: `${role}:${contract.adapterId}` });
   }
-  if (isRecord(providers.connections)) {
-    for (const [adapterId, connectionValue] of Object.entries(providers.connections)) {
+  if (isRecord(registry)) {
+    for (const [adapterId, connectionValue] of Object.entries(registry)) {
       const contract = CONNECTIONS.get(adapterId);
-      if (!contract || !isRecord(connectionValue)) continue;
-      const existing = configured.get(adapterId);
-      configured.set(adapterId, {
-        contract,
-        config: Object.freeze({ ...connectionValue, ...existing?.config }),
-      });
+      if (!contract || selectedAdapterIds.has(adapterId) || !isRecord(connectionValue)) continue;
+      const signature = connectionSignature(adapterId, connectionValue);
+      if (signatures.has(signature)) continue;
+      signatures.add(signature);
+      configured.push({ contract, config: Object.freeze({ ...connectionValue }), connectionId: adapterId });
     }
   }
-  return Object.freeze([...configured.values()]);
+  return Object.freeze(configured);
 }
 
-function connectionConfigError(config: unknown): string | null {
-  if (!isRecord(config)) return "the root value must be an object";
-  if (config.version !== 1) return "version must be 1";
-  if (!isRecord(config.providers)) return "providers must be an object";
-  const providers = config.providers;
-  const roles = [
-    ["work", new Set<string>(["github", "gitlab", "linear", "jira"])],
-    ["review", new Set<string>(["github", "gitlab"])],
-    ["ci", new Set<string>(["github"])],
-  ] as const;
-  for (const [role, kinds] of roles) {
-    const selection = providers[role];
-    if (selection === undefined) continue;
-    if (!isRecord(selection) || typeof selection.kind !== "string" || !kinds.has(selection.kind)) {
-      return `providers.${role}.kind is not supported`;
-    }
-    if (selection.connection !== undefined && !isRecord(selection.connection)) {
-      return `providers.${role}.connection must be an object`;
-    }
-  }
-  if (providers.connections !== undefined) {
-    if (!isRecord(providers.connections)) return "providers.connections must be an object";
-    for (const [adapterId, fields] of Object.entries(providers.connections)) {
-      if (!CONNECTIONS.has(adapterId) || !isRecord(fields)) return `providers.connections.${adapterId} is not supported`;
-    }
-  }
-  return null;
+function connectionSignature(adapterId: string, config: Readonly<Record<string, unknown>>): string {
+  return `${adapterId}:${JSON.stringify(Object.entries(config).sort(([left], [right]) => left.localeCompare(right)))}`;
 }
 
 function findExecutorConfig(start: string): string | null {
