@@ -1797,6 +1797,67 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
   });
 
+  it('carries forward with non-empty risk card activation when prior fragment identity matches', async () => {
+    const { formatRiskCardReviewerFragment, selectRiskCards } = require('../dist/risk_cards/index.js');
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', rereview: 'delta' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    const issueBody = 'status success failed provider capability fixture test oracle';
+    const prTitle = 'Review me';
+    const riskCardIssueText = `${prTitle}\nIssue 93\n${issueBody}`;
+    const changedPaths = ['src/app.js', 'notes.md'];
+    const cards = selectRiskCards({ issueText: riskCardIssueText, paths: changedPaths });
+    assert.ok(cards.length > 0, 'fixture must activate risk cards');
+    const fragments = cards.map(card => formatRiskCardReviewerFragment(card));
+    const cardStack = promptStack('code-quality', [`Run local review lane code-quality.`], fragments).promptStack.map(fragment => ({
+      id: fragment.id,
+      source: fragment.source,
+      sourceCategory: fragment.sourceCategory,
+      path: fragment.path,
+      sha256: fragment.sha256,
+      trust: fragment.trust,
+    }));
+
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      promptStack: cardStack,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: 'test-hash' }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr({ headRefOid: currentHead, title: prTitle })],
+      issueBodies: { 93: issueBody },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const carried = result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
+    assert.equal(carried.status, 'completed');
+    assert.match(carried.summary, /Carried forward from approved review at/);
+    assert.ok(carried.promptFragmentIds.some(id => id.startsWith('command-supplied:')));
+    const carriedEvidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'code-quality.json'), 'utf8'));
+    assert.equal(carriedEvidence.carriedForward.fromHeadSha, priorHead);
+    assert.equal(result.localReview.status, 'passed');
+  });
+
   it('reruns a delta lane when review configuration changed in the head delta', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

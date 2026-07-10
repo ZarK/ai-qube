@@ -56,6 +56,24 @@ function builtinFragmentDigest(entries: ReadonlyArray<Record<string, unknown>>):
   return hash(JSON.stringify(builtin));
 }
 
+/** Stable identity of activated risk-card command fragments (ordered ids). */
+export function riskCardCommandIdentity(fragments: readonly string[]): string {
+  const ids = fragments.map(text => {
+    const sha256 = createHash('sha256').update(text).digest('hex');
+    return `command-supplied:${sha256.slice(0, 12)}`;
+  });
+  return hash(JSON.stringify(ids));
+}
+
+export function priorRiskCardCommandIdentity(promptStackEntries: unknown): string {
+  if (!Array.isArray(promptStackEntries)) return hash(JSON.stringify([]));
+  const ids = promptStackEntries
+    .filter(isRecord)
+    .map(entry => typeof entry.id === 'string' ? entry.id : '')
+    .filter(id => id.startsWith('command-supplied:'));
+  return hash(JSON.stringify(ids));
+}
+
 export function expectedLaneFragmentDigest(lane: LocalReviewLaneId): string {
   return builtinFragmentDigest(promptStack(lane).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
@@ -78,9 +96,11 @@ export async function findCarryForwardSource(input: {
   matchPatterns: readonly string[];
   contextPatterns: readonly string[];
   expectedFragmentDigest: string;
+  expectedCommandSuppliedIdentity?: string;
   expectedAdapter: 'local-host' | 'local-command';
   requiredCommand: string | null;
 }): Promise<CarryForwardSource | null> {
+  const expectedCommandIdentity = input.expectedCommandSuppliedIdentity ?? riskCardCommandIdentity([]);
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
   let headDirectories: string[];
   try {
@@ -107,6 +127,7 @@ export async function findCarryForwardSource(input: {
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
+      if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
       const provenance = parsed.runnerProvenance;
       const priorRunId = [provenance.taskId, provenance.sessionId, provenance.threadId].find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? null;
       candidates.push({ fromHeadSha: priorHeadSha, priorRunId, recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '' });

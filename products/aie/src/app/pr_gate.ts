@@ -793,7 +793,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
   const riskCardIssueText = [
     finalSnapshot.pr.title,
-    ...issueChecklists.map(summary => `${summary.issue.title}\n${summary.issue.body}`),
+    ...issueChecklists.map(summary => summary.riskCardIssueText),
   ].join('\n');
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,

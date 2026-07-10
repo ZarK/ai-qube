@@ -1,7 +1,11 @@
 const assert = require('node:assert/strict');
 const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
+const { mkdtempSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
 
+const { getDefaults } = require('../dist/config/index.js');
 const {
   DEFAULT_MAX_RISK_CARDS,
   formatRiskCardReviewerFragment,
@@ -12,6 +16,18 @@ const {
   validateRiskCardCatalog,
 } = require('../dist/risk_cards/index.js');
 const { promptStack } = require('../dist/app/local_review_runner_support.js');
+const { runLocalReviewRunner } = require('../dist/app/local_review_runner.js');
+
+function localConfig() {
+  const config = structuredClone(getDefaults());
+  config.reviewAdapter = 'local';
+  config.localReviewAgents = ['codex'];
+  config.reviewProfile = 'local-focused';
+  config.reviewLanes = [
+    { id: 'code-quality', required: 'always', match: ['**/*'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', rereview: 'delta' },
+  ];
+  return config;
+}
 
 describe('aie risk cards', () => {
   it('validates the shipped catalog', () => {
@@ -35,7 +51,7 @@ describe('aie risk cards', () => {
     assert.deepEqual(selected, []);
   });
 
-  it('selects deterministically and bounds to at most five cards', () => {
+  it('selects exact ordered card ids for a representative fixture', () => {
     const input = {
       issueText: 'provider capability trust marker stale pagination fixture test oracle false success',
       paths: [
@@ -47,9 +63,48 @@ describe('aie risk cards', () => {
     };
     const first = selectRiskCards(input);
     const second = selectRiskCards(input);
+    assert.deepEqual(first.map(card => card.id), [
+      'test-oracle-quality',
+      'mode-provider-matrix',
+      'truthful-state-transitions',
+      'freshness-cache-identity',
+      'trust-identity-boundaries',
+    ]);
     assert.deepEqual(first.map(card => card.id), second.map(card => card.id));
-    assert.ok(first.length > 0);
-    assert.ok(first.length <= DEFAULT_MAX_RISK_CARDS);
+    assert.equal(first.length, DEFAULT_MAX_RISK_CARDS);
+  });
+
+  it('bounds selection to exactly five cards when more than five match', () => {
+    const selected = selectRiskCards({
+      issueText: [
+        'status success failed skipped unknown error gate check',
+        'provider adapter matrix unsupported capability permutation github gitlab jira',
+        'trust marker identity auth token untrusted forged reviewer approval',
+        'stale fresh head cache carry-forward evidence sha current-head',
+        'pagination limit timeout cancel abort budget pageSize cursor',
+        'lock concurrency parallel race session atomic mutex',
+        'fixture path traversal symlink root absolute relative escape',
+        'parse codec normalize encoding json malformed schema',
+        'package dist shipped workspace publish files assets',
+        'test negative fixture oracle conformance suite assert',
+      ].join(' '),
+      paths: [
+        'packages/foo/src/a.ts',
+        'adapters/x/src/y.ts',
+        'products/aie/src/app/z.ts',
+        'packages/x/test/t.mjs',
+        'packages/x/package.json',
+        'docs/notes.md',
+      ],
+    });
+    assert.equal(selected.length, DEFAULT_MAX_RISK_CARDS);
+    assert.deepEqual(selected.map(card => card.id), [
+      'mode-provider-matrix',
+      'truthful-state-transitions',
+      'test-oracle-quality',
+      'trust-identity-boundaries',
+      'serialization-encoding',
+    ]);
   });
 
   it('includes activated reviewer faces in the prompt stack hash', () => {
@@ -66,5 +121,91 @@ describe('aie risk cards', () => {
     assert.notEqual(hashWithout, hashWith);
     assert.ok(withCards.text.includes(cards[0].id));
     assert.ok(withCards.orderedFragmentIds.some(id => id.startsWith('command-supplied:')));
+  });
+
+  it('activates risk cards through the real local-review runner planning path', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-risk-cards-runner-'));
+    const config = localConfig();
+    const issueText = 'provider capability trust marker pagination fixture test';
+    const paths = ['products/aie/src/app/local_review_runner.ts'];
+    const expectedCards = selectRiskCards({ issueText, paths });
+    assert.ok(expectedCards.length > 0);
+
+    const withCards = await runLocalReviewRunner(config, {
+      repoRoot: repo,
+      issueNumbers: [282],
+      prNumber: 291,
+      headSha: 'head-with-cards',
+      required: true,
+      shadow: false,
+      dryRun: true,
+      includePrompts: true,
+      changedPaths: paths,
+      riskCardIssueText: issueText,
+    });
+    const zeroCards = await runLocalReviewRunner(config, {
+      repoRoot: repo,
+      issueNumbers: [282],
+      prNumber: 291,
+      headSha: 'head-zero-cards',
+      required: true,
+      shadow: false,
+      dryRun: true,
+      includePrompts: true,
+      changedPaths: ['docs/notes/unrelated.md'],
+      riskCardIssueText: 'purely unrelated prose about gardening',
+    });
+
+    assert.equal(withCards.lanes.length, 1);
+    assert.equal(zeroCards.lanes.length, 1);
+    const active = withCards.lanes[0];
+    const inactive = zeroCards.lanes[0];
+    assert.ok(active.promptText.includes(expectedCards[0].id));
+    assert.ok(active.promptFragmentIds.some(id => id.startsWith('command-supplied:')));
+    assert.ok(active.promptStackHash);
+    assert.notEqual(active.promptStackHash, inactive.promptStackHash);
+    assert.equal(inactive.promptText.includes('Risk card '), false);
+    assert.equal(inactive.promptFragmentIds.some(id => id.startsWith('command-supplied:')), false);
+
+    for (const card of expectedCards) {
+      assert.ok(active.promptText.includes(card.id), `missing activated card ${card.id}`);
+    }
+  });
+
+  it('keeps local-command terminal hash aligned with card-aware planned hash', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-risk-cards-cmd-'));
+    const config = localConfig();
+    config.localReviewAgents = ['local-command'];
+    config.reviewLanes = [
+      {
+        id: 'code-quality',
+        required: 'always',
+        match: ['**/*'],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-command',
+        command: 'review-fixture',
+        rereview: 'delta',
+      },
+    ];
+    const issueText = 'provider capability trust marker pagination fixture test';
+    const paths = ['products/aie/src/app/local_review_runner.ts'];
+    const planned = await runLocalReviewRunner(config, {
+      repoRoot: repo,
+      issueNumbers: [282],
+      prNumber: 291,
+      headSha: 'cmd-hash-head',
+      required: true,
+      shadow: false,
+      dryRun: true,
+      includePrompts: true,
+      changedPaths: paths,
+      riskCardIssueText: issueText,
+    });
+    assert.equal(planned.lanes.length, 1);
+    assert.ok(planned.lanes[0].promptFragmentIds.some(id => id.startsWith('command-supplied:')));
+    assert.ok(planned.lanes[0].promptStackHash);
+    assert.ok(planned.lanes[0].promptText.includes('Risk card '));
   });
 });

@@ -7,7 +7,7 @@ import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 
@@ -156,12 +156,24 @@ function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, link
 
 async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], linkedIssueNumbers: readonly number[], written: string[], riskCardFragments: readonly string[] = []): Promise<LocalReviewLaneRun | null> {
   if (runner !== 'local-host' && runner !== 'local-command') return null;
-  // Risk cards activate from issue text, which can change without a git delta; skip carry-forward when cards are active.
-  if (riskCardFragments.length > 0) return null;
   const lanePolicy = config.reviewLanes.find(entry => entry.id === lane);
   if ((lanePolicy?.rereview ?? defaultRereviewMode(lane)) !== 'delta') return null;
   const contextPatterns = [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements];
-  const source = await findCarryForwardSource({ repoRoot: input.repoRoot, issueNumber, prNumber: input.prNumber, headSha: input.headSha, lane, matchPatterns: lanePolicy?.match ?? [], contextPatterns, expectedFragmentDigest: expectedLaneFragmentDigest(lane), expectedAdapter: runner, requiredCommand: command });
+  // Risk cards can activate from issue text without a git delta. Carry forward only when the prior
+  // evidence recorded the same command-supplied risk-card fragment identity as the current head.
+  const source = await findCarryForwardSource({
+    repoRoot: input.repoRoot,
+    issueNumber,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    lane,
+    matchPatterns: lanePolicy?.match ?? [],
+    contextPatterns,
+    expectedFragmentDigest: expectedLaneFragmentDigest(lane),
+    expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
+    expectedAdapter: runner,
+    requiredCommand: command,
+  });
   if (!source) return null;
   if (input.dryRun) {
     return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments);
@@ -299,7 +311,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
       const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, evidence, 'local-command');
       written.push(writtenPath);
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
       produced.push(evidence);
     }
   }
