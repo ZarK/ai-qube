@@ -125,6 +125,8 @@ const review = defineReviewForgeHarness({
       { severity: "advisory", message: "body-only note" },
     ],
     diffPathsWithLines: { "src/a.ts": [10] },
+    // Non-empty thread ids force the dry-run planned path instead of the empty-id skip short-circuit.
+    resolveThreadIds: ["PRRT_fixture_thread_1"],
   },
   capabilityCases: [
     {

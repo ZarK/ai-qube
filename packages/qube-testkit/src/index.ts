@@ -64,6 +64,11 @@ export interface ReviewRoleScenarios {
     readonly location?: { readonly path: string; readonly line?: number; readonly side?: "source" | "destination" };
   }[];
   readonly diffPathsWithLines?: Readonly<Record<string, readonly number[]>>;
+  /**
+   * Thread ids used when resolveReviewThreads is advertised. Required non-empty so
+   * the suite cannot pass on the empty-id skipped short-circuit.
+   */
+  readonly resolveThreadIds?: readonly string[];
 }
 
 /** Shared CI scenario inputs. */
@@ -420,6 +425,10 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   }
   if (descriptor.roles.review) {
     assert.ok(descriptor.roles.review.reviewScenarios?.reviewPolicy, "Review forge harness must supply reviewScenarios.reviewPolicy for the shared review suite.");
+    assert.ok(
+      descriptor.roles.review.reviewScenarios?.sampleFindings && descriptor.roles.review.reviewScenarios.sampleFindings.length >= 2,
+      "Review forge harness must supply sampleFindings with at least two findings.",
+    );
   }
   if (descriptor.roles.ci) {
     assert.ok(descriptor.roles.ci.ciScenarios, "CI provider harness must supply ciScenarios for the shared CI suite.");
@@ -600,6 +609,26 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.ok(Array.isArray(plan.actions), "planStatusSync plan.actions must be an array.");
   }
 
+  // Observe true lifecycle flags through real plan methods; bare true flags without plans are false success.
+  if (caps.planLifecycleMutations === true) {
+    const items = await provider.listOpenWorkItems();
+    assert.ok(items.length > 0, "planLifecycleMutations requires at least one work item.");
+    const start = provider.planStart(items[0], scenarios.statusPolicy as never);
+    assert.ok(start && Array.isArray(start.actions), "planStart must return an action plan when planLifecycleMutations is true.");
+    const pause = provider.planPause(items[0], items, scenarios.statusPolicy as never);
+    assert.ok(pause && Array.isArray(pause.actions), "planPause must return an action plan when planLifecycleMutations is true.");
+    const complete = provider.planComplete(items[0], items, scenarios.statusPolicy as never);
+    assert.ok(complete && Array.isArray(complete.actions), "planComplete must return an action plan when planLifecycleMutations is true.");
+    if (caps.applyLifecycleMutations === true) {
+      const applied = await provider.apply({
+        ...start,
+        dryRun: true,
+        actions: [],
+      } as never);
+      assert.ok(Array.isArray(applied), "apply must return action results when applyLifecycleMutations is true.");
+    }
+  }
+
   if (scenarios.createLargeResultTransport) {
     const largeTransport = await scenarios.createLargeResultTransport();
     const largeProvider = await harness.createSubject(largeTransport) as WorkProvider;
@@ -698,18 +727,23 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     assert.equal(typeof provider.resolveReviewThreads, "function", "resolve-review-threads requires a resolveReviewThreads method.");
     const item = await provider.findReviewForCurrentBranch();
     const prNumber = Number(item?.key.id);
-    if (Number.isInteger(prNumber) && prNumber > 0) {
-      const threadIds = item?.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id) ?? [];
-      const result = await provider.resolveReviewThreads!({
-        prNumber,
-        threadIds,
-        dryRun: true,
-      });
-      assert.ok(result && typeof result.status === "string", "resolveReviewThreads dry-run must return a status.");
-      assert.equal(result.prNumber, prNumber);
-      assert.ok(Array.isArray(result.resolvedThreadIds), "resolveReviewThreads must report resolvedThreadIds.");
-      assert.ok(Array.isArray(result.skippedThreadIds), "resolveReviewThreads must report skippedThreadIds.");
-    }
+    assert.ok(Number.isInteger(prNumber) && prNumber > 0, "resolveReviewThreads suite requires a numeric review item id.");
+    const fromItem = item?.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id) ?? [];
+    const threadIds = [...(scenarios.resolveThreadIds ?? []), ...fromItem].filter(id => id.trim().length > 0);
+    assert.ok(
+      threadIds.length > 0,
+      "resolveReviewThreads suite requires non-empty resolveThreadIds or unresolved conversations; empty-id short-circuit is not observation.",
+    );
+    const result = await provider.resolveReviewThreads!({
+      prNumber,
+      threadIds,
+      dryRun: true,
+    });
+    assert.ok(result && typeof result.status === "string", "resolveReviewThreads dry-run must return a status.");
+    assert.notEqual(result.status, "skipped", "resolveReviewThreads dry-run with thread ids must not skip as if none were selected.");
+    assert.equal(result.prNumber, prNumber);
+    assert.ok(Array.isArray(result.resolvedThreadIds), "resolveReviewThreads must report resolvedThreadIds.");
+    assert.ok(Array.isArray(result.skippedThreadIds), "resolveReviewThreads must report skippedThreadIds.");
   }
 
   if (caps.publishLaneReview === true || caps.publishLaneReviewInline === true) {
