@@ -777,13 +777,12 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       assert.ok(action.kind, "Review request plan actions must declare a kind.");
     }
     if (caps.applyReviewRequests === true) {
-      // Observe advertised apply by applying a dry empty plan slice; a throwing apply must fail.
-      const applied = await provider.apply({
-        ...plan,
-        dryRun: true,
-        actions: [],
-      });
+      // Observe advertised apply against the real planned actions. Stripping actions would hide
+      // implementations that throw only when non-empty plans are applied.
+      assert.ok(plan.actions.length > 0, "applyReviewRequests observation requires a non-empty plan.");
+      const applied = await provider.apply(plan);
       assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
+      assert.equal(applied.length, plan.actions.length, "apply must return one result per planned action.");
     }
   }
 
