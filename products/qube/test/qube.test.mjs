@@ -634,6 +634,29 @@ describe("qube composer CLI", () => {
     assert.deepEqual(result.connections.filter(connection => connection.adapterId === "gitlab").map(connection => connection.connectionId), ["work:gitlab", "review:gitlab"]);
   });
 
+  it("uses the same Jira legacy-option precedence as the runtime adapter", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-jira-precedence-"));
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "jira", jira: { projectKey: "LEGACY", jql: "project = LEGACY" }, connection: { baseUrl: "https://jira.example.com", projectKey: "NEW", jql: "project = NEW" } },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+    await runConnectionDoctor({
+      cwd,
+      probe: async (contract, options) => {
+        if (contract.adapterId === "jira") {
+          assert.equal(options.config.projectKey, "LEGACY");
+          assert.equal(options.config.jql, "project = LEGACY");
+        }
+        return { adapterId: contract.adapterId, probeId: contract.probe.id, status: "pass", authMethod: contract.authMethod, summary: "passed", verifyCommand: contract.probe.verifyCommand, readOnly: true };
+      },
+    });
+  });
+
   it("fails doctor for malformed or structurally invalid Executor config", () => {
     const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-quality-"));
     createQualityDoctorShim(qualityRoot);
@@ -652,6 +675,10 @@ describe("qube composer CLI", () => {
       assert.equal(parsed.ok, false);
       assert.equal(parsed.connectionStatus, "fail");
       assert.match(parsed.connections.summary, /invalid|malformed/i);
+      const humanResult = runCli(["doctor"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+      assert.equal(humanResult.status, 1, humanResult.stderr);
+      assert.match(humanResult.stdout, /- fail:/);
+      assert.doesNotMatch(humanResult.stdout, /- unverified:/);
     }
   });
 

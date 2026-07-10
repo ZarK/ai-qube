@@ -118,7 +118,7 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
 
 export function formatConnectionDoctor(result: ConnectionDoctorResult): string {
   const lines = ["Connections:"];
-  if (result.connections.length === 0) lines.push(`- unverified: ${result.summary}`);
+  if (result.connections.length === 0) lines.push(`- ${result.status}: ${result.summary}`);
   for (const connection of result.connections) {
     lines.push(`- ${connection.connectionId}: ${connection.status} — ${connection.summary}`);
     lines.push(`  Verify: ${connection.verifyCommand}`);
@@ -147,7 +147,7 @@ function configuredConnections(config: unknown): readonly { readonly contract: C
     const adapterConfig = isRecord(adapterValue) ? adapterValue : {};
     const connectionValue = selection.connection;
     const connectionConfig = isRecord(connectionValue) ? connectionValue : {};
-    const resolvedConfig = Object.freeze({ ...sharedConfig, ...adapterConfig, ...connectionConfig });
+    const resolvedConfig = Object.freeze({ ...sharedConfig, ...connectionConfig, ...adapterConfig });
     const signature = connectionSignature(contract.adapterId, resolvedConfig);
     if (signatures.has(signature)) continue;
     signatures.add(signature);
