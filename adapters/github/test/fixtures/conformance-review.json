@@ -4,8 +4,14 @@
   "state": "OPEN",
   "url": "https://github.com/example/qube/pull/12",
   "headRefOid": "abc1234",
+  "author": { "login": "octocat" },
   "reviewDecision": "REVIEW_REQUIRED",
   "mergeStateStatus": "CLEAN",
   "mergeable": "MERGEABLE",
-  "isDraft": false
+  "isDraft": false,
+  "reviewRequests": [],
+  "reviews": [],
+  "latestReviews": [],
+  "statusCheckRollup": [],
+  "closingIssuesReferences": [{ "number": 42 }]
 }

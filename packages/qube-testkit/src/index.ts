@@ -484,6 +484,22 @@ async function verifyRoleShape(adapter: QubeAdapterContract, harness: RoleHarnes
     for (const capability of ["loadReview", "loadReviewSnapshot", "findCurrentBranchReview", "planReviewRequests", "applyReviewRequests"] as const) {
       assert.equal(typeof capabilities[capability], "boolean", `Review capability ${capability} must be boolean.`);
     }
+    // Optional true flags must expose the matching methods; bare flags without methods are false success.
+    if (capabilities.publishLaneReview === true) {
+      assert.equal(typeof provider.publishLaneReviewFeedback, "function", "publishLaneReview=true requires publishLaneReviewFeedback().");
+    }
+    if (capabilities.publishLaneReviewInline === true) {
+      assert.equal(typeof provider.publishLaneReviewFeedback, "function", "publishLaneReviewInline=true requires publishLaneReviewFeedback().");
+    }
+    if (capabilities.resolveReviewThreads === true) {
+      assert.equal(typeof provider.resolveReviewThreads, "function", "resolveReviewThreads=true requires resolveReviewThreads().");
+    }
+    if (capabilities.loadReviewSnapshot === true) {
+      assert.equal(typeof provider.loadReviewSnapshot, "function", "loadReviewSnapshot=true requires loadReviewSnapshot().");
+    }
+    if (capabilities.applyReviewRequests === true) {
+      assert.equal(typeof provider.apply, "function", "applyReviewRequests=true requires apply().");
+    }
     assertCapabilityFlagsMatchDeclarations(adapter, "review-forge", capabilities, REVIEW_DECLARATION_FLAGS);
   }
 }
@@ -677,20 +693,59 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     }
   }
 
-  if (isSupported(declared, "resolve-review-threads")) {
-    assert.equal(caps.resolveReviewThreads, true, "resolveReviewThreads flag must be true when capability is supported.");
+  if (isSupported(declared, "resolve-review-threads") || caps.resolveReviewThreads === true) {
+    assert.equal(caps.resolveReviewThreads, true, "resolveReviewThreads flag must be true when resolution is advertised.");
     assert.equal(typeof provider.resolveReviewThreads, "function", "resolve-review-threads requires a resolveReviewThreads method.");
     const item = await provider.findReviewForCurrentBranch();
     const prNumber = Number(item?.key.id);
     if (Number.isInteger(prNumber) && prNumber > 0) {
+      const threadIds = item?.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id) ?? [];
       const result = await provider.resolveReviewThreads!({
         prNumber,
-        threadIds: [],
+        threadIds,
         dryRun: true,
       });
       assert.ok(result && typeof result.status === "string", "resolveReviewThreads dry-run must return a status.");
       assert.equal(result.prNumber, prNumber);
+      assert.ok(Array.isArray(result.resolvedThreadIds), "resolveReviewThreads must report resolvedThreadIds.");
+      assert.ok(Array.isArray(result.skippedThreadIds), "resolveReviewThreads must report skippedThreadIds.");
     }
+  }
+
+  if (caps.publishLaneReview === true || caps.publishLaneReviewInline === true) {
+    assert.equal(typeof provider.publishLaneReviewFeedback, "function", "publish flags require publishLaneReviewFeedback().");
+    const item = await provider.findReviewForCurrentBranch();
+    assert.ok(item, "publishLaneReview suite requires a loadable review item.");
+    const prNumber = Number(item.key.id);
+    assert.ok(Number.isInteger(prNumber) && prNumber > 0, "publishLaneReview requires a numeric review item id.");
+    const published = await provider.publishLaneReviewFeedback!(item, {
+      dryRun: true,
+      prNumber,
+      headSha: "conformance-head",
+      lane: "code-quality",
+      profile: "local",
+      status: "needs-work",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 1,
+      summary: "Conformance dry-run publish payload.",
+      findings: [
+        "Shared suite publish payload finding.",
+      ],
+      completeness: "Shared suite dry-run publish.",
+      evidencePath: null,
+    });
+    assert.ok(published && typeof published.status === "string", "publishLaneReviewFeedback must return a status.");
+    assert.ok(published.body === null || typeof published.body === "string", "publish payload body must be string or null.");
+  }
+
+  if (caps.loadReviewSnapshot === true) {
+    const item = await provider.findReviewForCurrentBranch();
+    assert.ok(item, "loadReviewSnapshot suite requires a loadable review item.");
+    const snapshot = await provider.loadReviewSnapshot(item.key);
+    assert.ok(snapshot?.item, "loadReviewSnapshot must return a review item.");
+    assertReviewItemShape(snapshot.item, adapter.id);
+    assert.ok(Array.isArray(snapshot.unavailable), "loadReviewSnapshot must report unavailable fields.");
   }
 
   assert.ok(

@@ -244,10 +244,23 @@ export const githubHarness = defineAdapterHarness({
 });
 
 function reviewExec(pullRequest) {
+  const currentFields = "number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft";
+  const fullFields = "number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences";
   return async args => {
-    if (args.join(" ") === "pr view --json number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft") {
+    const joined = args.join(" ");
+    if (joined === `pr view --json ${currentFields}`) {
       return { args, exitCode: 0, stdout: JSON.stringify(pullRequest), stderr: "" };
     }
+    if (joined === `pr view ${pullRequest.number} --json ${fullFields}`) {
+      return { args, exitCode: 0, stdout: JSON.stringify(pullRequest), stderr: "" };
+    }
+    if (joined === "repo view --json nameWithOwner") {
+      return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube" }), stderr: "" };
+    }
+    if (args[0] === "api" && args[1] === "user") {
+      return { args, exitCode: 0, stdout: JSON.stringify({ login: "fixture-bot" }), stderr: "" };
+    }
+    // Optional secondary loads may fail; snapshot paths treat them as unavailable rather than hard errors.
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
   };
 }
