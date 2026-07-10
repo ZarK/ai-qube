@@ -88,6 +88,33 @@ describe("qube core contracts", () => {
     assert.equal(missingFixture.status, "unverified");
     assert.equal(missingCredential.status, "fail");
     assert.equal(denied.status, "fail");
+
+    let execCalls = 0;
+    let fetchCalls = 0;
+    const mismatchedHttp = await core.runConnectionProbe(core.githubConnectionContract, {
+      mode: "fixture",
+      fixture: { http: { status: 200, body: { ok: true } } },
+      exec: async () => {
+        execCalls += 1;
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+    const mismatchedCommand = await core.runConnectionProbe(core.gitLabConnectionContract, {
+      mode: "fixture",
+      env: { GITLAB_TOKEN: "fixture-token", GITLAB_PROJECT_ID: "group/project" },
+      config: { projectId: "group/project", baseUrl: "https://gitlab.example.com" },
+      fixture: { command: { exitCode: 0, stdout: "ok", stderr: "" } },
+      fetch: async () => {
+        fetchCalls += 1;
+        return { status: 200, body: { id: 1 } };
+      },
+    });
+    assert.equal(mismatchedHttp.status, "fail");
+    assert.equal(mismatchedCommand.status, "fail");
+    assert.equal(execCalls, 0);
+    assert.equal(fetchCalls, 0);
+    assert.match(mismatchedHttp.summary, /command result|Fixture mode/i);
+    assert.match(mismatchedCommand.summary, /HTTP result|Fixture mode/i);
   });
 
   it("exports canonical repository layout kinds for provider contracts", () => {

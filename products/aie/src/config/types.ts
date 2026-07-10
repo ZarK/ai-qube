@@ -5,11 +5,16 @@ export const DEFAULT_CONFIG_VERSION = 1;
 export type WorkProviderKind = 'github' | 'gitlab' | 'linear' | 'jira';
 export type ReviewProviderKind = 'github' | 'gitlab';
 export type RepositoryProviderKind = 'local-git';
-export type CiProviderKind = 'github';
+export type CiProviderKind = 'github' | 'jenkins';
 export type LayoutProviderKind = 'local';
 
 export interface ProviderSelection<K extends string> {
   kind: K;
+  /**
+   * Optional non-secret connection fields for provider probes (base URL, project id, team id, user).
+   * Secrets stay in environment variables; never store tokens here.
+   */
+  connection?: Record<string, string | number | boolean>;
 }
 
 export type GitHubReviewPublisherMode = 'user' | 'github-app' | 'token';

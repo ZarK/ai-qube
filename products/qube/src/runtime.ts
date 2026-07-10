@@ -1218,9 +1218,11 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     env: environment.env,
     mode: offline ? "offline" : "live",
   });
+  const connectionExitCode = connections.status === "fail" ? 1 : 0;
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const exitCode = planned.exitCode === 0 && connections.status !== "fail" ? 0 : planned.exitCode || 1;
+    // Offline mode reports connections as unverified without requiring Quality Control availability.
+    const exitCode = offline ? connectionExitCode : (planned.exitCode === 0 ? connectionExitCode : planned.exitCode || 1);
     if (json) {
       return {
         exitCode,
@@ -1235,7 +1237,9 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
 
   const quality = await dispatchCommandCaptured(planned.dispatch);
-  const exitCode = quality.exitCode === 0 && connections.status !== "fail" ? 0 : quality.exitCode || 1;
+  const exitCode = offline
+    ? connectionExitCode
+    : (quality.exitCode === 0 ? connectionExitCode : quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
     try {

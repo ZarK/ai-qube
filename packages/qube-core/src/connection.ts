@@ -148,7 +148,12 @@ export async function runConnectionProbe(
     return probeResult(contract, "fail", `Connection configuration is incomplete; missing ${missing.join(", ")}.`);
   }
 
-  const timeoutMs = positiveTimeout(options.timeoutMs ?? contract.probe.timeoutMs);
+  let timeoutMs: number;
+  try {
+    timeoutMs = positiveTimeout(options.timeoutMs ?? contract.probe.timeoutMs);
+  } catch {
+    return probeResult(contract, "fail", "Connection probe timeout must be a positive number of milliseconds.");
+  }
   try {
     if (options.fixture?.error === "timeout") {
       return probeResult(contract, "fail", `Read-only connection probe timed out after ${timeoutMs}ms.`);
@@ -157,9 +162,9 @@ export async function runConnectionProbe(
       return probeResult(contract, "unverified", "Read-only connection probe could not reach the provider; connection status is unverified.");
     }
     if (contract.probe.transport.kind === "command") {
-      return probeCommand(contract, timeoutMs, options);
+      return probeCommand(contract, timeoutMs, mode, options);
     }
-    return probeHttp(contract, timeoutMs, env, config, options);
+    return probeHttp(contract, timeoutMs, mode, env, config, options);
   } catch (error) {
     if (error instanceof ConnectionConfigurationError) {
       return probeResult(contract, "fail", "Connection configuration is invalid; verify the documented environment and config fields.");
@@ -174,14 +179,24 @@ export async function runConnectionProbe(
 async function probeCommand(
   contract: ConnectionContract,
   timeoutMs: number,
+  mode: ConnectionProbeMode,
   options: ConnectionProbeOptions,
 ): Promise<ConnectionProbeResult> {
   const transport = contract.probe.transport as ConnectionCommandProbe;
-  if (!options.fixture?.command && !options.exec) {
+  if (mode === "fixture") {
+    if (!options.fixture?.command) {
+      return probeResult(contract, "fail", "Fixture mode requires a command result for this connection probe; live transport was not used.");
+    }
+    const execution = options.fixture.command;
+    if (execution.exitCode === 0) {
+      return probeResult(contract, "pass", `${contract.probe.name} passed.`);
+    }
+    return probeResult(contract, "fail", `${contract.probe.name} failed; run the verify command for provider-safe details.`);
+  }
+  if (!options.exec) {
     return probeResult(contract, "unverified", "Connection command transport is unavailable; no connection was verified.");
   }
-  const execution = options.fixture?.command
-    ?? await options.exec!(transport.command, transport.args, timeoutMs);
+  const execution = await options.exec(transport.command, transport.args, timeoutMs);
   if (execution.exitCode === 0) {
     return probeResult(contract, "pass", `${contract.probe.name} passed.`);
   }
@@ -191,16 +206,30 @@ async function probeCommand(
 async function probeHttp(
   contract: ConnectionContract,
   timeoutMs: number,
+  mode: ConnectionProbeMode,
   env: Readonly<Record<string, string | undefined>>,
   config: Readonly<Record<string, unknown>>,
   options: ConnectionProbeOptions,
 ): Promise<ConnectionProbeResult> {
   const transport = contract.probe.transport as ConnectionHttpProbe;
+  if (mode === "fixture") {
+    if (!options.fixture?.http) {
+      return probeResult(contract, "fail", "Fixture mode requires an HTTP result for this connection probe; live transport was not used.");
+    }
+    const response = options.fixture.http;
+    if (response.status < 200 || response.status >= 300) {
+      return probeResult(contract, "fail", `${contract.probe.name} failed with HTTP ${response.status}.`);
+    }
+    if (!matchesSuccessPayload(transport, response.body)) {
+      return probeResult(contract, "fail", `${contract.probe.name} returned an unexpected read-only response.`);
+    }
+    return probeResult(contract, "pass", `${contract.probe.name} passed.`);
+  }
   const request = createHttpRequest(transport, timeoutMs, env, config);
-  if (!options.fixture?.http && !options.fetch) {
+  if (!options.fetch) {
     return probeResult(contract, "unverified", "Connection HTTP transport is unavailable; no connection was verified.");
   }
-  const response = options.fixture?.http ?? await options.fetch!(request);
+  const response = await options.fetch(request);
   if (response.status < 200 || response.status >= 300) {
     return probeResult(contract, "fail", `${contract.probe.name} failed with HTTP ${response.status}.`);
   }
