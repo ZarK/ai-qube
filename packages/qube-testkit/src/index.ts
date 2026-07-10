@@ -661,18 +661,28 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.equal(results[0].status, "completed", "commentMutations apply must complete through the fixture transport.");
   }
   if (caps.reviewIntegration === true) {
-    // Review integration requires loadable work keys that review forge can reference.
+    // Review integration requires loadable work keys that review forge can reference by id.
     assert.equal(caps.listOpenWork, true, "reviewIntegration=true requires listOpenWork.");
+    assert.equal(caps.loadWork, true, "reviewIntegration=true requires loadWork so review forge can resolve work keys.");
     const items = await provider.listOpenWorkItems();
     assert.ok(items.length > 0, "reviewIntegration requires at least one work item.");
     assert.ok(items.every(item => item.key.providerId === adapter.id && item.key.id.trim().length > 0));
+    const loaded = await provider.getWorkItem(items[0].key);
+    assert.equal(loaded.key.id, items[0].key.id, "reviewIntegration must load the same work key review forge would reference.");
+    assert.ok(loaded.url === null || typeof loaded.url === "string", "reviewIntegration work items must expose a stable url field.");
   }
   if (caps.ciMergeStatus === true) {
-    // CI merge status requires work items with trusted metadata that CI evidence can attach to.
+    // CI merge status requires work items with non-empty trusted metadata that CI evidence can attach to.
     assert.equal(caps.listOpenWork, true, "ciMergeStatus=true requires listOpenWork.");
     const items = await provider.listOpenWorkItems();
     assert.ok(items.length > 0, "ciMergeStatus requires at least one work item.");
-    assert.ok(items.every(item => item.trustedMetadata && typeof item.trustedMetadata === "object"));
+    for (const item of items) {
+      assert.ok(item.trustedMetadata && typeof item.trustedMetadata === "object", "ciMergeStatus requires trustedMetadata objects.");
+      assert.ok(
+        Object.keys(item.trustedMetadata).length > 0,
+        "ciMergeStatus requires non-empty trustedMetadata so CI checks can attach to work items.",
+      );
+    }
   }
 
   if (scenarios.createLargeResultTransport) {
@@ -868,14 +878,17 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
     const passed = scenarios.mapCheck(subject, scenarios.passedCheck);
     assert.equal(passed.result, "passed");
     assert.ok(passed.name || passed.key, "CI mapCheck must expose a check name or key for artifact/reference identity.");
+    assert.ok(passed.summary && passed.summary.trim().length > 0, "CI mapCheck must expose a summary reference for the check.");
   }
   if (isSupported(declared, "diagnose-ci-status")) {
     const failed = scenarios.mapCheck(subject, scenarios.failedCheck);
     const pending = scenarios.mapCheck(subject, scenarios.pendingCheck);
     assert.equal(failed.result, "failed");
     assert.equal(pending.result, "pending");
-    assert.ok(failed.reasonCode || failed.summary, "diagnose-ci-status failed checks must include reasonCode or summary.");
-    assert.ok(pending.reasonCode || pending.summary, "diagnose-ci-status pending checks must include reasonCode or summary.");
+    assert.ok(failed.reasonCode && failed.reasonCode.trim().length > 0, "diagnose-ci-status failed checks must include reasonCode.");
+    assert.ok(failed.summary && failed.summary.trim().length > 0, "diagnose-ci-status failed checks must include summary.");
+    assert.ok(pending.reasonCode && pending.reasonCode.trim().length > 0, "diagnose-ci-status pending checks must include reasonCode.");
+    assert.ok(pending.summary && pending.summary.trim().length > 0, "diagnose-ci-status pending checks must include summary.");
   }
   if (isUnsupported(declared, "trigger-workflow-run")) {
     assert.ok(scenarios.unsupportedTrigger, "unsupportedTrigger is required when trigger-workflow-run is unsupported.");
