@@ -1,5 +1,7 @@
 import { linearAdapterContract } from "@tjalve/qube-core";
 
+export { probeLinearConnection } from "./connection.js";
+
 export { renderLinearIssueDraft } from "./render_linear_draft.js";
 export type { LinearIssueDraft, LinearWorkItemDraft } from "./render_linear_draft.js";
 export { attachLinearBlockedBy, linearIssueToWorkItem, linearWorkItemKey, parseLinearBlockerKeys } from "./linear_work_codec.js";

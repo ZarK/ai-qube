@@ -1,5 +1,7 @@
 import { jiraAdapterContract } from "@tjalve/qube-core";
 
+export { probeJiraConnection } from "./connection.js";
+
 export { attachJiraBlockedBy, jiraIssueKey, jiraIssueToWorkItem } from "./jira_work_codec.js";
 export type {
   JiraComment,

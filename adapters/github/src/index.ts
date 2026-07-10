@@ -1,5 +1,7 @@
 import { githubAdapterContract } from "@tjalve/qube-core";
 
+export { probeGitHubConnection } from "./connection.js";
+
 export type GitHubOperation =
   | "map-work-item"
   | "work-item-queue"

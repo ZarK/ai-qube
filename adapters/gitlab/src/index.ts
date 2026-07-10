@@ -1,5 +1,7 @@
 import { gitLabAdapterContract } from "@tjalve/qube-core";
 
+export { probeGitLabConnection } from "./connection.js";
+
 export { renderGitLabIssueDraft } from "./render_gitlab_draft.js";
 export type { GitLabIssueDraft, GitLabWorkItemDraft } from "./render_gitlab_draft.js";
 export { attachGitLabBlockedBy, gitLabIssueToWorkItem, gitLabWorkItemKey } from "./gitlab_work_codec.js";

@@ -1,0 +1,13 @@
+{
+  "http": {
+    "status": 200,
+    "body": {
+      "data": {
+        "viewer": {
+          "id": "fixture-viewer",
+          "name": "Fixture User"
+        }
+      }
+    }
+  }
+}

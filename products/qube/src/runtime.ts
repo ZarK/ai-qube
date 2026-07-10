@@ -10,9 +10,10 @@ import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mut
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
-import type { AutoresearchArena, AutoresearchEvaluator } from "@tjalve/qube-core";
+import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
+import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
@@ -65,6 +66,11 @@ const yesFlag = defineFlag({
   description: "Use safe defaults for non-interactive installer decisions.",
   type: "boolean"
 });
+const offlineFlag = defineFlag({
+  name: "offline",
+  description: "Skip provider network and CLI probes and report configured connections as unverified.",
+  type: "boolean"
+});
 
 type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
@@ -100,6 +106,7 @@ interface InstallOptionSummary {
   readonly source: QubeDiscoveryOption["source"];
   readonly summary: string;
   readonly capabilities: QubeDiscoveryOption["capabilities"];
+  readonly connection: ConnectionContract | null;
 }
 
 interface InstallOptionGroups {
@@ -118,6 +125,7 @@ interface InstallPlan {
   readonly mode: "copy-commands";
   readonly dryRun: boolean;
   readonly commands: readonly InstallCommandStep[];
+  readonly connections: readonly ConnectionContract[];
   readonly files: readonly string[];
   readonly notes: readonly string[];
 }
@@ -856,6 +864,23 @@ interface DirectQubeCommand {
   readonly mapArgs: (args: readonly string[]) => readonly string[];
 }
 
+const doctorCommand = defineCommand({
+  kind: "command",
+  name: "doctor",
+  description: "Run Quality Control diagnostics and configured provider connection probes.",
+  flags: [jsonFlag, offlineFlag],
+  examples: [
+    { description: "Run all diagnostics and live read-only provider probes.", command: "qube doctor" },
+    { description: "Report connection probes as unverified without network access.", command: "qube doctor --offline --json" },
+  ],
+  interactions: {
+    json: true,
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: false,
+  },
+});
+
 const directCommandDefinitions: readonly DirectQubeCommand[] = [
   {
     command: defineCommand({
@@ -949,7 +974,6 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("app wait", "Wait for a local audit app readiness URL.", "aie", "run wait"),
   createDirectCommand("app status", "Show local audit app process status.", "aie", "run status"),
   createDirectCommand("app stop", "Stop a local audit app process.", "aie", "run stop"),
-  createDirectCommand("doctor", "Run Quality Control diagnostics.", "aiq", "doctor", { translateJson: true }),
   createDirectCommand("check", "Run Quality Control checks for explicit paths.", "aiq", "check", { translateJson: true }),
   createDirectCommand("quality", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
   createDirectCommand("quality run", "Run AIQ quality stages for explicit paths.", "aiq", "run", { translateJson: true }),
@@ -1039,7 +1063,7 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -1051,6 +1075,10 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   }
   if (args[0] === "install") {
     return planQubeInstall(args.slice(1));
+  }
+  if (args[0] === "doctor") {
+    const forwarded = args.slice(1).filter(argument => argument !== "--offline");
+    return planQubeDispatch("aiq", ["doctor", ...translateJsonFlag(forwarded)], environment);
   }
   if (args[0] === "autoresearch") {
     return planAutoresearch(args.slice(1), environment);
@@ -1152,6 +1180,7 @@ function createQubeCli(environment: CliEnvironment) {
         }
         return { stdout: renderInstallPlan(plan) };
       }),
+      createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
       createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
       createRuntimeCommand(makeItSoCommand, ({ argv }) => executeMakeItSo(argv, environment)),
@@ -1181,6 +1210,54 @@ function createQubeCli(environment: CliEnvironment) {
   });
   runtimeRegistry = cli.registry;
   return cli;
+}
+
+async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const connections = await runConnectionDoctor({
+    cwd: environment.cwd,
+    env: environment.env,
+    mode: offline ? "offline" : "live",
+  });
+  const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
+  if (!planned.dispatch) {
+    const exitCode = planned.exitCode === 0 && connections.status !== "fail" ? 0 : planned.exitCode || 1;
+    if (json) {
+      return {
+        exitCode,
+        json: {
+          quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
+          connectionStatus: connections.status,
+          connections,
+        },
+      };
+    }
+    return { exitCode, stdout: `${planned.stdout}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+  }
+
+  const quality = await dispatchCommandCaptured(planned.dispatch);
+  const exitCode = quality.exitCode === 0 && connections.status !== "fail" ? 0 : quality.exitCode || 1;
+  if (json) {
+    let qualityPayload: unknown;
+    try {
+      qualityPayload = JSON.parse(quality.stdout);
+    } catch {
+      qualityPayload = { ok: false, error: "Quality Control doctor returned invalid JSON." };
+    }
+    return {
+      exitCode,
+      json: {
+        quality: qualityPayload,
+        connectionStatus: connections.status,
+        connections,
+      },
+      stderr: `${planned.stderr}${quality.stderr}`,
+    };
+  }
+  return {
+    exitCode,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatConnectionDoctor(connections)}`,
+    stderr: `${planned.stderr}${quality.stderr}`,
+  };
 }
 
 async function executeQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -4088,6 +4165,7 @@ function createInstallPlan(selections: InstallSelections, dryRun: boolean): Inst
     mode: "copy-commands",
     dryRun,
     commands: createInstallCommands(selections),
+    connections: createInstallConnections(selections),
     files: createInstallFiles(selections),
     notes: createInstallNotes(selections)
   };
@@ -4111,7 +4189,16 @@ function summarizeDiscoveryOptions(options: readonly QubeDiscoveryOption[]): rea
     source: option.source,
     summary: option.summary,
     capabilities: option.capabilities,
+    connection: option.connection,
   })));
+}
+
+function createInstallConnections(selections: InstallSelections): readonly ConnectionContract[] {
+  const selected = [
+    executorWorkProviders.find(option => option.id === selections.workProvider)?.connection,
+    executorCiProviders.find(option => option.id === selections.ciProvider)?.connection,
+  ].filter((connection): connection is ConnectionContract => connection !== null && connection !== undefined);
+  return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
 }
 
 function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
@@ -4202,6 +4289,7 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
     notes.push("Prefer project-local installs for automation; global installs are for manual shell use.");
   }
   notes.push("Autoresearch agent entry: run `qube autoresearch --help`, translate natural-language requests to `<target>` plus `<goal>`, and synthesize the arena before edits.");
+  notes.push("QUBE provider probes verify only QUBE adapter credentials; host MCP server credentials are separate even when they use the same token.");
   notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
   notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
   if (selections.host === "codex") {
@@ -4258,6 +4346,9 @@ function renderInstallPlan(plan: InstallPlan): string {
     renderOptionSummary("Work providers", plan.options.workProviders),
     renderOptionSummary("CI providers", plan.options.ciProviders),
     "",
+    "Connections:",
+    ...(plan.connections.length > 0 ? plan.connections.flatMap(renderInstallConnection) : ["- No provider connection is selected."]),
+    "",
     "Notes:",
     ...plan.notes.map(note => `- ${note}`),
     ...(plan.files.length > 0 ? ["", "Docs/config notes to add:", ...plan.files.map(file => `- ${file}`)] : []),
@@ -4265,6 +4356,24 @@ function renderInstallPlan(plan: InstallPlan): string {
     "No commands were run.",
     ""
   ].join("\n");
+}
+
+function renderInstallConnection(connection: ConnectionContract): readonly string[] {
+  const envVars = connection.envVars.length === 0
+    ? "none (credentials are delegated to the provider CLI)"
+    : connection.envVars.map(variable => `${variable.name}${variable.sensitive ? " (secret)" : " (non-secret)"}: ${variable.purpose}`).join("; ");
+  const configFields = connection.configFields.length === 0
+    ? "none"
+    : connection.configFields.map(field => `${field.name}${field.required ? " (required)" : " (optional)"}: ${field.purpose}`).join("; ");
+  return [
+    `- ${connection.adapterId} (${connection.authMethod})`,
+    `  Environment: ${envVars}`,
+    `  Config fields: ${configFields}`,
+    `  Token URL: ${connection.credentialUrl}`,
+    `  Minimal scopes: ${connection.scopes.join(", ") || "none"}`,
+    `  Read-only probe: ${connection.probe.name} (${connection.probe.timeoutMs}ms timeout)`,
+    `  Verify: ${connection.probe.verifyCommand}`,
+  ];
 }
 
 function renderOptionSummary(label: string, options: readonly InstallOptionSummary[]): string {

@@ -22,6 +22,28 @@ export {
 } from "./autoresearch.js";
 export type { JsonObject, JsonValue } from "./json_value.js";
 export type {
+  ConnectionAuthMethod,
+  ConnectionBasicAuth,
+  ConnectionCommandProbe,
+  ConnectionCommandResult,
+  ConnectionConfigField,
+  ConnectionContract,
+  ConnectionEnvVar,
+  ConnectionHeader,
+  ConnectionHttpProbe,
+  ConnectionHttpRequest,
+  ConnectionHttpResponse,
+  ConnectionProbeContract,
+  ConnectionProbeFixture,
+  ConnectionProbeMode,
+  ConnectionProbeOptions,
+  ConnectionProbeResult,
+  ConnectionProbeStatus,
+  ConnectionValueSource,
+} from "./connection.js";
+export { runConnectionProbe } from "./connection.js";
+import type { ConnectionContract } from "./connection.js";
+export type {
   ProviderResourceKind,
   ProviderSource,
 } from "./provider_source.js";
@@ -191,6 +213,7 @@ export interface QubeAdapterContract {
   readonly owns: readonly string[];
   readonly boundary: string;
   readonly capabilities?: readonly QubeAdapterCapability[];
+  readonly connection?: ConnectionContract;
   readonly contractOnly: boolean;
 }
 
@@ -209,6 +232,160 @@ function adapterCapability(
 ): QubeAdapterCapability {
   return Object.freeze({ id, support, owner, summary });
 }
+
+const CONNECTION_PROBE_TIMEOUT_MS = 10_000;
+
+export const githubConnectionContract = Object.freeze({
+  adapterId: "github",
+  authMethod: "cli-delegated",
+  envVars: Object.freeze([]),
+  configFields: Object.freeze([]),
+  credentialUrl: "https://cli.github.com/manual/gh_auth_login",
+  scopes: Object.freeze(["repo read access", "read:org when organization membership is required"]),
+  probe: Object.freeze({
+    id: "github-auth-status",
+    name: "GitHub gh authentication",
+    summary: "Ask the official GitHub CLI to verify its delegated authentication state.",
+    readOnly: true,
+    timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
+    verifyCommand: "gh auth status",
+    transport: Object.freeze({ kind: "command", command: "gh", args: Object.freeze(["auth", "status"]) }),
+  }),
+} as const satisfies ConnectionContract);
+
+export const gitLabConnectionContract = Object.freeze({
+  adapterId: "gitlab",
+  authMethod: "token-env",
+  envVars: Object.freeze([
+    Object.freeze({ name: "GITLAB_TOKEN", sensitive: true, purpose: "Authenticate QUBE GitLab API requests." }),
+  ]),
+  configFields: Object.freeze([
+    Object.freeze({ name: "projectId", required: true, purpose: "Select the GitLab project path or numeric id.", envFallback: "GITLAB_PROJECT_ID" }),
+    Object.freeze({ name: "baseUrl", required: false, purpose: "Select GitLab.com or a self-managed GitLab origin.", envFallback: "GITLAB_BASE_URL", defaultValue: "https://gitlab.com" }),
+  ]),
+  credentialUrl: "https://gitlab.com/-/user_settings/personal_access_tokens",
+  scopes: Object.freeze(["api"]),
+  probe: Object.freeze({
+    id: "gitlab-user",
+    name: "GitLab /user",
+    summary: "Read the authenticated GitLab user through the REST API.",
+    readOnly: true,
+    timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
+    verifyCommand: "qube doctor --json",
+    transport: Object.freeze({
+      kind: "http",
+      method: "GET",
+      baseUrl: Object.freeze({ configField: "baseUrl", envVar: "GITLAB_BASE_URL", defaultValue: "https://gitlab.com" }),
+      path: "api/v4/user",
+      headers: Object.freeze([
+        Object.freeze({ name: "PRIVATE-TOKEN", value: Object.freeze({ envVar: "GITLAB_TOKEN" }) }),
+      ]),
+      successJsonPath: Object.freeze(["id"]),
+    }),
+  }),
+} as const satisfies ConnectionContract);
+
+export const linearConnectionContract = Object.freeze({
+  adapterId: "linear",
+  authMethod: "token-env",
+  envVars: Object.freeze([
+    Object.freeze({ name: "LINEAR_API_KEY", sensitive: true, purpose: "Authenticate QUBE Linear GraphQL requests." }),
+  ]),
+  configFields: Object.freeze([
+    Object.freeze({ name: "teamId", required: true, purpose: "Select the Linear team whose issues form the work queue.", envFallback: "LINEAR_TEAM_ID" }),
+    Object.freeze({ name: "endpoint", required: false, purpose: "Override the Linear GraphQL endpoint.", defaultValue: "https://api.linear.app/graphql" }),
+  ]),
+  credentialUrl: "https://linear.app/settings/api",
+  scopes: Object.freeze(["workspace read access"]),
+  probe: Object.freeze({
+    id: "linear-viewer",
+    name: "Linear viewer",
+    summary: "Read the authenticated Linear viewer through GraphQL.",
+    readOnly: true,
+    timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
+    verifyCommand: "qube doctor --json",
+    transport: Object.freeze({
+      kind: "http",
+      method: "POST",
+      baseUrl: Object.freeze({ configField: "endpoint", defaultValue: "https://api.linear.app/graphql" }),
+      path: "",
+      headers: Object.freeze([
+        Object.freeze({ name: "Authorization", value: Object.freeze({ envVar: "LINEAR_API_KEY" }) }),
+      ]),
+      body: JSON.stringify({ query: "query QubeConnectionProbe { viewer { id name } }" }),
+      successJsonPath: Object.freeze(["data", "viewer", "id"]),
+    }),
+  }),
+} as const satisfies ConnectionContract);
+
+export const jiraConnectionContract = Object.freeze({
+  adapterId: "jira",
+  authMethod: "basic-env",
+  envVars: Object.freeze([
+    Object.freeze({ name: "JIRA_EMAIL", sensitive: false, purpose: "Identify the Atlassian account used for API token authentication." }),
+    Object.freeze({ name: "JIRA_API_TOKEN", sensitive: true, purpose: "Authenticate QUBE Jira REST requests." }),
+  ]),
+  configFields: Object.freeze([
+    Object.freeze({ name: "baseUrl", required: true, purpose: "Select the Jira Cloud site origin.", envFallback: "JIRA_BASE_URL" }),
+    Object.freeze({ name: "projectKey", required: false, purpose: "Select a Jira project when custom JQL is not configured.", envFallback: "JIRA_PROJECT_KEY" }),
+    Object.freeze({ name: "jql", required: false, purpose: "Select Jira work with a custom read query." }),
+  ]),
+  credentialUrl: "https://id.atlassian.com/manage-profile/security/api-tokens",
+  scopes: Object.freeze(["read Jira user identity", "browse selected Jira projects"]),
+  probe: Object.freeze({
+    id: "jira-myself",
+    name: "Jira /myself",
+    summary: "Read the authenticated Jira account through the REST API.",
+    readOnly: true,
+    timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
+    verifyCommand: "qube doctor --json",
+    transport: Object.freeze({
+      kind: "http",
+      method: "GET",
+      baseUrl: Object.freeze({ configField: "baseUrl", envVar: "JIRA_BASE_URL" }),
+      path: "rest/api/3/myself",
+      basicAuth: Object.freeze({
+        username: Object.freeze({ envVar: "JIRA_EMAIL" }),
+        password: Object.freeze({ envVar: "JIRA_API_TOKEN" }),
+      }),
+      successJsonPath: Object.freeze(["accountId"]),
+    }),
+  }),
+} as const satisfies ConnectionContract);
+
+export const jenkinsConnectionContract = Object.freeze({
+  adapterId: "jenkins",
+  authMethod: "token-env",
+  envVars: Object.freeze([
+    Object.freeze({ name: "JENKINS_API_TOKEN", sensitive: true, purpose: "Authenticate QUBE Jenkins API requests." }),
+  ]),
+  configFields: Object.freeze([
+    Object.freeze({ name: "baseUrl", required: true, purpose: "Select the Jenkins controller origin.", envFallback: "JENKINS_BASE_URL" }),
+    Object.freeze({ name: "user", required: true, purpose: "Identify the Jenkins user paired with the API token.", envFallback: "JENKINS_USER" }),
+    Object.freeze({ name: "jobPath", required: false, purpose: "Select the Jenkins job or folder path used for CI evidence." }),
+  ]),
+  credentialUrl: "<JENKINS_BASE_URL>/me/configure",
+  scopes: Object.freeze(["Overall/Read", "Job/Read for configured jobs"]),
+  probe: Object.freeze({
+    id: "jenkins-who-am-i",
+    name: "Jenkins whoAmI",
+    summary: "Read the authenticated Jenkins identity through the REST API.",
+    readOnly: true,
+    timeoutMs: CONNECTION_PROBE_TIMEOUT_MS,
+    verifyCommand: "qube doctor --json",
+    transport: Object.freeze({
+      kind: "http",
+      method: "GET",
+      baseUrl: Object.freeze({ configField: "baseUrl", envVar: "JENKINS_BASE_URL" }),
+      path: "whoAmI/api/json",
+      basicAuth: Object.freeze({
+        username: Object.freeze({ configField: "user", envVar: "JENKINS_USER" }),
+        password: Object.freeze({ envVar: "JENKINS_API_TOKEN" }),
+      }),
+      successBooleanPath: Object.freeze(["authenticated"]),
+    }),
+  }),
+} as const satisfies ConnectionContract);
 
 export const githubAdapterContract = defineQubeAdapter({
   id: "github",
@@ -244,6 +421,7 @@ export const githubAdapterContract = defineQubeAdapter({
     adapterCapability("mutate-repository-files", "unsupported", "@tjalve/aie repository provider", "GitHub provider support does not edit local repository files."),
     adapterCapability("publish-release", "unsupported", "repository release workflow", "GitHub release publishing is outside the current QUBE GitHub adapter contract."),
   ]),
+  connection: githubConnectionContract,
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
@@ -276,6 +454,7 @@ export const gitLabAdapterContract = defineQubeAdapter({
     adapterCapability("resolve-review-threads", "supported", "@tjalve/qube-adapter-gitlab", "Resolve GitLab merge request discussions selected from provider-visible review-thread state."),
     adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-gitlab", "GitLab issue lifecycle, merge request approval, merge, and pipeline mutation behavior require explicit mutation adapters and are reported as unsupported."),
   ]),
+  connection: gitLabConnectionContract,
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
@@ -297,6 +476,7 @@ export const linearAdapterContract = defineQubeAdapter({
     adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-linear", "Render provider-neutral AIB work item drafts into Linear issue previews without mutating Linear."),
     adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-linear", "Linear lifecycle mutations require explicit team workflow-state configuration and are reported as unsupported."),
   ]),
+  connection: linearConnectionContract,
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
@@ -320,6 +500,7 @@ export const jiraAdapterContract = defineQubeAdapter({
     adapterCapability("render-work-items", "supported", "@tjalve/qube-adapter-jira", "Render provider-neutral AIB work item drafts into Jira issue previews without mutating Jira."),
     adapterCapability("sync-issue-status", "unsupported", "@tjalve/qube-adapter-jira", "Jira lifecycle mutations require explicit workflow transition IDs and are reported as unsupported."),
   ]),
+  connection: jiraConnectionContract,
   contractOnly: false,
 } satisfies QubeAdapterContract);
 
@@ -342,6 +523,7 @@ export const jenkinsAdapterContract = defineQubeAdapter({
     adapterCapability("read-ci-artifacts", "supported", "@tjalve/qube-adapter-jenkins", "Attach Jenkins build URL, console log URL, build id, timestamp, and artifact URLs to provider gate evidence metadata when Jenkins exposes them."),
     adapterCapability("trigger-ci-run", "unsupported", "@tjalve/qube-adapter-jenkins", "Jenkins build trigger and rerun mutations are not supported until a separate mutation capability is designed and tested."),
   ]),
+  connection: jenkinsConnectionContract,
   contractOnly: false,
 } satisfies QubeAdapterContract);
 

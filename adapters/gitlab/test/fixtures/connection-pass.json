@@ -1,0 +1,9 @@
+{
+  "http": {
+    "status": 200,
+    "body": {
+      "id": 42,
+      "username": "fixture-user"
+    }
+  }
+}

@@ -50,6 +50,46 @@ describe("qube core contracts", () => {
     assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
   });
 
+  it("declares provider connection contracts with read-only bounded probes", () => {
+    const contracts = [
+      core.githubAdapterContract,
+      core.gitLabAdapterContract,
+      core.linearAdapterContract,
+      core.jiraAdapterContract,
+      core.jenkinsAdapterContract,
+    ];
+    assert.deepEqual(contracts.map(contract => contract.connection.authMethod), [
+      "cli-delegated",
+      "token-env",
+      "token-env",
+      "basic-env",
+      "token-env",
+    ]);
+    assert.ok(contracts.every(contract => contract.connection.probe.readOnly === true));
+    assert.ok(contracts.every(contract => contract.connection.probe.timeoutMs > 0));
+    assert.ok(contracts.every(contract => contract.connection.credentialUrl.length > 0));
+    assert.ok(contracts.every(contract => contract.connection.scopes.length > 0));
+  });
+
+  it("keeps skipped and unavailable probes explicit instead of silently passing", async () => {
+    const offline = await core.runConnectionProbe(core.linearConnectionContract, { mode: "offline" });
+    const missingFixture = await core.runConnectionProbe(core.linearConnectionContract, { mode: "fixture" });
+    const missingCredential = await core.runConnectionProbe(core.linearConnectionContract, {
+      mode: "fixture",
+      fixture: { http: { status: 200, body: { data: { viewer: { id: "fixture" } } } } },
+    });
+    const denied = await core.runConnectionProbe(core.linearConnectionContract, {
+      mode: "fixture",
+      env: { LINEAR_API_KEY: "fixture-key" },
+      config: { teamId: "fixture-team" },
+      fixture: { http: { status: 401, body: { error: "denied" } } },
+    });
+    assert.equal(offline.status, "unverified");
+    assert.equal(missingFixture.status, "unverified");
+    assert.equal(missingCredential.status, "fail");
+    assert.equal(denied.status, "fail");
+  });
+
   it("exports canonical repository layout kinds for provider contracts", () => {
     assert.ok(REPO_LAYOUT_KINDS.includes("single-app-service"));
     assert.ok(REPO_LAYOUT_KINDS.includes("javascript-typescript-workspace"));

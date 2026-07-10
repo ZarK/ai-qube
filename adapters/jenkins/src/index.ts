@@ -1,5 +1,7 @@
 import { jenkinsAdapterContract } from "@tjalve/qube-core";
 
+export { probeJenkinsConnection } from "./connection.js";
+
 export {
   JenkinsCiProvider,
   createJenkinsCiProvider,
