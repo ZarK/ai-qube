@@ -1,0 +1,17 @@
+{
+  "passed": {
+    "name": "core",
+    "status": "COMPLETED",
+    "conclusion": "SUCCESS"
+  },
+  "failed": {
+    "name": "core",
+    "status": "COMPLETED",
+    "conclusion": "FAILURE"
+  },
+  "pending": {
+    "name": "core",
+    "status": "IN_PROGRESS",
+    "conclusion": null
+  }
+}

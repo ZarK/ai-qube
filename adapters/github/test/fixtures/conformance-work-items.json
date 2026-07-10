@@ -1,0 +1,12 @@
+[
+  {
+    "number": 42,
+    "title": "Fixture issue",
+    "body": "- [x] captured fixture",
+    "state": "OPEN",
+    "labels": [],
+    "assignees": [],
+    "milestone": null,
+    "url": "https://github.com/example/qube/issues/42"
+  }
+]
