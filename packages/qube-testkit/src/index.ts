@@ -776,6 +776,15 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     for (const action of plan.actions) {
       assert.ok(action.kind, "Review request plan actions must declare a kind.");
     }
+    if (caps.applyReviewRequests === true) {
+      // Observe advertised apply by applying a dry empty plan slice; a throwing apply must fail.
+      const applied = await provider.apply({
+        ...plan,
+        dryRun: true,
+        actions: [],
+      });
+      assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
+    }
   }
 
   if (isSupported(declared, "resolve-review-threads") || caps.resolveReviewThreads === true) {
