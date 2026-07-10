@@ -58,9 +58,19 @@ export async function runConnectionDoctor(options: ConnectionDoctorOptions): Pro
     config = JSON.parse(readFileSync(configPath, "utf8"));
   } catch {
     return Object.freeze({
-      status: "unverified",
+      status: "fail",
       configPath,
-      summary: "Executor config could not be read as JSON; no provider connection was verified.",
+      summary: "Executor config is malformed JSON; provider connections cannot be verified.",
+      connections: Object.freeze([]),
+    });
+  }
+
+  const configError = connectionConfigError(config);
+  if (configError) {
+    return Object.freeze({
+      status: "fail",
+      configPath,
+      summary: `Executor config is invalid: ${configError}`,
       connections: Object.freeze([]),
     });
   }
@@ -109,8 +119,8 @@ export function formatConnectionDoctor(result: ConnectionDoctorResult): string {
 function configuredConnections(config: unknown): readonly { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>> }[] {
   if (!isRecord(config) || !isRecord(config.providers)) return [];
   const providers = config.providers;
-  const selections = [providers.work, providers.review, providers.ci].filter(isRecord);
   const configured = new Map<string, { readonly contract: ConnectionContract; readonly config: Readonly<Record<string, unknown>> }>();
+  const selections = [providers.work, providers.review, providers.ci].filter(isRecord);
   for (const selection of selections) {
     if (typeof selection.kind !== "string") continue;
     const contract = CONNECTIONS.get(selection.kind);
@@ -132,11 +142,40 @@ function configuredConnections(config: unknown): readonly { readonly contract: C
       const existing = configured.get(adapterId);
       configured.set(adapterId, {
         contract,
-        config: Object.freeze({ ...existing?.config, ...connectionValue }),
+        config: Object.freeze({ ...connectionValue, ...existing?.config }),
       });
     }
   }
   return Object.freeze([...configured.values()]);
+}
+
+function connectionConfigError(config: unknown): string | null {
+  if (!isRecord(config)) return "the root value must be an object";
+  if (config.version !== 1) return "version must be 1";
+  if (!isRecord(config.providers)) return "providers must be an object";
+  const providers = config.providers;
+  const roles = [
+    ["work", new Set<string>(["github", "gitlab", "linear", "jira"])],
+    ["review", new Set<string>(["github", "gitlab"])],
+    ["ci", new Set<string>(["github"])],
+  ] as const;
+  for (const [role, kinds] of roles) {
+    const selection = providers[role];
+    if (selection === undefined) continue;
+    if (!isRecord(selection) || typeof selection.kind !== "string" || !kinds.has(selection.kind)) {
+      return `providers.${role}.kind is not supported`;
+    }
+    if (selection.connection !== undefined && !isRecord(selection.connection)) {
+      return `providers.${role}.connection must be an object`;
+    }
+  }
+  if (providers.connections !== undefined) {
+    if (!isRecord(providers.connections)) return "providers.connections must be an object";
+    for (const [adapterId, fields] of Object.entries(providers.connections)) {
+      if (!CONNECTIONS.has(adapterId) || !isRecord(fields)) return `providers.connections.${adapterId} is not supported`;
+    }
+  }
+  return null;
 }
 
 function findExecutorConfig(start: string): string | null {

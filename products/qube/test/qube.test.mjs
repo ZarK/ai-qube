@@ -7,6 +7,7 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSyn
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { runConnectionProbe as runCoreConnectionProbe } from "@tjalve/qube-core";
 
 import {
   assertClaudeCodeHostCapabilityAvailable,
@@ -68,7 +69,7 @@ function createQualityDoctorShim(root) {
   const commandPath = path.join(binDir, process.platform === "win32" ? "aiq.cmd" : "aiq");
   writeFileSync(commandPath, process.platform === "win32"
     ? "@echo off\r\necho {\"ok\":true}\r\n"
-    : "#!/usr/bin/env sh\nprintf '{\"ok\":true}\\n'\n", "utf8");
+    : "#!/bin/sh\nprintf '{\"ok\":true}\\n'\n", "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiq", version: "0.2.3" })}\n`, "utf8");
 }
@@ -567,38 +568,64 @@ describe("qube composer CLI", () => {
       version: 1,
       providers: {
         work: { kind: "linear", connection: { teamId: "team" } },
-        review: { kind: "local" },
-        ci: { kind: "local" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
       },
     })}\n`, "utf8");
 
-    const result = await runConnectionDoctor({ cwd, env: {} });
+    const result = await runConnectionDoctor({
+      cwd,
+      env: {},
+      probe: (contract, options) => contract.adapterId === "linear"
+        ? runCoreConnectionProbe(contract, { ...options, mode: "fixture", fixture: { http: { status: 200, body: { data: { viewer: { id: "fixture" } } } } } })
+        : Promise.resolve({ adapterId: contract.adapterId, probeId: contract.probe.id, status: "unverified", authMethod: contract.authMethod, summary: "not part of this focused assertion", verifyCommand: contract.probe.verifyCommand, readOnly: true }),
+    });
     assert.equal(result.status, "fail");
-    assert.deepEqual(result.connections.map(connection => [connection.adapterId, connection.status]), [["linear", "fail"]]);
+    assert.equal(result.connections.find(connection => connection.adapterId === "linear").status, "fail");
   });
 
-  it("merges connection fields when one adapter serves multiple configured roles", async () => {
+  it("merges connection fields with runtime role precedence when one adapter serves multiple roles", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-merged-connection-doctor-"));
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
       version: 1,
       providers: {
-        work: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://gitlab.example.com" } },
+        work: { kind: "gitlab", connection: { projectId: "group/project", baseUrl: "https://runtime.example.com" } },
         review: { kind: "gitlab" },
-        ci: { kind: "local" },
+        ci: { kind: "github" },
+        connections: { gitlab: { projectId: "registry/project", baseUrl: "https://doctor.example.com" } },
       },
     })}\n`, "utf8");
 
     const result = await runConnectionDoctor({
       cwd,
       probe: async (contract, options) => {
-        assert.equal(options.config.projectId, "group/project");
-        assert.equal(options.config.baseUrl, "https://gitlab.example.com");
+        if (contract.adapterId === "gitlab") {
+          assert.equal(options.config.projectId, "group/project");
+          assert.equal(options.config.baseUrl, "https://runtime.example.com");
+        }
         return { adapterId: contract.adapterId, probeId: contract.probe.id, status: "pass", authMethod: contract.authMethod, summary: "passed", verifyCommand: contract.probe.verifyCommand, readOnly: true };
       },
     });
     assert.equal(result.status, "pass");
-    assert.equal(result.connections.length, 1);
+    assert.equal(result.connections.length, 2);
+  });
+
+  it("fails doctor for malformed or structurally invalid Executor config", () => {
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-quality-"));
+    createQualityDoctorShim(qualityRoot);
+    const cases = ["{not-json", JSON.stringify({ version: 1, providers: { work: "github" } })];
+    for (const configText of cases) {
+      const cwd = mkdtempSync(path.join(tmpdir(), "qube-invalid-config-"));
+      mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+      writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${configText}\n`, "utf8");
+      const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+      assert.equal(result.status, 1, result.stderr);
+      const parsed = JSON.parse(result.stdout);
+      assert.equal(parsed.ok, false);
+      assert.equal(parsed.connectionStatus, "fail");
+      assert.match(parsed.connections.summary, /invalid|malformed/i);
+    }
   });
 
   it("renders GitLab work provider install notes without prompting", () => {
