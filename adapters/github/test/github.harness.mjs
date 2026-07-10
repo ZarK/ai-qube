@@ -35,7 +35,7 @@ const statusPolicy = {
 const workListCommand = "issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000";
 
 function createCountingExec(issues) {
-  const state = { listRequests: 0 };
+  const state = { listRequests: 0, comments: [] };
   const exec = async args => {
     if (args.join(" ") === workListCommand) {
       state.listRequests += 1;
@@ -49,9 +49,14 @@ function createCountingExec(issues) {
       }
       return { args, exitCode: 0, stdout: JSON.stringify(issue), stderr: "" };
     }
+    if (args[0] === "issue" && args[1] === "comment") {
+      state.comments.push({ issueNumber: args[2], body: args[args.indexOf("--body") + 1] ?? "" });
+      return { args, exitCode: 0, stdout: JSON.stringify({ url: `https://github.com/example/qube/issues/${args[2]}#comment` }), stderr: "" };
+    }
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
   };
   exec.listRequests = () => state.listRequests;
+  exec.comments = () => state.comments;
   return exec;
 }
 
@@ -71,26 +76,6 @@ const work = defineWorkProviderHarness({
         return { args, exitCode: 0, stdout: "{not-json", stderr: "" };
       }
       return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
-    },
-    observeCommentMutations: async provider => {
-      // GitHub mutates issue comments through apply on lifecycle plans that carry comment actions.
-      const items = await provider.listOpenWorkItems();
-      const plan = provider.planStart(items[0], statusPolicy);
-      assert.equal(typeof provider.apply, "function");
-      assert.ok(plan && typeof plan.id === "string");
-      assert.equal(provider.capabilities().commentMutations, true);
-    },
-    observeReviewIntegration: async provider => {
-      // Review integration is advertised only when the work provider can load work that review forge keys can reference.
-      const items = await provider.listOpenWorkItems();
-      assert.ok(items.every(item => item.key.providerId === "github"));
-      assert.equal(provider.capabilities().reviewIntegration, true);
-    },
-    observeCiMergeStatus: async provider => {
-      // CI merge status is advertised with work keys that CI checks can attach to via trusted metadata.
-      const items = await provider.listOpenWorkItems();
-      assert.ok(items.every(item => item.trustedMetadata && typeof item.trustedMetadata === "object"));
-      assert.equal(provider.capabilities().ciMergeStatus, true);
     },
   },
   capabilityCases: [

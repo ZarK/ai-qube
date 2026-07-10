@@ -274,7 +274,7 @@ describe("adapter conformance testkit", () => {
     })), /must be true when adapter declares|listOpenWork must be true|requires work capability flag|loadWork must be true/);
   });
 
-  it("fails when commentMutations is true without an observation hook", async () => {
+  it("fails when commentMutations is true but apply cannot complete a comment-work action", async () => {
     const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
     const items = [
       workItem("1", { body: "- [x] a\n- [ ] b", checklist: { total: 2, completed: 1 }, status: "ready", priority: "high" }),
@@ -293,7 +293,12 @@ describe("adapter conformance testkit", () => {
           fixtureRoot: root,
           fixtureFiles: ["fixtures/work.json"],
           createFixtureTransport: () => items,
-          createSubject: transport => createWorkProvider(transport, { commentMutations: true }),
+          createSubject: transport => ({
+            ...createWorkProvider(transport, { commentMutations: true }),
+            async apply() {
+              return [{ actionId: "comment", status: "failed", failure: { operation: "comment", cause: "no transport", nextAction: "fix" }, details: {} }];
+            },
+          }),
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
             createLargeResultTransport: () => items,
@@ -302,7 +307,7 @@ describe("adapter conformance testkit", () => {
           },
         }),
       },
-    })), /observeCommentMutations/);
+    })), /commentMutations apply must complete/);
   });
 
   it("runs shared work suite against multi-item fixtures and rejects silent malformed lists", async () => {

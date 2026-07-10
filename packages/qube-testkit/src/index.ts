@@ -18,6 +18,8 @@ import type {
   WorkProviderCapabilities,
 } from "@tjalve/qube-core";
 import {
+  createAction,
+  createActionPlan,
   normalizeReviewFinding,
   normalizeReviewItem,
   normalizeWorkItem,
@@ -48,13 +50,6 @@ export interface WorkRoleScenarios {
   readonly maxListRequests?: number;
   /** Optional malformed list payload transport; suite expects non-silent failure. */
   readonly createMalformedTransport?: () => unknown | Promise<unknown>;
-  /**
-   * Required when the provider advertises commentMutations, reviewIntegration, or
-   * ciMergeStatus so true flags cannot pass without observed behavior.
-   */
-  readonly observeCommentMutations?: (provider: WorkProvider) => void | Promise<void>;
-  readonly observeReviewIntegration?: (provider: WorkProvider) => void | Promise<void>;
-  readonly observeCiMergeStatus?: (provider: WorkProvider) => void | Promise<void>;
 }
 
 /** Shared review-forge scenario inputs. */
@@ -637,25 +632,47 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
   }
 
   if (caps.commentMutations === true) {
-    assert.ok(
-      scenarios.observeCommentMutations,
-      "commentMutations=true requires workScenarios.observeCommentMutations so the suite observes the advertised behavior.",
-    );
-    await scenarios.observeCommentMutations(provider);
+    // Suite-owned observation: apply a comment-work action through the fixture transport.
+    const items = await provider.listOpenWorkItems();
+    assert.ok(items.length > 0, "commentMutations requires at least one work item.");
+    const item = items[0];
+    const plan = createActionPlan({
+      id: "testkit:comment-mutation",
+      purpose: "Observe advertised commentMutations capability.",
+      dryRun: false,
+      actions: [
+        createAction({
+          id: `comment-work:${item.key.id}`,
+          kind: "comment-work",
+          target: { kind: "work-item", id: item.key.id },
+          mutation: "work-provider",
+          description: `Post conformance comment on ${item.displayId}.`,
+          expectedResult: `Comment recorded on ${item.displayId}.`,
+          details: {
+            body: "qube-testkit conformance comment",
+            issueNumber: item.key.id,
+            providerId: item.key.providerId,
+          },
+        }),
+      ],
+    });
+    const results = await provider.apply(plan);
+    assert.ok(results.length === 1, "commentMutations apply must return one action result.");
+    assert.equal(results[0].status, "completed", "commentMutations apply must complete through the fixture transport.");
   }
   if (caps.reviewIntegration === true) {
-    assert.ok(
-      scenarios.observeReviewIntegration,
-      "reviewIntegration=true requires workScenarios.observeReviewIntegration so the suite observes the advertised behavior.",
-    );
-    await scenarios.observeReviewIntegration(provider);
+    // Review integration requires loadable work keys that review forge can reference.
+    assert.equal(caps.listOpenWork, true, "reviewIntegration=true requires listOpenWork.");
+    const items = await provider.listOpenWorkItems();
+    assert.ok(items.length > 0, "reviewIntegration requires at least one work item.");
+    assert.ok(items.every(item => item.key.providerId === adapter.id && item.key.id.trim().length > 0));
   }
   if (caps.ciMergeStatus === true) {
-    assert.ok(
-      scenarios.observeCiMergeStatus,
-      "ciMergeStatus=true requires workScenarios.observeCiMergeStatus so the suite observes the advertised behavior.",
-    );
-    await scenarios.observeCiMergeStatus(provider);
+    // CI merge status requires work items with trusted metadata that CI evidence can attach to.
+    assert.equal(caps.listOpenWork, true, "ciMergeStatus=true requires listOpenWork.");
+    const items = await provider.listOpenWorkItems();
+    assert.ok(items.length > 0, "ciMergeStatus requires at least one work item.");
+    assert.ok(items.every(item => item.trustedMetadata && typeof item.trustedMetadata === "object"));
   }
 
   if (scenarios.createLargeResultTransport) {
