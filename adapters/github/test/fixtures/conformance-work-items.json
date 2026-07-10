@@ -1,12 +1,62 @@
 [
   {
     "number": 42,
-    "title": "Fixture issue",
-    "body": "- [x] captured fixture",
+    "title": "Fixture ready issue",
+    "body": "Sequence: A1\n\n- [x] captured fixture\n- [ ] remaining work\n",
     "state": "OPEN",
-    "labels": [],
+    "labels": [{ "name": "S-Ready" }, { "name": "P2-High" }],
+    "assignees": [{ "login": "octocat" }],
+    "milestone": {
+      "number": 3,
+      "title": "Adapter testkit",
+      "state": "OPEN",
+      "dueOn": null
+    },
+    "url": "https://github.com/example/qube/issues/42"
+  },
+  {
+    "number": 43,
+    "title": "Fixture blocked issue",
+    "body": "Sequence: A2\n\n- [ ] blocked item\n\nBlocked by: #42\n",
+    "state": "OPEN",
+    "labels": [{ "name": "S-Blocked" }, { "name": "P3-Medium" }],
+    "assignees": [],
+    "milestone": {
+      "number": 3,
+      "title": "Adapter testkit",
+      "state": "OPEN",
+      "dueOn": null
+    },
+    "url": "https://github.com/example/qube/issues/43"
+  },
+  {
+    "number": 44,
+    "title": "Fixture in-progress issue",
+    "body": "Sequence: B1\n\n- [x] started\n- [ ] finish\n",
+    "state": "OPEN",
+    "labels": [{ "name": "S-InProgress" }, { "name": "P1-Critical" }],
+    "assignees": [{ "login": "octocat" }],
+    "milestone": null,
+    "url": "https://github.com/example/qube/issues/44"
+  },
+  {
+    "number": 45,
+    "title": "Fixture unknown-state issue",
+    "body": "No checklist labels.",
+    "state": "OPEN",
+    "labels": [{ "name": "C-Testing" }],
     "assignees": [],
     "milestone": null,
-    "url": "https://github.com/example/qube/issues/42"
+    "url": "https://github.com/example/qube/issues/45"
+  },
+  {
+    "number": 46,
+    "title": "Fixture low-priority issue",
+    "body": "- [ ] backlog",
+    "state": "OPEN",
+    "labels": [{ "name": "S-Ready" }, { "name": "P4-Low" }],
+    "assignees": [],
+    "milestone": null,
+    "url": "https://github.com/example/qube/issues/46"
   }
 ]

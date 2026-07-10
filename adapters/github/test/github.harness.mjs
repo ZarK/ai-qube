@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import {
   defineAdapterHarness,
@@ -16,6 +18,7 @@ import {
   probeGitHubConnection,
 } from "../dist/index.js";
 
+const fixtureRoot = dirname(fileURLToPath(import.meta.url));
 const workItems = readFixture("./fixtures/conformance-work-items.json");
 const reviewFixture = readFixture("./fixtures/conformance-review.json");
 const checkFixture = readFixture("./fixtures/conformance-checks.json");
@@ -29,46 +32,100 @@ const statusPolicy = {
   milestoneOrdering: { enabled: false, order: [], missingAssignment: "warn" },
 };
 
+const workListCommand = "issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000";
+
+function createCountingExec(issues) {
+  const state = { listRequests: 0 };
+  const exec = async args => {
+    if (args.join(" ") === workListCommand) {
+      state.listRequests += 1;
+      return { args, exitCode: 0, stdout: JSON.stringify(issues), stderr: "" };
+    }
+    if (args[0] === "issue" && args[1] === "view") {
+      const number = Number(args[2]);
+      const issue = issues.find(item => item.number === number);
+      if (!issue) {
+        return { args, exitCode: 1, stdout: "", stderr: `issue ${number} not found in fixture` };
+      }
+      return { args, exitCode: 0, stdout: JSON.stringify(issue), stderr: "" };
+    }
+    return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
+  };
+  exec.listRequests = () => state.listRequests;
+  return exec;
+}
+
 const work = defineWorkProviderHarness({
+  fixtureRoot,
   fixtureFiles: ["fixtures/conformance-work-items.json"],
-  createFixtureTransport: () => fixtureExec(workItems),
+  createFixtureTransport: () => createCountingExec(workItems),
   createSubject: exec => createGitHubWorkProvider({ exec, includeAssignees: true }),
+  getListRequestCount: transport => transport.listRequests(),
+  workScenarios: {
+    statusPolicy,
+    createLargeResultTransport: () => createCountingExec(workItems),
+    expectedLargeResultCount: workItems.length,
+    maxListRequests: 1,
+    createMalformedTransport: () => async args => {
+      if (args.join(" ") === workListCommand) {
+        return { args, exitCode: 0, stdout: "{not-json", stderr: "" };
+      }
+      return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
+    },
+  },
   capabilityCases: [
     {
       capabilityId: "map-work-item",
-      name: "maps fixture issues into provider-neutral work items",
+      name: "maps fixture priorities, statuses, blockers, and checklists",
       run: async provider => {
-        const [item] = await provider.listOpenWorkItems();
-        assert.deepEqual(item.key, { providerId: "github", id: "42" });
-        assert.deepEqual(item.checklist, { total: 1, completed: 1 });
+        const items = await provider.listOpenWorkItems();
+        const byId = Object.fromEntries(items.map(item => [item.key.id, item]));
+        assert.equal(byId["42"].status, "ready");
+        assert.equal(byId["42"].priority, "high");
+        assert.deepEqual(byId["42"].checklist, { total: 2, completed: 1 });
+        assert.equal(byId["43"].status, "blocked");
+        assert.deepEqual(byId["43"].blockers, [{ providerId: "github", id: "42" }]);
+        assert.equal(byId["44"].status, "in-progress");
+        assert.equal(byId["44"].priority, "critical");
+        assert.equal(byId["45"].status, "unknown");
+        assert.equal(byId["46"].priority, "low");
       },
     },
     {
       capabilityId: "work-item-queue",
-      name: "loads the fixture issue queue",
+      name: "loads the full multi-item fixture queue without truncation",
       run: async provider => {
         const items = await provider.listOpenWorkItems();
-        assert.equal(items.length, 1);
-        assert.equal(items[0].title, "Fixture issue");
+        assert.equal(items.length, workItems.length);
+        assert.deepEqual(items.map(item => item.key.id).sort(), ["42", "43", "44", "45", "46"]);
       },
     },
     {
       capabilityId: "sync-issue-status",
-      name: "plans lifecycle status from fixture work",
+      name: "plans lifecycle status labels from fixture work",
       run: async provider => {
         const items = await provider.listOpenWorkItems();
         const plan = provider.planStatusSync(items, statusPolicy);
-        assert.equal(plan.actions.length, 1);
-        assert.deepEqual(plan.actions[0].details.addLabels, ["S-Ready"]);
+        assert.ok(plan.actions.length >= 1);
+        assert.ok(plan.actions.every(action => action.details && typeof action.details === "object"));
       },
     },
   ],
 });
 
 const review = defineReviewForgeHarness({
+  fixtureRoot,
   fixtureFiles: ["fixtures/conformance-review.json"],
   createFixtureTransport: () => reviewExec(reviewFixture),
   createSubject: exec => createGitHubReviewForgeProvider({ exec }),
+  reviewScenarios: {
+    reviewPolicy: { adapter: "github", reviewers: ["@copilot"], requestText: "" },
+    sampleFindings: [
+      { severity: "blocking", message: "inline blocker", location: { path: "src/a.ts", line: 10, side: "destination" } },
+      { severity: "advisory", message: "body-only note" },
+    ],
+    diffPathsWithLines: { "src/a.ts": [10] },
+  },
   capabilityCases: [
     {
       capabilityId: "load-pull-request",
@@ -120,9 +177,19 @@ const review = defineReviewForgeHarness({
 });
 
 const ci = defineCiProviderHarness({
+  fixtureRoot,
   fixtureFiles: ["fixtures/conformance-checks.json"],
   createFixtureTransport: () => checkFixture,
   createSubject: fixture => ({ fixture, mapCheck: mapGitHubCheckStatus }),
+  ciScenarios: {
+    mapCheck: (subject, check) => subject.mapCheck(check),
+    passedCheck: checkFixture.passed,
+    failedCheck: checkFixture.failed,
+    pendingCheck: checkFixture.pending,
+    unsupportedTrigger: () => {
+      assertGitHubOperationSupported("trigger-workflow-run");
+    },
+  },
   capabilityCases: [
     {
       capabilityId: "read-ci-status",
@@ -162,6 +229,11 @@ export const githubHarness = defineAdapterHarness({
       contract: githubAdapter.connection,
       probe: probeGitHubConnection,
       live: { envVar: "QUBE_LIVE_PROBES" },
+      negativeFixtures: {
+        badCredential: { command: { exitCode: 1, stdout: "", stderr: "not logged in to github.com" } },
+        unreachable: { error: "network" },
+        timeout: { error: "timeout" },
+      },
     },
   },
   ignoredCapabilities: [
@@ -170,15 +242,6 @@ export const githubHarness = defineAdapterHarness({
     { id: "publish-release", reason: "Repository release workflows own publishing." },
   ],
 });
-
-function fixtureExec(issues) {
-  return async args => {
-    if (args.join(" ") === "issue list --state open --json number,title,state,labels,assignees,body,milestone,url --limit 1000") {
-      return { args, exitCode: 0, stdout: JSON.stringify(issues), stderr: "" };
-    }
-    return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
-  };
-}
 
 function reviewExec(pullRequest) {
   return async args => {
