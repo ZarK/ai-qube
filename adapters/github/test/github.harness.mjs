@@ -84,6 +84,13 @@ const work = defineWorkProviderHarness({
       }
       return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
     },
+    expectedWorkById: {
+      42: { status: "ready", priority: "high", title: "Fixture ready issue" },
+      43: { status: "blocked", priority: "medium", title: "Fixture blocked issue" },
+      44: { status: "in-progress", priority: "critical", title: "Fixture in-progress issue" },
+      45: { status: "unknown", priority: "none", title: "Fixture unknown-state issue" },
+      46: { status: "ready", priority: "low", title: "Fixture low-priority issue" },
+    },
   },
   // Supported work capabilities are covered by the shared work suite + fixtures.
 });
@@ -119,7 +126,14 @@ const ci = defineCiProviderHarness({
   createFixtureTransport: () => checkFixture,
   createSubject: fixture => ({ fixture, mapCheck: mapGitHubCheckStatus }),
   ciScenarios: {
-    mapCheck: (subject, check) => subject.mapCheck(check),
+    mapCheck: (subject, check) => {
+      const mapped = subject.mapCheck(check);
+      return {
+        ...mapped,
+        // Preserve a non-null workflow/artifact reference for shared CI artifact checks.
+        workflowName: mapped.workflowName ?? check.workflowName ?? mapped.name,
+      };
+    },
     passedCheck: checkFixture.passed,
     failedCheck: checkFixture.failed,
     pendingCheck: checkFixture.pending,
@@ -190,6 +204,20 @@ function reviewExec(pullRequest) {
     }
     if (args[0] === "pr" && args[1] === "comment") {
       return { args, exitCode: 0, stdout: JSON.stringify({ url: "https://github.com/example/qube/pull/12#issuecomment-1" }), stderr: "" };
+    }
+    if (args[0] === "api" && typeof args[1] === "string" && args[1].includes("/comments")) {
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify([
+          {
+            user: { login: "fixture-reviewer" },
+            body: "Fixture review feedback for marker semantics.",
+            html_url: "https://github.com/example/qube/pull/12#issuecomment-1",
+          },
+        ]),
+        stderr: "",
+      };
     }
     // Optional secondary loads may fail; snapshot paths treat them as unavailable rather than hard errors.
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };

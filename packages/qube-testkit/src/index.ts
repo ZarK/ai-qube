@@ -59,6 +59,12 @@ export interface WorkRoleScenarios {
   readonly minMultiPageRequests?: number;
   /** Optional malformed list payload transport; suite expects non-silent failure. */
   readonly createMalformedTransport?: () => unknown | Promise<unknown>;
+  /** Expected provider-neutral mappings keyed by work item id. */
+  readonly expectedWorkById?: Readonly<Record<string, {
+    readonly status?: WorkItem["status"];
+    readonly priority?: WorkItem["priority"];
+    readonly title?: string;
+  }>>;
 }
 
 /** Shared review-forge scenario inputs. */
@@ -90,6 +96,11 @@ export interface CiRoleScenarios {
     readonly summary?: string;
     readonly key?: string;
     readonly name?: string;
+    readonly url?: string | null;
+    readonly path?: string | null;
+    readonly workflowName?: string | null;
+    readonly runId?: string | null;
+    readonly artifact?: string | null;
   };
   readonly passedCheck: unknown;
   readonly failedCheck: unknown;
@@ -614,6 +625,17 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
       assert.equal(loaded.key.id, items[0].key.id);
       assert.deepEqual(normalizeWorkItem(loaded).checklist, loaded.checklist);
     }
+
+    if (scenarios.expectedWorkById) {
+      const byId = Object.fromEntries(items.map(item => [item.key.id, item]));
+      for (const [id, expected] of Object.entries(scenarios.expectedWorkById)) {
+        const item = byId[id];
+        assert.ok(item, `expectedWorkById references missing work item ${id}.`);
+        if (expected.status !== undefined) assert.equal(item.status, expected.status, `Work item ${id} status mapping mismatch.`);
+        if (expected.priority !== undefined) assert.equal(item.priority, expected.priority, `Work item ${id} priority mapping mismatch.`);
+        if (expected.title !== undefined) assert.equal(item.title, expected.title, `Work item ${id} title mapping mismatch.`);
+      }
+    }
   }
 
   if (isSupported(declared, "sync-issue-status")) {
@@ -764,33 +786,39 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
 
   if (isSupported(declared, "load-pull-request") || isSupported(declared, "read-merge-blockers") || isSupported(declared, "read-review-threads")) {
     assert.equal(caps.findCurrentBranchReview, true);
+    assert.equal(caps.loadReview, true, "load-pull-request requires loadReview=true.");
     const item = await provider.findReviewForCurrentBranch();
     assert.ok(item, "Supported review load fixture must yield a review item for the current branch.");
     assertReviewItemShape(item, adapter.id);
+    // Observe loadReview via getReviewItem, not only findCurrentBranchReview.
+    const loaded = await provider.getReviewItem(item.key);
+    assertReviewItemShape(loaded, adapter.id);
+    assert.equal(loaded.key.id, item.key.id);
     // Codec round-trip through the shared review model.
-    const roundTrip = normalizeReviewItem(item);
-    assert.equal(roundTrip.key.id, item.key.id);
-    assert.equal(roundTrip.title, item.title);
-    assert.equal(roundTrip.mergeability, item.mergeability);
-    assert.equal(roundTrip.reviewDecision, item.reviewDecision);
+    const roundTrip = normalizeReviewItem(loaded);
+    assert.equal(roundTrip.key.id, loaded.key.id);
+    assert.equal(roundTrip.title, loaded.title);
+    assert.equal(roundTrip.mergeability, loaded.mergeability);
+    assert.equal(roundTrip.reviewDecision, loaded.reviewDecision);
 
     // Feedback classification: every feedback row must carry source + trust labels.
-    for (const feedback of item.feedback) {
+    for (const feedback of loaded.feedback) {
       assert.ok(feedback.source, "Review feedback must classify its source.");
       assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider", "Review feedback must classify trust.");
       assert.ok(feedback.summary.trim().length > 0, "Review feedback summary must be non-empty.");
     }
 
     if (isSupported(declared, "read-merge-blockers")) {
-      assert.ok(Array.isArray(item.mergeBlockers), "Review item must expose mergeBlockers array.");
-      for (const blocker of item.mergeBlockers) {
+      assert.ok(Array.isArray(loaded.mergeBlockers), "Review item must expose mergeBlockers array.");
+      assert.ok(loaded.mergeBlockers.length > 0, "read-merge-blockers requires at least one merge blocker in the fixture corpus.");
+      for (const blocker of loaded.mergeBlockers) {
         assert.ok(blocker.reason, "Merge blocker must include a reason.");
         assert.ok(blocker.summary.trim().length > 0, "Merge blocker summary must be non-empty.");
       }
     }
     if (isSupported(declared, "read-review-threads")) {
-      assert.ok(Array.isArray(item.conversations), "Review item must expose conversations array.");
-      for (const conversation of item.conversations) {
+      assert.ok(Array.isArray(loaded.conversations), "Review item must expose conversations array.");
+      for (const conversation of loaded.conversations) {
         assert.ok(conversation.id.trim().length > 0, "Review conversation id must be non-empty.");
         assert.equal(typeof conversation.resolved, "boolean");
         assert.equal(typeof conversation.outdated, "boolean");
@@ -880,6 +908,11 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     assert.ok(snapshot?.item, "loadReviewSnapshot must return a review item.");
     assertReviewItemShape(snapshot.item, adapter.id);
     assert.ok(Array.isArray(snapshot.unavailable), "loadReviewSnapshot must report unavailable fields.");
+    // Snapshot is the richer load path for feedback and marker semantics.
+    assert.ok(
+      snapshot.item.feedback.length > 0 || snapshot.item.conversations.length > 0 || snapshot.item.checks.length > 0,
+      "loadReviewSnapshot must surface feedback, conversations, or checks from the fixture corpus.",
+    );
   }
 
   assert.ok(
@@ -923,6 +956,14 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
     assert.equal(passed.result, "passed");
     assert.ok(passed.name || passed.key, "CI mapCheck must expose a check name or key for artifact/reference identity.");
     assert.ok(passed.summary && passed.summary.trim().length > 0, "CI mapCheck must expose a summary reference for the check.");
+    assert.ok(
+      (passed.url && String(passed.url).trim().length > 0)
+        || (passed.path && String(passed.path).trim().length > 0)
+        || (passed.workflowName && String(passed.workflowName).trim().length > 0)
+        || (passed.runId && String(passed.runId).trim().length > 0)
+        || (passed.artifact && String(passed.artifact).trim().length > 0),
+      "CI mapCheck must expose an artifact/reference field (url, path, workflowName, runId, or artifact).",
+    );
   }
   if (isSupported(declared, "diagnose-ci-status")) {
     const failed = scenarios.mapCheck(subject, scenarios.failedCheck);
