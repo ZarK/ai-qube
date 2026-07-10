@@ -7,7 +7,7 @@ import {
   isSupported,
   isUnsupported,
 } from "./capabilities.js";
-import { createSubject } from "./descriptor.js";
+import { assertMutationAllowed } from "./fixtures.js";
 import type { RoleHarness } from "./types.js";
 
 type CiMapResult = {
@@ -31,7 +31,8 @@ type CiSubject = {
 export async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarness): Promise<void> {
   const scenarios = harness.ciScenarios;
   assert.ok(scenarios, "CI provider harness must supply ciScenarios.");
-  const subject = await createSubject(harness) as CiSubject;
+  const transport = await harness.createFixtureTransport();
+  const subject = await harness.createSubject(transport) as CiSubject;
   const declared = declarationMap(adapter);
 
   // mapCheck must be a first-class subject method so harness callbacks cannot manufacture conformance alone.
@@ -71,6 +72,8 @@ export async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: R
   }
   if (isSupported(declared, "trigger-workflow-run")) {
     assert.equal(typeof subject.triggerWorkflowRun, "function", "supported trigger-workflow-run requires subject.triggerWorkflowRun().");
+    // Supported triggers are mutating; require the same fixture binding / live opt-in as work/review apply paths.
+    assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar, subject);
     const result = await subject.triggerWorkflowRun!();
     assert.ok(result && typeof result === "object", "supported triggerWorkflowRun must return an object result.");
     const status = (result as { status?: string }).status;

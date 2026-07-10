@@ -280,6 +280,16 @@ export function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   }
   if (descriptor.roles.ci) {
     assert.ok(descriptor.roles.ci.ciScenarios, "CI provider harness must supply ciScenarios for the shared CI suite.");
+    const triggerSupported = declaredList.some(capability => capability.id === "trigger-workflow-run" && capability.support === "supported");
+    if (triggerSupported) {
+      assert.ok(
+        descriptor.roles.ci.mutationBoundary === "fixture-only" || descriptor.roles.ci.mutationBoundary === "live-opt-in",
+        "CI harness must set mutationBoundary when trigger-workflow-run is supported.",
+      );
+      if (descriptor.roles.ci.mutationBoundary === "live-opt-in") {
+        assert.ok(descriptor.roles.ci.liveMutationEnvVar?.trim(), "CI live-opt-in harness must set liveMutationEnvVar.");
+      }
+    }
   }
 
   const connection = descriptor.roles.connection;

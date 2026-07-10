@@ -121,23 +121,47 @@ function normalizeIssue(raw: RawGhIssue): GitHubIssue {
   };
 }
 
+function isRestLabel(value: unknown): value is { name: string } | string {
+  if (typeof value === 'string' && value.trim().length > 0) return true;
+  return !!value && typeof value === 'object' && typeof (value as Record<string, unknown>).name === 'string'
+    && String((value as Record<string, unknown>).name).trim().length > 0;
+}
+
+function isRestAssignee(value: unknown): value is { login: string } {
+  return !!value && typeof value === 'object' && typeof (value as Record<string, unknown>).login === 'string'
+    && String((value as Record<string, unknown>).login).trim().length > 0;
+}
+
+function isRestIssue(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object') return false;
+  const rest = value as Record<string, unknown>;
+  const url = rest.html_url ?? rest.url;
+  if (typeof rest.number !== 'number' || !Number.isInteger(rest.number) || rest.number <= 0) return false;
+  if (typeof rest.title !== 'string' || rest.title.trim().length === 0) return false;
+  if (!(typeof rest.body === 'string' || rest.body === null || rest.body === undefined)) return false;
+  if (typeof rest.state !== 'string' || rest.state.trim().length === 0) return false;
+  if (typeof url !== 'string' || url.trim().length === 0) return false;
+  if (!Array.isArray(rest.labels) || !rest.labels.every(isRestLabel)) return false;
+  if (rest.assignees !== undefined && (!Array.isArray(rest.assignees) || !rest.assignees.every(isRestAssignee))) return false;
+  if (rest.milestone !== null && rest.milestone !== undefined) {
+    if (!rest.milestone || typeof rest.milestone !== 'object') return false;
+    const milestone = rest.milestone as Record<string, unknown>;
+    if (typeof milestone.number !== 'number' || typeof milestone.title !== 'string') return false;
+  }
+  return true;
+}
+
 function isRestIssueArray(value: unknown): value is Record<string, unknown>[] {
-  return Array.isArray(value) && value.every(item => !!item && typeof item === 'object' && typeof (item as Record<string, unknown>).number === 'number');
+  return Array.isArray(value) && value.every(isRestIssue);
 }
 
 function restIssueToRaw(rest: Record<string, unknown>): RawGhIssue {
-  const labels = Array.isArray(rest.labels)
-    ? rest.labels.map(label => {
-        if (typeof label === 'string') return { name: label };
-        const record = label as Record<string, unknown>;
-        return { name: typeof record.name === 'string' ? record.name : String(record.name ?? '') };
-      })
-    : [];
+  const labels = (rest.labels as unknown[]).map(label => {
+    if (typeof label === 'string') return { name: label };
+    return { name: String((label as Record<string, unknown>).name) };
+  });
   const assignees = Array.isArray(rest.assignees)
-    ? rest.assignees.map(assignee => {
-        const record = assignee as Record<string, unknown>;
-        return { login: typeof record.login === 'string' ? record.login : String(record.login ?? '') };
-      })
+    ? (rest.assignees as unknown[]).map(assignee => ({ login: String((assignee as Record<string, unknown>).login) }))
     : [];
   const milestoneRaw = rest.milestone;
   let milestone: RawGhMilestone | null = null;
@@ -145,20 +169,20 @@ function restIssueToRaw(rest: Record<string, unknown>): RawGhIssue {
     const milestoneRecord = milestoneRaw as Record<string, unknown>;
     milestone = {
       number: Number(milestoneRecord.number),
-      title: String(milestoneRecord.title ?? ''),
+      title: String(milestoneRecord.title),
       state: typeof milestoneRecord.state === 'string' ? milestoneRecord.state : undefined,
       dueOn: (milestoneRecord.due_on as string | null | undefined) ?? (milestoneRecord.dueOn as string | null | undefined) ?? null,
     };
   }
   return {
     number: Number(rest.number),
-    title: String(rest.title ?? ''),
+    title: String(rest.title),
     body: typeof rest.body === 'string' ? rest.body : '',
-    state: String(rest.state ?? 'open'),
+    state: String(rest.state),
     labels,
     assignees,
     milestone,
-    url: String(rest.html_url ?? rest.url ?? ''),
+    url: String(rest.html_url ?? rest.url),
   };
 }
 
@@ -203,6 +227,12 @@ async function listOpenIssuesPaged(options: {
   includeAssignees?: boolean;
 }): Promise<GitHubIssue[]> {
   const { cwd, exec, pageSize } = options;
+  if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 100) {
+    throw new GhMalformedOutputError(
+      'gh api issues pageSize',
+      `pageSize must be an integer from 1 to 100 (GitHub REST per_page limit); got ${String(pageSize)}.`,
+    );
+  }
   const repoResult = await runGh(['repo', 'view', '--json', 'nameWithOwner'], { cwd, exec });
   if (repoResult.exitCode !== 0) {
     throw new GhExecutionError('gh repo view', repoResult.exitCode, repoResult.stderr || repoResult.stdout);
@@ -214,7 +244,8 @@ async function listOpenIssuesPaged(options: {
       !!value && typeof value === 'object' && typeof (value as Record<string, unknown>).nameWithOwner === 'string',
   );
   const all: GitHubIssue[] = [];
-  for (let page = 1; page <= 100; page += 1) {
+  const maxPages = 100;
+  for (let page = 1; page <= maxPages; page += 1) {
     const path = `repos/${repo.nameWithOwner}/issues?state=open&per_page=${pageSize}&page=${page}`;
     const result = await runGh(['api', path], { cwd, exec });
     if (result.exitCode !== 0) {
@@ -226,7 +257,13 @@ async function listOpenIssuesPaged(options: {
     for (const rest of pureIssues) {
       all.push(normalizeIssue(restIssueToRaw(rest)));
     }
-    if (restIssues.length < pageSize) break;
+    if (restIssues.length < pageSize) return all;
+    if (page === maxPages) {
+      throw new GhMalformedOutputError(
+        'gh api issues pagination',
+        `Open issue pagination exceeded ${maxPages} pages of ${pageSize} items without a terminating short page.`,
+      );
+    }
   }
   return all;
 }
