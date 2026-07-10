@@ -130,9 +130,15 @@ export function cloneGate(gate: GateConfig): GateConfig {
   return { ...gate, env: { ...gate.env } };
 }
 
+function cloneConnectionFields(connection: Record<string, string | number | boolean> | undefined): Record<string, string | number | boolean> | undefined {
+  if (!connection) return undefined;
+  return { ...connection };
+}
+
 function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderSelection {
   return {
     kind: input.kind,
+    ...(input.connection ? { connection: cloneConnectionFields(input.connection) } : {}),
     ...(input.jira ? {
       jira: {
         ...(input.jira.projectKey ? { projectKey: input.jira.projectKey } : {}),
@@ -169,7 +175,10 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
     providers: {
       work: cloneWorkProviderSelection(input.providers.work),
       review: {
-        ...input.providers.review,
+        kind: input.providers.review.kind,
+        ...(input.providers.review.connection
+          ? { connection: cloneConnectionFields(input.providers.review.connection) }
+          : {}),
         ...(input.providers.review.publisher
           ? {
             publisher: {
@@ -186,7 +195,12 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           : {}),
       },
       repository: { ...input.providers.repository },
-      ci: { ...input.providers.ci },
+      ci: {
+        kind: input.providers.ci.kind,
+        ...(input.providers.ci.connection
+          ? { connection: cloneConnectionFields(input.providers.ci.connection) }
+          : {}),
+      },
       layout: { ...input.providers.layout },
       capabilities: { ...input.providers.capabilities },
     },

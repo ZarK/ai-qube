@@ -304,6 +304,9 @@ function resolveValue(
 ): string | undefined {
   const configured = source.configField ? config[source.configField] : undefined;
   if (typeof configured === "string" && configured.trim() !== "") return configured.trim();
+  // Config validation allows numeric/boolean non-secret fields (e.g. GitLab projectId).
+  if (typeof configured === "number" && Number.isFinite(configured)) return String(configured);
+  if (typeof configured === "boolean") return configured ? "true" : "false";
   if (source.envVar) {
     const environment = environmentValue(env, source.envVar);
     if (environment) return environment;
