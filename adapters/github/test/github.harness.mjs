@@ -78,44 +78,7 @@ const work = defineWorkProviderHarness({
       return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
     },
   },
-  capabilityCases: [
-    {
-      capabilityId: "map-work-item",
-      name: "maps fixture priorities, statuses, blockers, and checklists",
-      run: async provider => {
-        const items = await provider.listOpenWorkItems();
-        const byId = Object.fromEntries(items.map(item => [item.key.id, item]));
-        assert.equal(byId["42"].status, "ready");
-        assert.equal(byId["42"].priority, "high");
-        assert.deepEqual(byId["42"].checklist, { total: 2, completed: 1 });
-        assert.equal(byId["43"].status, "blocked");
-        assert.deepEqual(byId["43"].blockers, [{ providerId: "github", id: "42" }]);
-        assert.equal(byId["44"].status, "in-progress");
-        assert.equal(byId["44"].priority, "critical");
-        assert.equal(byId["45"].status, "unknown");
-        assert.equal(byId["46"].priority, "low");
-      },
-    },
-    {
-      capabilityId: "work-item-queue",
-      name: "loads the full multi-item fixture queue without truncation",
-      run: async provider => {
-        const items = await provider.listOpenWorkItems();
-        assert.equal(items.length, workItems.length);
-        assert.deepEqual(items.map(item => item.key.id).sort(), ["42", "43", "44", "45", "46"]);
-      },
-    },
-    {
-      capabilityId: "sync-issue-status",
-      name: "plans lifecycle status labels from fixture work",
-      run: async provider => {
-        const items = await provider.listOpenWorkItems();
-        const plan = provider.planStatusSync(items, statusPolicy);
-        assert.ok(plan.actions.length >= 1);
-        assert.ok(plan.actions.every(action => action.details && typeof action.details === "object"));
-      },
-    },
-  ],
+  // Supported work capabilities are covered by the shared work suite + fixtures.
 });
 
 const review = defineReviewForgeHarness({
@@ -134,47 +97,7 @@ const review = defineReviewForgeHarness({
     resolveThreadIds: ["PRRT_fixture_thread_1"],
   },
   capabilityCases: [
-    {
-      capabilityId: "load-pull-request",
-      name: "loads fixture pull request state",
-      run: async provider => {
-        const item = await provider.findReviewForCurrentBranch();
-        assert.deepEqual(item.key, { providerId: "github", id: "12" });
-        assert.equal(item.title, "Fixture pull request");
-      },
-    },
-    {
-      capabilityId: "request-review-gate",
-      name: "plans a provider-visible review request",
-      run: async provider => {
-        const item = await provider.findReviewForCurrentBranch();
-        const plan = provider.planReviewRequest(item, { adapter: "github", reviewers: ["@copilot"], requestText: "" });
-        assert.equal(plan.actions.length, 1);
-        assert.equal(plan.actions[0].kind, "request-review");
-      },
-    },
-    {
-      capabilityId: "read-merge-blockers",
-      name: "normalizes fixture mergeability and required review blockers",
-      run: async provider => {
-        const item = await provider.findReviewForCurrentBranch();
-        assert.equal(item.mergeability, "mergeable");
-        assert.deepEqual(item.mergeBlockers.map(blocker => blocker.reason), ["review-required"]);
-      },
-    },
-    {
-      capabilityId: "read-review-threads",
-      name: "keeps absent fixture conversations explicit",
-      run: async provider => {
-        const item = await provider.findReviewForCurrentBranch();
-        assert.deepEqual(item.conversations, []);
-      },
-    },
-    {
-      capabilityId: "resolve-review-threads",
-      name: "declares review-thread resolution",
-      run: provider => assert.equal(typeof provider.resolveReviewThreads, "function"),
-    },
+    // Unsupported approval is not part of the shared supported-review suite.
     {
       capabilityId: "approve-pull-request",
       name: "rejects fabricated provider approval",
@@ -198,28 +121,11 @@ const ci = defineCiProviderHarness({
     },
   },
   capabilityCases: [
-    {
-      capabilityId: "read-ci-status",
-      name: "maps successful current-head checks",
-      run: provider => assert.equal(provider.mapCheck(provider.fixture.passed).result, "passed"),
-    },
-    {
-      capabilityId: "diagnose-ci-status",
-      name: "distinguishes failed and pending checks",
-      run: provider => {
-        assert.equal(provider.mapCheck(provider.fixture.failed).result, "failed");
-        assert.equal(provider.mapCheck(provider.fixture.pending).result, "pending");
-      },
-    },
+    // Standalone AIQ packaging is outside the shared CI role suite.
     {
       capabilityId: "run-aiq-github-action",
       name: "keeps standalone CI integration explicit",
       run: () => assert.equal(assertGitHubOperationSupported("run-aiq-github-action").support, "standalone"),
-    },
-    {
-      capabilityId: "trigger-workflow-run",
-      name: "rejects unsupported workflow mutation",
-      run: () => assertGitHubOperationSupported("trigger-workflow-run"),
     },
   ],
 });
