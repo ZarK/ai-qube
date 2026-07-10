@@ -95,17 +95,32 @@ function createWorkProvider(items, flagOverrides = {}) {
     planStatusSync() {
       return { id: "plan", purpose: "sync", dryRun: true, actions: [{ id: "a1", kind: "sync-status", details: {} }] };
     },
-    planStart() {
-      return { id: "start", purpose: "start", dryRun: true, actions: [] };
+    planStart(item) {
+      return {
+        id: "start",
+        purpose: "start",
+        dryRun: true,
+        actions: [{ id: `start:${item.key.id}`, kind: "start-work", status: "planned", details: { issueNumber: item.key.id } }],
+      };
     },
-    planPause() {
-      return { id: "pause", purpose: "pause", dryRun: true, actions: [] };
+    planPause(item) {
+      return {
+        id: "pause",
+        purpose: "pause",
+        dryRun: true,
+        actions: [{ id: `pause:${item.key.id}`, kind: "pause-work", status: "planned", details: { issueNumber: item.key.id } }],
+      };
     },
-    planComplete() {
-      return { id: "complete", purpose: "complete", dryRun: true, actions: [] };
+    planComplete(item) {
+      return {
+        id: "complete",
+        purpose: "complete",
+        dryRun: true,
+        actions: [{ id: `complete:${item.key.id}`, kind: "close-work", status: "planned", details: { issueNumber: item.key.id } }],
+      };
     },
-    async apply() {
-      return [];
+    async apply(plan) {
+      return plan.actions.map(action => ({ actionId: action.id, status: "completed", failure: null, details: action.details ?? {} }));
     },
   };
 }
@@ -262,8 +277,11 @@ describe("adapter conformance testkit", () => {
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
             createLargeResultTransport: () => items,
+            expectedLargeResultCount: 2,
             createMalformedTransport: () => items,
+            singleShotHighLimit: true,
           },
+          getListRequestCount: () => 1,
           capabilityCases: [{
             capabilityId: "work-item-queue",
             name: "noop false success",
@@ -294,7 +312,11 @@ describe("adapter conformance testkit", () => {
           fixtureFiles: ["fixtures/work.json"],
           createFixtureTransport: () => items,
           createSubject: transport => ({
-            ...createWorkProvider(transport, { commentMutations: true }),
+            ...createWorkProvider(transport, {
+              commentMutations: true,
+              planLifecycleMutations: false,
+              applyLifecycleMutations: false,
+            }),
             async apply() {
               return [{ actionId: "comment", status: "failed", failure: { operation: "comment", cause: "no transport", nextAction: "fix" }, details: {} }];
             },
@@ -304,7 +326,9 @@ describe("adapter conformance testkit", () => {
             createLargeResultTransport: () => items,
             expectedLargeResultCount: 2,
             createMalformedTransport: () => items,
+            singleShotHighLimit: true,
           },
+          getListRequestCount: () => 1,
         }),
       },
     })), /commentMutations apply must complete/);
@@ -360,6 +384,7 @@ describe("adapter conformance testkit", () => {
             createLargeResultTransport: () => ({ items, listRequests: 0 }),
             expectedLargeResultCount: 2,
             maxListRequests: 2,
+            singleShotHighLimit: true,
             createMalformedTransport: () => ({ items: "malformed" }),
           },
         }),

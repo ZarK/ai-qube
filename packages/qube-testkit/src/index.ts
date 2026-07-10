@@ -48,6 +48,15 @@ export interface WorkRoleScenarios {
   readonly createLargeResultTransport?: () => unknown | Promise<unknown>;
   readonly expectedLargeResultCount?: number;
   readonly maxListRequests?: number;
+  /**
+   * When true, the adapter uses a single high-limit list request rather than
+   * multi-page cursors. When false/omitted, createMultiPageTransport is required.
+   */
+  readonly singleShotHighLimit?: boolean;
+  /** Multi-page transport that must produce at least two list requests. */
+  readonly createMultiPageTransport?: () => unknown | Promise<unknown>;
+  readonly expectedMultiPageItemCount?: number;
+  readonly minMultiPageRequests?: number;
   /** Optional malformed list payload transport; suite expects non-silent failure. */
   readonly createMalformedTransport?: () => unknown | Promise<unknown>;
 }
@@ -424,6 +433,10 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
       workScenarios.createMalformedTransport,
       "Work provider harness must supply workScenarios.createMalformedTransport for malformed-payload coverage.",
     );
+    assert.ok(
+      workScenarios.singleShotHighLimit === true || workScenarios.createMultiPageTransport,
+      "Work provider harness must declare singleShotHighLimit or supply createMultiPageTransport for pagination coverage.",
+    );
   }
   if (descriptor.roles.review) {
     assert.ok(descriptor.roles.review.reviewScenarios?.reviewPolicy, "Review forge harness must supply reviewScenarios.reviewPolicy for the shared review suite.");
@@ -617,17 +630,20 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.ok(items.length > 0, "planLifecycleMutations requires at least one work item.");
     const start = provider.planStart(items[0], scenarios.statusPolicy as never);
     assert.ok(start && Array.isArray(start.actions), "planStart must return an action plan when planLifecycleMutations is true.");
+    assert.ok(start.actions.length > 0, "planStart must plan at least one action when planLifecycleMutations is true.");
     const pause = provider.planPause(items[0], items, scenarios.statusPolicy as never);
     assert.ok(pause && Array.isArray(pause.actions), "planPause must return an action plan when planLifecycleMutations is true.");
     const complete = provider.planComplete(items[0], items, scenarios.statusPolicy as never);
     assert.ok(complete && Array.isArray(complete.actions), "planComplete must return an action plan when planLifecycleMutations is true.");
     if (caps.applyLifecycleMutations === true) {
-      const applied = await provider.apply({
-        ...start,
-        dryRun: true,
-        actions: [],
-      } as never);
+      // Apply the real planned start actions through the fixture transport.
+      const applied = await provider.apply(start);
       assert.ok(Array.isArray(applied), "apply must return action results when applyLifecycleMutations is true.");
+      assert.equal(applied.length, start.actions.length, "apply must return one result per planned lifecycle action.");
+      assert.ok(
+        applied.every(result => result.status === "completed" || result.status === "skipped"),
+        "applyLifecycleMutations must complete or skip planned actions; failures indicate unobserved mutation behavior.",
+      );
     }
   }
 
@@ -695,12 +711,28 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
       expected,
       `Large-result suite expected exactly ${expected} work items, got ${listed.length}.`,
     );
-    if (harness.getListRequestCount) {
-      const requests = harness.getListRequestCount(largeTransport);
-      const maxRequests = scenarios.maxListRequests ?? Math.max(1, expected);
-      assert.ok(requests >= 1, "Large-result transport must record at least one list request.");
-      assert.ok(requests <= maxRequests, `List request count ${requests} exceeds maxListRequests ${maxRequests}.`);
+    assert.ok(harness.getListRequestCount, "Large-result coverage requires getListRequestCount instrumentation.");
+    const requests = harness.getListRequestCount!(largeTransport);
+    const maxRequests = scenarios.maxListRequests ?? Math.max(1, expected);
+    assert.ok(requests >= 1, "Large-result transport must record at least one list request.");
+    assert.ok(requests <= maxRequests, `List request count ${requests} exceeds maxListRequests ${maxRequests}.`);
+    if (scenarios.singleShotHighLimit === true) {
+      assert.equal(requests, 1, "singleShotHighLimit adapters must use exactly one list request.");
     }
+  }
+
+  if (scenarios.createMultiPageTransport) {
+    assert.ok(harness.getListRequestCount, "Multi-page coverage requires getListRequestCount instrumentation.");
+    const pagedTransport = await scenarios.createMultiPageTransport();
+    const pagedProvider = await harness.createSubject(pagedTransport) as WorkProvider;
+    const listed = await pagedProvider.listOpenWorkItems();
+    const expected = scenarios.expectedMultiPageItemCount ?? 2;
+    assert.equal(listed.length, expected, `Multi-page suite expected exactly ${expected} work items, got ${listed.length}.`);
+    const uniqueIds = new Set(listed.map(item => `${item.key.providerId}:${item.key.id}`));
+    assert.equal(uniqueIds.size, listed.length, "Multi-page list must not return duplicate work item keys.");
+    const requests = harness.getListRequestCount(pagedTransport);
+    const minRequests = scenarios.minMultiPageRequests ?? 2;
+    assert.ok(requests >= minRequests, `Multi-page suite expected at least ${minRequests} list requests, got ${requests}.`);
   }
 
   if (scenarios.createMalformedTransport) {
@@ -783,6 +815,10 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       const applied = await provider.apply(plan);
       assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
       assert.equal(applied.length, plan.actions.length, "apply must return one result per planned action.");
+      assert.ok(
+        applied.every(result => result.status === "completed" || result.status === "skipped"),
+        "applyReviewRequests must complete or skip planned actions through the fixture transport.",
+      );
     }
   }
 
@@ -905,10 +941,12 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
     }, /unsupported/i);
   }
   if (isSupported(declared, "trigger-workflow-run")) {
-    // Supported triggers must be first-class subject methods so the suite observes a real invocation.
+    // Supported triggers must be first-class subject methods with an observable non-void result.
     const triggerable = subject as { triggerWorkflowRun?: () => unknown | Promise<unknown> };
     assert.equal(typeof triggerable.triggerWorkflowRun, "function", "supported trigger-workflow-run requires subject.triggerWorkflowRun().");
-    await triggerable.triggerWorkflowRun!();
+    const result = await triggerable.triggerWorkflowRun!();
+    assert.notEqual(result, undefined, "supported triggerWorkflowRun must return an observable result, not a silent no-op.");
+    assert.notEqual(result, null, "supported triggerWorkflowRun must return an observable result, not null.");
   }
 }
 
@@ -1017,12 +1055,14 @@ async function verifyConnection(adapter: QubeAdapterContract, harness: Connectio
     },
   });
   assert.equal(bad.status, "fail", "Bad-credential connection fixture must fail.");
+  assertNoSecretMaterial(bad.summary, "bad-credential probe summary");
 
   const unreachable = await harness.probe({
     mode: "fixture",
     fixture: harness.negativeFixtures?.unreachable ?? { error: "network" },
   });
   assert.notEqual(unreachable.status, "pass", "Unreachable connection fixture must not pass.");
+  assertNoSecretMaterial(unreachable.summary, "unreachable probe summary");
 
   const timeout = await harness.probe({
     mode: "fixture",
@@ -1030,6 +1070,15 @@ async function verifyConnection(adapter: QubeAdapterContract, harness: Connectio
   });
   assert.equal(timeout.status, "fail", "Timeout connection fixture must fail.");
   assert.match(timeout.summary, /timed out/i);
+  assertNoSecretMaterial(timeout.summary, "timeout probe summary");
+  assertNoSecretMaterial(result.summary, "passing probe summary");
+}
+
+function assertNoSecretMaterial(summary: string, label: string): void {
+  // Keep connection reports free of raw tokens, passwords, and fixture stderr dumps.
+  assert.equal(/\b(ghp_|gho_|github_pat_|sk-|xox[baprs]-)\w+/i.test(summary), false, `${label} must not include token-like material.`);
+  assert.equal(/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(summary), false, `${label} must not include private key material.`);
+  assert.equal(/\bpassword\s*[:=]\s*\S+/i.test(summary), false, `${label} must not include password assignments.`);
 }
 
 function declarationMap(adapter: QubeAdapterContract): Map<string, QubeAdapterCapability> {

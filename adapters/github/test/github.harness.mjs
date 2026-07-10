@@ -53,6 +53,12 @@ function createCountingExec(issues) {
       state.comments.push({ issueNumber: args[2], body: args[args.indexOf("--body") + 1] ?? "" });
       return { args, exitCode: 0, stdout: JSON.stringify({ url: `https://github.com/example/qube/issues/${args[2]}#comment` }), stderr: "" };
     }
+    if (args[0] === "issue" && args[1] === "edit") {
+      return { args, exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "api" && args[1] === "user") {
+      return { args, exitCode: 0, stdout: JSON.stringify({ login: "fixture-bot" }), stderr: "" };
+    }
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
   };
   exec.listRequests = () => state.listRequests;
@@ -71,6 +77,7 @@ const work = defineWorkProviderHarness({
     createLargeResultTransport: () => createCountingExec(workItems),
     expectedLargeResultCount: workItems.length,
     maxListRequests: 1,
+    singleShotHighLimit: true,
     createMalformedTransport: () => async args => {
       if (args.join(" ") === workListCommand) {
         return { args, exitCode: 0, stdout: "{not-json", stderr: "" };
@@ -167,11 +174,22 @@ function reviewExec(pullRequest) {
     if (joined === `pr view ${pullRequest.number} --json ${fullFields}`) {
       return { args, exitCode: 0, stdout: JSON.stringify(pullRequest), stderr: "" };
     }
-    if (joined === "repo view --json nameWithOwner") {
-      return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube" }), stderr: "" };
+    if (joined === "repo view --json nameWithOwner" || joined === "repo view --json nameWithOwner,url") {
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://github.com/example/qube" }),
+        stderr: "",
+      };
     }
     if (args[0] === "api" && args[1] === "user") {
       return { args, exitCode: 0, stdout: JSON.stringify({ login: "fixture-bot" }), stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "edit") {
+      return { args, exitCode: 0, stdout: "", stderr: "" };
+    }
+    if (args[0] === "pr" && args[1] === "comment") {
+      return { args, exitCode: 0, stdout: JSON.stringify({ url: "https://github.com/example/qube/pull/12#issuecomment-1" }), stderr: "" };
     }
     // Optional secondary loads may fail; snapshot paths treat them as unavailable rather than hard errors.
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
