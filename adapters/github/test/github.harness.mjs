@@ -158,6 +158,7 @@ export const githubHarness = defineAdapterHarness({
     review,
     ci,
     connection: {
+      fixtureRoot,
       fixtureFile: "fixtures/connection-pass.json",
       fixture: connectionFixture,
       contract: githubAdapter.connection,

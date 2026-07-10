@@ -282,11 +282,6 @@ describe("adapter conformance testkit", () => {
             singleShotHighLimit: true,
           },
           getListRequestCount: () => 1,
-          capabilityCases: [{
-            capabilityId: "work-item-queue",
-            name: "noop false success",
-            run: () => undefined,
-          }],
         }),
       },
     })), /must be true when adapter declares|listOpenWork must be true|requires work capability flag|loadWork must be true/);

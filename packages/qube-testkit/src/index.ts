@@ -129,6 +129,8 @@ export interface RoleHarnessInput<TTransport, TSubject> {
 }
 
 export interface ConnectionHarness {
+  /** Directory used to resolve fixtureFile on disk. */
+  readonly fixtureRoot?: string;
   readonly fixtureFile: string;
   readonly fixture: ConnectionProbeFixture;
   readonly contract: ConnectionContract;
@@ -463,6 +465,11 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   const connection = descriptor.roles.connection;
   if (connection) {
     assert.ok(connection.fixtureFile.trim().length > 0, "Connection harness must name its fixture file.");
+    assert.ok(connection.fixtureRoot && connection.fixtureRoot.trim().length > 0, "Connection harness must set fixtureRoot.");
+    assert.equal(isAbsolute(connection.fixtureFile), false, "Connection fixtureFile must be relative to fixtureRoot.");
+    assert.equal(connection.fixtureFile.includes(".."), false, "Connection fixtureFile must not escape fixtureRoot.");
+    const absolutePath = join(connection.fixtureRoot, connection.fixtureFile);
+    assert.ok(existsSync(absolutePath), `Connection fixture file is missing or unbound: ${connection.fixtureFile}.`);
     assert.equal(connection.contract.adapterId, descriptor.adapter.id);
     assert.deepEqual(connection.contract, descriptor.adapter.connection);
     assert.equal(connection.contract.probe.readOnly, true);
@@ -484,8 +491,13 @@ function assertRolePlacement(harness: RoleHarness | undefined, expected: Adapter
 
 function addCoverage(coverage: Map<string, string>, capabilityId: string, owner: string): void {
   assert.ok(capabilityId.trim().length > 0, "Capability case ids must be non-empty.");
-  // Shared suite and adapter cases may both name the same capability; first writer wins for coverage accounting.
-  if (!coverage.has(capabilityId)) coverage.set(capabilityId, owner);
+  // Every declared capability must be covered by exactly one owner (shared suite, adapter case, or ignore).
+  assert.equal(
+    coverage.has(capabilityId),
+    false,
+    `Capability ${capabilityId} is covered more than once (${coverage.get(capabilityId)} and ${owner}).`,
+  );
+  coverage.set(capabilityId, owner);
 }
 
 async function createSubject(harness: RoleHarness, transport?: unknown): Promise<unknown> {
