@@ -1,5 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
-import { gitLabConnectionContract, githubConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
+import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
@@ -483,9 +483,10 @@ const connectionContracts: Readonly<Record<string, ConnectionContract>> = Object
   gitlab: gitLabConnectionContract,
   linear: linearConnectionContract,
   jira: jiraConnectionContract,
+  jenkins: jenkinsConnectionContract,
 });
 
-function readConnectionFields(value: unknown, path: string, providerKind: string, errors: ValidationError[]): Record<string, string | number | boolean> | undefined {
+function readConnectionFields(value: unknown, path: string, providerKind: string, errors: ValidationError[]): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
     errors.push({ kind: 'invalid', path, message: `${path} must be an object of non-secret connection fields` });
@@ -493,7 +494,7 @@ function readConnectionFields(value: unknown, path: string, providerKind: string
   }
   const contract = connectionContracts[providerKind];
   const allowedFields = new Set(contract?.configFields.map(field => field.name) ?? []);
-  const connection: Record<string, string | number | boolean> = {};
+  const connection: Record<string, string> = {};
   for (const [key, entry] of Object.entries(value)) {
     if (/token|secret|password|credential|private.?key|api.?key/iu.test(key)) {
       errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must not store credential material; use the connection contract environment variables` });
@@ -503,7 +504,8 @@ function readConnectionFields(value: unknown, path: string, providerKind: string
       errors.push({ kind: 'unknown', path: `${path}.${key}`, message: `${path}.${key} is not declared by the ${providerKind} connection contract` });
       continue;
     }
-    if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
+    const field = contract?.configFields.find(candidate => candidate.name === key);
+    if (field?.valueType === 'string' && typeof entry === 'string' && entry.trim().length > 0) {
       // Reject values that look like credentials rather than public connection settings.
       if (typeof entry === 'string' && (entry.includes('BEGIN ') || /^(gh[pousr]_|github_pat_|ghs_|glpat-|lin_api_|ATATT)/i.test(entry) || entry.length > 512)) {
         errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must be a non-secret connection field, not credential material` });
@@ -512,9 +514,25 @@ function readConnectionFields(value: unknown, path: string, providerKind: string
       connection[key] = entry;
       continue;
     }
-    errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must be a string, number, or boolean` });
+    errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must be a non-empty string` });
   }
   return connection;
+}
+
+function readProbeConnections(value: unknown, errors: ValidationError[]): ProviderSelections['connections'] {
+  const path = 'providers.connections';
+  if (value === undefined) return {};
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an object keyed by connection adapter id` });
+    return {};
+  }
+  rejectUnknownKeys(value, Object.keys(connectionContracts), path, errors);
+  const connections: ProviderSelections['connections'] = {};
+  for (const providerKind of Object.keys(connectionContracts)) {
+    const connection = readConnectionFields(value[providerKind], `${path}.${providerKind}`, providerKind, errors);
+    if (connection) connections[providerKind as keyof ProviderSelections['connections']] = connection;
+  }
+  return connections;
 }
 
 function readWorkProviderSelection(input: Record<string, unknown>, defaultValue: WorkProviderSelection, errors: ValidationError[]): WorkProviderSelection {
@@ -658,7 +676,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
     errors.push({ kind: 'invalid', path: 'providers', message: 'providers must be an object' });
     return cloneConfigFile(DEFAULT_CONFIG_FILE).providers;
   }
-  rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'capabilities'], 'providers', errors);
+  rejectUnknownKeys(value, ['work', 'review', 'repository', 'ci', 'layout', 'connections', 'capabilities'], 'providers', errors);
   return {
     work: readWorkProviderSelection(value, defaultValue.work, errors),
     review: readReviewProviderSelection(value, defaultValue.review, errors),
@@ -676,6 +694,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
       };
     })(),
     layout: readProviderSelection(value, 'layout', defaultValue.layout, ['local'], errors),
+    connections: readProbeConnections(value.connections, errors),
     capabilities: readProviderCapabilities(value, defaultValue.capabilities, errors),
   };
 }

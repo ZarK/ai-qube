@@ -279,7 +279,7 @@ function nextAction(result: Pick<PrViewResult, 'reviewDecision' | 'mergeability'
 
 export async function runPrViewService(options: PrViewOptions): Promise<PrViewResult> {
   const config = await loadConfig(options.repoRoot ?? process.cwd()) ?? getDefaults();
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const snapshot = await provider.loadPullRequestReview(options.prNumber);
   const feedback = prFeedback(snapshot.item);
   const mergeBlockers = prMergeBlockers(snapshot.item);

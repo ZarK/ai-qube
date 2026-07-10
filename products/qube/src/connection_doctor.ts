@@ -125,6 +125,17 @@ function configuredConnections(config: unknown): readonly { readonly contract: C
       config: Object.freeze({ ...existing?.config, ...selection, ...adapterConfig, ...connectionConfig }),
     });
   }
+  if (isRecord(providers.connections)) {
+    for (const [adapterId, connectionValue] of Object.entries(providers.connections)) {
+      const contract = CONNECTIONS.get(adapterId);
+      if (!contract || !isRecord(connectionValue)) continue;
+      const existing = configured.get(adapterId);
+      configured.set(adapterId, {
+        contract,
+        config: Object.freeze({ ...existing?.config, ...connectionValue }),
+      });
+    }
+  }
   return Object.freeze([...configured.values()]);
 }
 

@@ -70,7 +70,7 @@ export async function handleDepsFix(context: RuntimeCommandContext): Promise<Run
   const dryRun = readBooleanFlag(context, 'dry-run');
   try {
     const config = (await loadConfig()) ?? getDefaults();
-    const provider = await createWorkProvider(config.providers.work.kind, { includeAssignees: false });
+    const provider = await createWorkProvider(config.providers.work.kind, { includeAssignees: false, ...config.providers.connections[config.providers.work.kind], ...config.providers.work.connection });
     const openItems = await provider.listOpenWorkItems();
     const actionPlan = provider.planStatusSync(openItems, configToExecutorPolicy(config));
     const plans = mergeStatusFixPlanActions(computeStatusFixPlanFromWorkItems(openItems, configToWorkQueuePolicy(config)), actionPlan);

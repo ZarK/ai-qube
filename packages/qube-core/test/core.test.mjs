@@ -117,6 +117,19 @@ describe("qube core contracts", () => {
     assert.match(mismatchedCommand.summary, /HTTP result|Fixture mode/i);
   });
 
+  it("rejects empty or wrong-type identity payloads from read-only probes", async () => {
+    const cases = [
+      [core.gitLabConnectionContract, { GITLAB_TOKEN: "token" }, { projectId: "group/project" }, { id: null }],
+      [core.linearConnectionContract, { LINEAR_API_KEY: "key" }, { teamId: "team" }, { data: { viewer: { id: "" } } }],
+      [core.jiraConnectionContract, { JIRA_EMAIL: "user@example.com", JIRA_API_TOKEN: "token" }, { baseUrl: "https://jira.example.com" }, { accountId: false }],
+    ];
+    for (const [contract, env, config, body] of cases) {
+      const result = await core.runConnectionProbe(contract, { mode: "fixture", env, config, fixture: { http: { status: 200, body } } });
+      assert.equal(result.status, "fail", contract.adapterId);
+      assert.match(result.summary, /unexpected read-only response/);
+    }
+  });
+
   it("preserves command timeout classification and bounds provider JSON responses", async () => {
     const timedOut = await core.runConnectionProbe(core.githubConnectionContract, {
       mode: "fixture",

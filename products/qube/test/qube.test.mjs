@@ -60,6 +60,19 @@ function runCli(args, options = {}) {
   });
 }
 
+function createQualityDoctorShim(root) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const packageDir = path.join(root, "node_modules", "@tjalve", "aiq");
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  const commandPath = path.join(binDir, process.platform === "win32" ? "aiq.cmd" : "aiq");
+  writeFileSync(commandPath, process.platform === "win32"
+    ? "@echo off\r\necho {\"ok\":true}\r\n"
+    : "#!/usr/bin/env sh\nprintf '{\"ok\":true}\\n'\n", "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiq", version: "0.2.3" })}\n`, "utf8");
+}
+
 function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   const target = path.join(cwd, "target");
   mkdirSync(target, { recursive: true });
@@ -476,7 +489,8 @@ describe("qube composer CLI", () => {
       providers: {
         work: { kind: "linear", connection: { teamId: "team" } },
         review: { kind: "github" },
-        ci: { kind: "jenkins", connection: { baseUrl: "https://jenkins.example.com", user: "ci" } },
+        ci: { kind: "github" },
+        connections: { jenkins: { baseUrl: "https://jenkins.example.com", user: "ci" } },
       },
     })}\n`, "utf8");
     const statuses = { linear: "pass", github: "unverified", jenkins: "fail" };
@@ -503,6 +517,8 @@ describe("qube composer CLI", () => {
 
   it("reports configured connections as explicitly unverified in offline doctor mode", () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-offline-doctor-"));
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-offline-quality-"));
+    createQualityDoctorShim(qualityRoot);
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
       version: 1,
@@ -513,7 +529,7 @@ describe("qube composer CLI", () => {
       },
     })}\n`, "utf8");
 
-    const result = runCli(["doctor", "--offline", "--json"], { cwd });
+    const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.connectionStatus, "unverified");
@@ -679,6 +695,7 @@ describe("qube composer CLI", () => {
     const parsed = JSON.parse(result.stdout);
 
     assert.equal(parsed.installPlan.selections.ciProvider, "jenkins");
+    assert.equal(parsed.installPlan.connections.find(connection => connection.adapterId === "jenkins").configPath, "providers.connections.jenkins");
     assert.ok(parsed.installPlan.files.includes(".qube/aie/gates/jenkins gate evidence notes"));
     assert.match(parsed.installPlan.notes.join("\n"), /@tjalve\/qube-adapter-jenkins/);
     assert.match(parsed.installPlan.notes.join("\n"), /CI provider: jenkins \(optional, adapter-contract\)/);

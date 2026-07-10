@@ -145,6 +145,17 @@ describe('config validation', () => {
     futureCiProvider.providers.ci = { kind: 'jenkins', connection: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
     const futureResult = validateConfig(futureCiProvider);
     assert.equal(futureResult.ok, false);
+    const probeOnlyJenkins = defaultFile();
+    probeOnlyJenkins.providers.connections = { jenkins: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
+    const probeOnlyResult = validateConfig(probeOnlyJenkins);
+    assert.equal(probeOnlyResult.ok, true);
+    assert.deepEqual(probeOnlyResult.config.providers.connections.jenkins, { baseUrl: 'https://jenkins.example.com', user: 'ci' });
+
+    const wrongType = defaultFile();
+    wrongType.providers.work = { kind: 'linear', connection: { teamId: false } };
+    const wrongTypeResult = validateConfig(wrongType);
+    assert.equal(wrongTypeResult.ok, false);
+    assert.ok(wrongTypeResult.errors.some(error => error.path === 'providers.work.connection.teamId' && error.kind === 'invalid'));
     assert.ok(futureResult.errors.some(error => error.path === 'providers.ci.kind'));
   });
 

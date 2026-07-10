@@ -17,6 +17,10 @@ export interface WorkProviderAdapterOptions {
   readonly projectKey?: string;
   readonly jql?: string;
   readonly requestTimeoutMs?: number;
+  readonly baseUrl?: string;
+  readonly projectId?: string;
+  readonly teamId?: string;
+  readonly endpoint?: string;
 }
 
 export interface WorkProviderAdapterMetadata {

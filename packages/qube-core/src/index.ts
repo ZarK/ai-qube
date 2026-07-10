@@ -237,6 +237,7 @@ const CONNECTION_PROBE_TIMEOUT_MS = 10_000;
 
 export const githubConnectionContract = Object.freeze({
   adapterId: "github",
+  configPath: "providers.connections.github",
   authMethod: "cli-delegated",
   envVars: Object.freeze([]),
   configFields: Object.freeze([]),
@@ -255,13 +256,14 @@ export const githubConnectionContract = Object.freeze({
 
 export const gitLabConnectionContract = Object.freeze({
   adapterId: "gitlab",
+  configPath: "providers.connections.gitlab",
   authMethod: "token-env",
   envVars: Object.freeze([
     Object.freeze({ name: "GITLAB_TOKEN", sensitive: true, purpose: "Authenticate QUBE GitLab API requests." }),
   ]),
   configFields: Object.freeze([
-    Object.freeze({ name: "projectId", required: true, purpose: "Select the GitLab project path or numeric id.", envFallback: "GITLAB_PROJECT_ID" }),
-    Object.freeze({ name: "baseUrl", required: false, purpose: "Select GitLab.com or a self-managed GitLab origin.", envFallback: "GITLAB_BASE_URL", defaultValue: "https://gitlab.com" }),
+    Object.freeze({ name: "projectId", valueType: "string", required: true, purpose: "Select the GitLab project path or numeric id.", envFallback: "GITLAB_PROJECT_ID" }),
+    Object.freeze({ name: "baseUrl", valueType: "string", required: false, purpose: "Select GitLab.com or a self-managed GitLab origin.", envFallback: "GITLAB_BASE_URL", defaultValue: "https://gitlab.com" }),
   ]),
   credentialUrl: "https://gitlab.com/-/user_settings/personal_access_tokens",
   scopes: Object.freeze(["api"]),
@@ -281,19 +283,21 @@ export const gitLabConnectionContract = Object.freeze({
         Object.freeze({ name: "PRIVATE-TOKEN", value: Object.freeze({ envVar: "GITLAB_TOKEN" }) }),
       ]),
       successJsonPath: Object.freeze(["id"]),
+      successValueKind: "positive-number",
     }),
   }),
 } as const satisfies ConnectionContract);
 
 export const linearConnectionContract = Object.freeze({
   adapterId: "linear",
+  configPath: "providers.connections.linear",
   authMethod: "token-env",
   envVars: Object.freeze([
     Object.freeze({ name: "LINEAR_API_KEY", sensitive: true, purpose: "Authenticate QUBE Linear GraphQL requests." }),
   ]),
   configFields: Object.freeze([
-    Object.freeze({ name: "teamId", required: true, purpose: "Select the Linear team whose issues form the work queue.", envFallback: "LINEAR_TEAM_ID" }),
-    Object.freeze({ name: "endpoint", required: false, purpose: "Override the Linear GraphQL endpoint.", defaultValue: "https://api.linear.app/graphql" }),
+    Object.freeze({ name: "teamId", valueType: "string", required: true, purpose: "Select the Linear team whose issues form the work queue.", envFallback: "LINEAR_TEAM_ID" }),
+    Object.freeze({ name: "endpoint", valueType: "string", required: false, purpose: "Override the Linear GraphQL endpoint.", defaultValue: "https://api.linear.app/graphql" }),
   ]),
   credentialUrl: "https://linear.app/settings/api",
   scopes: Object.freeze(["workspace read access"]),
@@ -314,21 +318,23 @@ export const linearConnectionContract = Object.freeze({
       ]),
       body: JSON.stringify({ query: "query QubeConnectionProbe { viewer { id name } }" }),
       successJsonPath: Object.freeze(["data", "viewer", "id"]),
+      successValueKind: "non-empty-string",
     }),
   }),
 } as const satisfies ConnectionContract);
 
 export const jiraConnectionContract = Object.freeze({
   adapterId: "jira",
+  configPath: "providers.connections.jira",
   authMethod: "basic-env",
   envVars: Object.freeze([
     Object.freeze({ name: "JIRA_EMAIL", sensitive: false, purpose: "Identify the Atlassian account used for API token authentication." }),
     Object.freeze({ name: "JIRA_API_TOKEN", sensitive: true, purpose: "Authenticate QUBE Jira REST requests." }),
   ]),
   configFields: Object.freeze([
-    Object.freeze({ name: "baseUrl", required: true, purpose: "Select the Jira Cloud site origin.", envFallback: "JIRA_BASE_URL" }),
-    Object.freeze({ name: "projectKey", required: false, purpose: "Select a Jira project when custom JQL is not configured.", envFallback: "JIRA_PROJECT_KEY" }),
-    Object.freeze({ name: "jql", required: false, purpose: "Select Jira work with a custom read query." }),
+    Object.freeze({ name: "baseUrl", valueType: "string", required: true, purpose: "Select the Jira Cloud site origin.", envFallback: "JIRA_BASE_URL" }),
+    Object.freeze({ name: "projectKey", valueType: "string", required: false, purpose: "Select a Jira project when custom JQL is not configured.", envFallback: "JIRA_PROJECT_KEY" }),
+    Object.freeze({ name: "jql", valueType: "string", required: false, purpose: "Select Jira work with a custom read query." }),
   ]),
   credentialUrl: "https://id.atlassian.com/manage-profile/security/api-tokens",
   scopes: Object.freeze(["read Jira user identity", "browse selected Jira projects"]),
@@ -349,20 +355,22 @@ export const jiraConnectionContract = Object.freeze({
         password: Object.freeze({ envVar: "JIRA_API_TOKEN" }),
       }),
       successJsonPath: Object.freeze(["accountId"]),
+      successValueKind: "non-empty-string",
     }),
   }),
 } as const satisfies ConnectionContract);
 
 export const jenkinsConnectionContract = Object.freeze({
   adapterId: "jenkins",
+  configPath: "providers.connections.jenkins",
   authMethod: "token-env",
   envVars: Object.freeze([
     Object.freeze({ name: "JENKINS_API_TOKEN", sensitive: true, purpose: "Authenticate QUBE Jenkins API requests." }),
   ]),
   configFields: Object.freeze([
-    Object.freeze({ name: "baseUrl", required: true, purpose: "Select the Jenkins controller origin.", envFallback: "JENKINS_BASE_URL" }),
-    Object.freeze({ name: "user", required: true, purpose: "Identify the Jenkins user paired with the API token.", envFallback: "JENKINS_USER" }),
-    Object.freeze({ name: "jobPath", required: false, purpose: "Select the Jenkins job or folder path used for CI evidence." }),
+    Object.freeze({ name: "baseUrl", valueType: "string", required: true, purpose: "Select the Jenkins controller origin.", envFallback: "JENKINS_BASE_URL" }),
+    Object.freeze({ name: "user", valueType: "string", required: true, purpose: "Identify the Jenkins user paired with the API token.", envFallback: "JENKINS_USER" }),
+    Object.freeze({ name: "jobPath", valueType: "string", required: false, purpose: "Select the Jenkins job or folder path used for CI evidence." }),
   ]),
   credentialUrl: "<JENKINS_BASE_URL>/me/configure",
   scopes: Object.freeze(["Overall/Read", "Job/Read for configured jobs"]),

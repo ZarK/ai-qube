@@ -751,7 +751,7 @@ async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]
 export async function runPrGateService(config: Config, options: PrGateOptions): Promise<PrGateResult> {
   const dryRun = options.dryRun ?? false;
   const policy = reviewRequestPolicy(config);
-  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null });
+  const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: options.repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const repoRoot = options.repoRoot ?? process.cwd();
   const localReviewContextCache = new Map<string, Promise<string[]>>();
   const changedPaths = await changedReviewPaths(config, repoRoot);

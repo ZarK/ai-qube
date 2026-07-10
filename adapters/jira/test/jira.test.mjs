@@ -216,11 +216,6 @@ describe("Jira work provider adapter", () => {
       () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", email: "user@example.com", apiToken: "token", projectKey: "ENG", limit: 0 }),
       /limit must be an integer between 1 and 1000/,
     );
-    assert.throws(
-      () => createJiraWorkProvider({ baseUrl: "https://jira.example.com", projectKey: "ENG" }),
-      /baseUrl option requires explicit email and apiToken/,
-    );
-
     const issue = makeJiraIssue();
     const provider = createJiraWorkProvider({
       projectKey: "ENG",
@@ -387,7 +382,8 @@ describe("Jira work provider adapter", () => {
     process.env.AIE_JIRA_EMAIL = "attacker@example.com";
     process.env.AIE_JIRA_TOKEN = "wrong-token";
     try {
-      globalThis.fetch = async (_url, options) => {
+      globalThis.fetch = async (url, options) => {
+        assert.match(String(url), /^https:\/\/jira-config\.example\.com\//);
         const encoded = options.headers.Authorization.replace(/^Basic /, "");
         assert.equal(Buffer.from(encoded, "base64").toString("utf8"), "user@example.com:token");
         return {
@@ -398,6 +394,7 @@ describe("Jira work provider adapter", () => {
         };
       };
       const provider = createJiraWorkProvider({
+        baseUrl: "https://jira-config.example.com",
         projectKey: "ENG",
       });
 

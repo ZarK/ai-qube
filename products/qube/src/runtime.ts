@@ -4379,6 +4379,7 @@ function renderInstallConnection(connection: ConnectionContract): readonly strin
   return [
     `- ${connection.adapterId} (${connection.authMethod})`,
     `  Environment: ${envVars}`,
+    `  Config path: ${connection.configPath}`,
     `  Config fields: ${configFields}`,
     `  Token URL: ${connection.credentialUrl}`,
     `  Minimal scopes: ${connection.scopes.join(", ") || "none"}`,

@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
     repository: { kind: 'local-git' },
     ci: { kind: 'github' },
     layout: { kind: 'local' },
+    connections: {},
     capabilities: {
       work: true,
       review: true,
@@ -130,7 +131,7 @@ export function cloneGate(gate: GateConfig): GateConfig {
   return { ...gate, env: { ...gate.env } };
 }
 
-function cloneConnectionFields(connection: Record<string, string | number | boolean> | undefined): Record<string, string | number | boolean> | undefined {
+function cloneConnectionFields(connection: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!connection) return undefined;
   return { ...connection };
 }
@@ -202,6 +203,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           : {}),
       },
       layout: { ...input.providers.layout },
+      connections: Object.fromEntries(Object.entries(input.providers.connections).map(([kind, connection]) => [kind, { ...connection }])),
       capabilities: { ...input.providers.capabilities },
     },
     policy: {

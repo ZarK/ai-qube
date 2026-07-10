@@ -10,6 +10,7 @@ export interface ConnectionEnvVar {
 
 export interface ConnectionConfigField {
   readonly name: string;
+  readonly valueType: "string";
   readonly required: boolean;
   readonly purpose: string;
   readonly envFallback?: string;
@@ -48,6 +49,7 @@ export interface ConnectionHttpProbe {
   readonly basicAuth?: ConnectionBasicAuth;
   readonly body?: string;
   readonly successJsonPath?: readonly string[];
+  readonly successValueKind?: "non-empty-string" | "positive-number";
   readonly successBooleanPath?: readonly string[];
 }
 
@@ -63,6 +65,7 @@ export interface ConnectionProbeContract {
 
 export interface ConnectionContract {
   readonly adapterId: string;
+  readonly configPath: string;
   readonly authMethod: ConnectionAuthMethod;
   readonly envVars: readonly ConnectionEnvVar[];
   readonly configFields: readonly ConnectionConfigField[];
@@ -349,7 +352,12 @@ function createHttpRequest(
 }
 
 function matchesSuccessPayload(transport: ConnectionHttpProbe, body: unknown): boolean {
-  if (transport.successJsonPath && valueAtPath(body, transport.successJsonPath) === undefined) return false;
+  if (transport.successJsonPath) {
+    const value = valueAtPath(body, transport.successJsonPath);
+    if (transport.successValueKind === "non-empty-string" && (typeof value !== "string" || value.trim().length === 0)) return false;
+    if (transport.successValueKind === "positive-number" && (typeof value !== "number" || !Number.isFinite(value) || value <= 0)) return false;
+    if (!transport.successValueKind && value === undefined) return false;
+  }
   if (transport.successBooleanPath && valueAtPath(body, transport.successBooleanPath) !== true) return false;
   return true;
 }
