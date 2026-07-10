@@ -1,0 +1,9 @@
+{
+  "http": {
+    "status": 200,
+    "body": {
+      "authenticated": true,
+      "name": "fixture-user"
+    }
+  }
+}

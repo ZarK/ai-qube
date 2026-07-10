@@ -10,6 +10,7 @@ import {
   type QubeAdapterCapability,
   type QubeAdapterContract,
   type QubeIntegrationSurface,
+  type ConnectionContract,
 } from "@tjalve/qube-core";
 
 import { dependencyVersion } from "./package.js";
@@ -27,6 +28,7 @@ export interface QubeDiscoveryOption {
   readonly default: boolean;
   readonly summary: string;
   readonly capabilities: readonly QubeDiscoveryCapability[];
+  readonly connection: ConnectionContract | null;
 }
 
 export interface QubeDiscoveryCapability {
@@ -77,6 +79,7 @@ function adapterOption(
     default: isDefault,
     summary,
     capabilities: Object.freeze([...(adapter.capabilities ?? [])]),
+    connection: adapter.connection ?? null,
   });
 }
 
@@ -103,6 +106,7 @@ function hostOption(input: {
       owner: capability.owner,
       summary: capability.summary,
     }))),
+    connection: null,
   });
 }
 

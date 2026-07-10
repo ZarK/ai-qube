@@ -50,6 +50,109 @@ describe("qube core contracts", () => {
     assert.deepEqual(surfaces.get("umpire"), ["cli", "opencode", "claude-code", "grok-build"]);
   });
 
+  it("declares provider connection contracts with read-only bounded probes", () => {
+    const contracts = [
+      core.githubAdapterContract,
+      core.gitLabAdapterContract,
+      core.linearAdapterContract,
+      core.jiraAdapterContract,
+      core.jenkinsAdapterContract,
+    ];
+    assert.deepEqual(contracts.map(contract => contract.connection.authMethod), [
+      "cli-delegated",
+      "token-env",
+      "token-env",
+      "basic-env",
+      "token-env",
+    ]);
+    assert.ok(contracts.every(contract => contract.connection.probe.readOnly === true));
+    assert.ok(contracts.every(contract => contract.connection.probe.timeoutMs > 0));
+    assert.ok(contracts.every(contract => contract.connection.credentialUrl.length > 0));
+    assert.ok(contracts.every(contract => contract.connection.scopes.length > 0));
+  });
+
+  it("keeps skipped and unavailable probes explicit instead of silently passing", async () => {
+    const offline = await core.runConnectionProbe(core.linearConnectionContract, { mode: "offline" });
+    const missingFixture = await core.runConnectionProbe(core.linearConnectionContract, { mode: "fixture" });
+    const missingCredential = await core.runConnectionProbe(core.linearConnectionContract, {
+      mode: "fixture",
+      fixture: { http: { status: 200, body: { data: { viewer: { id: "fixture" } } } } },
+    });
+    const denied = await core.runConnectionProbe(core.linearConnectionContract, {
+      mode: "fixture",
+      env: { LINEAR_API_KEY: "fixture-key" },
+      config: { teamId: "fixture-team" },
+      fixture: { http: { status: 401, body: { error: "denied" } } },
+    });
+    assert.equal(offline.status, "unverified");
+    assert.equal(missingFixture.status, "unverified");
+    assert.equal(missingCredential.status, "fail");
+    assert.equal(denied.status, "fail");
+
+    let execCalls = 0;
+    let fetchCalls = 0;
+    const mismatchedHttp = await core.runConnectionProbe(core.githubConnectionContract, {
+      mode: "fixture",
+      fixture: { http: { status: 200, body: { ok: true } } },
+      exec: async () => {
+        execCalls += 1;
+        return { exitCode: 0, stdout: "ok", stderr: "" };
+      },
+    });
+    const mismatchedCommand = await core.runConnectionProbe(core.gitLabConnectionContract, {
+      mode: "fixture",
+      env: { GITLAB_TOKEN: "fixture-token", GITLAB_PROJECT_ID: "group/project" },
+      config: { projectId: "group/project", baseUrl: "https://gitlab.example.com" },
+      fixture: { command: { exitCode: 0, stdout: "ok", stderr: "" } },
+      fetch: async () => {
+        fetchCalls += 1;
+        return { status: 200, body: { id: 1 } };
+      },
+    });
+    assert.equal(mismatchedHttp.status, "fail");
+    assert.equal(mismatchedCommand.status, "fail");
+    assert.equal(execCalls, 0);
+    assert.equal(fetchCalls, 0);
+    assert.match(mismatchedHttp.summary, /command result|Fixture mode/i);
+    assert.match(mismatchedCommand.summary, /HTTP result|Fixture mode/i);
+  });
+
+  it("rejects empty or wrong-type identity payloads from read-only probes", async () => {
+    const cases = [
+      [core.gitLabConnectionContract, { GITLAB_TOKEN: "token" }, { projectId: "group/project" }, { id: null }],
+      [core.linearConnectionContract, { LINEAR_API_KEY: "key" }, { teamId: "team" }, { data: { viewer: { id: "" } } }],
+      [core.jiraConnectionContract, { JIRA_EMAIL: "user@example.com", JIRA_API_TOKEN: "token" }, { baseUrl: "https://jira.example.com" }, { accountId: false }],
+    ];
+    for (const [contract, env, config, body] of cases) {
+      const result = await core.runConnectionProbe(contract, { mode: "fixture", env, config, fixture: { http: { status: 200, body } } });
+      assert.equal(result.status, "fail", contract.adapterId);
+      assert.match(result.summary, /unexpected read-only response/);
+    }
+  });
+
+  it("preserves command timeout classification and bounds provider JSON responses", async () => {
+    const timedOut = await core.runConnectionProbe(core.githubConnectionContract, {
+      mode: "fixture",
+      timeoutMs: 25,
+      fixture: { command: { exitCode: 1, timedOut: true } },
+    });
+    assert.equal(timedOut.status, "fail");
+    assert.match(timedOut.summary, /timed out after 25ms/);
+
+    const denied = new Response('{"error":"denied"}', { status: 401 });
+    assert.equal(await core.readConnectionJsonResponse(denied, 1), undefined);
+    assert.equal(denied.bodyUsed, false);
+
+    const accepted = new Response('{"viewer":{"id":"fixture"}}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    assert.deepEqual(await core.readConnectionJsonResponse(accepted, 1024), { viewer: { id: "fixture" } });
+
+    const oversized = new Response(`{"value":"${"x".repeat(64)}"}`, { status: 200 });
+    await assert.rejects(() => core.readConnectionJsonResponse(oversized, 32), /32-byte limit/);
+  });
+
   it("exports canonical repository layout kinds for provider contracts", () => {
     assert.ok(REPO_LAYOUT_KINDS.includes("single-app-service"));
     assert.ok(REPO_LAYOUT_KINDS.includes("javascript-typescript-workspace"));

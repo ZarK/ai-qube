@@ -25,6 +25,8 @@ export interface ReviewForgeAdapterOptions {
   readonly exec?: GhExec;
   readonly cwd?: string;
   readonly reviewAgents?: readonly string[];
+  readonly baseUrl?: string;
+  readonly projectId?: string;
   /** GitHub review publisher identity config (secret references only). */
   readonly publisher?: {
     mode: 'user' | 'github-app' | 'token';

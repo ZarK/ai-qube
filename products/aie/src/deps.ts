@@ -52,7 +52,7 @@ async function loadWorkQueuePolicy(options: { cwd?: string; config?: Config }): 
 async function loadWorkProvider(options: { exec?: GhExec; cwd?: string; config?: Config; includeAssignees?: boolean } = {}): Promise<{ provider: WorkProvider; providerId: WorkProviderId }> {
   const config = await loadRuntimeConfig(options);
   const providerId = config.providers.work.kind;
-  const provider = await createWorkProvider(providerId, { exec: options.exec, cwd: options.cwd, includeAssignees: options.includeAssignees ?? false });
+  const provider = await createWorkProvider(providerId, { exec: options.exec, cwd: options.cwd, includeAssignees: options.includeAssignees ?? false, ...config.providers.connections[providerId], ...config.providers.work.connection });
   return { provider, providerId };
 }
 

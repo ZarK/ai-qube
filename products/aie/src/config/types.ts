@@ -7,9 +7,15 @@ export type ReviewProviderKind = 'github' | 'gitlab';
 export type RepositoryProviderKind = 'local-git';
 export type CiProviderKind = 'github';
 export type LayoutProviderKind = 'local';
+export type ConnectionProviderKind = 'github' | 'gitlab' | 'linear' | 'jira' | 'jenkins';
 
 export interface ProviderSelection<K extends string> {
   kind: K;
+  /**
+   * Optional non-secret connection fields for provider probes (base URL, project id, team id, user).
+   * Secrets stay in environment variables; never store tokens here.
+   */
+  connection?: Record<string, string>;
 }
 
 export type GitHubReviewPublisherMode = 'user' | 'github-app' | 'token';
@@ -88,6 +94,8 @@ export interface ProviderSelections {
   repository: ProviderSelection<RepositoryProviderKind>;
   ci: ProviderSelection<CiProviderKind>;
   layout: ProviderSelection<LayoutProviderKind>;
+  /** Probe-only connections, including adapters that are not selectable for runtime roles yet. */
+  connections: Partial<Record<ConnectionProviderKind, Record<string, string>>>;
   capabilities: ProviderCapabilityPolicy;
 }
 

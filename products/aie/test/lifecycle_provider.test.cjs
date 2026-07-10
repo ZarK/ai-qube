@@ -176,6 +176,7 @@ describe('lifecycle provider support', () => {
         workflowSchema: { sprintField: 'customfield_10020' },
       },
     };
+    testContext.config.providers.connections.jira = { baseUrl: 'https://jira.example.com' };
 
     const options = workProviderOptions(testContext.config, { cwd: 'repo', limit: 25 });
 
@@ -186,7 +187,7 @@ describe('lifecycle provider support', () => {
     assert.equal(options.workflowSchema.sprintField, 'customfield_10020');
     assert.equal(Object.hasOwn(options, 'email'), false);
     assert.equal(Object.hasOwn(options, 'apiToken'), false);
-    assert.equal(Object.hasOwn(options, 'baseUrl'), false);
+    assert.equal(options.baseUrl, 'https://jira.example.com');
     assert.equal(Object.hasOwn(options, 'emailEnv'), false);
     assert.equal(Object.hasOwn(options, 'apiTokenEnv'), false);
   });

@@ -12,6 +12,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
     repository: { kind: 'local-git' },
     ci: { kind: 'github' },
     layout: { kind: 'local' },
+    connections: {},
     capabilities: {
       work: true,
       review: true,
@@ -130,9 +131,15 @@ export function cloneGate(gate: GateConfig): GateConfig {
   return { ...gate, env: { ...gate.env } };
 }
 
+function cloneConnectionFields(connection: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!connection) return undefined;
+  return { ...connection };
+}
+
 function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderSelection {
   return {
     kind: input.kind,
+    ...(input.connection ? { connection: cloneConnectionFields(input.connection) } : {}),
     ...(input.jira ? {
       jira: {
         ...(input.jira.projectKey ? { projectKey: input.jira.projectKey } : {}),
@@ -169,7 +176,10 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
     providers: {
       work: cloneWorkProviderSelection(input.providers.work),
       review: {
-        ...input.providers.review,
+        kind: input.providers.review.kind,
+        ...(input.providers.review.connection
+          ? { connection: cloneConnectionFields(input.providers.review.connection) }
+          : {}),
         ...(input.providers.review.publisher
           ? {
             publisher: {
@@ -186,8 +196,14 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           : {}),
       },
       repository: { ...input.providers.repository },
-      ci: { ...input.providers.ci },
+      ci: {
+        kind: input.providers.ci.kind,
+        ...(input.providers.ci.connection
+          ? { connection: cloneConnectionFields(input.providers.ci.connection) }
+          : {}),
+      },
       layout: { ...input.providers.layout },
+      connections: Object.fromEntries(Object.entries(input.providers.connections).map(([kind, connection]) => [kind, { ...connection }])),
       capabilities: { ...input.providers.capabilities },
     },
     policy: {

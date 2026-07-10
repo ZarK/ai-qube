@@ -1,0 +1,9 @@
+{
+  "http": {
+    "status": 200,
+    "body": {
+      "accountId": "fixture-account",
+      "displayName": "Fixture User"
+    }
+  }
+}
