@@ -117,6 +117,29 @@ describe("qube core contracts", () => {
     assert.match(mismatchedCommand.summary, /HTTP result|Fixture mode/i);
   });
 
+  it("preserves command timeout classification and bounds provider JSON responses", async () => {
+    const timedOut = await core.runConnectionProbe(core.githubConnectionContract, {
+      mode: "fixture",
+      timeoutMs: 25,
+      fixture: { command: { exitCode: 1, timedOut: true } },
+    });
+    assert.equal(timedOut.status, "fail");
+    assert.match(timedOut.summary, /timed out after 25ms/);
+
+    const denied = new Response('{"error":"denied"}', { status: 401 });
+    assert.equal(await core.readConnectionJsonResponse(denied, 1), undefined);
+    assert.equal(denied.bodyUsed, false);
+
+    const accepted = new Response('{"viewer":{"id":"fixture"}}', {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+    assert.deepEqual(await core.readConnectionJsonResponse(accepted, 1024), { viewer: { id: "fixture" } });
+
+    const oversized = new Response(`{"value":"${"x".repeat(64)}"}`, { status: 200 });
+    await assert.rejects(() => core.readConnectionJsonResponse(oversized, 32), /32-byte limit/);
+  });
+
   it("exports canonical repository layout kinds for provider contracts", () => {
     assert.ok(REPO_LAYOUT_KINDS.includes("single-app-service"));
     assert.ok(REPO_LAYOUT_KINDS.includes("javascript-typescript-workspace"));

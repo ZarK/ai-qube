@@ -8,7 +8,9 @@ import {
   jenkinsConnectionContract,
   jiraConnectionContract,
   linearConnectionContract,
+  readConnectionJsonResponse,
   runConnectionProbe,
+  type ConnectionCommandResult,
   type ConnectionContract,
   type ConnectionProbeMode,
   type ConnectionProbeOptions,
@@ -149,11 +151,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function executeCommand(command: string, args: readonly string[], timeoutMs: number): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+function executeCommand(command: string, args: readonly string[], timeoutMs: number): Promise<ConnectionCommandResult> {
   return new Promise(resolve => {
     execFile(command, [...args], { encoding: "utf8", timeout: timeoutMs, windowsHide: true }, (error, stdout, stderr) => {
       const exitCode = error && typeof error.code === "number" ? error.code : error ? 1 : 0;
-      resolve({ exitCode, stdout, stderr });
+      const timedOut = error !== null && (error.killed === true || error.code === "ETIMEDOUT");
+      resolve({ exitCode, stdout, stderr, ...(timedOut ? { timedOut: true } : {}) });
     });
   });
 }
@@ -167,5 +170,5 @@ async function fetchConnection(request: ConnectionHttpRequest): Promise<Connecti
     ...(request.body === undefined ? {} : { body: request.body }),
     signal: AbortSignal.timeout(request.timeoutMs),
   });
-  return { status: response.status, body: await response.json().catch(() => undefined) };
+  return { status: response.status, body: await readConnectionJsonResponse(response) };
 }

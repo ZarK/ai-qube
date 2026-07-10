@@ -118,6 +118,36 @@ describe('config validation', () => {
     assert.equal(result.config.opencodeCommandAlias, true);
   });
 
+  it('validates non-secret connection settings against the selected provider contract', () => {
+    const valid = defaultFile();
+    valid.providers.work = {
+      kind: 'linear',
+      connection: { teamId: 'engineering' },
+    };
+    const validResult = validateConfig(valid);
+    assert.equal(validResult.ok, true);
+    assert.deepEqual(validResult.config.providers.work.connection, { teamId: 'engineering' });
+
+    const invalid = defaultFile();
+    invalid.providers.work = {
+      kind: 'linear',
+      connection: {
+        teemId: 'misspelled',
+        apiToken: 'must-not-be-stored',
+      },
+    };
+    const invalidResult = validateConfig(invalid);
+    assert.equal(invalidResult.ok, false);
+    assert.ok(invalidResult.errors.some(error => error.path === 'providers.work.connection.teemId' && error.kind === 'unknown'));
+    assert.ok(invalidResult.errors.some(error => error.path === 'providers.work.connection.apiToken' && error.kind === 'invalid'));
+
+    const futureCiProvider = defaultFile();
+    futureCiProvider.providers.ci = { kind: 'jenkins', connection: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
+    const futureResult = validateConfig(futureCiProvider);
+    assert.equal(futureResult.ok, false);
+    assert.ok(futureResult.errors.some(error => error.path === 'providers.ci.kind'));
+  });
+
   it('preserves omitted Jira workflow schema fields so adapter defaults still apply', () => {
     const input = defaultFile();
     input.providers.work = {

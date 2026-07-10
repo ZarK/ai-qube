@@ -1,5 +1,6 @@
 import {
   gitLabConnectionContract,
+  readConnectionJsonResponse,
   runConnectionProbe,
   type ConnectionProbeOptions,
   type ConnectionProbeResult,
@@ -19,5 +20,5 @@ async function fetchConnection(request: ConnectionHttpRequest): Promise<Connecti
   const headers: Record<string, string> = { ...request.headers };
   if (request.basicAuth) headers.Authorization = `Basic ${Buffer.from(`${request.basicAuth.username}:${request.basicAuth.password}`, "utf8").toString("base64")}`;
   const response = await fetch(request.url, { method: request.method, headers, ...(request.body === undefined ? {} : { body: request.body }), signal: AbortSignal.timeout(request.timeoutMs) });
-  return { status: response.status, body: await response.json().catch(() => undefined) };
+  return { status: response.status, body: await readConnectionJsonResponse(response) };
 }

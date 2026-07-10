@@ -41,7 +41,7 @@ export type {
   ConnectionProbeStatus,
   ConnectionValueSource,
 } from "./connection.js";
-export { runConnectionProbe } from "./connection.js";
+export { readConnectionJsonResponse, runConnectionProbe } from "./connection.js";
 import type { ConnectionContract } from "./connection.js";
 export type {
   ProviderResourceKind,

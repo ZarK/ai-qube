@@ -75,6 +75,7 @@ export interface ConnectionCommandResult {
   readonly exitCode: number;
   readonly stdout?: string;
   readonly stderr?: string;
+  readonly timedOut?: boolean;
 }
 
 export interface ConnectionHttpRequest {
@@ -188,6 +189,9 @@ async function probeCommand(
       return probeResult(contract, "fail", "Fixture mode requires a command result for this connection probe; live transport was not used.");
     }
     const execution = options.fixture.command;
+    if (execution.timedOut === true) {
+      return probeResult(contract, "fail", `Read-only connection probe timed out after ${timeoutMs}ms.`);
+    }
     if (execution.exitCode === 0) {
       return probeResult(contract, "pass", `${contract.probe.name} passed.`);
     }
@@ -197,10 +201,80 @@ async function probeCommand(
     return probeResult(contract, "unverified", "Connection command transport is unavailable; no connection was verified.");
   }
   const execution = await options.exec(transport.command, transport.args, timeoutMs);
+  if (execution.timedOut === true) {
+    return probeResult(contract, "fail", `Read-only connection probe timed out after ${timeoutMs}ms.`);
+  }
   if (execution.exitCode === 0) {
     return probeResult(contract, "pass", `${contract.probe.name} passed.`);
   }
   return probeResult(contract, "fail", `${contract.probe.name} failed; run the verify command for provider-safe details.`);
+}
+
+interface ConnectionResponseReader {
+  read(): Promise<{ readonly done: boolean; readonly value?: Uint8Array }>;
+  cancel(): Promise<unknown>;
+}
+
+interface ConnectionResponse {
+  readonly ok: boolean;
+  readonly headers: { get(name: string): string | null };
+  readonly body: { getReader(): ConnectionResponseReader } | null;
+}
+
+function isConnectionResponse(response: unknown): response is ConnectionResponse {
+  if (typeof response !== "object" || response === null) return false;
+  const candidate = response as Partial<ConnectionResponse>;
+  return typeof candidate.ok === "boolean"
+    && typeof candidate.headers?.get === "function"
+    && (candidate.body === null || typeof candidate.body?.getReader === "function");
+}
+
+export async function readConnectionJsonResponse(response: unknown, maxBytes = 64 * 1024): Promise<unknown> {
+  if (!isConnectionResponse(response)) throw new TypeError("Connection response must expose status, headers, and a readable body.");
+  if (!response.ok) return undefined;
+  if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
+    throw new RangeError("Connection response limit must be a positive integer number of bytes.");
+  }
+  const declaredLength = response.headers.get("content-length");
+  if (declaredLength !== null) {
+    const parsedLength = Number(declaredLength);
+    if (Number.isFinite(parsedLength) && parsedLength > maxBytes) {
+      throw new RangeError(`Connection response exceeded the ${maxBytes}-byte limit.`);
+    }
+  }
+  if (!response.body) return undefined;
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let totalBytes = 0;
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    if (!chunk.value) continue;
+    totalBytes += chunk.value.byteLength;
+    if (totalBytes > maxBytes) {
+      await reader.cancel();
+      throw new RangeError(`Connection response exceeded the ${maxBytes}-byte limit.`);
+    }
+    chunks.push(chunk.value);
+  }
+
+  const bytes = new Uint8Array(totalBytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const Decoder = (globalThis as unknown as {
+    readonly TextDecoder: new () => { decode(input: Uint8Array): string };
+  }).TextDecoder;
+  const text = new Decoder().decode(bytes);
+  if (text.trim() === "") return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return undefined;
+  }
 }
 
 async function probeHttp(

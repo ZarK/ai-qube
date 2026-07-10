@@ -1,4 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
+import { gitLabConnectionContract, githubConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
@@ -477,14 +478,31 @@ function readJiraWorkProviderConfig(value: unknown, path: string, errors: Valida
   };
 }
 
-function readConnectionFields(value: unknown, path: string, errors: ValidationError[]): Record<string, string | number | boolean> | undefined {
+const connectionContracts: Readonly<Record<string, ConnectionContract>> = Object.freeze({
+  github: githubConnectionContract,
+  gitlab: gitLabConnectionContract,
+  linear: linearConnectionContract,
+  jira: jiraConnectionContract,
+});
+
+function readConnectionFields(value: unknown, path: string, providerKind: string, errors: ValidationError[]): Record<string, string | number | boolean> | undefined {
   if (value === undefined) return undefined;
   if (!isPlainObject(value)) {
     errors.push({ kind: 'invalid', path, message: `${path} must be an object of non-secret connection fields` });
     return undefined;
   }
+  const contract = connectionContracts[providerKind];
+  const allowedFields = new Set(contract?.configFields.map(field => field.name) ?? []);
   const connection: Record<string, string | number | boolean> = {};
   for (const [key, entry] of Object.entries(value)) {
+    if (/token|secret|password|credential|private.?key|api.?key/iu.test(key)) {
+      errors.push({ kind: 'invalid', path: `${path}.${key}`, message: `${path}.${key} must not store credential material; use the connection contract environment variables` });
+      continue;
+    }
+    if (!allowedFields.has(key)) {
+      errors.push({ kind: 'unknown', path: `${path}.${key}`, message: `${path}.${key} is not declared by the ${providerKind} connection contract` });
+      continue;
+    }
     if (typeof entry === 'string' || typeof entry === 'number' || typeof entry === 'boolean') {
       // Reject values that look like credentials rather than public connection settings.
       if (typeof entry === 'string' && (entry.includes('BEGIN ') || /^(gh[pousr]_|github_pat_|ghs_|glpat-|lin_api_|ATATT)/i.test(entry) || entry.length > 512)) {
@@ -506,7 +524,7 @@ function readWorkProviderSelection(input: Record<string, unknown>, defaultValue:
   rejectUnknownKeys(section, ['kind', 'jira', 'connection'], path, errors);
   const selection = readProviderSelection(input, 'work', defaultValue, ['github', 'gitlab', 'linear', 'jira'], errors, ['kind', 'jira', 'connection']) as WorkProviderSelection;
   const jira = readJiraWorkProviderConfig(section.jira, `${path}.jira`, errors);
-  const connection = readConnectionFields(section.connection, `${path}.connection`, errors);
+  const connection = readConnectionFields(section.connection, `${path}.connection`, selection.kind, errors);
   return {
     ...selection,
     ...(jira ? { jira } : {}),
@@ -613,7 +631,7 @@ function readReviewProviderSelection(input: Record<string, unknown>, defaultValu
   if (publisher && selection.kind !== 'github') {
     errors.push({ kind: 'invalid', path: `${path}.publisher`, message: `${path}.publisher is only supported when providers.review.kind is github` });
   }
-  const connection = readConnectionFields(section.connection, `${path}.connection`, errors);
+  const connection = readConnectionFields(section.connection, `${path}.connection`, selection.kind, errors);
   return {
     ...selection,
     ...(publisher && selection.kind === 'github' ? { publisher } : {}),
@@ -650,8 +668,8 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
       const section = readPlainObject(value, 'ci', 'providers', errors);
       if (!section) return { ...defaultValue.ci };
       rejectUnknownKeys(section, ['kind', 'connection'], path, errors);
-      const selection = readProviderSelection(value, 'ci', defaultValue.ci, ['github', 'jenkins'], errors, ['kind', 'connection']);
-      const connection = readConnectionFields(section.connection, `${path}.connection`, errors);
+      const selection = readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors, ['kind', 'connection']);
+      const connection = readConnectionFields(section.connection, `${path}.connection`, selection.kind, errors);
       return {
         ...selection,
         ...(connection ? { connection } : {}),

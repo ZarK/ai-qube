@@ -521,6 +521,29 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.connections.connections[0].readOnly, true);
   });
 
+  it("preserves a missing Quality Control failure in offline doctor mode", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-offline-missing-quality-"));
+    const emptyPackageRoot = mkdtempSync(path.join(tmpdir(), "qube-offline-empty-package-"));
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--offline", "--json"], {
+      cwd,
+      env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: emptyPackageRoot },
+    });
+    assert.equal(result.status, 4, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.quality.ok, false);
+    assert.equal(parsed.connectionStatus, "unverified");
+  });
+
   it("reports missing configured connection credentials as a doctor failure without probing the network", async () => {
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-failed-connection-doctor-"));
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });

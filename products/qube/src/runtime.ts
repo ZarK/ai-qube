@@ -1213,33 +1213,37 @@ function createQubeCli(environment: CliEnvironment) {
 }
 
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
-  const connections = await runConnectionDoctor({
+  const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
     env: environment.env,
     mode: offline ? "offline" : "live",
   });
-  const connectionExitCode = connections.status === "fail" ? 1 : 0;
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    // Offline only skips live provider probes. If Quality Control is unavailable, report
-    // connection status alone; otherwise preserve the quality exit code.
-    const exitCode = offline
-      ? connectionExitCode
-      : (planned.exitCode === 0 ? connectionExitCode : planned.exitCode || 1);
+    const connections = await connectionsPromise;
+    const connectionExitCode = connections.status === "fail" ? 1 : 0;
+    const exitCode = planned.exitCode === 0 ? connectionExitCode : planned.exitCode || 1;
     if (json) {
+      const payload = {
+        ok: false,
+        command: "doctor",
+        quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
+        connectionStatus: connections.status,
+        connections,
+      };
       return {
         exitCode,
-        json: {
-          quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
-          connectionStatus: connections.status,
-          connections,
-        },
+        jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
     return { exitCode, stdout: `${planned.stdout}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const quality = await dispatchCommandCaptured(planned.dispatch);
+  const [connections, quality] = await Promise.all([
+    connectionsPromise,
+    dispatchCommandCaptured(planned.dispatch),
+  ]);
+  const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
   const exitCode = quality.exitCode === 0
     ? connectionExitCode
@@ -1251,15 +1255,14 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     } catch {
       qualityPayload = { ok: false, error: "Quality Control doctor returned invalid JSON." };
     }
-    return {
-      exitCode,
-      json: {
-        quality: qualityPayload,
-        connectionStatus: connections.status,
-        connections,
-      },
-      stderr: `${planned.stderr}${quality.stderr}`,
+    const payload = {
+      ok: exitCode === 0,
+      command: "doctor",
+      quality: qualityPayload,
+      connectionStatus: connections.status,
+      connections,
     };
+    return { exitCode, jsonStdout: `${JSON.stringify(payload)}\n`, stderr: `${planned.stderr}${quality.stderr}` };
   }
   return {
     exitCode,
