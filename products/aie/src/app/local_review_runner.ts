@@ -6,6 +6,7 @@ import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
+import { formatRiskCardReviewerFragment, selectRiskCards } from '@tjalve/qube-risk-cards';
 import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, runExternalLane, writeCarriedForwardLane, writeLane, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
@@ -66,6 +67,8 @@ interface LocalReviewRunnerInput {
   exec?: PrGateExec;
   contextLines?: readonly string[];
   changedPaths?: readonly string[];
+  /** Issue/PR titles used only for risk-card activation (not the full review context blob). */
+  riskCardIssueText?: string;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -117,10 +120,11 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = []): LocalReviewLaneRun {
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand));
-  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand));
+  // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments);
+  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand), riskCardFragments);
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && promptText.trim() !== ''
@@ -174,6 +178,12 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const aiqFindings = loadAiqReviewFindings(input.repoRoot, input.changedPaths ?? []);
   const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings)];
+  // Activate from issue text + changed paths only so hashes stay deterministic and do not
+  // flip on every generated review-context line that happens to mention common keywords.
+  const riskCardFragments = selectRiskCards({
+    issueText: input.riskCardIssueText ?? '',
+    paths: input.changedPaths ?? [],
+  }).map(card => formatRiskCardReviewerFragment(card));
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   const modelTiers = {
@@ -211,7 +221,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           ? opencode.missingCapabilities[0] ?? 'opencode-local-review-runner-unsupported'
           : codex.missingCapabilities[0] ?? 'codex-local-reviewer-not-configured';
         unavailable.push(`${lane}: ${summary}`);
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path]));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments));
         continue;
       }
       const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written);
@@ -222,7 +232,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], reviewTierResolution));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], reviewTierResolution, riskCardFragments));
     }
   }
 
@@ -233,7 +243,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], reviewTierResolution);
+      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.', null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], reviewTierResolution, riskCardFragments);
       if (command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';

@@ -146,6 +146,15 @@ importers:
         specifier: 6.0.3
         version: 6.0.3
 
+  packages/qube-risk-cards:
+    devDependencies:
+      '@types/node':
+        specifier: 24.12.2
+        version: 24.12.2
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
+
   packages/qube-testkit:
     dependencies:
       '@tjalve/qube-core':
@@ -193,6 +202,9 @@ importers:
       '@tjalve/qube-core':
         specifier: 0.2.1
         version: link:../../packages/qube-core
+      '@tjalve/qube-risk-cards':
+        specifier: 0.1.0
+        version: link:../../packages/qube-risk-cards
     devDependencies:
       '@types/node':
         specifier: 24.12.2

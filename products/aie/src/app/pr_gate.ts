@@ -791,6 +791,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const linkedChecklistWarnings: string[] = [];
   const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
+  const riskCardIssueText = [
+    finalSnapshot.pr.title,
+    ...issueChecklists.map(summary => summary.issue.title),
+  ].join('\n');
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -803,6 +807,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     contextLines: localReviewContextLines,
     includePrompts: options.includeLocalReviewPrompts === true,
     changedPaths,
+    riskCardIssueText,
   });
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),

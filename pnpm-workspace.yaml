@@ -16,6 +16,7 @@ minimumReleaseAgeExclude:
   - "@tjalve/qube"
   - "@tjalve/qube-cli"
   - "@tjalve/qube-core"
+  - "@tjalve/qube-risk-cards"
   - "@tjalve/qube-adapter-github"
   - "@tjalve/qube-adapter-codex"
   - "@tjalve/qube-adapter-opencode"

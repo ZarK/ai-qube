@@ -203,13 +203,18 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
   ];
 }
 
-export function promptStack(lane: LocalReviewLaneId, contextLines: readonly string[] = [`Run local review lane ${lane}.`]) {
+export function promptStack(
+  lane: LocalReviewLaneId,
+  contextLines: readonly string[] = [`Run local review lane ${lane}.`],
+  riskCardFragments: readonly string[] = [],
+) {
   return renderAgentPrompt({
     hostId: 'codex',
     descriptorId: 'qa-reviewer',
     categoryId: 'review',
     laneIds: [lane],
     contextLines,
+    commandFragments: riskCardFragments,
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
