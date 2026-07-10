@@ -259,7 +259,11 @@ describe("adapter conformance testkit", () => {
             loadWork: false,
             planStatusSync: false,
           }),
-          workScenarios: { statusPolicy: { labels: { priorities: [], statuses: [] } } },
+          workScenarios: {
+            statusPolicy: { labels: { priorities: [], statuses: [] } },
+            createLargeResultTransport: () => items,
+            createMalformedTransport: () => items,
+          },
           capabilityCases: [{
             capabilityId: "work-item-queue",
             name: "noop false success",
@@ -274,7 +278,12 @@ describe("adapter conformance testkit", () => {
     const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
     const items = [
       workItem("1", { status: "ready", priority: "high", checklist: { total: 2, completed: 1 } }),
-      workItem("2", { status: "blocked", priority: "low", blockers: [{ providerId: "fixture", id: "1" }] }),
+      workItem("2", {
+        status: "blocked",
+        priority: "low",
+        checklist: { total: 1, completed: 0 },
+        blockers: [{ providerId: "fixture", id: "1" }],
+      }),
     ];
     let listRequests = 0;
     await verifyAdapterHarness(defineAdapterHarness({
@@ -315,5 +324,48 @@ describe("adapter conformance testkit", () => {
       },
     }));
     assert.ok(listRequests >= 1);
+  });
+
+  it("rejects duplicate capability ids", () => {
+    assert.throws(() => defineAdapterHarness({
+      adapter: {
+        id: "fixture",
+        packageName: "@tjalve/qube-adapter-fixture",
+        capabilities: [
+          { id: "read-fixture", support: "supported", owner: "@tjalve/qube-adapter-fixture", summary: "read" },
+          { id: "read-fixture", support: "unsupported", owner: "@tjalve/qube-adapter-fixture", summary: "dup" },
+        ],
+      },
+      roles: {
+        ci: ciHarness(() => undefined),
+      },
+    }), /Duplicate capability id/);
+  });
+
+  it("requires explicit unsupported observation for unsupported CI triggers", () => {
+    assert.throws(() => defineAdapterHarness({
+      adapter: {
+        id: "fixture",
+        packageName: "@tjalve/qube-adapter-fixture",
+        capabilities: [
+          { id: "read-ci-status", support: "supported", owner: "@tjalve/qube-adapter-fixture", summary: "read" },
+          { id: "trigger-workflow-run", support: "unsupported", owner: "@tjalve/qube-adapter-fixture", summary: "trigger" },
+        ],
+      },
+      roles: {
+        ci: defineCiProviderHarness({
+          fixtureRoot: makeFixtureRoot(),
+          fixtureFiles: ["fixtures/check.json"],
+          createFixtureTransport: () => ({}),
+          createSubject: fixture => fixture,
+          ciScenarios: {
+            mapCheck: () => ({ result: "passed" }),
+            passedCheck: { status: "success" },
+            failedCheck: { status: "failure" },
+            pendingCheck: { status: "pending" },
+          },
+        }),
+      },
+    }), /unsupportedTrigger/);
   });
 });

@@ -66,7 +66,10 @@ export interface CiRoleScenarios {
   readonly passedCheck: unknown;
   readonly failedCheck: unknown;
   readonly pendingCheck: unknown;
+  /** Required when trigger-workflow-run is declared unsupported. */
   readonly unsupportedTrigger?: () => void;
+  /** Required when trigger-workflow-run is declared supported; must invoke the subject. */
+  readonly supportedTrigger?: (subject: unknown) => void | Promise<void>;
 }
 
 export interface RoleHarnessInput<TTransport, TSubject> {
@@ -330,19 +333,55 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   assertRolePlacement(descriptor.roles.review, "review-forge", "review");
   assertRolePlacement(descriptor.roles.ci, "ci-provider", "ci");
 
-  const declared = new Map((descriptor.adapter.capabilities ?? []).map(capability => [capability.id, capability]));
+  const declaredList = descriptor.adapter.capabilities ?? [];
+  const seenIds = new Set<string>();
+  for (const capability of declaredList) {
+    assert.ok(capability.id.trim().length > 0, "Capability ids must be non-empty.");
+    assert.equal(seenIds.has(capability.id), false, `Duplicate capability id ${capability.id} is not allowed.`);
+    seenIds.add(capability.id);
+  }
+
+  const declared = new Map(declaredList.map(capability => [capability.id, capability]));
   const coverage = new Map<string, string>();
   for (const harness of harnesses) {
     assert.ok(harness.fixtureFiles.length > 0, `${harness.role} must name at least one fixture file.`);
     assertFixtureFilesBound(harness);
-    // Shared suite only covers capabilities the adapter actually declares.
-    const sharedIds = sharedCapabilityIds(harness).filter(capabilityId => declared.has(capabilityId));
+    // Shared suite only covers supported declarations it actually observes.
+    // Unsupported / standalone declarations need explicit capabilityCases (or CI trigger hooks).
+    const sharedIds = sharedCapabilityIds(harness).filter(capabilityId => {
+      const declaration = declared.get(capabilityId);
+      return declaration?.support === "supported";
+    });
+    let harnessCovered = 0;
+    if (harness.role === "ci-provider") {
+      const trigger = declared.get("trigger-workflow-run");
+      if (trigger?.support === "unsupported") {
+        assert.ok(
+          harness.ciScenarios?.unsupportedTrigger,
+          "CI harness must supply ciScenarios.unsupportedTrigger when trigger-workflow-run is unsupported.",
+        );
+        addCoverage(coverage, "trigger-workflow-run", "ci-provider:shared-unsupported");
+        harnessCovered += 1;
+      }
+      if (trigger?.support === "supported") {
+        assert.ok(
+          harness.ciScenarios?.supportedTrigger,
+          "CI harness must supply ciScenarios.supportedTrigger when trigger-workflow-run is supported.",
+        );
+      }
+    }
+    for (const capabilityId of sharedIds) {
+      addCoverage(coverage, capabilityId, `${harness.role}:shared`);
+      harnessCovered += 1;
+    }
+    for (const testCase of harness.capabilityCases) {
+      addCoverage(coverage, testCase.capabilityId, harness.role);
+      harnessCovered += 1;
+    }
     assert.ok(
-      harness.capabilityCases.length > 0 || sharedIds.length > 0,
+      harnessCovered > 0,
       `${harness.role} must define shared suite coverage or at least one capability case.`,
     );
-    for (const capabilityId of sharedIds) addCoverage(coverage, capabilityId, `${harness.role}:shared`);
-    for (const testCase of harness.capabilityCases) addCoverage(coverage, testCase.capabilityId, harness.role);
   }
   for (const ignored of descriptor.ignoredCapabilities ?? []) {
     assert.ok(ignored.reason.trim().length > 0, `Ignored capability ${ignored.id} must include a reason.`);
@@ -360,7 +399,16 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   }
 
   if (descriptor.roles.work) {
-    assert.ok(descriptor.roles.work.workScenarios?.statusPolicy, "Work provider harness must supply workScenarios.statusPolicy for the shared status suite.");
+    const workScenarios = descriptor.roles.work.workScenarios;
+    assert.ok(workScenarios?.statusPolicy, "Work provider harness must supply workScenarios.statusPolicy for the shared status suite.");
+    assert.ok(
+      workScenarios.createLargeResultTransport,
+      "Work provider harness must supply workScenarios.createLargeResultTransport for list completeness coverage.",
+    );
+    assert.ok(
+      workScenarios.createMalformedTransport,
+      "Work provider harness must supply workScenarios.createMalformedTransport for malformed-payload coverage.",
+    );
   }
   if (descriptor.roles.review) {
     assert.ok(descriptor.roles.review.reviewScenarios?.reviewPolicy, "Review forge harness must supply reviewScenarios.reviewPolicy for the shared review suite.");
@@ -487,9 +535,13 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
       // Multi-item corpus exercises codec breadth (status/priority/checklist/blockers).
       assert.ok(items.length >= 2, "map-work-item shared suite requires a multi-item fixture corpus.");
       const statuses = new Set(items.map(item => item.status));
-      assert.ok(statuses.size >= 1, "Work items must report canonical status values.");
+      assert.ok(statuses.size >= 2, "map-work-item shared suite requires at least two distinct canonical statuses.");
+      const priorities = new Set(items.map(item => item.priority));
+      assert.ok(priorities.size >= 2, "map-work-item shared suite requires at least two distinct priorities.");
       const withChecklist = items.filter(item => item.checklist.total > 0);
       assert.ok(withChecklist.length > 0, "At least one fixture work item must include checklist coverage.");
+      const withBlockers = items.filter(item => item.blockers.length > 0 || item.blockedBy.length > 0);
+      assert.ok(withBlockers.length > 0, "At least one fixture work item must include blocker or blockedBy edges.");
     }
 
     if (caps.loadWork && isSupported(declared, "map-work-item")) {
@@ -612,12 +664,15 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
     assert.equal(scenarios.mapCheck(subject, scenarios.failedCheck).result, "failed");
     assert.equal(scenarios.mapCheck(subject, scenarios.pendingCheck).result, "pending");
   }
-  if (isUnsupported(declared, "trigger-workflow-run") || declared.has("trigger-workflow-run")) {
-    if (scenarios.unsupportedTrigger) {
-      await assert.rejects(async () => {
-        scenarios.unsupportedTrigger!();
-      }, /unsupported/i);
-    }
+  if (isUnsupported(declared, "trigger-workflow-run")) {
+    assert.ok(scenarios.unsupportedTrigger, "unsupportedTrigger is required when trigger-workflow-run is unsupported.");
+    await assert.rejects(async () => {
+      scenarios.unsupportedTrigger!();
+    }, /unsupported/i);
+  }
+  if (isSupported(declared, "trigger-workflow-run")) {
+    assert.ok(scenarios.supportedTrigger, "supportedTrigger is required when trigger-workflow-run is supported.");
+    await scenarios.supportedTrigger!(subject);
   }
 }
 
@@ -683,7 +738,14 @@ function assertFixtureFilesBound(harness: RoleHarness): void {
     `${harness.role} must set fixtureRoot so fixtureFiles are bound to on-disk fixtures.`,
   );
   for (const relativePath of harness.fixtureFiles) {
-    const absolutePath = isAbsolute(relativePath) ? relativePath : join(harness.fixtureRoot, relativePath);
+    assert.ok(relativePath.trim().length > 0, `${harness.role} fixture file names must be non-empty.`);
+    // Keep fixture names repository-relative under fixtureRoot; reject absolute escape hatches.
+    assert.equal(
+      isAbsolute(relativePath),
+      false,
+      `${harness.role} fixture file must be relative to fixtureRoot (got absolute path ${relativePath}).`,
+    );
+    const absolutePath = join(harness.fixtureRoot, relativePath);
     assert.ok(
       existsSync(absolutePath),
       `${harness.role} fixture file is missing or unbound: ${relativePath} (resolved ${absolutePath}).`,
