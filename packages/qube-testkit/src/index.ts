@@ -17,7 +17,13 @@ import type {
   WorkProvider,
   WorkProviderCapabilities,
 } from "@tjalve/qube-core";
-import { normalizeReviewFinding, partitionReviewFindings } from "@tjalve/qube-core";
+import {
+  normalizeReviewFinding,
+  normalizeReviewItem,
+  normalizeWorkItem,
+  parseWorkChecklist,
+  partitionReviewFindings,
+} from "@tjalve/qube-core";
 
 export type AdapterRole = "work-provider" | "review-forge" | "ci-provider";
 
@@ -62,14 +68,18 @@ export interface ReviewRoleScenarios {
 
 /** Shared CI scenario inputs. */
 export interface CiRoleScenarios {
-  readonly mapCheck: (subject: unknown, check: unknown) => { readonly result: string };
+  readonly mapCheck: (subject: unknown, check: unknown) => {
+    readonly result: string;
+    readonly reasonCode?: string;
+    readonly summary?: string;
+    readonly key?: string;
+    readonly name?: string;
+  };
   readonly passedCheck: unknown;
   readonly failedCheck: unknown;
   readonly pendingCheck: unknown;
   /** Required when trigger-workflow-run is declared unsupported. */
-  readonly unsupportedTrigger?: () => void;
-  /** Required when trigger-workflow-run is declared supported; must invoke the subject. */
-  readonly supportedTrigger?: (subject: unknown) => void | Promise<void>;
+  readonly unsupportedTrigger?: () => void | Promise<void>;
 }
 
 export interface RoleHarnessInput<TTransport, TSubject> {
@@ -169,9 +179,13 @@ const REVIEW_CAPABILITIES = Object.freeze([
   "ciDiagnostics",
 ] as const satisfies readonly (keyof ReviewForgeCapabilities)[]);
 
-/** Maps adapter capability declarations to role capability flags they imply. */
+/**
+ * Maps adapter capability declarations to the role flags they uniquely own.
+ * Shared flags (for example listOpenWork for both map and queue) are attributed
+ * to the more general capability so unsupported partial overlaps stay coherent.
+ */
 const WORK_DECLARATION_FLAGS: Readonly<Record<string, readonly (keyof WorkProviderCapabilities)[]>> = Object.freeze({
-  "map-work-item": Object.freeze(["listOpenWork", "loadWork"] as const),
+  "map-work-item": Object.freeze(["loadWork"] as const),
   "work-item-queue": Object.freeze(["listOpenWork"] as const),
   "sync-issue-status": Object.freeze(["planStatusSync"] as const),
 });
@@ -363,12 +377,6 @@ function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
         addCoverage(coverage, "trigger-workflow-run", "ci-provider:shared-unsupported");
         harnessCovered += 1;
       }
-      if (trigger?.support === "supported") {
-        assert.ok(
-          harness.ciScenarios?.supportedTrigger,
-          "CI harness must supply ciScenarios.supportedTrigger when trigger-workflow-run is supported.",
-        );
-      }
     }
     for (const capabilityId of sharedIds) {
       addCoverage(coverage, capabilityId, `${harness.role}:shared`);
@@ -500,10 +508,12 @@ function assertCapabilityFlagsMatchDeclarations(
       }
     }
     if (declaration.support === "unsupported") {
-      // Fail only on a clear contradiction: every related flag is true while declared unsupported.
-      if (requiredFlags.length > 0 && requiredFlags.every(flag => flagRecord[flag] === true)) {
-        assert.fail(
-          `${role} capability flags ${requiredFlags.join(", ")} are all true but adapter declares ${declaration.id} unsupported.`,
+      // Any true related flag contradicts an unsupported declaration for that owned behavior.
+      for (const flag of requiredFlags) {
+        assert.notEqual(
+          flagRecord[flag],
+          true,
+          `${role} capability flag ${flag} must not be true when adapter declares ${declaration.id} unsupported.`,
         );
       }
     }
@@ -542,12 +552,27 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
       assert.ok(withChecklist.length > 0, "At least one fixture work item must include checklist coverage.");
       const withBlockers = items.filter(item => item.blockers.length > 0 || item.blockedBy.length > 0);
       assert.ok(withBlockers.length > 0, "At least one fixture work item must include blocker or blockedBy edges.");
+
+      for (const item of items) {
+        // Codec round-trip: provider-neutral items must re-normalize without semantic loss.
+        const roundTrip = normalizeWorkItem(item);
+        assert.equal(roundTrip.key.id, item.key.id);
+        assert.equal(roundTrip.status, item.status);
+        assert.equal(roundTrip.priority, item.priority);
+        assert.deepEqual(roundTrip.checklist, item.checklist);
+        assert.deepEqual(roundTrip.blockers, item.blockers);
+        // Comment/checklist handling: body checkbox lines must agree with checklist totals.
+        if (item.body.includes("[") && item.checklist.total > 0) {
+          assert.deepEqual(parseWorkChecklist(item.body), item.checklist);
+        }
+      }
     }
 
     if (caps.loadWork && isSupported(declared, "map-work-item")) {
       const loaded = await provider.getWorkItem(items[0].key);
       assertWorkItemShape(loaded, adapter.id);
       assert.equal(loaded.key.id, items[0].key.id);
+      assert.deepEqual(normalizeWorkItem(loaded).checklist, loaded.checklist);
     }
   }
 
@@ -564,7 +589,11 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     const largeProvider = await harness.createSubject(largeTransport) as WorkProvider;
     const listed = await largeProvider.listOpenWorkItems();
     const expected = scenarios.expectedLargeResultCount ?? 2;
-    assert.ok(listed.length >= expected, `Large-result suite expected at least ${expected} work items, got ${listed.length}.`);
+    assert.equal(
+      listed.length,
+      expected,
+      `Large-result suite expected exactly ${expected} work items, got ${listed.length}.`,
+    );
     if (harness.getListRequestCount) {
       const requests = harness.getListRequestCount(largeTransport);
       const maxRequests = scenarios.maxListRequests ?? Math.max(1, expected);
@@ -605,12 +634,34 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     const item = await provider.findReviewForCurrentBranch();
     assert.ok(item, "Supported review load fixture must yield a review item for the current branch.");
     assertReviewItemShape(item, adapter.id);
+    // Codec round-trip through the shared review model.
+    const roundTrip = normalizeReviewItem(item);
+    assert.equal(roundTrip.key.id, item.key.id);
+    assert.equal(roundTrip.title, item.title);
+    assert.equal(roundTrip.mergeability, item.mergeability);
+    assert.equal(roundTrip.reviewDecision, item.reviewDecision);
+
+    // Feedback classification: every feedback row must carry source + trust labels.
+    for (const feedback of item.feedback) {
+      assert.ok(feedback.source, "Review feedback must classify its source.");
+      assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider", "Review feedback must classify trust.");
+      assert.ok(feedback.summary.trim().length > 0, "Review feedback summary must be non-empty.");
+    }
 
     if (isSupported(declared, "read-merge-blockers")) {
       assert.ok(Array.isArray(item.mergeBlockers), "Review item must expose mergeBlockers array.");
+      for (const blocker of item.mergeBlockers) {
+        assert.ok(blocker.reason, "Merge blocker must include a reason.");
+        assert.ok(blocker.summary.trim().length > 0, "Merge blocker summary must be non-empty.");
+      }
     }
     if (isSupported(declared, "read-review-threads")) {
       assert.ok(Array.isArray(item.conversations), "Review item must expose conversations array.");
+      for (const conversation of item.conversations) {
+        assert.ok(conversation.id.trim().length > 0, "Review conversation id must be non-empty.");
+        assert.equal(typeof conversation.resolved, "boolean");
+        assert.equal(typeof conversation.outdated, "boolean");
+      }
     }
   }
 
@@ -620,14 +671,33 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     assert.ok(item, "request-review-gate suite requires a loadable review item.");
     const plan = provider.planReviewRequest(item, scenarios.reviewPolicy);
     assert.ok(plan && Array.isArray(plan.actions), "planReviewRequest must return an action plan.");
+    assert.ok(plan.actions.length > 0, "request-review-gate plan must include at least one action.");
+    for (const action of plan.actions) {
+      assert.ok(action.kind, "Review request plan actions must declare a kind.");
+    }
   }
 
   if (isSupported(declared, "resolve-review-threads")) {
     assert.equal(caps.resolveReviewThreads, true, "resolveReviewThreads flag must be true when capability is supported.");
     assert.equal(typeof provider.resolveReviewThreads, "function", "resolve-review-threads requires a resolveReviewThreads method.");
+    const item = await provider.findReviewForCurrentBranch();
+    const prNumber = Number(item?.key.id);
+    if (Number.isInteger(prNumber) && prNumber > 0) {
+      const result = await provider.resolveReviewThreads!({
+        prNumber,
+        threadIds: [],
+        dryRun: true,
+      });
+      assert.ok(result && typeof result.status === "string", "resolveReviewThreads dry-run must return a status.");
+      assert.equal(result.prNumber, prNumber);
+    }
   }
 
-  if (scenarios.sampleFindings && scenarios.sampleFindings.length > 0) {
+  assert.ok(
+    scenarios.sampleFindings && scenarios.sampleFindings.length >= 2,
+    "Review harness must supply sampleFindings with at least two findings for partition coverage.",
+  );
+  {
     const paths = scenarios.diffPathsWithLines ?? {};
     const diffIndex = {
       hasLine(path: string, line: number): boolean {
@@ -638,7 +708,9 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       scenarios.sampleFindings.map(finding => normalizeReviewFinding(finding)),
       diffIndex,
     );
-    assert.ok(partitioned.inline.length + partitioned.body.length === scenarios.sampleFindings.length);
+    assert.equal(partitioned.inline.length + partitioned.body.length, scenarios.sampleFindings.length);
+    assert.ok(partitioned.inline.length > 0, "sampleFindings must partition at least one inline finding.");
+    assert.ok(partitioned.body.length > 0, "sampleFindings must partition at least one body finding.");
   }
 
   for (const declaration of adapter.capabilities ?? []) {
@@ -658,21 +730,29 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
   const declared = declarationMap(adapter);
 
   if (isSupported(declared, "read-ci-status")) {
-    assert.equal(scenarios.mapCheck(subject, scenarios.passedCheck).result, "passed");
+    const passed = scenarios.mapCheck(subject, scenarios.passedCheck);
+    assert.equal(passed.result, "passed");
+    assert.ok(passed.name || passed.key, "CI mapCheck must expose a check name or key for artifact/reference identity.");
   }
   if (isSupported(declared, "diagnose-ci-status")) {
-    assert.equal(scenarios.mapCheck(subject, scenarios.failedCheck).result, "failed");
-    assert.equal(scenarios.mapCheck(subject, scenarios.pendingCheck).result, "pending");
+    const failed = scenarios.mapCheck(subject, scenarios.failedCheck);
+    const pending = scenarios.mapCheck(subject, scenarios.pendingCheck);
+    assert.equal(failed.result, "failed");
+    assert.equal(pending.result, "pending");
+    assert.ok(failed.reasonCode || failed.summary, "diagnose-ci-status failed checks must include reasonCode or summary.");
+    assert.ok(pending.reasonCode || pending.summary, "diagnose-ci-status pending checks must include reasonCode or summary.");
   }
   if (isUnsupported(declared, "trigger-workflow-run")) {
     assert.ok(scenarios.unsupportedTrigger, "unsupportedTrigger is required when trigger-workflow-run is unsupported.");
     await assert.rejects(async () => {
-      scenarios.unsupportedTrigger!();
+      await scenarios.unsupportedTrigger!();
     }, /unsupported/i);
   }
   if (isSupported(declared, "trigger-workflow-run")) {
-    assert.ok(scenarios.supportedTrigger, "supportedTrigger is required when trigger-workflow-run is supported.");
-    await scenarios.supportedTrigger!(subject);
+    // Supported triggers must be first-class subject methods so the suite observes a real invocation.
+    const triggerable = subject as { triggerWorkflowRun?: () => unknown | Promise<unknown> };
+    assert.equal(typeof triggerable.triggerWorkflowRun, "function", "supported trigger-workflow-run requires subject.triggerWorkflowRun().");
+    await triggerable.triggerWorkflowRun!();
   }
 }
 
@@ -737,6 +817,7 @@ function assertFixtureFilesBound(harness: RoleHarness): void {
     harness.fixtureRoot && harness.fixtureRoot.trim().length > 0,
     `${harness.role} must set fixtureRoot so fixtureFiles are bound to on-disk fixtures.`,
   );
+  const root = join(harness.fixtureRoot);
   for (const relativePath of harness.fixtureFiles) {
     assert.ok(relativePath.trim().length > 0, `${harness.role} fixture file names must be non-empty.`);
     // Keep fixture names repository-relative under fixtureRoot; reject absolute escape hatches.
@@ -745,10 +826,19 @@ function assertFixtureFilesBound(harness: RoleHarness): void {
       false,
       `${harness.role} fixture file must be relative to fixtureRoot (got absolute path ${relativePath}).`,
     );
-    const absolutePath = join(harness.fixtureRoot, relativePath);
+    assert.equal(
+      relativePath.includes(".."),
+      false,
+      `${harness.role} fixture file must stay under fixtureRoot (got path traversal ${relativePath}).`,
+    );
+    const absolutePath = join(root, relativePath);
+    assert.ok(
+      absolutePath === root || absolutePath.startsWith(root.endsWith("\\") || root.endsWith("/") ? root : `${root}\\`) || absolutePath.startsWith(`${root}/`),
+      `${harness.role} fixture file escaped fixtureRoot: ${relativePath}.`,
+    );
     assert.ok(
       existsSync(absolutePath),
-      `${harness.role} fixture file is missing or unbound: ${relativePath} (resolved ${absolutePath}).`,
+      `${harness.role} fixture file is missing or unbound: ${relativePath}.`,
     );
   }
 }

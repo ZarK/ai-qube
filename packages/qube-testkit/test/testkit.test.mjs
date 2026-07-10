@@ -271,16 +271,22 @@ describe("adapter conformance testkit", () => {
           }],
         }),
       },
-    })), /must be true when adapter declares work-item-queue as supported|listOpenWork must be true|requires work capability flag/);
+    })), /must be true when adapter declares|listOpenWork must be true|requires work capability flag|loadWork must be true/);
   });
 
   it("runs shared work suite against multi-item fixtures and rejects silent malformed lists", async () => {
     const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
     const items = [
-      workItem("1", { status: "ready", priority: "high", checklist: { total: 2, completed: 1 } }),
+      workItem("1", {
+        status: "ready",
+        priority: "high",
+        body: "- [x] a\n- [ ] b",
+        checklist: { total: 2, completed: 1 },
+      }),
       workItem("2", {
         status: "blocked",
         priority: "low",
+        body: "- [ ] blocked",
         checklist: { total: 1, completed: 0 },
         blockers: [{ providerId: "fixture", id: "1" }],
       }),
