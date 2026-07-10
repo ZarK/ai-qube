@@ -350,6 +350,9 @@ describe("adapter conformance testkit", () => {
         checklist: { total: 1, completed: 0 },
         blockers: [{ providerId: "fixture", id: "1" }],
       }),
+      workItem("3", { status: "in-progress", priority: "critical", body: "- [x] go", checklist: { total: 1, completed: 1 } }),
+      workItem("4", { status: "ready", priority: "medium", body: "- [ ] more", checklist: { total: 1, completed: 0 } }),
+      workItem("5", { status: "unknown", priority: "none", body: "none", checklist: { total: 0, completed: 0 } }),
     ];
     let listRequests = 0;
     await verifyAdapterHarness(defineAdapterHarness({
@@ -382,8 +385,8 @@ describe("adapter conformance testkit", () => {
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
             createLargeResultTransport: () => ({ items, listRequests: 0 }),
-            expectedLargeResultCount: 2,
-            maxListRequests: 2,
+            expectedLargeResultCount: 5,
+            maxListRequests: 1,
             singleShotHighLimit: true,
             createMalformedTransport: () => ({ items: "malformed" }),
           },

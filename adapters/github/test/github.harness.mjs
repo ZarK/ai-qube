@@ -219,6 +219,72 @@ function reviewExec(pullRequest) {
         stderr: "",
       };
     }
+    if (args[0] === "api" && args[1] === "graphql") {
+      const joined = args.join(" ");
+      if (joined.includes("reviewThreads")) {
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  reviewThreads: {
+                    nodes: [
+                      {
+                        id: "PRRT_fixture_thread_1",
+                        isResolved: false,
+                        isOutdated: false,
+                        viewerCanResolve: true,
+                        viewerCanUnresolve: true,
+                        comments: {
+                          nodes: [
+                            {
+                              id: "PRRC_1",
+                              databaseId: 1,
+                              body: "Fixture unresolved thread.",
+                              url: "https://github.com/example/qube/pull/12#discussion_r1",
+                              path: "src/a.ts",
+                              line: 10,
+                              originalLine: 10,
+                              diffHunk: "@@ -1 +1 @@",
+                              outdated: false,
+                              createdAt: "2026-01-01T00:00:00Z",
+                              author: { login: "fixture-reviewer" },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                    pageInfo: { hasNextPage: false, endCursor: null },
+                  },
+                },
+              },
+            },
+          }),
+          stderr: "",
+        };
+      }
+      if (joined.includes("viewerMergeHeadlineText")) {
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({
+            data: {
+              repository: {
+                pullRequest: {
+                  viewerMergeHeadlineText: null,
+                  viewerMergeBodyText: null,
+                  viewerCannotUpdateReasons: [],
+                },
+              },
+            },
+          }),
+          stderr: "",
+        };
+      }
+      return { args, exitCode: 0, stdout: JSON.stringify({ data: {} }), stderr: "" };
+    }
     // Optional secondary loads may fail; snapshot paths treat them as unavailable rather than hard errors.
     return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
   };

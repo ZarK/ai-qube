@@ -655,16 +655,18 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.ok(start.actions.length > 0, "planStart must plan at least one action when planLifecycleMutations is true.");
     const pause = provider.planPause(items[0], items, scenarios.statusPolicy as never);
     assert.ok(pause && Array.isArray(pause.actions), "planPause must return an action plan when planLifecycleMutations is true.");
+    assert.ok(pause.actions.length > 0, "planPause must plan at least one action when planLifecycleMutations is true.");
     const complete = provider.planComplete(items[0], items, scenarios.statusPolicy as never);
     assert.ok(complete && Array.isArray(complete.actions), "planComplete must return an action plan when planLifecycleMutations is true.");
+    assert.ok(complete.actions.length > 0, "planComplete must plan at least one action when planLifecycleMutations is true.");
     if (caps.applyLifecycleMutations === true) {
-      // Apply the real planned start actions through the fixture transport.
+      // Apply the real planned start actions through the fixture transport only.
       const applied = await provider.apply(start);
       assert.ok(Array.isArray(applied), "apply must return action results when applyLifecycleMutations is true.");
       assert.equal(applied.length, start.actions.length, "apply must return one result per planned lifecycle action.");
       assert.ok(
-        applied.every(result => result.status === "completed" || result.status === "skipped"),
-        "applyLifecycleMutations must complete or skip planned actions; failures indicate unobserved mutation behavior.",
+        applied.every(result => result.status === "completed"),
+        "applyLifecycleMutations must complete planned actions through the fixture transport.",
       );
     }
   }
@@ -740,6 +742,8 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.ok(requests <= maxRequests, `List request count ${requests} exceeds maxListRequests ${maxRequests}.`);
     if (scenarios.singleShotHighLimit === true) {
       assert.equal(requests, 1, "singleShotHighLimit adapters must use exactly one list request.");
+      // Single-shot high-limit still needs a non-trivial corpus so the limit is actually exercised.
+      assert.ok(expected >= 5, "singleShotHighLimit large-result corpus must include at least 5 work items.");
     }
   }
 
@@ -754,7 +758,9 @@ async function verifyWorkRoleSuite(adapter: QubeAdapterContract, harness: RoleHa
     assert.equal(uniqueIds.size, listed.length, "Multi-page list must not return duplicate work item keys.");
     const requests = harness.getListRequestCount(pagedTransport);
     const minRequests = scenarios.minMultiPageRequests ?? 2;
+    const maxRequests = scenarios.maxListRequests ?? Math.max(minRequests, expected);
     assert.ok(requests >= minRequests, `Multi-page suite expected at least ${minRequests} list requests, got ${requests}.`);
+    assert.ok(requests <= maxRequests, `Multi-page suite expected at most ${maxRequests} list requests, got ${requests}.`);
   }
 
   if (scenarios.createMalformedTransport) {
@@ -818,10 +824,15 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     }
     if (isSupported(declared, "read-review-threads")) {
       assert.ok(Array.isArray(loaded.conversations), "Review item must expose conversations array.");
+      assert.ok(
+        loaded.conversations.length > 0,
+        "read-review-threads requires at least one recorded conversation in the fixture corpus.",
+      );
       for (const conversation of loaded.conversations) {
         assert.ok(conversation.id.trim().length > 0, "Review conversation id must be non-empty.");
         assert.equal(typeof conversation.resolved, "boolean");
         assert.equal(typeof conversation.outdated, "boolean");
+        assert.ok(conversation.summary.trim().length > 0, "Review conversation summary must be non-empty.");
       }
     }
   }
@@ -844,8 +855,12 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
       assert.equal(applied.length, plan.actions.length, "apply must return one result per planned action.");
       assert.ok(
-        applied.every(result => result.status === "completed" || result.status === "skipped"),
-        "applyReviewRequests must complete or skip planned actions through the fixture transport.",
+        applied.every(result => result.status === "completed"),
+        "applyReviewRequests must complete planned actions through the fixture transport.",
+      );
+      assert.ok(
+        applied.some(result => result.status === "completed"),
+        "applyReviewRequests must complete at least one planned action.",
       );
     }
   }
@@ -853,14 +868,14 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
   if (isSupported(declared, "resolve-review-threads") || caps.resolveReviewThreads === true) {
     assert.equal(caps.resolveReviewThreads, true, "resolveReviewThreads flag must be true when resolution is advertised.");
     assert.equal(typeof provider.resolveReviewThreads, "function", "resolve-review-threads requires a resolveReviewThreads method.");
-    const item = await provider.findReviewForCurrentBranch();
-    const prNumber = Number(item?.key.id);
+    const item = await provider.getReviewItem((await provider.findReviewForCurrentBranch())!.key);
+    const prNumber = Number(item.key.id);
     assert.ok(Number.isInteger(prNumber) && prNumber > 0, "resolveReviewThreads suite requires a numeric review item id.");
-    const fromItem = item?.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id) ?? [];
-    const threadIds = [...(scenarios.resolveThreadIds ?? []), ...fromItem].filter(id => id.trim().length > 0);
+    const fromItem = item.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id);
+    const threadIds = [...fromItem, ...(scenarios.resolveThreadIds ?? [])].filter(id => id.trim().length > 0);
     assert.ok(
-      threadIds.length > 0,
-      "resolveReviewThreads suite requires non-empty resolveThreadIds or unresolved conversations; empty-id short-circuit is not observation.",
+      fromItem.length > 0,
+      "resolveReviewThreads suite requires unresolved conversations loaded from the fixture, not only synthetic resolveThreadIds.",
     );
     const result = await provider.resolveReviewThreads!({
       prNumber,
@@ -868,7 +883,7 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       dryRun: true,
     });
     assert.ok(result && typeof result.status === "string", "resolveReviewThreads dry-run must return a status.");
-    assert.notEqual(result.status, "skipped", "resolveReviewThreads dry-run with thread ids must not skip as if none were selected.");
+    assert.equal(result.status, "planned", "resolveReviewThreads dry-run must return planned, not failed/skipped.");
     assert.equal(result.prNumber, prNumber);
     assert.ok(Array.isArray(result.resolvedThreadIds), "resolveReviewThreads must report resolvedThreadIds.");
     assert.ok(Array.isArray(result.skippedThreadIds), "resolveReviewThreads must report skippedThreadIds.");
@@ -898,7 +913,12 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
       evidencePath: null,
     });
     assert.ok(published && typeof published.status === "string", "publishLaneReviewFeedback must return a status.");
-    assert.ok(published.body === null || typeof published.body === "string", "publish payload body must be string or null.");
+    assert.ok(
+      published.status === "planned" || published.status === "published",
+      "publishLaneReviewFeedback dry-run must return planned or published, not failed/skipped/disabled.",
+    );
+    assert.ok(typeof published.body === "string" && published.body.trim().length > 0, "publish payload body must be a non-empty string.");
+    assert.ok(published.marker === null || (typeof published.marker === "string" && published.marker.trim().length > 0), "publish payload marker must be null or non-empty.");
   }
 
   if (caps.loadReviewSnapshot === true) {
@@ -908,11 +928,12 @@ async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: Role
     assert.ok(snapshot?.item, "loadReviewSnapshot must return a review item.");
     assertReviewItemShape(snapshot.item, adapter.id);
     assert.ok(Array.isArray(snapshot.unavailable), "loadReviewSnapshot must report unavailable fields.");
-    // Snapshot is the richer load path for feedback and marker semantics.
-    assert.ok(
-      snapshot.item.feedback.length > 0 || snapshot.item.conversations.length > 0 || snapshot.item.checks.length > 0,
-      "loadReviewSnapshot must surface feedback, conversations, or checks from the fixture corpus.",
-    );
+    // Snapshot is the richer load path for feedback and thread semantics.
+    assert.ok(snapshot.item.feedback.length > 0, "loadReviewSnapshot must surface at least one feedback row from fixtures.");
+    for (const feedback of snapshot.item.feedback) {
+      assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider");
+      assert.ok(feedback.summary.trim().length > 0);
+    }
   }
 
   assert.ok(
@@ -982,12 +1003,16 @@ async function verifyCiRoleSuite(adapter: QubeAdapterContract, harness: RoleHarn
     }, /unsupported/i);
   }
   if (isSupported(declared, "trigger-workflow-run")) {
-    // Supported triggers must be first-class subject methods with an observable non-void result.
+    // Supported triggers must be first-class subject methods with an observable successful result.
     const triggerable = subject as { triggerWorkflowRun?: () => unknown | Promise<unknown> };
     assert.equal(typeof triggerable.triggerWorkflowRun, "function", "supported trigger-workflow-run requires subject.triggerWorkflowRun().");
     const result = await triggerable.triggerWorkflowRun!();
-    assert.notEqual(result, undefined, "supported triggerWorkflowRun must return an observable result, not a silent no-op.");
-    assert.notEqual(result, null, "supported triggerWorkflowRun must return an observable result, not null.");
+    assert.ok(result && typeof result === "object", "supported triggerWorkflowRun must return an object result.");
+    const status = (result as { status?: string }).status;
+    assert.ok(
+      status === "planned" || status === "completed" || status === "success" || status === "pass",
+      "supported triggerWorkflowRun must return a successful status (planned/completed/success/pass).",
+    );
   }
 }
 
