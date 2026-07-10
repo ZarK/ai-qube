@@ -5,8 +5,8 @@ import { fileURLToPath } from "node:url";
 
 import type { RiskCard, RiskCardCatalogValidation } from "./types.js";
 
-const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const catalogPath = join(packageRoot, "assets", "catalog.json");
+const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+const catalogPath = join(packageRoot, "assets", "risk-cards", "catalog.json");
 
 let cachedCards: readonly RiskCard[] | null = null;
 

@@ -21,7 +21,7 @@ describe('package publish surface safety', () => {
   });
 
   it('declares the intended package surface and dry-run pack check', () => {
-    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'docs/migration.md', 'prompts/', 'README.md']);
+    assert.deepEqual(pkg.files, ['bin/', 'dist/', 'assets/', 'docs/migration.md', 'prompts/', 'README.md']);
     assert.equal(pkg.bin.aie, 'bin/run');
     assert.equal(pkg.main, './dist/index.js');
     assert.equal(pkg.types, './dist/index.d.ts');
@@ -61,7 +61,7 @@ describe('package publish surface safety', () => {
   });
 
   it('keeps dependencies minimal and exact', () => {
-    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli', '@tjalve/qube-core', '@tjalve/qube-risk-cards']);
+    assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@tjalve/qube-cli', '@tjalve/qube-core']);
     assert.deepEqual(Object.keys(pkg.devDependencies).sort(), ['@types/node', 'typescript']);
     assert.equal(pkg.oclif, undefined);
 

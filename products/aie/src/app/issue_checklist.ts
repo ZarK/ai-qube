@@ -5,6 +5,7 @@ export interface IssueChecklistSummary {
   issue: {
     number: number;
     title: string;
+    body: string;
     state: GitHubIssue['state'];
     url: string;
   };
@@ -39,7 +40,7 @@ export interface ChecklistUpdateOptions {
 }
 
 function issueSummary(issue: GitHubIssue): IssueChecklistSummary['issue'] {
-  return { number: issue.number, title: issue.title, state: issue.state, url: issue.url };
+  return { number: issue.number, title: issue.title, body: issue.body ?? '', state: issue.state, url: issue.url };
 }
 
 function ensureGhSuccess(operation: string, result: Awaited<ReturnType<typeof runGh>>): void {

@@ -526,8 +526,8 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand));
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = []): Promise<LaneEvidence | null> {
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,

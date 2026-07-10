@@ -40,14 +40,14 @@
   "files": [
     "bin/",
     "dist/",
+    "assets/",
     "docs/migration.md",
     "prompts/",
     "README.md"
   ],
   "dependencies": {
     "@tjalve/qube-cli": "0.2.0",
-    "@tjalve/qube-core": "0.2.1",
-    "@tjalve/qube-risk-cards": "0.1.0"
+    "@tjalve/qube-core": "0.2.1"
   },
   "optionalDependencies": {
     "@tjalve/qube-adapter-github": "workspace:*",
