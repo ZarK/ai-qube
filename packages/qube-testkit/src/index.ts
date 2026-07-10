@@ -7,6 +7,7 @@ export type {
   RoleHarnessInput,
   ConnectionHarness,
   IgnoredCapability,
+  MutationBoundary,
   RoleHarness,
   AdapterHarnessDescriptor,
 } from "./types.js";
@@ -17,6 +18,11 @@ export {
   defineCiProviderHarness,
   defineAdapterHarness,
 } from "./descriptor.js";
+
+export {
+  markFixtureTransport,
+  FIXTURE_TRANSPORT_MARKER,
+} from "./fixtures.js";
 
 export {
   verifyAdapterHarness,

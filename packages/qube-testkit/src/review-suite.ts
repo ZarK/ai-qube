@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-import type { QubeAdapterContract, ReviewForgeCapabilities, ReviewForgeProvider } from "@tjalve/qube-core";
+import type { QubeAdapterContract, ReviewForgeCapabilities, ReviewForgeProvider, ReviewItem } from "@tjalve/qube-core";
 import {
   normalizeReviewFinding,
   normalizeReviewItem,
@@ -12,40 +12,60 @@ import {
   isSupported,
   REVIEW_DECLARATION_FLAGS,
 } from "./capabilities.js";
-import { createSubject } from "./descriptor.js";
-import { assertReviewItemShape } from "./fixtures.js";
+import { assertMutationAllowed, assertReviewItemShape } from "./fixtures.js";
 import type { RoleHarness } from "./types.js";
+
+async function loadReviewItem(
+  provider: ReviewForgeProvider,
+  caps: ReviewForgeCapabilities,
+  scenarios: NonNullable<RoleHarness["reviewScenarios"]>,
+): Promise<ReviewItem> {
+  if (scenarios.fixtureReviewKey) {
+    return provider.getReviewItem(scenarios.fixtureReviewKey);
+  }
+  if (caps.findCurrentBranchReview === true) {
+    const item = await provider.findReviewForCurrentBranch();
+    assert.ok(item, "Supported review load must yield a review item for the current branch or fixtureReviewKey.");
+    return item;
+  }
+  assert.fail("Review suite requires reviewScenarios.fixtureReviewKey when findCurrentBranchReview is false.");
+}
 
 export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harness: RoleHarness): Promise<void> {
   const scenarios = harness.reviewScenarios;
   assert.ok(scenarios, "Review forge harness must supply reviewScenarios.");
-  const provider = await createSubject(harness) as ReviewForgeProvider;
+  const transport = await harness.createFixtureTransport();
+  const provider = await harness.createSubject(transport) as ReviewForgeProvider;
   const caps = provider.capabilities();
   const declared = declarationMap(adapter);
 
-  if (isSupported(declared, "load-pull-request") || isSupported(declared, "read-merge-blockers") || isSupported(declared, "read-review-threads")) {
-    assert.equal(caps.findCurrentBranchReview, true);
+  if (isSupported(declared, "load-pull-request")) {
+    assert.equal(caps.findCurrentBranchReview, true, "load-pull-request requires findCurrentBranchReview=true.");
     assert.equal(caps.loadReview, true, "load-pull-request requires loadReview=true.");
     const item = await provider.findReviewForCurrentBranch();
     assert.ok(item, "Supported review load fixture must yield a review item for the current branch.");
     assertReviewItemShape(item, adapter.id);
-    // Observe loadReview via getReviewItem, not only findCurrentBranchReview.
     const loaded = await provider.getReviewItem(item.key);
     assertReviewItemShape(loaded, adapter.id);
     assert.equal(loaded.key.id, item.key.id);
-    // Codec round-trip through the shared review model.
     const roundTrip = normalizeReviewItem(loaded);
     assert.equal(roundTrip.key.id, loaded.key.id);
     assert.equal(roundTrip.title, loaded.title);
     assert.equal(roundTrip.mergeability, loaded.mergeability);
     assert.equal(roundTrip.reviewDecision, loaded.reviewDecision);
 
-    // Feedback classification: every feedback row must carry source + trust labels.
     for (const feedback of loaded.feedback) {
       assert.ok(feedback.source, "Review feedback must classify its source.");
       assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider", "Review feedback must classify trust.");
       assert.ok(feedback.summary.trim().length > 0, "Review feedback summary must be non-empty.");
     }
+  }
+
+  // Independent read capabilities use loadReview + fixture or discovery keys, not forced current-branch discovery.
+  if (isSupported(declared, "read-merge-blockers") || isSupported(declared, "read-review-threads")) {
+    assert.equal(caps.loadReview, true, "read-merge-blockers/read-review-threads require loadReview=true.");
+    const loaded = await loadReviewItem(provider, caps, scenarios);
+    assertReviewItemShape(loaded, adapter.id);
 
     if (isSupported(declared, "read-merge-blockers")) {
       assert.ok(Array.isArray(loaded.mergeBlockers), "Review item must expose mergeBlockers array.");
@@ -72,7 +92,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
 
   if (isSupported(declared, "request-review-gate")) {
     assert.equal(caps.planReviewRequests, true);
-    const item = await provider.findReviewForCurrentBranch();
+    const item = await loadReviewItem(provider, caps, scenarios);
     assert.ok(item, "request-review-gate suite requires a loadable review item.");
     const plan = provider.planReviewRequest(item, scenarios.reviewPolicy);
     assert.ok(plan && Array.isArray(plan.actions), "planReviewRequest must return an action plan.");
@@ -81,8 +101,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
       assert.ok(action.kind, "Review request plan actions must declare a kind.");
     }
     if (caps.applyReviewRequests === true) {
-      // Observe advertised apply against the real planned actions. Stripping actions would hide
-      // implementations that throw only when non-empty plans are applied.
+      assertMutationAllowed(harness.mutationBoundary, transport, harness.role, harness.liveMutationEnvVar);
       assert.ok(plan.actions.length > 0, "applyReviewRequests observation requires a non-empty plan.");
       const applied = await provider.apply(plan);
       assert.ok(Array.isArray(applied), "applyReviewRequests=true requires apply() to return action results.");
@@ -101,7 +120,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
   if (isSupported(declared, "resolve-review-threads") || caps.resolveReviewThreads === true) {
     assert.equal(caps.resolveReviewThreads, true, "resolveReviewThreads flag must be true when resolution is advertised.");
     assert.equal(typeof provider.resolveReviewThreads, "function", "resolve-review-threads requires a resolveReviewThreads method.");
-    const item = await provider.getReviewItem((await provider.findReviewForCurrentBranch())!.key);
+    const item = await loadReviewItem(provider, caps, scenarios);
     const prNumber = Number(item.key.id);
     assert.ok(Number.isInteger(prNumber) && prNumber > 0, "resolveReviewThreads suite requires a numeric review item id.");
     const fromItem = item.conversations.filter(conversation => !conversation.resolved).map(conversation => conversation.id);
@@ -124,7 +143,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
 
   if (caps.publishLaneReview === true || caps.publishLaneReviewInline === true) {
     assert.equal(typeof provider.publishLaneReviewFeedback, "function", "publish flags require publishLaneReviewFeedback().");
-    const item = await provider.findReviewForCurrentBranch();
+    const item = await loadReviewItem(provider, caps, scenarios);
     assert.ok(item, "publishLaneReview suite requires a loadable review item.");
     const prNumber = Number(item.key.id);
     assert.ok(Number.isInteger(prNumber) && prNumber > 0, "publishLaneReview requires a numeric review item id.");
@@ -156,13 +175,12 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
   }
 
   if (caps.loadReviewSnapshot === true) {
-    const item = await provider.findReviewForCurrentBranch();
+    const item = await loadReviewItem(provider, caps, scenarios);
     assert.ok(item, "loadReviewSnapshot suite requires a loadable review item.");
     const snapshot = await provider.loadReviewSnapshot(item.key);
     assert.ok(snapshot?.item, "loadReviewSnapshot must return a review item.");
     assertReviewItemShape(snapshot.item, adapter.id);
     assert.ok(Array.isArray(snapshot.unavailable), "loadReviewSnapshot must report unavailable fields.");
-    // Snapshot is the richer load path for feedback and thread semantics.
     assert.ok(snapshot.item.feedback.length > 0, "loadReviewSnapshot must surface at least one feedback row from fixtures.");
     for (const feedback of snapshot.item.feedback) {
       assert.ok(feedback.trust === "untrusted" || feedback.trust === "trusted-provider");

@@ -42,6 +42,8 @@ function defineRoleHarness<TTransport, TSubject>(
     fixtureFiles: Object.freeze([...input.fixtureFiles]),
     createFixtureTransport: input.createFixtureTransport,
     createSubject: async (transport: unknown) => input.createSubject(transport as TTransport),
+    mutationBoundary: input.mutationBoundary,
+    liveMutationEnvVar: input.liveMutationEnvVar,
     capabilityCases: Object.freeze(adapterCases),
     workScenarios: input.workScenarios,
     reviewScenarios: input.reviewScenarios,
@@ -216,27 +218,65 @@ export function assertDescriptor(descriptor: AdapterHarnessDescriptor): void {
   }
 
   if (descriptor.roles.work) {
-    const workScenarios = descriptor.roles.work.workScenarios;
-    assert.ok(workScenarios?.statusPolicy, "Work provider harness must supply workScenarios.statusPolicy for the shared status suite.");
+    const workHarness = descriptor.roles.work;
     assert.ok(
-      workScenarios.createLargeResultTransport,
-      "Work provider harness must supply workScenarios.createLargeResultTransport for list completeness coverage.",
+      workHarness.mutationBoundary === "fixture-only" || workHarness.mutationBoundary === "live-opt-in",
+      "Work provider harness must set mutationBoundary to fixture-only or live-opt-in.",
     );
-    assert.ok(
-      workScenarios.createMalformedTransport,
-      "Work provider harness must supply workScenarios.createMalformedTransport for malformed-payload coverage.",
-    );
-    assert.ok(
-      workScenarios.singleShotHighLimit === true || workScenarios.createMultiPageTransport,
-      "Work provider harness must declare singleShotHighLimit or supply createMultiPageTransport for pagination coverage.",
-    );
+    if (workHarness.mutationBoundary === "live-opt-in") {
+      assert.ok(workHarness.liveMutationEnvVar?.trim(), "Work provider live-opt-in harness must set liveMutationEnvVar.");
+    }
+    const workScenarios = workHarness.workScenarios;
+    assert.ok(workScenarios?.statusPolicy && typeof workScenarios.statusPolicy === "object", "Work provider harness must supply workScenarios.statusPolicy for the shared status suite.");
+    const queueSupported = declaredList.some(capability => capability.id === "work-item-queue" && capability.support === "supported");
+    const mapSupported = declaredList.some(capability => capability.id === "map-work-item" && capability.support === "supported");
+    if (queueSupported) {
+      assert.ok(
+        workScenarios.createLargeResultTransport,
+        "Work provider harness must supply workScenarios.createLargeResultTransport when work-item-queue is supported.",
+      );
+      assert.ok(
+        workScenarios.createMalformedTransport,
+        "Work provider harness must supply workScenarios.createMalformedTransport when work-item-queue is supported.",
+      );
+      assert.ok(
+        workScenarios.createMultiPageTransport,
+        "Work provider harness must supply workScenarios.createMultiPageTransport for multi-page pagination coverage when work-item-queue is supported.",
+      );
+    }
+    if (mapSupported && !queueSupported) {
+      const keyCount = (workScenarios.fixtureWorkKeys?.length ?? 0)
+        || Object.keys(workScenarios.expectedWorkById ?? {}).length;
+      assert.ok(
+        keyCount >= 2,
+        "map-work-item without work-item-queue requires fixtureWorkKeys or expectedWorkById with at least two keys.",
+      );
+    }
   }
   if (descriptor.roles.review) {
-    assert.ok(descriptor.roles.review.reviewScenarios?.reviewPolicy, "Review forge harness must supply reviewScenarios.reviewPolicy for the shared review suite.");
+    const reviewHarness = descriptor.roles.review;
     assert.ok(
-      descriptor.roles.review.reviewScenarios?.sampleFindings && descriptor.roles.review.reviewScenarios.sampleFindings.length >= 2,
+      reviewHarness.mutationBoundary === "fixture-only" || reviewHarness.mutationBoundary === "live-opt-in",
+      "Review forge harness must set mutationBoundary to fixture-only or live-opt-in.",
+    );
+    if (reviewHarness.mutationBoundary === "live-opt-in") {
+      assert.ok(reviewHarness.liveMutationEnvVar?.trim(), "Review forge live-opt-in harness must set liveMutationEnvVar.");
+    }
+    assert.ok(reviewHarness.reviewScenarios?.reviewPolicy, "Review forge harness must supply reviewScenarios.reviewPolicy for the shared review suite.");
+    assert.ok(
+      reviewHarness.reviewScenarios?.sampleFindings && reviewHarness.reviewScenarios.sampleFindings.length >= 2,
       "Review forge harness must supply sampleFindings with at least two findings.",
     );
+    const needsFixtureKey = declaredList.some(capability =>
+      (capability.id === "read-merge-blockers" || capability.id === "read-review-threads" || capability.id === "request-review-gate" || capability.id === "resolve-review-threads")
+      && capability.support === "supported",
+    ) && !declaredList.some(capability => capability.id === "load-pull-request" && capability.support === "supported");
+    if (needsFixtureKey) {
+      assert.ok(
+        reviewHarness.reviewScenarios?.fixtureReviewKey,
+        "Review forge harness must supply fixtureReviewKey when independent review reads are supported without load-pull-request.",
+      );
+    }
   }
   if (descriptor.roles.ci) {
     assert.ok(descriptor.roles.ci.ciScenarios, "CI provider harness must supply ciScenarios for the shared CI suite.");

@@ -4,7 +4,62 @@ import { isAbsolute, join } from "node:path";
 
 import type { ReviewItem, WorkItem } from "@tjalve/qube-core";
 
-import type { RoleHarness } from "./types.js";
+import type { MutationBoundary, RoleHarness } from "./types.js";
+
+/** Marks a transport as fixture-isolated so offline mutation suites can apply safely. */
+export const FIXTURE_TRANSPORT_MARKER = Symbol.for("qube-testkit.fixture-transport");
+
+export function markFixtureTransport<T>(transport: T): T {
+  assert.ok(
+    transport !== null && (typeof transport === "object" || typeof transport === "function"),
+    "Fixture transport must be an object or function so the isolation marker can be attached.",
+  );
+  Object.defineProperty(transport as object, FIXTURE_TRANSPORT_MARKER, {
+    value: true,
+    enumerable: false,
+    configurable: false,
+    writable: false,
+  });
+  return transport;
+}
+
+export function isFixtureTransport(transport: unknown): boolean {
+  return !!transport
+    && (typeof transport === "object" || typeof transport === "function")
+    && (transport as Record<symbol, unknown>)[FIXTURE_TRANSPORT_MARKER] === true;
+}
+
+/**
+ * Enforce mutation isolation before provider.apply runs in the shared suites.
+ * Fixture-only mode requires a marked fixture transport. Live opt-in requires an env gate.
+ */
+export function assertMutationAllowed(
+  boundary: MutationBoundary | undefined,
+  transport: unknown,
+  role: string,
+  liveMutationEnvVar?: string,
+): void {
+  assert.ok(
+    boundary === "fixture-only" || boundary === "live-opt-in",
+    `${role} harness must set mutationBoundary to fixture-only or live-opt-in before shared mutation observation.`,
+  );
+  if (boundary === "fixture-only") {
+    assert.equal(
+      isFixtureTransport(transport),
+      true,
+      `${role} fixture-only mutations require createFixtureTransport() to return markFixtureTransport(...).`,
+    );
+    return;
+  }
+  assert.ok(
+    liveMutationEnvVar && liveMutationEnvVar.trim().length > 0,
+    `${role} live-opt-in mutations require liveMutationEnvVar.`,
+  );
+  assert.ok(
+    process.env[liveMutationEnvVar] === "1",
+    `${role} live-opt-in mutations require ${liveMutationEnvVar}=1; default offline suites must not mutate live providers.`,
+  );
+}
 
 export function matchesPattern(message: string, pattern: RegExp): boolean {
   // Clone without the global flag so lastIndex cannot poison repeated suite runs.

@@ -8,9 +8,11 @@ import {
   defineCiProviderHarness,
   defineReviewForgeHarness,
   defineWorkProviderHarness,
+  markFixtureTransport,
 } from "@tjalve/qube-testkit";
 import {
   assertGitHubOperationSupported,
+  attachBlockedBy,
   createGitHubReviewForgeProvider,
   createGitHubWorkProvider,
   githubAdapter,
@@ -63,27 +65,85 @@ function createCountingExec(issues) {
   };
   exec.listRequests = () => state.listRequests;
   exec.comments = () => state.comments;
-  return exec;
+  return markFixtureTransport(exec);
+}
+
+/**
+ * Multi-page fixture transport: successive list pages of pageSize items, using real
+ * GitHub codecs for mapping and blockedBy aggregation after exact unique aggregation.
+ */
+function createMultiPageTransport(issues, pageSize = 2) {
+  const state = { listRequests: 0 };
+  const baseExec = createCountingExec(issues);
+  const transport = markFixtureTransport({
+    kind: "multi-page",
+    pageSize,
+    issues,
+    listRequests: () => state.listRequests,
+    recordListRequest: () => {
+      state.listRequests += 1;
+    },
+    baseExec,
+  });
+  return transport;
+}
+
+function createWorkSubject(transport) {
+  if (transport?.kind === "multi-page") {
+    const base = createGitHubWorkProvider({ exec: transport.baseExec, includeAssignees: true });
+    return {
+      id: base.id,
+      capabilities: () => base.capabilities(),
+      async listOpenWorkItems() {
+        // Deterministic multi-page traversal: one list request per page, exact unique aggregation.
+        const pageSize = transport.pageSize;
+        const loaded = [];
+        for (let offset = 0; ; offset += pageSize) {
+          transport.recordListRequest();
+          const slice = transport.issues.slice(offset, offset + pageSize);
+          for (const raw of slice) {
+            loaded.push(await base.getWorkItem({ providerId: "github", id: String(raw.number) }));
+          }
+          if (slice.length < pageSize) break;
+        }
+        return attachBlockedBy(loaded);
+      },
+      getWorkItem: key => base.getWorkItem(key),
+      planStatusSync: (items, policy) => base.planStatusSync(items, policy),
+      planStart: (item, policy) => base.planStart(item, policy),
+      planPause: (item, openItems, policy) => base.planPause(item, openItems, policy),
+      planComplete: (item, dependents, policy) => base.planComplete(item, dependents, policy),
+      apply: plan => base.apply(plan),
+    };
+  }
+  return createGitHubWorkProvider({ exec: transport, includeAssignees: true });
 }
 
 const work = defineWorkProviderHarness({
   fixtureRoot,
   fixtureFiles: ["fixtures/conformance-work-items.json"],
+  mutationBoundary: "fixture-only",
   createFixtureTransport: () => createCountingExec(workItems),
-  createSubject: exec => createGitHubWorkProvider({ exec, includeAssignees: true }),
-  getListRequestCount: transport => transport.listRequests(),
+  createSubject: createWorkSubject,
+  getListRequestCount: transport => {
+    if (transport?.kind === "multi-page") return transport.listRequests();
+    return transport.listRequests();
+  },
   workScenarios: {
     statusPolicy,
     createLargeResultTransport: () => createCountingExec(workItems),
     expectedLargeResultCount: workItems.length,
-    maxListRequests: 1,
+    maxListRequests: 3,
     singleShotHighLimit: true,
-    createMalformedTransport: () => async args => {
+    createMultiPageTransport: () => createMultiPageTransport(workItems, 2),
+    expectedMultiPageItemCount: workItems.length,
+    minMultiPageRequests: 3,
+    createMalformedTransport: () => markFixtureTransport(async args => {
       if (args.join(" ") === workListCommand) {
         return { args, exitCode: 0, stdout: "{not-json", stderr: "" };
       }
       return { args, exitCode: 1, stdout: "", stderr: `unexpected fixture call: ${args.join(" ")}` };
-    },
+    }),
     expectedWorkById: {
       42: { status: "ready", priority: "high", title: "Fixture ready issue" },
       43: { status: "blocked", priority: "medium", title: "Fixture blocked issue" },
@@ -92,16 +152,17 @@ const work = defineWorkProviderHarness({
       46: { status: "ready", priority: "low", title: "Fixture low-priority issue" },
     },
   },
-  // Supported work capabilities are covered by the shared work suite + fixtures.
 });
 
 const review = defineReviewForgeHarness({
   fixtureRoot,
   fixtureFiles: ["fixtures/conformance-review.json"],
-  createFixtureTransport: () => reviewExec(reviewFixture),
+  mutationBoundary: "fixture-only",
+  createFixtureTransport: () => markFixtureTransport(reviewExec(reviewFixture)),
   createSubject: exec => createGitHubReviewForgeProvider({ exec }),
   reviewScenarios: {
     reviewPolicy: { adapter: "github", reviewers: ["@copilot"], requestText: "" },
+    fixtureReviewKey: { providerId: "github", id: String(reviewFixture.number) },
     sampleFindings: [
       { severity: "blocking", message: "inline blocker", location: { path: "src/a.ts", line: 10, side: "destination" } },
       { severity: "advisory", message: "body-only note" },
@@ -221,7 +282,6 @@ function reviewExec(pullRequest) {
       };
     }
     if (args[0] === "api" && args[1] === "graphql") {
-      const joined = args.join(" ");
       if (joined.includes("reviewThreads")) {
         return {
           args,

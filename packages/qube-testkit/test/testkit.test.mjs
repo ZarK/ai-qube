@@ -8,6 +8,7 @@ import {
   defineAdapterHarness,
   defineCiProviderHarness,
   defineWorkProviderHarness,
+  markFixtureTransport,
   verifyAdapterHarness,
 } from "../dist/index.js";
 
@@ -268,18 +269,21 @@ describe("adapter conformance testkit", () => {
         work: defineWorkProviderHarness({
           fixtureRoot: root,
           fixtureFiles: ["fixtures/work.json"],
-          createFixtureTransport: () => items,
-          createSubject: transport => createWorkProvider(transport, {
+          mutationBoundary: "fixture-only",
+          createFixtureTransport: () => markFixtureTransport({ items }),
+          createSubject: transport => createWorkProvider(transport.items, {
             listOpenWork: false,
             loadWork: false,
             planStatusSync: false,
           }),
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
-            createLargeResultTransport: () => items,
+            createLargeResultTransport: () => markFixtureTransport({ items, listRequests: 0 }),
             expectedLargeResultCount: 2,
-            createMalformedTransport: () => items,
-            singleShotHighLimit: true,
+            createMalformedTransport: () => markFixtureTransport({ items: "malformed" }),
+            createMultiPageTransport: () => markFixtureTransport({ items, listRequests: 0, multiPage: true }),
+            expectedMultiPageItemCount: 2,
+            minMultiPageRequests: 2,
           },
           getListRequestCount: () => 1,
         }),
@@ -305,25 +309,54 @@ describe("adapter conformance testkit", () => {
         work: defineWorkProviderHarness({
           fixtureRoot: root,
           fixtureFiles: ["fixtures/work.json"],
-          createFixtureTransport: () => items,
-          createSubject: transport => ({
-            ...createWorkProvider(transport, {
-              commentMutations: true,
-              planLifecycleMutations: false,
-              applyLifecycleMutations: false,
-            }),
-            async apply() {
-              return [{ actionId: "comment", status: "failed", failure: { operation: "comment", cause: "no transport", nextAction: "fix" }, details: {} }];
-            },
-          }),
+          mutationBoundary: "fixture-only",
+          createFixtureTransport: () => markFixtureTransport({ items, listRequests: 0 }),
+          createSubject: transport => {
+            const base = {
+              ...createWorkProvider(transport.items, {
+                commentMutations: true,
+                planLifecycleMutations: false,
+                applyLifecycleMutations: false,
+              }),
+              async apply() {
+                return [{ actionId: "comment", status: "failed", failure: { operation: "comment", cause: "no transport", nextAction: "fix" }, details: {} }];
+              },
+            };
+            if (transport.multiPage) {
+              return {
+                ...base,
+                async listOpenWorkItems() {
+                  const pageSize = 1;
+                  const all = [];
+                  for (let offset = 0; ; offset += pageSize) {
+                    transport.listRequests += 1;
+                    const slice = transport.items.slice(offset, offset + pageSize);
+                    all.push(...slice);
+                    if (slice.length < pageSize) break;
+                  }
+                  return all;
+                },
+              };
+            }
+            return {
+              ...base,
+              async listOpenWorkItems() {
+                transport.listRequests += 1;
+                return base.listOpenWorkItems();
+              },
+            };
+          },
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
-            createLargeResultTransport: () => items,
+            createLargeResultTransport: () => markFixtureTransport({ items, listRequests: 0 }),
             expectedLargeResultCount: 2,
-            createMalformedTransport: () => items,
-            singleShotHighLimit: true,
+            createMalformedTransport: () => markFixtureTransport({ items: "malformed" }),
+            createMultiPageTransport: () => markFixtureTransport({ items, listRequests: 0, multiPage: true }),
+            expectedMultiPageItemCount: 2,
+            minMultiPageRequests: 2,
+            maxListRequests: 4,
           },
-          getListRequestCount: () => 1,
+          getListRequestCount: transport => transport.listRequests,
         }),
       },
     })), /commentMutations apply must complete/);
@@ -356,7 +389,8 @@ describe("adapter conformance testkit", () => {
         work: defineWorkProviderHarness({
           fixtureRoot: root,
           fixtureFiles: ["fixtures/work.json"],
-          createFixtureTransport: () => ({ items, listRequests: 0 }),
+          mutationBoundary: "fixture-only",
+          createFixtureTransport: () => markFixtureTransport({ items, listRequests: 0 }),
           createSubject: transport => {
             if (transport.items === "malformed") {
               return {
@@ -367,6 +401,23 @@ describe("adapter conformance testkit", () => {
               };
             }
             const provider = createWorkProvider(transport.items);
+            if (transport.multiPage) {
+              return {
+                ...provider,
+                async listOpenWorkItems() {
+                  const pageSize = 2;
+                  const all = [];
+                  for (let offset = 0; ; offset += pageSize) {
+                    transport.listRequests += 1;
+                    listRequests = transport.listRequests;
+                    const slice = transport.items.slice(offset, offset + pageSize);
+                    all.push(...slice);
+                    if (slice.length < pageSize) break;
+                  }
+                  return all;
+                },
+              };
+            }
             return {
               ...provider,
               async listOpenWorkItems() {
@@ -379,17 +430,87 @@ describe("adapter conformance testkit", () => {
           getListRequestCount: transport => transport.listRequests,
           workScenarios: {
             statusPolicy: { labels: { priorities: [], statuses: [] } },
-            createLargeResultTransport: () => ({ items, listRequests: 0 }),
+            createLargeResultTransport: () => markFixtureTransport({ items, listRequests: 0 }),
             expectedLargeResultCount: 5,
-            maxListRequests: 1,
+            maxListRequests: 3,
             singleShotHighLimit: true,
-            createMalformedTransport: () => ({ items: "malformed" }),
+            createMultiPageTransport: () => markFixtureTransport({ items, listRequests: 0, multiPage: true }),
+            expectedMultiPageItemCount: 5,
+            minMultiPageRequests: 3,
+            createMalformedTransport: () => markFixtureTransport({ items: "malformed" }),
           },
         }),
       },
     }));
     assert.ok(listRequests >= 1);
   });
+
+  it("rejects unmarked fixture transports for offline mutation observation", async () => {
+    const root = makeFixtureRoot({ "fixtures/work.json": [{ id: "1" }, { id: "2" }] });
+    const items = [
+      workItem("1", { status: "ready", priority: "high", body: "- [x] a", checklist: { total: 1, completed: 1 } }),
+      workItem("2", {
+        status: "blocked",
+        priority: "low",
+        body: "- [ ] b",
+        checklist: { total: 1, completed: 0 },
+        blockers: [{ providerId: "fixture", id: "1" }],
+      }),
+    ];
+    await assert.rejects(() => verifyAdapterHarness(defineAdapterHarness({
+      adapter: workAdapter(),
+      roles: {
+        work: defineWorkProviderHarness({
+          fixtureRoot: root,
+          fixtureFiles: ["fixtures/work.json"],
+          mutationBoundary: "fixture-only",
+          createFixtureTransport: () => ({ items, listRequests: 0 }),
+          createSubject: transport => {
+            const base = createWorkProvider(transport.items, {
+              planLifecycleMutations: false,
+              applyLifecycleMutations: false,
+              commentMutations: true,
+            });
+            if (transport.multiPage) {
+              return {
+                ...base,
+                async listOpenWorkItems() {
+                  const pageSize = 1;
+                  const all = [];
+                  for (let offset = 0; ; offset += pageSize) {
+                    transport.listRequests += 1;
+                    const slice = transport.items.slice(offset, offset + pageSize);
+                    all.push(...slice);
+                    if (slice.length < pageSize) break;
+                  }
+                  return all;
+                },
+              };
+            }
+            return {
+              ...base,
+              async listOpenWorkItems() {
+                transport.listRequests += 1;
+                return base.listOpenWorkItems();
+              },
+            };
+          },
+          workScenarios: {
+            statusPolicy: { labels: { priorities: [], statuses: [] } },
+            createLargeResultTransport: () => markFixtureTransport({ items, listRequests: 0 }),
+            expectedLargeResultCount: 2,
+            createMalformedTransport: () => markFixtureTransport({ items: "malformed" }),
+            createMultiPageTransport: () => markFixtureTransport({ items, listRequests: 0, multiPage: true }),
+            expectedMultiPageItemCount: 2,
+            minMultiPageRequests: 2,
+            maxListRequests: 4,
+          },
+          getListRequestCount: transport => transport.listRequests,
+        }),
+      },
+    })), /markFixtureTransport|fixture-only mutations require/);
+  });
+
 
 
   it("rejects duplicate capability ids", () => {

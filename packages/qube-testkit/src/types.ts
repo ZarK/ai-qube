@@ -4,10 +4,18 @@ import type {
   ConnectionProbeOptions,
   ConnectionProbeResult,
   QubeAdapterContract,
+  ReviewItemKey,
   WorkItem,
+  WorkItemKey,
 } from "@tjalve/qube-core";
 
 export type AdapterRole = "work-provider" | "review-forge" | "ci-provider";
+
+/**
+ * Offline suites that call provider.apply must declare fixture-only mutation.
+ * Live mutation suites must opt in explicitly and gate with an environment variable.
+ */
+export type MutationBoundary = "fixture-only" | "live-opt-in";
 
 export interface CapabilityCaseInput<TSubject> {
   readonly capabilityId: string;
@@ -18,8 +26,11 @@ export interface CapabilityCaseInput<TSubject> {
 
 /** Shared work-provider scenario inputs consumed by the reusable suite. */
 export interface WorkRoleScenarios {
-  /** Policy object passed to planStatusSync for status-mapping cases. */
-  readonly statusPolicy: unknown;
+  /**
+   * Policy object passed to planStatusSync / lifecycle planners.
+   * Adapters supply their native policy shape; the suite only requires a non-null object.
+   */
+  readonly statusPolicy: object;
   /**
    * Optional multi-page / large-result transport. When set, the shared suite
    * constructs the subject from this transport and asserts list completeness
@@ -29,16 +40,24 @@ export interface WorkRoleScenarios {
   readonly expectedLargeResultCount?: number;
   readonly maxListRequests?: number;
   /**
-   * When true, the adapter uses a single high-limit list request rather than
-   * multi-page cursors. When false/omitted, createMultiPageTransport is required.
+   * When true, the large-result path uses one high-limit list request.
+   * This is not a substitute for multi-page pagination coverage.
    */
   readonly singleShotHighLimit?: boolean;
-  /** Multi-page transport that must produce at least two list requests. */
+  /**
+   * Multi-page transport that must produce at least two list requests and exact
+   * unique aggregation. Required when work-item-queue is supported.
+   */
   readonly createMultiPageTransport?: () => unknown | Promise<unknown>;
   readonly expectedMultiPageItemCount?: number;
   readonly minMultiPageRequests?: number;
   /** Optional malformed list payload transport; suite expects non-silent failure. */
   readonly createMalformedTransport?: () => unknown | Promise<unknown>;
+  /**
+   * Fixture work keys used when map-work-item is supported without work-item-queue.
+   * When omitted, expectedWorkById keys are used as the map-only corpus.
+   */
+  readonly fixtureWorkKeys?: readonly WorkItemKey[];
   /** Expected provider-neutral mappings keyed by work item id. */
   readonly expectedWorkById?: Readonly<Record<string, {
     readonly status?: WorkItem["status"];
@@ -54,6 +73,11 @@ export interface ReviewRoleScenarios {
     readonly reviewers: readonly string[];
     readonly requestText: string;
   };
+  /**
+   * Fixture review key used when findCurrentBranchReview is false or when load
+   * paths should not require current-branch discovery.
+   */
+  readonly fixtureReviewKey?: ReviewItemKey;
   /** Optional findings used to exercise partitionReviewFindings. */
   readonly sampleFindings?: readonly {
     readonly severity: "blocking" | "advisory";
@@ -95,6 +119,13 @@ export interface RoleHarnessInput<TTransport, TSubject> {
   readonly fixtureFiles: readonly string[];
   readonly createFixtureTransport: () => TTransport | Promise<TTransport>;
   readonly createSubject: (transport: TTransport) => TSubject | Promise<TSubject>;
+  /**
+   * Declares how provider mutations are isolated for offline conformance.
+   * Required for work-provider and review-forge harnesses.
+   */
+  readonly mutationBoundary?: MutationBoundary;
+  /** Required when mutationBoundary is live-opt-in. */
+  readonly liveMutationEnvVar?: string;
   /**
    * Adapter-authored cases supplement the shared role suite for declared
    * capabilities that need provider-specific assertions. Shared suite cases
@@ -146,6 +177,8 @@ export interface RoleHarness {
   readonly fixtureFiles: readonly string[];
   readonly createFixtureTransport: () => unknown | Promise<unknown>;
   readonly createSubject: (transport: unknown) => unknown | Promise<unknown>;
+  readonly mutationBoundary?: MutationBoundary;
+  readonly liveMutationEnvVar?: string;
   readonly capabilityCases: readonly CapabilityCase[];
   readonly workScenarios?: WorkRoleScenarios;
   readonly reviewScenarios?: ReviewRoleScenarios;
