@@ -55,8 +55,16 @@ describe('aie risk cards', () => {
     assert.equal(implementerFaceHasTestObligation('Add optional tests if time permits. Handle errors correctly.'), false);
     assert.equal(implementerFaceHasTestObligation('Ship whatever seems convenient. Tests are useful.'), false);
     assert.equal(implementerFaceHasTestObligation('Create code first. Tests are not necessary.'), false);
+    assert.equal(implementerFaceHasTestObligation('Write APIs that mirror tests.'), false);
+    assert.equal(implementerFaceHasTestObligation('Create production code first while documenting existing tests.'), false);
+    assert.equal(implementerFaceHasTestObligation('Write production code that tests can call.'), false);
+    assert.equal(implementerFaceHasTestObligation('Create a parser used by tests.'), false);
+    assert.equal(implementerFaceHasTestObligation('Add runtime logging so test failures are visible.'), false);
+    assert.equal(implementerFaceHasTestObligation('Existing negative tests already cover this path.'), false);
+    assert.equal(implementerFaceHasTestObligation('Never write a test against private helpers.'), false);
     assert.equal(implementerFaceHasTestObligation('Write a negative test for each false-success path.'), true);
     assert.equal(implementerFaceHasTestObligation('Add a fixture that rejects each unsupported provider combination.'), true);
+    assert.equal(implementerFaceHasTestObligation('Cover a pack or asset-resolution test that fails if a new asset is omitted.'), true);
   });
 
   it('matches issue keywords on token boundaries', () => {

@@ -22,9 +22,13 @@ export const REQUIRED_RISK_CARD_IDS = [
 ] as const;
 
 const KEBAB_CASE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-/** Imperative obligation to ship concrete test/fixture/assert coverage within one sentence. */
-const TEST_OBLIGATION = /\b(?:write|add|ship|cover|include|create)\b[^.!?]{0,80}\b(?:negative\s+)?(?:test|tests|fixture|fixtures|assert|oracle|counterexample)s?\b|\b(?:negative\s+tests?|oracle\s+fixture|malformed[- ]payload\s+fixture|stale-head\s+fixture|concurrent-write\s+fixture)\b/i;
-const TEST_NON_OBLIGATION = /\b(?:optional\s+tests?|no\s+tests?|not\s+(?:required|necessary)|tests?\s+are\s+(?:useful|nice|good|optional)|do\s+not\s+(?:add|write|ship|cover|include|create)\b|don't\s+(?:add|write|ship|cover|include|create)\b)\b/i;
+/**
+ * Imperative obligation where the verb directly governs a test/fixture noun as its object.
+ * A test noun mentioned elsewhere in the sentence ("write APIs that mirror tests",
+ * "existing negative tests cover this") is not an obligation.
+ */
+const TEST_OBLIGATION = /\b(?:write|add|ship|cover|include|create)\s+(?:(?:a|an|the|each|every|one|all|at\s+least(?:\s+one)?)\s+)*(?:(?:negative|positive|oracle|malformed[- ]payload|stale-head|concurrent-write|pack(?:\s+or\s+asset-resolution)?|asset-resolution|focused|production-path)\s+)*(?:test|tests|fixture|fixtures|assert|asserts|counterexample)s?\b/i;
+const TEST_NON_OBLIGATION = /\b(?:optional\s+tests?|no\s+tests?|not\s+(?:required|necessary)|tests?\s+are\s+(?:useful|nice|good|optional)|(?:do\s+not|don't|never)\s+(?:add|write|ship|cover|include|create)\b)\b/i;
 
 let cachedCards: readonly RiskCard[] | null = null;
 
