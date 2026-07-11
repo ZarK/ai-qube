@@ -4,7 +4,7 @@ import { selectNextWork } from '../core/queue_rules.js';
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleIssueSelection, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle.js';
-import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadLayoutSnapshot, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 import { buildPreStartPolicy } from './pre_start_policy.js';
 
 export interface StartServiceResult {
@@ -96,6 +96,7 @@ function selectedWorkLabel(item: WorkItem): string {
   return item.displayId;
 }
 
+
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
   const { selection, dryRun, assign, comment, context } = options;
   if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun, warnings: ['Use command help output for usage.'] });
@@ -162,6 +163,6 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!context.config.assignOnStart) warnings.push('Assignment is disabled by repository policy.');
   if (!context.config.commentOnStart) warnings.push('Started-work comments are disabled by repository policy.');
   const errors = preStartPolicy.ok ? plan.summary.failedActions.map(item => item.failure?.cause ?? item.description) : preStartPolicy.blockers;
-  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config }) : null;
+  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config, layout: await loadLayoutSnapshot(context) }) : null;
   return { ok: plan.ok, action: plan.ok ? action : 'blocked', reason: plan.ok ? reason : blockedReason({ selectedIssueNumber, preStartPolicy, plan }), selectedItem, blockers, activeIssueState: activeState, preStartPolicy, branchName, brief, plan, warnings, errors };
 }

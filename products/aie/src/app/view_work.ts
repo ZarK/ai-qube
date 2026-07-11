@@ -3,7 +3,7 @@ import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, parseWorkChecklist, parseWorkChecklistItems, workItemNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
 import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
-import { githubIssueLifecycleUnsupportedReason, type LifecycleServiceContext } from './lifecycle_common.js';
+import { githubIssueLifecycleUnsupportedReason, loadLayoutSnapshot, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface ViewServiceResult {
   ok: boolean;
@@ -21,6 +21,7 @@ export interface ViewServiceResult {
 function checklistItems(body: string): string[] {
   return parseWorkChecklistItems(body).map(item => item.text);
 }
+
 
 function recommendedAction(issueNumber: number, status: ViewServiceResult['effectiveStatus'], unresolvedBlockers: BlockerDetail[], hasOtherInProgress: boolean): string {
   if (status === 'Closed') return `Issue is closed. Run \`aie deps blocking ${issueNumber}\` to inspect open dependents before advancing related work.`;
@@ -75,7 +76,7 @@ export async function runViewService(options: { issueNumber: number; context: Li
     dependency: { declaredBlockers: blockerNumbers, openBlockers: openBlockers.map(blocker => blocker.number), unresolvedBlockers: unresolvedBlockers.map(blocker => blocker.number), blockers, dependents },
     checklist: { total: checklist.total, checked: checklist.completed, unchecked, items },
     branch: { suggested, current: currentBranch, matches: currentBranch !== null && currentBranch === suggested },
-    brief: buildImplementationBrief({ title: item.title, body: item.body, config: context.config }),
+    brief: buildImplementationBrief({ title: item.title, body: item.body, config: context.config, layout: await loadLayoutSnapshot(context) }),
     warnings,
     recommendedAction: recommendedAction(issueNumber, status, unresolvedBlockers, hasOtherInProgress),
   };

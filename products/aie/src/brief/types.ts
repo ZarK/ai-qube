@@ -27,10 +27,26 @@ export interface BriefLane {
   heuristic: string;
 }
 
+export interface BriefLayoutProject {
+  name: string;
+  path: string;
+  role: string;
+}
+
+export interface BriefLayout {
+  owningProjects: BriefLayoutProject[];
+  omittedProjects: number;
+  boundaryRules: string[];
+  doNotEditPaths: string[];
+  omittedDoNotEditPaths: number;
+  derived: boolean;
+}
+
 export interface ImplementationBrief {
   obligations: BriefObligation[];
   omittedObligations: number;
   matrix: BriefMatrix | null;
+  layout: BriefLayout | null;
   riskCards: BriefRiskCard[];
   expectedLanes: BriefLane[];
   negativeCases: string[];
