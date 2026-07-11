@@ -912,6 +912,31 @@ describe('PR gate service', () => {
     assert.equal(prViewFields.split(',').includes('reviews'), true);
   });
 
+  it('exposes the implementer self-check on dry-run in JSON and human output', async () => {
+    const config = getDefaults();
+    const { exec } = makePrExec({ prViews: [basePr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    assert.ok(result.selfCheck, 'expected a self-check on dry-run');
+    assert.ok(result.selfCheck.instruction.includes('do not spawn reviewers with known gaps'));
+    assert.ok(result.selfCheck.lanes.length > 0);
+    for (const lane of result.selfCheck.lanes) {
+      assert.equal(typeof lane.lane, 'string');
+      assert.ok(lane.digest.length > 0);
+      assert.equal(typeof lane.activated, 'boolean');
+      assert.ok(lane.reason.length > 0);
+    }
+    assert.ok(Array.isArray(result.selfCheck.riskCards));
+
+    const { formatPrGate } = require('../dist/pr/index.js');
+    const human = formatPrGate(result);
+    assert.ok(human.includes('Implementer self-check (before spawning reviewers):'));
+    assert.ok(human.includes(result.selfCheck.instruction));
+    assert.ok(human.includes(result.selfCheck.lanes[0].digest));
+    assert.ok(!formatPrGate({ ...result, selfCheck: null }).includes('Implementer self-check'));
+  });
+
   it('posts a marker-only request comment for the host review participant', async () => {
     const config = getDefaults();
     config.reviewAgents = ['QUBEReview', '@coderabbitai'];
