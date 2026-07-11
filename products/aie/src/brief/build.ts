@@ -109,8 +109,10 @@ function isDocumentationSurface(path: string): boolean {
   return path.startsWith('docs/') || path.endsWith('.md');
 }
 
-function projectContains(projectPath: string, surfacePath: string): boolean {
-  if (projectPath === '.' || projectPath === '') return true;
+function projectContains(projectPath: string, surfacePath: string, rootOwnsUnmatched: boolean): boolean {
+  // A root-level project claims arbitrary paths only in single-app layouts; in a
+  // multi-project workspace an unmatched path stays unowned rather than defaulting to root.
+  if (projectPath === '.' || projectPath === '') return rootOwnsUnmatched;
   return surfacePath === projectPath || surfacePath.startsWith(`${projectPath}/`);
 }
 
@@ -121,13 +123,17 @@ function meaningfulIdentifier(value: string | null): value is string {
 function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string, expectedPaths: readonly string[]): BriefLayout | null {
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
+  const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
+  // Documentation-only work renders no layout section, wherever the documentation lives.
+  if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
+
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
+  const rootOwnsUnmatched = layout.kind === 'single-app-service' || projects.length === 1;
   const owners = new Set<string>();
-  // Each expected surface is owned by the most specific containing project, so a
-  // root-level project owns a path only when no deeper project does.
-  for (const surface of expectedPaths) {
+  // Each expected code surface is owned by the most specific containing project.
+  for (const surface of codeSurfaces) {
     const containing = projects
-      .filter(project => projectContains(project.path, surface))
+      .filter(project => projectContains(project.path, surface, rootOwnsUnmatched))
       .sort((left, right) => right.path.length - left.path.length);
     if (containing.length > 0) owners.add(containing[0].id);
   }
@@ -147,12 +153,10 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   const owningProjects = allOwningProjects.slice(0, MAX_LAYOUT_PROJECTS);
   const omittedProjects = allOwningProjects.length - owningProjects.length;
 
-  const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
-  // Non-code work: every recognizable surface is documentation and no workspace project is named.
-  if (owningProjects.length === 0 && expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
+  const derived = allOwningProjects.length > 0;
+  // Boundary rules derive from every owning project, including capped-out ones.
+  const roles = new Set(allOwningProjects.map(project => project.role));
 
-  const derived = owningProjects.length > 0;
-  const roles = new Set(owningProjects.map(project => project.role));
   const boundaryRules: string[] = [];
   if (derived) {
     if (roles.has('package')) boundaryRules.push('Provider-neutral contracts live in core packages; provider-specific behavior does not belong there.');

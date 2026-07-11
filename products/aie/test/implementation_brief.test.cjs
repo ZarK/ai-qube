@@ -320,6 +320,59 @@ describe('implementation brief builder', () => {
     assert.equal(roles['.'], undefined, 'root project must not own paths a deeper project owns');
   });
 
+  it('never fabricates root ownership for unmatched paths in a multi-project workspace', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'root', path: '.', kind: 'workspace', packageName: 'monorepo-root', packageManager: 'pnpm', gates: [] },
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Touch an unrecognized surface',
+      body: 'Edit `mystery/deep/thing.ts` to render output.\n\n- [ ] Unit test asserts the surface renders.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout, 'expected a layout section');
+    assert.equal(brief.layout.derived, false, 'unmatched path must yield could-not-derive, not a fabricated root owner');
+    assert.deepEqual(brief.layout.owningProjects, []);
+  });
+
+  it('omits the layout section for documentation-only work inside a known project', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [{ path: 'dist', reason: 'Generated package build output path exists.' }],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Update the product guide',
+      body: 'Rewrite `products/aie/docs/guide.md` for clarity.\n\n- [ ] The guide reads clearly. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(brief.layout, null, 'documentation work inside a project must not render ownership');
+  });
+
   it('caps owning projects with an omission marker', () => {
     const projects = Array.from({ length: 10 }, (_, index) => ({
       id: `pkg-${index}`,
@@ -352,6 +405,43 @@ describe('implementation brief builder', () => {
     assert.equal(brief.layout.owningProjects.length, 8);
     assert.equal(brief.layout.omittedProjects, 2);
     assert.ok(formatBriefLines(brief).join('\n').includes('(+2 projects omitted)'));
+  });
+
+  it('derives boundary rules from capped-out owners too', () => {
+    const projects = [
+      ...Array.from({ length: 9 }, (_, index) => ({
+        id: `pkg-${index}`,
+        path: `packages/pkg-${index}`,
+        kind: 'package',
+        packageName: `@scope/pkg-${index}`,
+        packageManager: 'pnpm',
+        gates: [],
+      })),
+      { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+    ];
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects,
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const body = [
+      projects.map(project => `Touch \`${project.path}/src/index.ts\`.`).join(' '),
+      '',
+      '- [ ] Unit test asserts every project builds.',
+    ].join('\n');
+    const brief = buildImplementationBrief({ title: 'Wide refactor', body, config: briefConfig(), layout });
+    assert.ok(brief.layout && brief.layout.derived);
+    assert.equal(brief.layout.omittedProjects, 2);
+    assert.ok(!brief.layout.owningProjects.some(project => project.role === 'product'), 'the product owner is beyond the cap in this fixture');
+    assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Products consume core contracts')), 'rules must reflect capped-out owners');
   });
 
   it('states could-not-derive instead of guessing and omits empty do-not-edit entries', () => {
