@@ -56,15 +56,19 @@ export function extractExpectedPaths(issueText: string): string[] {
   const found = new Set<string>();
   for (const match of issueText.matchAll(/`([^`\n]+)`/g)) {
     const token = match[1].trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    // Globs and placeholder templates quoted in issue text are patterns, not expected paths.
-    if (token.includes('/') && !/[\s*?<>]/.test(token)) found.add(token);
+    // Globs, placeholder templates, and traversal tokens are not repo-relative surfaces.
+    if (token.includes('/') && !/[\s*?<>]/.test(token) && !token.split('/').includes('..')) found.add(token);
   }
   // Bare tokens qualify only with a file-extension tail so slash-separated prose
   // such as "multi-provider/multi-mode" or "layout/ownership" is never treated as a path.
   for (const match of issueText.matchAll(/\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
     found.add(match[0].replace(/^\.\//, ''));
   }
-  return [...found].sort().slice(0, MAX_EXPECTED_PATHS).map(path => capText(path));
+  return [...found]
+    .filter(path => !path.split('/').includes('..'))
+    .sort()
+    .slice(0, MAX_EXPECTED_PATHS)
+    .map(path => capText(path));
 }
 
 function buildMatrix(issueText: string): { matrix: BriefMatrix | null; unboundedDimensions: string[] } {
@@ -109,9 +113,12 @@ function isDocumentationSurface(path: string): boolean {
   return path.startsWith('docs/') || path.endsWith('.md');
 }
 
+const ROOT_DOT_DIRECTORIES = new Set(['.github', '.qube', '.vscode', '.agents', '.codex']);
+
 function isWorkspaceRootScoped(surfacePath: string): boolean {
-  // Top-level files and dot-directories (package.json, .github/**, .qube/**) are root-owned surfaces.
-  return !surfacePath.includes('/') || surfacePath.split('/')[0].startsWith('.');
+  // Top-level files and known root dot-directories are root-owned surfaces; arbitrary
+  // hidden directories named in issue text do not claim root ownership.
+  return !surfacePath.includes('/') || ROOT_DOT_DIRECTORIES.has(surfacePath.split('/')[0]);
 }
 
 function projectContains(projectPath: string, surfacePath: string, rootOwnsUnmatched: boolean): boolean {
@@ -131,12 +138,16 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
   // Documentation-only work renders no layout section, wherever the documentation lives —
-  // including documentation issues that name no path at all.
+  // including pathless documentation issues, unless code-work signals say otherwise.
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
-  if (expectedPaths.length === 0 && /\b(?:readme|docs|documentation|wording|guide)\b/iu.test(issueText)) return null;
+  if (expectedPaths.length === 0 && !expectsTestWork && /\b(?:readme|docs|documentation|wording|guide)\b/iu.test(issueText)) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
-  const rootOwnsUnmatched = layout.kind === 'single-app-service';
+  // A lone root project owns unmatched paths in non-workspace layouts (single-app repos,
+  // including generated/vendor-heavy ones); workspace kinds keep could-not-derive instead.
+  const rootOnly = projects.every(project => project.path === '.' || project.path === '');
+  const rootOwnsUnmatched = layout.kind === 'single-app-service'
+    || (rootOnly && layout.kind !== 'javascript-typescript-workspace' && layout.kind !== 'python-workspace-monorepo');
   const owners = new Set<string>();
   // Each expected code surface is owned by the most specific containing project.
   for (const surface of codeSurfaces) {

@@ -456,6 +456,76 @@ describe('implementation brief builder', () => {
     assert.equal(pathlessDocs.layout, null, 'documentation work without paths must not render ownership from name mentions');
   });
 
+  it('owns nested paths in generated-vendor-heavy single-app repos and ignores traversal and unknown hidden paths', () => {
+    const singleAppVendor = {
+      kind: 'generated-vendor-heavy',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'field-notes', path: '.', kind: 'app', packageName: 'field-notes', packageManager: 'npm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [{ path: 'dist', reason: 'Generated output path exists.' }],
+      vendorPaths: [{ path: 'vendor', reason: 'Vendored dependency path exists.' }],
+      warnings: [],
+    };
+    const owned = buildImplementationBrief({
+      title: 'Harden the exporter',
+      body: 'Refactor `src/exporter.ts` to reject malformed rows loudly.\n\n- [ ] Unit test asserts malformed rows are rejected loudly with an error message.',
+      config: briefConfig(),
+      layout: singleAppVendor,
+    });
+    assert.ok(owned.layout && owned.layout.derived, 'a lone root app in a vendor-heavy repo still owns its source paths');
+    assert.deepEqual(owned.layout.owningProjects.map(project => project.name), ['field-notes']);
+
+    const workspace = {
+      ...singleAppVendor,
+      kind: 'javascript-typescript-workspace',
+      projects: [
+        { id: 'root', path: '.', kind: 'workspace', packageName: 'monorepo-root', packageManager: 'pnpm', gates: [] },
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+    };
+    const suspicious = buildImplementationBrief({
+      title: 'Touch odd paths',
+      body: 'Edit `src/../../../secrets/keys.ts` and `.mystery/hidden.ts` carefully.\n\n- [ ] Unit test asserts nothing leaks.',
+      config: briefConfig(),
+      layout: workspace,
+    });
+    assert.ok(suspicious.layout, 'expected a layout section');
+    assert.equal(suspicious.layout.derived, false, 'traversal tokens and unknown hidden directories must not claim ownership');
+  });
+
+  it('keeps layout ownership for pathless code work that mentions documentation terms', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Fix the README badge generator',
+      body: 'The README badge generator in @tjalve/aie emits stale counts.\n\n- [ ] Unit test asserts the badge generator emits current counts.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout, 'expected a layout section');
+    assert.equal(brief.layout.derived, true, 'code work mentioning README must keep ownership from the project mention');
+    assert.deepEqual(brief.layout.owningProjects.map(project => project.name), ['@tjalve/aie']);
+  });
+
   it('activates the test-boundary directive from regression prose outside the checklist', () => {
     const layout = {
       kind: 'javascript-typescript-workspace',
