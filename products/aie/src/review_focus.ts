@@ -5,6 +5,25 @@ import { pathsTouchPatterns as sharedPathsTouchPatterns, simpleGlobMatch } from 
 
 const DEFAULT_MAX_ACTIVE_FOCUSES = 5;
 
+/** Fixed one-line digest per lane: what the lane hunts for. Shared by the start/view brief and the pr gate self-check. */
+export const LANE_HEURISTIC_DIGESTS: Record<LocalReviewLaneId, string> = {
+  'task-record-compliance': 'Durable task records match the work actually performed.',
+  'issue-compliance': 'Every acceptance criterion is observably satisfied at the PR head with no false-success path.',
+  'code-quality': 'Correct, maintainable code with no dead, duplicated, or speculative logic.',
+  'security': 'Untrusted input handling, path traversal, injection, and trust-boundary violations.',
+  'performance': 'Unbounded work, needless recomputation, and scaling hazards.',
+  'data-database': 'Schema, migration, and data-integrity correctness.',
+  'concurrency-resource': 'Races, deadlocks, leaked resources, and cross-process interference.',
+  'error-observability': 'Loud failures with actionable messages and no swallowed errors.',
+  'tests-quality': 'Tests validate the production contract, not the implementation mirror.',
+  'api-contract-compatibility': 'Public contracts stay compatible or change intentionally.',
+  'docs-instructions': 'Shipped docs and rendered instructions match real behavior.',
+  'ui-ux-accessibility': 'Visual correctness, usability, and accessibility of user-facing UI.',
+  'release-ci-supply-chain': 'CI, packaging, and dependency changes stay pinned and intentional.',
+  'manual-qa': 'Hands-on verification of the running product.',
+  'final-gate': 'All configured gates and reviews are complete at the current head.',
+};
+
 const FOCUS_LANE_IDS = new Set<LocalReviewLaneId>([
   'task-record-compliance',
   'issue-compliance',

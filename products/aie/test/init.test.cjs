@@ -372,6 +372,7 @@ describe('init service', () => {
     const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
     assert.match(claude, /spawn one independent fresh-context review subagent per lane that runs the lane through the Codex CLI/);
     assert.match(claude, /pass each lane `spawnPrompt` verbatim as the Codex prompt/);
+    assert.match(claude, /complete the implementer self-check rendered in the dry-run output — confirm or fix every lane digest and risk card it lists — and address those gaps before creating the review session lock/);
     assert.doesNotMatch(claude, /agent_type: "qube-review-focus"/);
   });
 

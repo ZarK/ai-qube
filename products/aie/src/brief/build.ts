@@ -1,7 +1,6 @@
 import type { Config } from '../config/index.js';
 import { parseWorkChecklistItems } from '../core/work_item.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
-import type { LocalReviewLaneId } from '../local_review_evidence.js';
+import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { implementerFaceHasTestObligation, selectRiskCards } from '../risk_cards/index.js';
 import type { BriefLane, BriefMatrix, BriefMatrixDimension, BriefObligation, ImplementationBrief, VerificationKind } from './types.js';
 
@@ -29,24 +28,6 @@ const MATRIX_DIMENSIONS: readonly MatrixDimensionSpec[] = [
   { name: 'lifecycle state', mention: /\blifecycle[ -]states?\b/i, values: ['started', 'resumed', 'blocked', 'empty', 'invalid'], requiresMention: true },
   { name: 'platform', mention: /\bplatforms?\b/i, values: ['windows', 'macos', 'linux'], requiresMention: false },
 ];
-
-const LANE_HEURISTICS: Record<LocalReviewLaneId, string> = {
-  'task-record-compliance': 'Durable task records match the work actually performed.',
-  'issue-compliance': 'Every acceptance criterion is observably satisfied at the PR head with no false-success path.',
-  'code-quality': 'Correct, maintainable code with no dead, duplicated, or speculative logic.',
-  'security': 'Untrusted input handling, path traversal, injection, and trust-boundary violations.',
-  'performance': 'Unbounded work, needless recomputation, and scaling hazards.',
-  'data-database': 'Schema, migration, and data-integrity correctness.',
-  'concurrency-resource': 'Races, deadlocks, leaked resources, and cross-process interference.',
-  'error-observability': 'Loud failures with actionable messages and no swallowed errors.',
-  'tests-quality': 'Tests validate the production contract, not the implementation mirror.',
-  'api-contract-compatibility': 'Public contracts stay compatible or change intentionally.',
-  'docs-instructions': 'Shipped docs and rendered instructions match real behavior.',
-  'ui-ux-accessibility': 'Visual correctness, usability, and accessibility of user-facing UI.',
-  'release-ci-supply-chain': 'CI, packaging, and dependency changes stay pinned and intentional.',
-  'manual-qa': 'Hands-on verification of the running product.',
-  'final-gate': 'All configured gates and reviews are complete at the current head.',
-};
 
 const FAILURE_WORDS = /\b(?:fail|fails|failed|failing|failure|failures|reject|rejects|rejected|rejecting|invalid|malformed|unsupported|error|errors|never|omitted|omission|truncat\w*)\b/i;
 const OUTCOME_WORDS = /\b(?:loud|loudly|throw|throws|exit code|error message|reject(?:s|ed)? with|returns?|renders?|markers?|reports?|lists?|exposes?)\b/i;
@@ -126,7 +107,7 @@ export function buildImplementationBrief(input: { title: string; body: string; c
   const riskCards = cards.map(card => ({ id: card.id, title: card.title, implementerFace: card.implementerFace.trim() }));
 
   const expectedLanes: BriefLane[] = activeLocalReviewFocusesForConfig(input.config, expectedPaths)
-    .map(lane => ({ lane, heuristic: LANE_HEURISTICS[lane] }));
+    .map(lane => ({ lane, heuristic: LANE_HEURISTIC_DIGESTS[lane] }));
 
   const negativeSet = new Set<string>();
   for (const card of cards) {

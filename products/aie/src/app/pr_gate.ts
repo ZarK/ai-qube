@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
+import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
 import { getIssue } from '../providers/github_adapter_exports.js';
 import { configToExecutorPolicy, prThreadContextMode } from '../config_policy.js';
@@ -145,6 +146,7 @@ export interface PrGateResult {
   mergeBlockers: PrGateMergeBlock[];
   conversations: PrGateConversation[];
   checkDiagnostics: PrGateCheckDiagnostic[];
+  selfCheck: ImplementerSelfCheck | null;
   localReviewRunner: LocalReviewRunResult;
   localReview: LocalReviewGate;
   fixBatch: FixBatch;
@@ -884,6 +886,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     mergeBlockers,
     conversations,
     checkDiagnostics,
+    selfCheck: dryRun ? buildImplementerSelfCheck({ config, changedPaths, issueText: riskCardIssueText }) : null,
     localReviewRunner,
     localReview,
     fixBatch,
@@ -930,6 +933,9 @@ export function formatPrGate(result: PrGateResult): string {
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
   for (const lane of result.localReviewRunner.lanes) {
     lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; evidence=${lane.evidencePath}`);
+  }
+  if (result.selfCheck) {
+    lines.push(...formatImplementerSelfCheck(result.selfCheck));
   }
   lines.push(`Local review evidence: ${result.localReview.mode}; profile=${result.localReview.profile}; status=${result.localReview.required || result.localReview.mode === 'shadow' ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
   if (result.localReview.required || result.localReview.mode === 'shadow') {
