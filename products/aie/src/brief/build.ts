@@ -56,19 +56,28 @@ export function extractExpectedPaths(issueText: string): string[] {
   const found = new Set<string>();
   for (const match of issueText.matchAll(/`([^`\n]+)`/g)) {
     const token = match[1].trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    // Globs, placeholder templates, traversal tokens, absolute/UNC paths, and scoped
-    // package names are not repo-relative surfaces.
-    if (token.includes('/') && !/[\s*?<>]/.test(token) && !token.split('/').includes('..')
-      && !/^(?:[A-Za-z]:\/|\/|@)/.test(token)) found.add(token);
+    // Globs, placeholder templates, traversal tokens, absolute/UNC paths, URLs, and
+    // scoped package names are not repo-relative surfaces.
+    if (/[\s*?<>]/.test(token) || token.split('/').includes('..') || /^(?:[A-Za-z]:\/|\/|@)/.test(token) || token.includes('://')) continue;
+    // Top-level file tokens (package.json, pnpm-lock.yaml) are workspace-root surfaces.
+    if (!token.includes('/') && /^[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}$/.test(token)) found.add(token);
+    else if (token.includes('/')) found.add(token);
   }
   // Bare tokens qualify only with a file-extension tail so slash-separated prose
   // such as "multi-provider/multi-mode" or "layout/ownership" is never treated as a path.
-  // The lookbehind keeps matches from starting inside absolute, drive-letter, UNC, or scoped-package tokens.
-  for (const match of issueText.matchAll(/(?<![:@/\\])\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
+  // The lookbehind and dot-free first character keep matches from starting inside
+  // absolute, drive-letter, UNC, URL, or scoped-package tokens.
+  for (const match of issueText.matchAll(/(?<![:@/\\.])\b[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
     found.add(match[0].replace(/^\.\//, ''));
   }
   return [...found]
     .filter(path => !path.split('/').includes('..'))
+    // A dotted first segment (docs.example.com/...) is a hostname fragment, not a repo path;
+    // leading-dot directories (.github/...) stay allowed.
+    .filter(path => {
+      const firstSegment = path.split('/')[0];
+      return !firstSegment.includes('.') || firstSegment.startsWith('.') || !path.includes('/');
+    })
     .sort()
     .slice(0, MAX_EXPECTED_PATHS)
     .map(path => capText(path));
@@ -140,11 +149,8 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
-  // Ownership renders only on positive code-work evidence: a code surface or a stated
-  // test obligation. Documentation, coordination, and other non-code work is omitted
-  // without enumerating non-code categories.
+  // Documentation-only surfaces render no ownership, wherever the documentation lives.
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
-  if (expectedPaths.length === 0 && !expectsTestWork) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
   // A lone root project owns unmatched paths only in the two single-app layout kinds;
@@ -176,6 +182,14 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
       path: project.path,
       role: projectRole(project.path, project.kind),
     }));
+  // Pathless work renders ownership only on positive evidence: a stated test obligation
+  // or a named project — and a named project still yields nothing when the prose is
+  // documentation or coordination writing.
+  if (expectedPaths.length === 0 && !expectsTestWork) {
+    if (owners.size === 0) return null;
+    if (/\b(?:readme|docs|documentation|wording|guide|changelog|release\s+notes|announcement)\b/iu.test(issueText)) return null;
+  }
+
   const owningProjects = allOwningProjects.slice(0, MAX_LAYOUT_PROJECTS);
   const omittedProjects = allOwningProjects.length - owningProjects.length;
 

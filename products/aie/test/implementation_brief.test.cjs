@@ -518,6 +518,12 @@ describe('implementation brief builder', () => {
     const paths = extractExpectedPaths('Check `/etc/passwd.txt`, `C:/secrets/keys.ts`, `\\\\server\\share\\thing.ts`, and `@tjalve/aie` here.');
     assert.deepEqual(paths, [], 'absolute, UNC, and scoped-package tokens are not repository surfaces');
 
+    const urlPaths = extractExpectedPaths('See `https://github.com/example/repo/blob/main/file.ts` and docs.example.com/guide/setup.ts for details.');
+    assert.deepEqual(urlPaths, [], 'URLs and hostname fragments are not repository surfaces');
+
+    const manifest = extractExpectedPaths('Update `package.json` and `pnpm-lock.yaml` pins.');
+    assert.deepEqual(manifest, ['package.json', 'pnpm-lock.yaml'], 'top-level manifest tokens are workspace-root surfaces');
+
     const rstDocs = buildImplementationBrief({
       title: 'Update the manual',
       body: 'Rewrite `products/aie/manual/setup.rst` for the new flow.\n\n- [ ] The manual describes the new flow. Verified by artifact review.',
@@ -559,6 +565,15 @@ describe('implementation brief builder', () => {
       layout,
     });
     assert.equal(coordination.layout, null, 'coordination work without code evidence must render no layout section');
+
+    const pathlessRefactor = buildImplementationBrief({
+      title: 'Simplify the exports',
+      body: 'Refactor the @tjalve/aie exports so consumers see one entry surface. The behavior stays identical. Confirmed by inspection.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(pathlessRefactor.layout && pathlessRefactor.layout.derived, 'pathless code work naming a package must render its owner');
+    assert.deepEqual(pathlessRefactor.layout.owningProjects.map(project => project.path), ['products/aie']);
 
     const rootProse = buildImplementationBrief({
       title: 'Investigate flaky exports',
