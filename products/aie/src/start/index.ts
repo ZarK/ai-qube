@@ -1,3 +1,4 @@
+import type { ImplementationBrief } from '../brief/index.js';
 import { getDefaults, loadConfig, Config } from '../config/index.js';
 import type { GhExec } from '../providers/github_adapter_exports.js';
 import {
@@ -41,6 +42,7 @@ export interface StartResult {
   };
   preStartPolicy?: PreStartPolicyResult;
   branchRecommendation: StartBranchRecommendation;
+  brief: ImplementationBrief | null;
   plan: import('../lifecycle.js').LifecyclePlan;
   warnings: string[];
   errors: string[];
@@ -105,6 +107,7 @@ export async function startIssue(options: StartOptions): Promise<StartResult> {
       suggested: branchName || null,
       nextCommand: selectedItem && serviceResult.ok ? startNextCommand(workItemNumber(selectedItem), branchName, resumed) : 'Run `aie queue` to inspect available issue work.',
     },
+    brief: serviceResult.brief,
     plan: serviceResult.plan,
     warnings: serviceResult.warnings,
     errors: serviceResult.errors,

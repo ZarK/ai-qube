@@ -1,3 +1,4 @@
+import { buildImplementationBrief, type ImplementationBrief } from '../brief/index.js';
 import { createAction, createActionPlan, type Action } from '../core/action_plan.js';
 import { selectNextWork } from '../core/queue_rules.js';
 import { suggestBranchName } from '../core/branch_rules.js';
@@ -15,6 +16,7 @@ export interface StartServiceResult {
   activeIssueState: ActiveWorkState;
   preStartPolicy?: PreStartPolicyResult;
   branchName: string;
+  brief: ImplementationBrief | null;
   plan: LifecyclePlan;
   warnings: string[];
   errors: string[];
@@ -45,6 +47,7 @@ function blockedStart(input: {
     blockers: input.blockers ?? [],
     activeIssueState: input.activeIssueState,
     branchName: input.branchName ?? '',
+    brief: null,
     plan: emptyLifecyclePlan('start', input.dryRun),
     warnings: input.warnings ?? [],
     errors: [input.reason],
@@ -159,5 +162,6 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!context.config.assignOnStart) warnings.push('Assignment is disabled by repository policy.');
   if (!context.config.commentOnStart) warnings.push('Started-work comments are disabled by repository policy.');
   const errors = preStartPolicy.ok ? plan.summary.failedActions.map(item => item.failure?.cause ?? item.description) : preStartPolicy.blockers;
-  return { ok: plan.ok, action: plan.ok ? action : 'blocked', reason: plan.ok ? reason : blockedReason({ selectedIssueNumber, preStartPolicy, plan }), selectedItem, blockers, activeIssueState: activeState, preStartPolicy, branchName, plan, warnings, errors };
+  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config }) : null;
+  return { ok: plan.ok, action: plan.ok ? action : 'blocked', reason: plan.ok ? reason : blockedReason({ selectedIssueNumber, preStartPolicy, plan }), selectedItem, blockers, activeIssueState: activeState, preStartPolicy, branchName, brief, plan, warnings, errors };
 }

@@ -436,7 +436,10 @@ describe('init service', () => {
     assert.match(agents, /manual GitHub issue creation or issue suggestion are allowed before implementation starts when the user explicitly asks/);
     assert.match(agents, /When explicitly directed to record a confirmed product gap, create or suggest GitHub issue work with clear requirements and acceptance criteria/);
     assert.match(agents, /branch-check: verify the current branch matches the active issue before shipping/);
-    assert.match(agents, /implementation: implement the complete issue scope/);
+    assert.match(agents, /implementation: read the implementation brief rendered by `qube aie start` and `qube aie view <issue> --json`/);
+    assert.match(agents, /post that plan as a comment on the issue before editing source/);
+    assert.match(agents, /the plan commits you to the full obligation surface before anchoring on an architecture/);
+    assert.match(agents, /Then implement the complete issue scope/);
     assert.match(agents, /audit: run the configured manual UI audit/);
     assert.match(agents, /Executor local app runner/);
     assert.match(agents, /prefer repository package scripts/);

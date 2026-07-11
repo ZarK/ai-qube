@@ -1,3 +1,4 @@
+import type { ImplementationBrief } from './brief/index.js';
 import { getDefaults, loadConfig, type Config } from './config/index.js';
 import { configToExecutorPolicy } from './config_policy.js';
 import type { GhExec } from './providers/github_adapter_exports.js';
@@ -19,6 +20,7 @@ export interface ViewIssueResult {
   dependency: { declaredBlockers: number[]; openBlockers: number[]; unresolvedBlockers: number[]; blockers: BlockerDetail[]; dependents: BlockerDetail[] };
   checklist: ChecklistSummary;
   branch: BranchInfo;
+  brief: ImplementationBrief;
   warnings: string[];
   recommendedAction: string;
 }
@@ -65,6 +67,7 @@ export async function viewIssue(issueNumber: number, options: { exec?: GhExec; c
     dependency: service.dependency,
     checklist: service.checklist,
     branch: service.branch,
+    brief: service.brief,
     warnings: service.warnings,
     recommendedAction: service.recommendedAction,
   };

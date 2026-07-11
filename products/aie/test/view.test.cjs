@@ -56,6 +56,49 @@ describe('view service', () => {
     assert.ok(result.recommendedAction.includes('aie next --json'));
   });
 
+  it('exposes the implementation brief in JSON and renders it between checklist and branch', async () => {
+    const body = [
+      'Support the GitHub and GitLab providers with OAuth and API key auth modes in `products/aie/src/app/start_work.ts`.',
+      '',
+      '- [ ] Integration test covers each provider and auth-mode combination.',
+      '- [ ] Malformed provider payloads fail loudly with an error message and a unit test asserts the rejection.',
+    ].join('\n');
+    const exec = makeFixtureExec({
+      'issue view 93 --json number,title,state,labels,body,milestone,url': {
+        args: ['issue', 'view', '93', '--json', 'number,title,state,labels,body,milestone,url'],
+        exitCode: 0,
+        stdout: sampleIssueJson(93, 'Add view command', 'OPEN', ['S-Ready'], body, null),
+        stderr: '',
+      },
+      'issue list --state open --json number,title,state,labels,body,milestone,url --limit 1000': {
+        args: ['issue', 'list', '--state', 'open', '--json', 'number,title,state,labels,body,milestone,url', '--limit', '1000'],
+        exitCode: 0,
+        stdout: '[]',
+        stderr: '',
+      },
+    });
+
+    const result = await viewIssue(93, { exec });
+    for (const key of ['obligations', 'matrix', 'riskCards', 'expectedLanes', 'negativeCases', 'ambiguities']) {
+      assert.ok(key in result.brief, `missing brief.${key}`);
+    }
+    assert.equal(result.brief.obligations.length, 2);
+    assert.ok(result.brief.matrix);
+
+    const { formatViewHuman } = require('../dist/renderers/view_renderer.js');
+    const human = formatViewHuman(result);
+    const briefIndex = human.indexOf('Implementation brief:');
+    assert.ok(briefIndex > human.indexOf('Checklist:'));
+    assert.ok(briefIndex < human.indexOf('Branch:'));
+    const order = ['Obligations:', 'Behavior matrix', 'Risk cards', 'Expected review lanes', 'Negative cases', 'Open ambiguities'];
+    let cursor = briefIndex;
+    for (const section of order) {
+      const sectionIndex = human.indexOf(section, cursor);
+      assert.ok(sectionIndex > cursor, `section ${section} missing or out of order`);
+      cursor = sectionIndex;
+    }
+  });
+
   it('ignores non-configured labels that share managed prefixes', async () => {
     const exec = makeFixtureExec({
       'issue view 93 --json number,title,state,labels,body,milestone,url': {

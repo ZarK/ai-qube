@@ -79,6 +79,61 @@ describe('start service', () => {
     assert.match(formatStartHuman(result), /Labels: not planned/);
   });
 
+  it('exposes the implementation brief on start and omits it when start is blocked', async () => {
+    const body = [
+      'Support the GitHub and GitLab providers with OAuth and API key auth modes.',
+      '',
+      '- [ ] Integration test covers each provider and auth-mode combination.',
+    ].join('\n');
+    const resumeExec = makeExec({
+      [issueListKey()]: success([], JSON.stringify([issue(93, 'Multi-mode work', ['S-InProgress'], body)])),
+    });
+    const started = await startIssue({
+      selection: { kind: 'next' },
+      dryRun: false,
+      assign: true,
+      comment: true,
+      exec: resumeExec,
+      cwd: join(tmpdir(), 'missing-aie-start-brief'),
+      config: getDefaults(),
+    });
+    assert.equal(started.ok, true);
+    assert.ok(started.brief, 'expected a brief for a started issue');
+    for (const key of ['obligations', 'matrix', 'riskCards', 'expectedLanes', 'negativeCases', 'ambiguities']) {
+      assert.ok(key in started.brief, `missing brief.${key}`);
+    }
+    assert.ok(started.brief.matrix, 'expected matrix rows for a multi-mode issue');
+    const { formatStartHuman } = require('../dist/renderers/lifecycle_renderer.js');
+    const human = formatStartHuman(started);
+    assert.ok(human.includes('Implementation brief:'));
+    assert.ok(human.indexOf('Implementation brief:') > human.indexOf('Branch:'));
+
+    const blockedExec = makeExec({
+      'issue view 95 --json number,title,state,labels,body,milestone,url': success([], JSON.stringify({
+        number: 95,
+        title: 'Closed work',
+        body,
+        state: 'CLOSED',
+        labels: [],
+        milestone: null,
+        url: 'https://github.com/example/repo/issues/95',
+      })),
+      [issueListKey()]: success([], '[]'),
+    });
+    const blocked = await startIssue({
+      selection: { kind: 'issue', issueNumber: 95 },
+      dryRun: false,
+      assign: true,
+      comment: true,
+      exec: blockedExec,
+      cwd: join(tmpdir(), 'missing-aie-start-brief-blocked'),
+      config: getDefaults(),
+    });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.brief, null);
+    assert.ok(!formatStartHuman(blocked).includes('Implementation brief:'));
+  });
+
   it('plans start-next label mutation in dry-run without mutating GitHub', async () => {
     const repo = makeGitRepo();
     const calls = [];
