@@ -109,10 +109,16 @@ function isDocumentationSurface(path: string): boolean {
   return path.startsWith('docs/') || path.endsWith('.md');
 }
 
+function isWorkspaceRootScoped(surfacePath: string): boolean {
+  // Top-level files and dot-directories (package.json, .github/**, .qube/**) are root-owned surfaces.
+  return !surfacePath.includes('/') || surfacePath.split('/')[0].startsWith('.');
+}
+
 function projectContains(projectPath: string, surfacePath: string, rootOwnsUnmatched: boolean): boolean {
   // A root-level project claims arbitrary paths only in single-app layouts; in a
-  // multi-project workspace an unmatched path stays unowned rather than defaulting to root.
-  if (projectPath === '.' || projectPath === '') return rootOwnsUnmatched;
+  // multi-project workspace it owns only workspace-root-scoped surfaces, and an
+  // unmatched nested path stays unowned rather than defaulting to root.
+  if (projectPath === '.' || projectPath === '') return rootOwnsUnmatched || isWorkspaceRootScoped(surfacePath);
   return surfacePath === projectPath || surfacePath.startsWith(`${projectPath}/`);
 }
 
@@ -124,8 +130,10 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
-  // Documentation-only work renders no layout section, wherever the documentation lives.
+  // Documentation-only work renders no layout section, wherever the documentation lives —
+  // including documentation issues that name no path at all.
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
+  if (expectedPaths.length === 0 && /\b(?:readme|docs|documentation|wording|guide)\b/iu.test(issueText)) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
   const rootOwnsUnmatched = layout.kind === 'single-app-service';
@@ -162,7 +170,7 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
     const ownsCorePackage = allOwningProjects.some(project => project.role === 'package'
       && (matchesToken(project.name, 'core') || matchesToken(project.path, 'core')));
     if (ownsCorePackage) boundaryRules.push('Provider-neutral contracts live in core packages; provider-specific behavior does not belong there.');
-    if (roles.has('adapter') || /\bprovider\b/iu.test(issueText)) boundaryRules.push('Provider-specific encoding lives in the owning adapter, not in core packages or products.');
+    if (roles.has('adapter')) boundaryRules.push('Provider-specific encoding lives in the owning adapter, not in core packages or products.');
     if (roles.has('product')) boundaryRules.push('Products consume core contracts rather than duplicating them.');
     if (expectsTestWork) boundaryRules.push('Test support stays inside its own project boundaries.');
   }
@@ -231,7 +239,9 @@ export function buildImplementationBrief(input: { title: string; body: string; c
       issueText,
       expectedPaths,
       obligations.some(obligation => obligation.kind === 'unit' || obligation.kind === 'integration')
-        || expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path)),
+        || expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path))
+        || /\bregression\s+tests?\b/iu.test(issueText)
+        || splitSentences(issueText).some(sentence => implementerFaceHasTestObligation(sentence)),
     ),
     riskCards,
     expectedLanes,

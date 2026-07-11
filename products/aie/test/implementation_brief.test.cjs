@@ -420,6 +420,68 @@ describe('implementation brief builder', () => {
     assert.ok(formatBriefLines(brief).join('\n').includes('(+2 projects omitted)'));
   });
 
+  it('owns workspace-root files, skips pathless docs work, and keeps the adapter directive owner-gated', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'root', path: '.', kind: 'workspace', packageName: 'monorepo-root', packageManager: 'pnpm', gates: [] },
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const rootFiles = buildImplementationBrief({
+      title: 'Pin the workflow actions',
+      body: 'Edit `.github/workflows/ci.yml` and the root `package.json` provider pins.\n\n- [ ] Unit test asserts the workflow pins are exact.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(rootFiles.layout && rootFiles.layout.derived, 'workspace-root files must be owned by the root project');
+    assert.deepEqual(rootFiles.layout.owningProjects.map(project => project.path), ['.']);
+    assert.ok(!rootFiles.layout.boundaryRules.some(rule => rule.includes('owning adapter')), 'the word provider alone must not trigger the adapter directive');
+
+    const pathlessDocs = buildImplementationBrief({
+      title: 'Improve the README',
+      body: 'Rewrite the README wording for @tjalve/aie so newcomers can start faster.\n\n- [ ] The README reads clearly. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(pathlessDocs.layout, null, 'documentation work without paths must not render ownership from name mentions');
+  });
+
+  it('activates the test-boundary directive from regression prose outside the checklist', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Harden the selector',
+      body: 'Refactor `products/aie/src/brief/build.ts` for clarity. Write a regression test for each defaulted allocation branch.\n\n- [ ] The selector output stays identical for existing inputs. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout && brief.layout.derived);
+    assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Test support stays inside its own project boundaries')), 'regression-test prose must activate the test directive');
+  });
+
   it('reserves the core directive for core packages', () => {
     const layout = {
       kind: 'javascript-typescript-workspace',
