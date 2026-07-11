@@ -93,10 +93,15 @@ function splitSentences(text: string): string[] {
   return text.trim().split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(part => part.length > 0);
 }
 
+const MAX_LAYOUT_PROJECTS = 8;
+const MAX_DO_NOT_EDIT_PATHS = 10;
+
 function projectRole(projectPath: string, inspectedKind: string): string {
-  if (projectPath.startsWith('products/')) return 'product';
-  if (projectPath.startsWith('packages/')) return 'package';
-  if (projectPath.startsWith('adapters/')) return 'adapter';
+  // Workspace-prefix roles apply only to direct children; nested projects keep their inspected kind.
+  const segments = projectPath.split('/');
+  if (segments.length === 2 && segments[0] === 'products') return 'product';
+  if (segments.length === 2 && segments[0] === 'packages') return 'package';
+  if (segments.length === 2 && segments[0] === 'adapters') return 'adapter';
   return inspectedKind;
 }
 
@@ -104,23 +109,43 @@ function isDocumentationSurface(path: string): boolean {
   return path.startsWith('docs/') || path.endsWith('.md');
 }
 
+function projectContains(projectPath: string, surfacePath: string): boolean {
+  if (projectPath === '.' || projectPath === '') return true;
+  return surfacePath === projectPath || surfacePath.startsWith(`${projectPath}/`);
+}
+
+function meaningfulIdentifier(value: string | null): value is string {
+  return value !== null && value.trim().length >= 3 && value !== '.';
+}
+
 function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string, expectedPaths: readonly string[]): BriefLayout | null {
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
-  const owningProjects: BriefLayoutProject[] = layout.projects
-    .filter(project => {
-      const prefix = `${project.path.replace(/\\/g, '/')}/`;
-      const pathOwned = expectedPaths.some(path => path.startsWith(prefix) || path === project.path);
-      const nameMentioned = (project.packageName !== null && matchesToken(issueText, project.packageName))
-        || matchesToken(issueText, project.path)
-        || matchesToken(issueText, project.id);
-      return pathOwned || nameMentioned;
-    })
+  const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
+  const owners = new Set<string>();
+  // Each expected surface is owned by the most specific containing project, so a
+  // root-level project owns a path only when no deeper project does.
+  for (const surface of expectedPaths) {
+    const containing = projects
+      .filter(project => projectContains(project.path, surface))
+      .sort((left, right) => right.path.length - left.path.length);
+    if (containing.length > 0) owners.add(containing[0].id);
+  }
+  for (const project of projects) {
+    const nameMentioned = (meaningfulIdentifier(project.packageName) && matchesToken(issueText, project.packageName))
+      || (meaningfulIdentifier(project.path) && matchesToken(issueText, project.path))
+      || (meaningfulIdentifier(project.id) && matchesToken(issueText, project.id));
+    if (nameMentioned) owners.add(project.id);
+  }
+  const allOwningProjects: BriefLayoutProject[] = projects
+    .filter(project => owners.has(project.id))
     .map(project => ({
       name: project.packageName ?? project.id,
-      path: project.path.replace(/\\/g, '/'),
-      role: projectRole(project.path.replace(/\\/g, '/'), project.kind),
+      path: project.path,
+      role: projectRole(project.path, project.kind),
     }));
+  const owningProjects = allOwningProjects.slice(0, MAX_LAYOUT_PROJECTS);
+  const omittedProjects = allOwningProjects.length - owningProjects.length;
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
   // Non-code work: every recognizable surface is documentation and no workspace project is named.
@@ -136,10 +161,12 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
     if (expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path))) boundaryRules.push('Test support stays inside its own project boundaries.');
   }
 
-  const doNotEditPaths = [...layout.generatedPaths, ...layout.vendorPaths]
+  const allDoNotEditPaths = [...layout.generatedPaths, ...layout.vendorPaths]
     .map(signal => `${signal.path} (${signal.reason})`);
+  const doNotEditPaths = allDoNotEditPaths.slice(0, MAX_DO_NOT_EDIT_PATHS);
+  const omittedDoNotEditPaths = allDoNotEditPaths.length - doNotEditPaths.length;
 
-  return { owningProjects, boundaryRules, doNotEditPaths, derived };
+  return { owningProjects, omittedProjects, boundaryRules, doNotEditPaths, omittedDoNotEditPaths, derived };
 }
 
 export function buildImplementationBrief(input: { title: string; body: string; config: Config; layout?: RepoLayoutInspection }): ImplementationBrief {

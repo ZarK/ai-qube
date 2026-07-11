@@ -36,6 +36,7 @@ export function formatBriefLines(brief: ImplementationBrief): string[] {
       for (const project of brief.layout.owningProjects) {
         lines.push(`    - ${project.name} (${project.role}, ${project.path})`);
       }
+      if (brief.layout.omittedProjects > 0) lines.push(`    (+${brief.layout.omittedProjects} projects omitted)`);
       if (brief.layout.boundaryRules.length > 0) {
         lines.push('    Boundary rules:');
         for (const rule of brief.layout.boundaryRules) {
@@ -48,6 +49,7 @@ export function formatBriefLines(brief: ImplementationBrief): string[] {
       for (const path of brief.layout.doNotEditPaths) {
         lines.push(`    - ${path}`);
       }
+      if (brief.layout.omittedDoNotEditPaths > 0) lines.push(`    (+${brief.layout.omittedDoNotEditPaths} paths omitted)`);
     }
   }
 

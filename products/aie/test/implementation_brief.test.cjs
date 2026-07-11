@@ -253,6 +253,107 @@ describe('implementation brief builder', () => {
     assert.equal(nonCode.layout, null, 'documentation-only work renders no layout section');
   });
 
+  it('derives root ownership for single-app layouts without fabricating it from punctuation', () => {
+    const layout = {
+      kind: 'single-app-service',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'field-notes', path: '.', kind: 'app', packageName: 'field-notes', packageManager: 'npm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const owned = buildImplementationBrief({
+      title: 'Harden the server entry',
+      body: 'Refactor `src/server.ts` to reject malformed requests loudly.\n\n- [ ] Unit test asserts malformed requests are rejected loudly with an error message.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(owned.layout && owned.layout.derived, 'expected root project ownership from a contained code path');
+    assert.deepEqual(owned.layout.owningProjects.map(project => `${project.name}:${project.role}`), ['field-notes:app']);
+
+    const punctuationOnly = buildImplementationBrief({
+      title: 'Improve resilience',
+      body: 'contestant latest errorship pretest resilience. Improvements follow. Thanks.\n\n- [ ] Unit test asserts resilient behavior.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(punctuationOnly.layout, 'expected a layout section');
+    assert.equal(punctuationOnly.layout.derived, false, 'periods in prose must not fabricate root ownership');
+    assert.deepEqual(punctuationOnly.layout.owningProjects, []);
+  });
+
+  it('keeps inspected kinds for nested projects and picks the most specific owner', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'root', path: '.', kind: 'workspace', packageName: 'monorepo-root', packageManager: 'pnpm', gates: [] },
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+        { id: 'html-css', path: 'products/aiq/test-projects/html-css', kind: 'app', packageName: null, packageManager: null, gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Touch nested app',
+      body: 'Edit `products/aiq/test-projects/html-css/index.html` and `products/aie/src/view.ts`.\n\n- [ ] Unit test asserts both surfaces render.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout && brief.layout.derived);
+    const roles = Object.fromEntries(brief.layout.owningProjects.map(project => [project.path, project.role]));
+    assert.equal(roles['products/aiq/test-projects/html-css'], 'app', 'nested project must keep its inspected kind');
+    assert.equal(roles['products/aie'], 'product');
+    assert.equal(roles['.'], undefined, 'root project must not own paths a deeper project owns');
+  });
+
+  it('caps owning projects with an omission marker', () => {
+    const projects = Array.from({ length: 10 }, (_, index) => ({
+      id: `pkg-${index}`,
+      path: `packages/pkg-${index}`,
+      kind: 'package',
+      packageName: `@scope/pkg-${index}`,
+      packageManager: 'pnpm',
+      gates: [],
+    }));
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects,
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const body = [
+      projects.map(project => `Touch \`${project.path}/src/index.ts\`.`).join(' '),
+      '',
+      '- [ ] Unit test asserts every package builds.',
+    ].join('\n');
+    const brief = buildImplementationBrief({ title: 'Wide refactor', body, config: briefConfig(), layout });
+    assert.ok(brief.layout && brief.layout.derived);
+    assert.equal(brief.layout.owningProjects.length, 8);
+    assert.equal(brief.layout.omittedProjects, 2);
+    assert.ok(formatBriefLines(brief).join('\n').includes('(+2 projects omitted)'));
+  });
+
   it('states could-not-derive instead of guessing and omits empty do-not-edit entries', () => {
     const layout = {
       kind: 'javascript-typescript-workspace',

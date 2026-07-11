@@ -35,8 +35,10 @@ export interface BriefLayoutProject {
 
 export interface BriefLayout {
   owningProjects: BriefLayoutProject[];
+  omittedProjects: number;
   boundaryRules: string[];
   doNotEditPaths: string[];
+  omittedDoNotEditPaths: number;
   derived: boolean;
 }
 
