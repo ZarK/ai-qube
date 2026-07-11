@@ -575,6 +575,14 @@ describe('implementation brief builder', () => {
     assert.ok(pathlessRefactor.layout && pathlessRefactor.layout.derived, 'pathless code work naming a package must render its owner');
     assert.deepEqual(pathlessRefactor.layout.owningProjects.map(project => project.path), ['products/aie']);
 
+    const packageCoordination = buildImplementationBrief({
+      title: 'Plan the next release',
+      body: 'Coordinate the @tjalve/aie release sign-off with stakeholders.\n\n- [ ] The sign-off order is confirmed. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(packageCoordination.layout, null, 'coordination work naming a package must not render ownership');
+
     const rootProse = buildImplementationBrief({
       title: 'Investigate flaky exports',
       body: 'Investigate the root cause of flaky exports in `products/aie/src/export.ts`.\n\n- [ ] Unit test asserts exports are stable.',

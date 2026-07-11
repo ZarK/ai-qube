@@ -187,7 +187,7 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   // documentation or coordination writing.
   if (expectedPaths.length === 0 && !expectsTestWork) {
     if (owners.size === 0) return null;
-    if (/\b(?:readme|docs|documentation|wording|guide|changelog|release\s+notes|announcement)\b/iu.test(issueText)) return null;
+    if (/\b(?:readme|docs|documentation|wording|guide|changelog|release|announcement|coordinat\w*|schedule|sign-off|stakeholders?|approval)\b/iu.test(issueText)) return null;
   }
 
   const owningProjects = allOwningProjects.slice(0, MAX_LAYOUT_PROJECTS);
