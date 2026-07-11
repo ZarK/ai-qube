@@ -24,14 +24,25 @@ const DEFAULTED_ALLOCATION = /; allocation defaulted: no theme matched\)/u;
 const VAGUE_PHRASES = /\b(?:works?\s+correctly|handles?\s+errors?|is\s+robust|functions?\s+properly|behaves?\s+as\s+expected)\b/iu;
 const OBSERVABLE_OUTCOME = /\b(?:loud(?:ly)?|exit\s+code|error\s+message|returns?|renders?|rejects?\s+with|asserts?|fails?\s+with|reports?|lists?|exposes?|counts?|checkbox)\b/iu;
 
-function criteriaLines(draft: WorkItemDraft): string[] {
+interface CriteriaSectionLines {
+  readonly criteria: readonly string[];
+  readonly malformed: readonly string[];
+}
+
+function criteriaLines(draft: WorkItemDraft): CriteriaSectionLines {
   const criteriaSection = draft.bodySections.find((section) => section.heading.toLowerCase() === "acceptance criteria");
-  if (!criteriaSection) return [];
-  return criteriaSection.body
-    .split("\n")
-    .map((line) => line.trim())
-    .map((line) => CRITERION_LINE.exec(line)?.[1])
-    .filter((line): line is string => line !== undefined && line.length > 0);
+  if (!criteriaSection) return { criteria: [], malformed: [] };
+  const criteria: string[] = [];
+  const malformed: string[] = [];
+  for (const raw of criteriaSection.body.split("\n")) {
+    const line = raw.trim();
+    if (line.length === 0) continue;
+    const matched = CRITERION_LINE.exec(line)?.[1];
+    // Silently dropping unmatched lines would let malformed criteria bypass every check below.
+    if (matched !== undefined && matched.length > 0) criteria.push(matched);
+    else malformed.push(line);
+  }
+  return { criteria, malformed };
 }
 
 function isExecutable(draft: WorkItemDraft): boolean {
@@ -43,9 +54,12 @@ export function lintWorkItemDrafts(drafts: readonly WorkItemDraft[]): readonly W
   const criteriaByDraft = new Map(drafts.map((draft) => [draft.draftId, criteriaLines(draft)]));
 
   for (const draft of drafts) {
-    const criteria = criteriaByDraft.get(draft.draftId) ?? [];
+    const { criteria, malformed } = criteriaByDraft.get(draft.draftId) ?? { criteria: [], malformed: [] };
     if (isExecutable(draft) && criteria.length === 0) {
       diagnostics.push({ code: "work-item-empty-criteria", draftId: draft.draftId, message: "Executable work item has no acceptance criteria checkboxes." });
+    }
+    for (const line of malformed) {
+      diagnostics.push({ code: "work-item-malformed-criterion", draftId: draft.draftId, message: `Acceptance criteria line is not a task-list checkbox: "${line}"` });
     }
     for (const criterion of criteria) {
       if (!VERIFICATION_MARKER.test(criterion)) {
@@ -66,7 +80,7 @@ export function lintWorkItemDrafts(drafts: readonly WorkItemDraft[]): readonly W
   }
 
   if (drafts.length > 1) {
-    const sets = drafts.map((draft) => (criteriaByDraft.get(draft.draftId) ?? []).join("\n"));
+    const sets = drafts.map((draft) => (criteriaByDraft.get(draft.draftId)?.criteria ?? []).join("\n"));
     const allIdentical = sets.every((set) => set === sets[0]) && sets[0] !== "";
     if (allIdentical) {
       for (const draft of drafts) {

@@ -305,11 +305,21 @@ function renderCriterion(criterion: AllocatedCriterion): string {
   return `- [ ] ${criterion.text} (verify: ${criterion.kind}${sharedSuffix}${defaultedSuffix})`;
 }
 
-function sliceScope(milestone: MilestoneDraft, theme: string): readonly string[] {
+const SCOPE_STOPWORDS = new Set(["before", "after", "which", "uses", "runs", "with", "without", "this", "that", "then", "when", "from", "into"]);
+
+function entryMatchesSlice(entry: string, sliceText: string): boolean {
+  const tokens = entry.toLowerCase().split(/[^a-z0-9]+/u).filter((token) => token.length >= 4 && !SCOPE_STOPWORDS.has(token));
+  const haystack = sliceText.toLowerCase();
+  return tokens.some((token) => new RegExp(`(?:^|[^a-z0-9_])${token}(?:$|[^a-z0-9_])`, "u").test(haystack));
+}
+
+function sliceScope(milestone: MilestoneDraft, theme: string, ownedCriteria: readonly AllocatedCriterion[]): readonly string[] {
+  const sliceText = [theme, ...ownedCriteria.map((criterion) => criterion.text)].join("\n");
   const matched = [...milestone.technicalDecisions, ...milestone.specAnchors]
-    .filter((entry) => criterionThemeScore(entry, theme) > 0);
+    .filter((entry) => entryMatchesSlice(entry, sliceText));
   if (matched.length > 0) return matched.map((entry) => `- ${entry}`);
-  return [`- Surfaces introduced by the ${theme} slice of ${milestone.id}.`];
+  // No planning surface names this slice; its owned criteria are the concrete slice surface.
+  return ownedCriteria.map((criterion) => `- ${criterion.text}`);
 }
 
 function sliceSummary(milestone: MilestoneDraft, theme: string, siblingThemes: readonly string[], ownedCount: number): string {
@@ -349,7 +359,7 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
     ];
     const ownedCriteria = allocation.get(theme) ?? [];
     const siblingThemes = workThemes.filter((candidate) => candidate !== theme);
-    const scope = sliceScope(milestone, theme);
+    const scope = sliceScope(milestone, theme, ownedCriteria);
     const guidance = guidanceSection(`${milestone.title}: ${titleCase(theme)}`, ownedCriteria, scope);
     return {
       draftId,

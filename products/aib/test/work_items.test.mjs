@@ -94,6 +94,7 @@ describe("work item generation", () => {
       assert.match(summary, /separate/u);
       const scope = sectionBody(draft, "Scope");
       assert.ok(!scope.includes("No provider mutation changes."), "scope copied milestone boundaries");
+      assert.ok(!scope.includes("Surfaces introduced by"), "scope fell back to a generic placeholder");
       assert.equal(sectionBody(draft, "Named E2E tests"), null);
       const rendered = renderMarkdownWorkItemDraft(draft).content;
       assert.doesNotMatch(rendered, /e2e:/u);
@@ -202,6 +203,10 @@ describe("work item lint", () => {
 
     const unexplainedShared = lintWorkItemDrafts([draftWith("- [ ] Renders the slice body. (verify: unit; shared with linting slice)")]);
     assert.ok(unexplainedShared.some((entry) => entry.code === "work-item-shared-without-reason"));
+
+    const malformed = lintWorkItemDrafts([draftWith("- [ ] Renders the slice body. (verify: unit)\n- Prose line without a checkbox.")]);
+    assert.ok(malformed.some((entry) => entry.code === "work-item-malformed-criterion"));
+    assert.ok(!malformed.some((entry) => entry.code === "work-item-empty-criteria"), "valid checkbox still counts");
   });
 
   it("passes a valid boundary fixture and surfaces codes in the thrown error message", async () => {
