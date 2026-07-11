@@ -4430,6 +4430,71 @@ describe('PR body service', () => {
     assert.match(result.body, /Issue checklist: 1\/2 checked/);
   });
 
+  it('renders one criterion-to-proof scaffold entry per checklist criterion', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const singleExec = async args => {
+      const issue = issueViewResponse(args, 93, '- [ ] Renders the scaffold for each criterion.');
+      if (issue) return issue;
+      return { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+    };
+
+    const single = await buildPrBody(config, { issueNumber: 93, repoRoot: repo, exec: singleExec });
+
+    assert.match(single.body, /## Criterion-to-proof map/);
+    assert.match(single.body, /Fill every entry before opening the PR\. Update entries when review fixes move code or tests\./);
+    assert.match(single.body, /### Criterion 1: Renders the scaffold for each criterion\./);
+    assert.match(single.body, /- Implemented at: \[UNFILLED: list the file paths and symbols where this behavior lives\]/);
+    assert.match(single.body, /- Proven by: \[UNFILLED: name the test file and test whose assertions fail if this behavior regresses\]/);
+    assert.match(single.body, /- Negative case: \[UNFILLED: name the counterexample test, or state why none applies\]/);
+    assert.equal((single.body.match(/\[UNFILLED:/g) || []).length, 3);
+    const mapIndex = single.body.indexOf('## Criterion-to-proof map');
+    assert.ok(mapIndex > single.body.indexOf('## Summary'));
+    assert.ok(mapIndex < single.body.indexOf('## Verification'));
+
+    const manyBody = Array.from({ length: 12 }, (_, index) => `- [${index % 2 ? 'x' : ' '}] Criterion body ${index + 1}.`).join('\n');
+    const manyExec = async args => {
+      const issue = issueViewResponse(args, 93, manyBody);
+      if (issue) return issue;
+      return { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+    };
+
+    const many = await buildPrBody(config, { issueNumber: 93, repoRoot: repo, exec: manyExec });
+
+    assert.equal((many.body.match(/### Criterion /g) || []).length, 12);
+    assert.equal((many.body.match(/\[UNFILLED:/g) || []).length, 36);
+    assert.match(many.body, /### Criterion 12: Criterion body 12\./);
+  });
+
+  it('renders no scaffold section or placeholder debris without checklist criteria', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93.json'), JSON.stringify({ status: 'passed', summary: 'review passed' }));
+    const config = getDefaults();
+    config.manualUiAudit = false;
+    config.reviewAgents = [];
+    const exec = async args => {
+      const issue = issueViewResponse(args, 93);
+      if (issue) return issue;
+      return { args, exitCode: 1, stdout: '', stderr: 'no pull requests found for branch' };
+    };
+
+    const result = await buildPrBody(config, { issueNumber: 93, repoRoot: repo, exec });
+
+    assert.doesNotMatch(result.body, /Criterion-to-proof/);
+    assert.doesNotMatch(result.body, /\[UNFILLED/);
+  });
+
+  it('directs the issue-compliance lane to verify the criterion-to-proof map', () => {
+    const stack = promptStack('issue-compliance', []);
+    assert.match(stack.text, /criterion-to-proof map/);
+    assert.match(stack.text, /Treat unfilled \[UNFILLED\] placeholders, false locations, tests that do not assert the criterion, and missing negative cases without a stated reason as findings\./);
+  });
+
   it('does not report ready while GitHub merge state is still blocked', async () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, '.qube', 'aie', 'reviews'), { recursive: true });
