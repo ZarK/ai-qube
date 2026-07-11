@@ -358,7 +358,7 @@ function renderStageLines(config: Config, hosts: readonly AgentHostProfile[], wo
     `audit: run the configured manual UI audit with \`qube aie audit ui <issue> --prepare\` for user-facing UI changes, start local UI servers with ${audit.runnerWithStart} when a long-running app is needed, ${audit.packageScriptPreference}, ${audit.boundedWait}, ${audit.inspectionOrderWithPlaywright}, ${audit.evidence}, ${audit.stop}, keep evidence local, ${audit.noShortcuts}, or record the exact blocker from ${audit.status}.`,
     reviewStage,
     'test: run configured quality gates plus the relevant build, typecheck, and test commands for changed code.',
-    'PR: commit intentional source changes, push the issue branch, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
+    'PR: commit intentional source changes, push the issue branch, fill every criterion-to-proof entry in the PR body before opening the pull request and update entries when review fixes move code or tests, open a non-draft, ready-for-review pull request that closes the issue, and request configured reviews when enabled.',
     'merge: address review/check feedback, loop back to implementation when a gate fails, rerun affected gates, and merge only after policy and checks pass.',
     'completion: after merge, run `qube aie complete <issue>` even when the pull request already closed the issue.',
     `pull-base: return to \`${config.baseBranch}\` and pull \`${config.baseRemote}/${config.baseBranch}\` before new issue work.`,

@@ -325,8 +325,25 @@ function formatLocalReview(result: PrGateResult | null): string[] {
   return lines;
 }
 
+function criterionProofLines(issueChecklist: IssueChecklistSummary | null): string[] {
+  const criteria = issueChecklist?.checklist.items ?? [];
+  if (criteria.length === 0) return [];
+  const lines = ['## Criterion-to-proof map', '', 'Fill every entry before opening the PR. Update entries when review fixes move code or tests.'];
+  for (const criterion of criteria) {
+    lines.push('');
+    lines.push(`### Criterion ${criterion.index}: ${criterion.text}`);
+    lines.push('- Implemented at: [UNFILLED: list the file paths and symbols where this behavior lives]');
+    lines.push('- Proven by: [UNFILLED: name the test file and test whose assertions fail if this behavior regresses]');
+    lines.push('- Negative case: [UNFILLED: name the counterexample test, or state why none applies]');
+  }
+  lines.push('');
+  return lines;
+}
+
 function buildBody(result: Omit<PrBodyResult, 'body'>): string {
-  const lines = ['## Summary', `- Complete Executor issue #${result.issue}.`, '', '## Verification'];
+  const lines = ['## Summary', `- Complete Executor issue #${result.issue}.`, ''];
+  lines.push(...criterionProofLines(result.issueChecklist));
+  lines.push('## Verification');
   if (result.gates.lines.length === 0) lines.push('- Configured gates: none configured.');
   for (const gate of result.gates.lines) lines.push(`- ${gate.state}: ${gate.name} (${gate.stage}, ${gate.requirement}) - ${gate.recorded ? 'recorded' : 'pending evidence'}; ${gate.summary}`);
   lines.push(formatUiAudit(result.uiAudit, result.prReviewGate.result));
