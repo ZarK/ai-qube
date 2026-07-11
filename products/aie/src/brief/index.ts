@@ -1,5 +1,7 @@
 export type {
   BriefLane,
+  BriefLayout,
+  BriefLayoutProject,
   BriefMatrix,
   BriefMatrixDimension,
   BriefObligation,

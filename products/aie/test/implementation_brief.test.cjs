@@ -206,6 +206,94 @@ describe('implementation brief builder', () => {
     assert.ok(brief.negativeCases.length > 0);
   });
 
+  it('renders layout ownership for a multi-package issue and omits it without layout data', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+        { id: 'qube-core', path: 'packages/qube-core', kind: 'package', packageName: '@tjalve/qube-core', packageManager: 'pnpm', gates: [] },
+        { id: 'adapter-github', path: 'adapters/github', kind: 'package', packageName: '@tjalve/qube-adapter-github', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [{ path: 'dist', reason: 'Generated package build output path exists.' }],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const body = [
+      'Move the contract into `packages/qube-core/src/contracts.ts` and consume it from `products/aie/src/view.ts`.',
+      '',
+      '- [ ] Unit test asserts the shared contract is consumed, not duplicated.',
+    ].join('\n');
+    const brief = buildImplementationBrief({ title: 'Share the contract', body, config: briefConfig(), layout });
+    assert.ok(brief.layout, 'expected a layout section');
+    assert.equal(brief.layout.derived, true);
+    assert.deepEqual(brief.layout.owningProjects.map(project => `${project.name}:${project.role}`), ['@tjalve/aie:product', '@tjalve/qube-core:package']);
+    assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Provider-neutral contracts live in core packages')));
+    assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Products consume core contracts')));
+    assert.deepEqual(brief.layout.doNotEditPaths, ['dist (Generated package build output path exists.)']);
+    const rendered = formatBriefLines(brief).join('\n');
+    assert.ok(rendered.includes('Layout ownership:'));
+    assert.ok(rendered.includes('Do-not-edit paths:'));
+
+    const withoutLayout = buildImplementationBrief({ title: 'Share the contract', body, config: briefConfig() });
+    assert.equal(withoutLayout.layout, null);
+    assert.ok(!formatBriefLines(withoutLayout).join('\n').includes('Layout ownership'));
+
+    const nonCode = buildImplementationBrief({
+      title: 'Rewrite the guide',
+      body: 'Improve wording in `docs/guide.md` only.\n\n- [ ] The guide reads clearly. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(nonCode.layout, null, 'documentation-only work renders no layout section');
+  });
+
+  it('states could-not-derive instead of guessing and omits empty do-not-edit entries', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Improve resilience',
+      body: 'contestant latest errorship pretest resilience improvements.\n\n- [ ] Unit test asserts resilient behavior.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout, 'expected a layout section with the could-not-derive statement');
+    assert.equal(brief.layout.derived, false);
+    assert.deepEqual(brief.layout.owningProjects, []);
+    assert.deepEqual(brief.layout.boundaryRules, []);
+    assert.deepEqual(brief.layout.doNotEditPaths, []);
+    const rendered = formatBriefLines(brief).join('\n');
+    assert.ok(rendered.includes('Expected surfaces could not be derived'));
+    assert.ok(!rendered.includes('Do-not-edit paths:'));
+    assert.ok(!rendered.includes('Owning projects:'));
+
+    const again = buildImplementationBrief({
+      title: 'Improve resilience',
+      body: 'contestant latest errorship pretest resilience improvements.\n\n- [ ] Unit test asserts resilient behavior.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.deepEqual(brief, again, 'layout projection must be deterministic');
+  });
+
   it('extracts expected paths from backticked and bare path tokens', () => {
     const paths = extractExpectedPaths('Edit `products/aie/src/view.ts` and products/aie/test/view.test.cjs but not `a spaced token`, `prompts/**/*.md`, or plain words.');
     assert.ok(paths.includes('products/aie/src/view.ts'));

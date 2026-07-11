@@ -27,6 +27,30 @@ export function formatBriefLines(brief: ImplementationBrief): string[] {
     if (brief.matrix.omittedRows > 0) lines.push(`    (+${brief.matrix.omittedRows} rows omitted)`);
   }
 
+  if (brief.layout !== null) {
+    lines.push('  Layout ownership:');
+    if (!brief.layout.derived) {
+      lines.push('    Expected surfaces could not be derived from the issue text; identify the owning projects before coding.');
+    } else {
+      lines.push('    Owning projects:');
+      for (const project of brief.layout.owningProjects) {
+        lines.push(`    - ${project.name} (${project.role}, ${project.path})`);
+      }
+      if (brief.layout.boundaryRules.length > 0) {
+        lines.push('    Boundary rules:');
+        for (const rule of brief.layout.boundaryRules) {
+          lines.push(`    - ${rule}`);
+        }
+      }
+    }
+    if (brief.layout.doNotEditPaths.length > 0) {
+      lines.push('    Do-not-edit paths:');
+      for (const path of brief.layout.doNotEditPaths) {
+        lines.push(`    - ${path}`);
+      }
+    }
+  }
+
   if (brief.riskCards.length === 0) {
     lines.push('  Risk cards: none activated.');
   } else {

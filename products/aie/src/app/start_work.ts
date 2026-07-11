@@ -1,5 +1,6 @@
 import { buildImplementationBrief, type ImplementationBrief } from '../brief/index.js';
 import { createAction, createActionPlan, type Action } from '../core/action_plan.js';
+import { inspectRepoLayout } from '../repo/index.js';
 import { selectNextWork } from '../core/queue_rules.js';
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
@@ -96,6 +97,14 @@ function selectedWorkLabel(item: WorkItem): string {
   return item.displayId;
 }
 
+async function loadLayoutSnapshot(context: LifecycleServiceContext): Promise<import('@tjalve/qube-core').RepoLayoutInspection | undefined> {
+  try {
+    return await inspectRepoLayout({ config: context.config, cwd: context.cwd });
+  } catch {
+    return undefined;
+  }
+}
+
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
   const { selection, dryRun, assign, comment, context } = options;
   if (selection.kind === 'help') return blockedStart({ action: 'invalid', reason: 'Start help was requested instead of lifecycle mutation.', selectedItem: null, activeIssueState: emptyActiveWorkState(), dryRun, warnings: ['Use command help output for usage.'] });
@@ -162,6 +171,6 @@ export async function runStartService(options: { selection: LifecycleIssueSelect
   if (!context.config.assignOnStart) warnings.push('Assignment is disabled by repository policy.');
   if (!context.config.commentOnStart) warnings.push('Started-work comments are disabled by repository policy.');
   const errors = preStartPolicy.ok ? plan.summary.failedActions.map(item => item.failure?.cause ?? item.description) : preStartPolicy.blockers;
-  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config }) : null;
+  const brief = plan.ok ? buildImplementationBrief({ title: selectedItem.title, body: selectedItem.body, config: context.config, layout: await loadLayoutSnapshot(context) }) : null;
   return { ok: plan.ok, action: plan.ok ? action : 'blocked', reason: plan.ok ? reason : blockedReason({ selectedIssueNumber, preStartPolicy, plan }), selectedItem, blockers, activeIssueState: activeState, preStartPolicy, branchName, brief, plan, warnings, errors };
 }

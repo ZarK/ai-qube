@@ -1,8 +1,9 @@
+import type { RepoLayoutInspection } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { parseWorkChecklistItems } from '../core/work_item.js';
 import { activeLocalReviewFocusesForConfig, LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { implementerFaceHasTestObligation, selectRiskCards } from '../risk_cards/index.js';
-import type { BriefLane, BriefMatrix, BriefMatrixDimension, BriefObligation, ImplementationBrief, VerificationKind } from './types.js';
+import type { BriefLane, BriefLayout, BriefLayoutProject, BriefMatrix, BriefMatrixDimension, BriefObligation, ImplementationBrief, VerificationKind } from './types.js';
 
 const MAX_OBLIGATIONS = 30;
 const MAX_MATRIX_ROWS = 24;
@@ -92,7 +93,56 @@ function splitSentences(text: string): string[] {
   return text.trim().split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(part => part.length > 0);
 }
 
-export function buildImplementationBrief(input: { title: string; body: string; config: Config }): ImplementationBrief {
+function projectRole(projectPath: string, inspectedKind: string): string {
+  if (projectPath.startsWith('products/')) return 'product';
+  if (projectPath.startsWith('packages/')) return 'package';
+  if (projectPath.startsWith('adapters/')) return 'adapter';
+  return inspectedKind;
+}
+
+function isDocumentationSurface(path: string): boolean {
+  return path.startsWith('docs/') || path.endsWith('.md');
+}
+
+function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string, expectedPaths: readonly string[]): BriefLayout | null {
+  if (!layout || layout.root === null || layout.projects.length === 0) return null;
+
+  const owningProjects: BriefLayoutProject[] = layout.projects
+    .filter(project => {
+      const prefix = `${project.path.replace(/\\/g, '/')}/`;
+      const pathOwned = expectedPaths.some(path => path.startsWith(prefix) || path === project.path);
+      const nameMentioned = (project.packageName !== null && matchesToken(issueText, project.packageName))
+        || matchesToken(issueText, project.path)
+        || matchesToken(issueText, project.id);
+      return pathOwned || nameMentioned;
+    })
+    .map(project => ({
+      name: project.packageName ?? project.id,
+      path: project.path.replace(/\\/g, '/'),
+      role: projectRole(project.path.replace(/\\/g, '/'), project.kind),
+    }));
+
+  const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
+  // Non-code work: every recognizable surface is documentation and no workspace project is named.
+  if (owningProjects.length === 0 && expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
+
+  const derived = owningProjects.length > 0;
+  const roles = new Set(owningProjects.map(project => project.role));
+  const boundaryRules: string[] = [];
+  if (derived) {
+    if (roles.has('package')) boundaryRules.push('Provider-neutral contracts live in core packages; provider-specific behavior does not belong there.');
+    if (roles.has('adapter') || /\bprovider\b/iu.test(issueText)) boundaryRules.push('Provider-specific encoding lives in the owning adapter, not in core packages or products.');
+    if (roles.has('product')) boundaryRules.push('Products consume core contracts rather than duplicating them.');
+    if (expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path))) boundaryRules.push('Test support stays inside its own project boundaries.');
+  }
+
+  const doNotEditPaths = [...layout.generatedPaths, ...layout.vendorPaths]
+    .map(signal => `${signal.path} (${signal.reason})`);
+
+  return { owningProjects, boundaryRules, doNotEditPaths, derived };
+}
+
+export function buildImplementationBrief(input: { title: string; body: string; config: Config; layout?: RepoLayoutInspection }): ImplementationBrief {
   const issueText = `${input.title}\n${input.body}`;
   const criteria = parseWorkChecklistItems(input.body).map(item => item.text);
   const obligations: BriefObligation[] = criteria
@@ -143,6 +193,7 @@ export function buildImplementationBrief(input: { title: string; body: string; c
     obligations,
     omittedObligations,
     matrix,
+    layout: buildLayout(input.layout, issueText, expectedPaths),
     riskCards,
     expectedLanes,
     negativeCases,
