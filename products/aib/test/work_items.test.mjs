@@ -22,7 +22,7 @@ function milestoneFixture(overrides = {}) {
       "Allocation assigns each criterion to the owning slice and renders checkboxes.",
       "Linting rejects vague statements with stable diagnostic codes.",
       "Guidance sections render implementer faces from triggered risk cards.",
-      "Rendered output stays deterministic across runs for every slice."
+      "Guidance output stays deterministic across runs."
     ],
     likelyWorkItemThemes: ["criterion allocation", "draft linting", "risk guidance"],
     technicalDecisions: ["Allocation scoring uses word boundaries.", "Linting runs before render."],
@@ -128,6 +128,33 @@ describe("work item generation", () => {
     const serializationCard = loadRiskCardCatalog().find((card) => card.id === "serialization-encoding");
     assert.ok(guidance.includes(serializationCard.implementerFace.trim()), "implementer face missing from guidance");
     assert.ok(!guidance.includes(serializationCard.reviewerFace.trim().slice(0, 40)), "reviewer-face text leaked");
+  });
+
+  it("diagnoses defaulted allocation with siblings and allows it for a single slice", () => {
+    const multiDir = mkdtempSync(join(tmpdir(), "aib-work-items-"));
+    const multiTheme = milestoneFixture({
+      acceptanceCriteria: [
+        "Allocation assigns each criterion to the owning slice and renders checkboxes.",
+        "Linting rejects vague statements with stable diagnostic codes.",
+        "Everything stays reproducible without further wording."
+      ],
+      likelyWorkItemThemes: ["criterion allocation", "draft linting"]
+    });
+    assert.throws(
+      () => createWorkItemDrafts(stateFixture(multiTheme, multiDir), undefined, multiDir),
+      (error) => error instanceof WorkItemLintError && error.diagnostics.some((entry) => entry.code === "work-item-unallocated-criterion")
+    );
+
+    const singleDir = mkdtempSync(join(tmpdir(), "aib-work-items-"));
+    const singleTheme = milestoneFixture({
+      id: "milestone-03-single",
+      path: "docs/milestones/milestone-03-single.md",
+      acceptanceCriteria: ["Everything stays reproducible without further wording."],
+      likelyWorkItemThemes: ["handoff wrap-up"]
+    });
+    const single = createWorkItemDrafts(stateFixture(singleTheme, singleDir), undefined, singleDir);
+    assert.equal(single.drafts.length, 1);
+    assert.match(sectionBody(single.drafts[0], "Acceptance criteria"), /allocation defaulted: no theme matched/u);
   });
 
   it("is deterministic across runs", () => {

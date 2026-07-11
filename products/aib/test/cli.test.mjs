@@ -979,6 +979,26 @@ test("milestones generate writes planning-depth docs before work items", async (
   const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
   assert.equal(status.artifacts.milestones.length, 3);
   assert.equal(status.artifacts.workItems.length, 1);
+
+  const lintState = JSON.parse(await readFile(init.statePath, "utf8"));
+  lintState.planning.workItemDrafts = [{
+    ...lintState.planning.workItemDrafts[0],
+    bodySections: [
+      { heading: "Summary", body: "Deliver the slice." },
+      { heading: "Acceptance criteria", body: "- [ ] Handles errors correctly. (verify: unit)" }
+    ]
+  }];
+  await writeFile(init.statePath, JSON.stringify(lintState), "utf8");
+
+  const lintJson = runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run", "--json"]);
+  assert.notEqual(lintJson.status, 0);
+  const lintError = JSON.parse(lintJson.stdout).error;
+  assert.equal(lintError.kind, "work-item-lint-failed");
+  assert.match(lintError.likelyCause, /work-item-vague-criterion/);
+
+  const lintHuman = runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run"]);
+  assert.notEqual(lintHuman.status, 0);
+  assert.match(`${lintHuman.stdout}\n${lintHuman.stderr}`, /work-item-vague-criterion/);
 });
 
 test("end-to-end bootstrap flow reaches renderable work item drafts from CLI answers", async () => {

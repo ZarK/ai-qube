@@ -253,6 +253,7 @@ interface AllocatedCriterion {
   readonly kind: CriterionVerificationKind;
   readonly sharedWith: readonly string[];
   readonly sharedReason: string | null;
+  readonly defaulted: boolean;
 }
 
 function themeTokens(theme: string): readonly string[] {
@@ -280,13 +281,15 @@ function allocateCriteria(criteria: readonly string[], themes: readonly string[]
   for (const criterion of criteria) {
     const scores = themes.map((theme) => criterionThemeScore(criterion, theme));
     const top = Math.max(...scores);
-    const owners = top > 0 ? themes.filter((theme, index) => scores[index] === top) : [themes[0] ?? "scope"];
+    const defaulted = top === 0;
+    const owners = defaulted ? [themes[0] ?? "scope"] : themes.filter((theme, index) => scores[index] === top);
     const shared = owners.length > 1;
     const entry = (owner: string): AllocatedCriterion => ({
       text: criterion,
       kind: verificationKindFor(criterion),
       sharedWith: shared ? owners.filter((theme) => theme !== owner) : [],
-      sharedReason: shared ? `names behavior spanning the ${owners.join(" and ")} slices` : null
+      sharedReason: shared ? `names behavior spanning the ${owners.join(" and ")} slices` : null,
+      defaulted
     });
     for (const owner of owners) allocation.get(owner)?.push(entry(owner));
   }
@@ -297,7 +300,9 @@ function renderCriterion(criterion: AllocatedCriterion): string {
   const sharedSuffix = criterion.sharedReason !== null && criterion.sharedWith.length > 0
     ? `; shared with ${criterion.sharedWith.join(" and ")}: ${criterion.sharedReason}`
     : "";
-  return `- [ ] ${criterion.text} (verify: ${criterion.kind}${sharedSuffix})`;
+  // Defaulted ownership is rendered explicitly so linting can diagnose it on multi-slice milestones.
+  const defaultedSuffix = criterion.defaulted ? "; allocation defaulted: no theme matched" : "";
+  return `- [ ] ${criterion.text} (verify: ${criterion.kind}${sharedSuffix}${defaultedSuffix})`;
 }
 
 function sliceScope(milestone: MilestoneDraft, theme: string): readonly string[] {

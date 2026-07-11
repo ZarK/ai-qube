@@ -19,7 +19,8 @@ export class WorkItemLintError extends Error {
 const CRITERION_LINE = /^- \[[ x]\] (.*)$/u;
 const VERIFICATION_MARKER = /\(verify: (?:unit|integration|manual observation|artifact review)(?:;|\))/u;
 const SHARED_MARKER = /\(verify: [^)]*; shared with /u;
-const SHARED_REASON = /; shared with [^:)]+: [^)]+\)/u;
+const SHARED_REASON = /; shared with [^:)]+: [^)]+(?:;|\))/u;
+const DEFAULTED_ALLOCATION = /; allocation defaulted: no theme matched\)/u;
 const VAGUE_PHRASES = /\b(?:works?\s+correctly|handles?\s+errors?|is\s+robust|functions?\s+properly|behaves?\s+as\s+expected)\b/iu;
 const OBSERVABLE_OUTCOME = /\b(?:loud(?:ly)?|exit\s+code|error\s+message|returns?|renders?|rejects?\s+with|asserts?|fails?\s+with|reports?|lists?|exposes?|counts?|checkbox)\b/iu;
 
@@ -55,6 +56,11 @@ export function lintWorkItemDrafts(drafts: readonly WorkItemDraft[]): readonly W
       }
       if (SHARED_MARKER.test(criterion) && !SHARED_REASON.test(criterion)) {
         diagnostics.push({ code: "work-item-shared-without-reason", draftId: draft.draftId, message: `Shared criterion has no stated reason: "${criterion}"` });
+      }
+      // A defaulted owner is safe when the milestone yields one slice (ownership by elimination);
+      // with siblings present it is an undecided allocation and must be resolved by the author.
+      if (drafts.length > 1 && DEFAULTED_ALLOCATION.test(criterion)) {
+        diagnostics.push({ code: "work-item-unallocated-criterion", draftId: draft.draftId, message: `Criterion matched no theme and was defaulted while sibling slices exist: "${criterion}"` });
       }
     }
   }
