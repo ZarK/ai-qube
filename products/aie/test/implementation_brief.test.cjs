@@ -221,7 +221,7 @@ describe('implementation brief builder', () => {
       lockfiles: [],
       ciHints: [],
       generatedPaths: [{ path: 'dist', reason: 'Generated package build output path exists.' }],
-      vendorPaths: [],
+      vendorPaths: [{ path: 'vendor', reason: 'Vendored dependency path exists.' }],
       warnings: [],
     };
     const body = [
@@ -235,7 +235,11 @@ describe('implementation brief builder', () => {
     assert.deepEqual(brief.layout.owningProjects.map(project => `${project.name}:${project.role}`), ['@tjalve/aie:product', '@tjalve/qube-core:package']);
     assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Provider-neutral contracts live in core packages')));
     assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Products consume core contracts')));
-    assert.deepEqual(brief.layout.doNotEditPaths, ['dist (Generated package build output path exists.)']);
+    assert.ok(brief.layout.boundaryRules.some(rule => rule.includes('Test support stays inside its own project boundaries')), 'a unit-test obligation implies the test-boundary directive');
+    assert.deepEqual(brief.layout.doNotEditPaths, [
+      'dist (Generated package build output path exists.)',
+      'vendor (Vendored dependency path exists.)',
+    ]);
     const rendered = formatBriefLines(brief).join('\n');
     assert.ok(rendered.includes('Layout ownership:'));
     assert.ok(rendered.includes('Do-not-edit paths:'));
@@ -346,6 +350,15 @@ describe('implementation brief builder', () => {
     assert.ok(brief.layout, 'expected a layout section');
     assert.equal(brief.layout.derived, false, 'unmatched path must yield could-not-derive, not a fabricated root owner');
     assert.deepEqual(brief.layout.owningProjects, []);
+
+    const oneProjectWorkspace = buildImplementationBrief({
+      title: 'Touch an unrecognized surface',
+      body: 'Edit `mystery/deep/thing.ts` to render output.\n\n- [ ] Unit test asserts the surface renders.',
+      config: briefConfig(),
+      layout: { ...layout, projects: [layout.projects[0]] },
+    });
+    assert.ok(oneProjectWorkspace.layout);
+    assert.equal(oneProjectWorkspace.layout.derived, false, 'a one-project workspace root must not claim unmatched paths');
   });
 
   it('omits the layout section for documentation-only work inside a known project', () => {
@@ -405,6 +418,32 @@ describe('implementation brief builder', () => {
     assert.equal(brief.layout.owningProjects.length, 8);
     assert.equal(brief.layout.omittedProjects, 2);
     assert.ok(formatBriefLines(brief).join('\n').includes('(+2 projects omitted)'));
+  });
+
+  it('reserves the core directive for core packages', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'qube-cli', path: 'packages/qube-cli', kind: 'package', packageName: '@tjalve/qube-cli', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const brief = buildImplementationBrief({
+      title: 'Extend the command registry',
+      body: 'Edit `packages/qube-cli/src/registry/index.ts` to expose the new command shape.\n\n- [ ] Unit test asserts the registry exposes the new command shape.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(brief.layout && brief.layout.derived);
+    assert.ok(!brief.layout.boundaryRules.some(rule => rule.includes('Provider-neutral contracts live in core packages')), 'a non-core package must not trigger the core directive');
   });
 
   it('derives boundary rules from capped-out owners too', () => {

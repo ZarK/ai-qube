@@ -1,11 +1,10 @@
 import { buildImplementationBrief, type ImplementationBrief } from '../brief/index.js';
 import { createAction, createActionPlan, type Action } from '../core/action_plan.js';
-import { inspectRepoLayout } from '../repo/index.js';
 import { selectNextWork } from '../core/queue_rules.js';
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, type WorkItem } from '../core/work_item.js';
 import { buildLifecyclePlan, createLifecycleAction, type LifecycleIssueSelection, type LifecyclePlan, type PreStartPolicyResult } from '../lifecycle.js';
-import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
+import { actionToLifecycle, activeWorkState, applyProviderPlan, emptyLifecyclePlan, githubIssueLifecycleUnsupportedReason, loadLayoutSnapshot, loadQueueState, workItemNumber, type ActiveWorkState, type ApplyResult, type LifecycleServiceContext } from './lifecycle_common.js';
 import { buildPreStartPolicy } from './pre_start_policy.js';
 
 export interface StartServiceResult {
@@ -97,13 +96,6 @@ function selectedWorkLabel(item: WorkItem): string {
   return item.displayId;
 }
 
-async function loadLayoutSnapshot(context: LifecycleServiceContext): Promise<import('@tjalve/qube-core').RepoLayoutInspection | undefined> {
-  try {
-    return await inspectRepoLayout({ config: context.config, cwd: context.cwd });
-  } catch {
-    return undefined;
-  }
-}
 
 export async function runStartService(options: { selection: LifecycleIssueSelection; dryRun: boolean; assign: boolean; comment: boolean; context: LifecycleServiceContext }): Promise<StartServiceResult> {
   const { selection, dryRun, assign, comment, context } = options;

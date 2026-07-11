@@ -120,7 +120,7 @@ function meaningfulIdentifier(value: string | null): value is string {
   return value !== null && value.trim().length >= 3 && value !== '.';
 }
 
-function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string, expectedPaths: readonly string[]): BriefLayout | null {
+function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string, expectedPaths: readonly string[], expectsTestWork: boolean): BriefLayout | null {
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
@@ -128,7 +128,7 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
-  const rootOwnsUnmatched = layout.kind === 'single-app-service' || projects.length === 1;
+  const rootOwnsUnmatched = layout.kind === 'single-app-service';
   const owners = new Set<string>();
   // Each expected code surface is owned by the most specific containing project.
   for (const surface of codeSurfaces) {
@@ -159,10 +159,12 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
 
   const boundaryRules: string[] = [];
   if (derived) {
-    if (roles.has('package')) boundaryRules.push('Provider-neutral contracts live in core packages; provider-specific behavior does not belong there.');
+    const ownsCorePackage = allOwningProjects.some(project => project.role === 'package'
+      && (matchesToken(project.name, 'core') || matchesToken(project.path, 'core')));
+    if (ownsCorePackage) boundaryRules.push('Provider-neutral contracts live in core packages; provider-specific behavior does not belong there.');
     if (roles.has('adapter') || /\bprovider\b/iu.test(issueText)) boundaryRules.push('Provider-specific encoding lives in the owning adapter, not in core packages or products.');
     if (roles.has('product')) boundaryRules.push('Products consume core contracts rather than duplicating them.');
-    if (expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path))) boundaryRules.push('Test support stays inside its own project boundaries.');
+    if (expectsTestWork) boundaryRules.push('Test support stays inside its own project boundaries.');
   }
 
   const allDoNotEditPaths = [...layout.generatedPaths, ...layout.vendorPaths]
@@ -224,7 +226,13 @@ export function buildImplementationBrief(input: { title: string; body: string; c
     obligations,
     omittedObligations,
     matrix,
-    layout: buildLayout(input.layout, issueText, expectedPaths),
+    layout: buildLayout(
+      input.layout,
+      issueText,
+      expectedPaths,
+      obligations.some(obligation => obligation.kind === 'unit' || obligation.kind === 'integration')
+        || expectedPaths.some(path => /(?:^|\/)tests?\//.test(path) || /\.test\./.test(path)),
+    ),
     riskCards,
     expectedLanes,
     negativeCases,

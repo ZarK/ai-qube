@@ -12,6 +12,7 @@ import { buildLifecyclePlan, createLifecycleAction, type LifecycleAction, type L
 import { createWorkProvider } from '../providers/work_provider_adapters.js';
 import type { WorkProviderAdapterOptions } from '../providers/work_provider_adapters.js';
 import type { WorkProvider } from '../providers/work_provider.js';
+import { inspectRepoLayout } from '../repo/index.js';
 
 export interface LifecycleServiceContext {
   config: Config;
@@ -80,6 +81,15 @@ export function activeWorkState(queue: WorkQueueState): ActiveWorkState {
 }
 
 export { workItemNumber };
+
+/** Layout facts are optional brief context: inspection failure degrades to no layout section. */
+export async function loadLayoutSnapshot(context: LifecycleServiceContext): Promise<import('@tjalve/qube-core').RepoLayoutInspection | undefined> {
+  try {
+    return await inspectRepoLayout({ config: context.config, cwd: context.cwd });
+  } catch {
+    return undefined;
+  }
+}
 
 export function githubIssueLifecycleUnsupportedReason(context: LifecycleServiceContext, command: string): string | null {
   if (context.provider.id === 'github') return null;

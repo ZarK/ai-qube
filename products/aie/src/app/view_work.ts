@@ -2,8 +2,8 @@ import { buildImplementationBrief, type ImplementationBrief } from '../brief/ind
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, parseWorkChecklist, parseWorkChecklistItems, workItemNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
-import { getRepositoryIdentity, inspectRepoLayout, listMilestones } from '../repo/index.js';
-import { githubIssueLifecycleUnsupportedReason, type LifecycleServiceContext } from './lifecycle_common.js';
+import { getRepositoryIdentity, listMilestones } from '../repo/index.js';
+import { githubIssueLifecycleUnsupportedReason, loadLayoutSnapshot, type LifecycleServiceContext } from './lifecycle_common.js';
 
 export interface ViewServiceResult {
   ok: boolean;
@@ -22,13 +22,6 @@ function checklistItems(body: string): string[] {
   return parseWorkChecklistItems(body).map(item => item.text);
 }
 
-async function loadLayoutSnapshot(context: LifecycleServiceContext): Promise<import('@tjalve/qube-core').RepoLayoutInspection | undefined> {
-  try {
-    return await inspectRepoLayout({ config: context.config, cwd: context.cwd });
-  } catch {
-    return undefined;
-  }
-}
 
 function recommendedAction(issueNumber: number, status: ViewServiceResult['effectiveStatus'], unresolvedBlockers: BlockerDetail[], hasOtherInProgress: boolean): string {
   if (status === 'Closed') return `Issue is closed. Run \`aie deps blocking ${issueNumber}\` to inspect open dependents before advancing related work.`;
