@@ -56,6 +56,24 @@ function builtinFragmentDigest(entries: ReadonlyArray<Record<string, unknown>>):
   return hash(JSON.stringify(builtin));
 }
 
+/** Stable identity of activated risk-card command fragments (ordered ids). */
+export function riskCardCommandIdentity(fragments: readonly string[]): string {
+  const ids = fragments.map(text => {
+    const sha256 = createHash('sha256').update(text).digest('hex');
+    return `command-supplied:${sha256.slice(0, 12)}`;
+  });
+  return hash(JSON.stringify(ids));
+}
+
+export function priorRiskCardCommandIdentity(promptStackEntries: unknown): string {
+  if (!Array.isArray(promptStackEntries)) return hash(JSON.stringify([]));
+  const ids = promptStackEntries
+    .filter(isRecord)
+    .map(entry => typeof entry.id === 'string' ? entry.id : '')
+    .filter(id => id.startsWith('command-supplied:'));
+  return hash(JSON.stringify(ids));
+}
+
 export function expectedLaneFragmentDigest(lane: LocalReviewLaneId): string {
   return builtinFragmentDigest(promptStack(lane).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
@@ -78,9 +96,11 @@ export async function findCarryForwardSource(input: {
   matchPatterns: readonly string[];
   contextPatterns: readonly string[];
   expectedFragmentDigest: string;
+  expectedCommandSuppliedIdentity?: string;
   expectedAdapter: 'local-host' | 'local-command';
   requiredCommand: string | null;
 }): Promise<CarryForwardSource | null> {
+  const expectedCommandIdentity = input.expectedCommandSuppliedIdentity ?? riskCardCommandIdentity([]);
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
   let headDirectories: string[];
   try {
@@ -107,6 +127,7 @@ export async function findCarryForwardSource(input: {
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
+      if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
       const provenance = parsed.runnerProvenance;
       const priorRunId = [provenance.taskId, provenance.sessionId, provenance.threadId].find((value): value is string => typeof value === 'string' && value.trim() !== '') ?? null;
       candidates.push({ fromHeadSha: priorHeadSha, priorRunId, recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '' });
@@ -203,13 +224,18 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
   ];
 }
 
-export function promptStack(lane: LocalReviewLaneId, contextLines: readonly string[] = [`Run local review lane ${lane}.`]) {
+export function promptStack(
+  lane: LocalReviewLaneId,
+  contextLines: readonly string[] = [`Run local review lane ${lane}.`],
+  riskCardFragments: readonly string[] = [],
+) {
   return renderAgentPrompt({
     hostId: 'codex',
     descriptorId: 'qa-reviewer',
     categoryId: 'review',
     laneIds: [lane],
     contextLines,
+    commandFragments: riskCardFragments,
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
@@ -521,8 +547,8 @@ function writeReviewBundle(input: {
   return path;
 }
 
-export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand));
+export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = []): Promise<LaneEvidence | null> {
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,

@@ -47,7 +47,15 @@ function ensureGhSuccess(operation: string, result: Awaited<ReturnType<typeof ru
 }
 
 export function summarizeIssueChecklist(issue: GitHubIssue): IssueChecklistSummary {
-  return { issue: issueSummary(issue), checklist: parseChecklist(issue.body) };
+  return {
+    issue: issueSummary(issue),
+    checklist: parseChecklist(issue.body),
+  };
+}
+
+/** Activation corpus for risk-card selection; kept out of public checklist JSON. */
+export function riskCardIssueTextFromIssue(issue: Pick<GitHubIssue, 'title' | 'body'>): string {
+  return `${issue.title}\n${issue.body ?? ''}`;
 }
 
 export async function inspectIssueChecklist(issueNumber: number, options: { cwd?: string; exec?: GhExec } = {}): Promise<IssueChecklistSummary> {

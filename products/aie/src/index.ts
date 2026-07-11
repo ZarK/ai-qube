@@ -4,3 +4,24 @@
  */
 export const name = '@tjalve/aie';
 export { validateConfig } from './config/schema.js';
+
+export type {
+  RiskCard,
+  RiskCardCatalogValidation,
+  RiskCardSelectionInput,
+} from './risk_cards/index.js';
+
+export {
+  DEFAULT_MAX_RISK_CARDS,
+  REQUIRED_RISK_CARD_IDS,
+  formatRiskCardImplementerFragment,
+  formatRiskCardReviewerFragment,
+  implementerFaceHasTestObligation,
+  loadRiskCardCatalog,
+  pathsTouchPatterns,
+  riskCardCatalogPath,
+  riskCardFaceSha256,
+  selectRiskCards,
+  simpleGlobMatch,
+  validateRiskCardCatalog,
+} from './risk_cards/index.js';
