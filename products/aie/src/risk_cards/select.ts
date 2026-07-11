@@ -9,7 +9,12 @@ function keywordHits(issueText: string, keywords: readonly string[]): number {
   const haystack = issueText.toLowerCase();
   let hits = 0;
   for (const keyword of keywords) {
-    if (haystack.includes(keyword.toLowerCase())) hits += 1;
+    const needle = keyword.toLowerCase().trim();
+    if (!needle) continue;
+    // Token/phrase boundaries so "test" does not activate on "contestant" or "pretest".
+    const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = new RegExp(`(?:^|[^a-z0-9_])${escaped}(?:$|[^a-z0-9_])`, "i");
+    if (pattern.test(haystack)) hits += 1;
   }
   return hits;
 }

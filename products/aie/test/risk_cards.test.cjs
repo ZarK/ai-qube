@@ -51,8 +51,25 @@ describe('aie risk cards', () => {
     assert.equal(implementerFaceHasTestObligation('Tests are useful. Handle errors correctly.'), false);
     assert.equal(implementerFaceHasTestObligation('Tests are not required. Ship whatever seems convenient.'), false);
     assert.equal(implementerFaceHasTestObligation('Do not add a fixture. Ship whatever seems convenient.'), false);
+    assert.equal(implementerFaceHasTestObligation('Require no tests. Handle errors correctly.'), false);
+    assert.equal(implementerFaceHasTestObligation('Add optional tests if time permits. Handle errors correctly.'), false);
+    assert.equal(implementerFaceHasTestObligation('Ship whatever seems convenient. Tests are useful.'), false);
+    assert.equal(implementerFaceHasTestObligation('Create code first. Tests are not necessary.'), false);
     assert.equal(implementerFaceHasTestObligation('Write a negative test for each false-success path.'), true);
     assert.equal(implementerFaceHasTestObligation('Add a fixture that rejects each unsupported provider combination.'), true);
+  });
+
+  it('matches issue keywords on token boundaries', () => {
+    const falsePositive = selectRiskCards({
+      issueText: 'contestant latest errorship providerless pretest',
+      paths: ['docs/notes/unrelated.md'],
+    });
+    assert.deepEqual(falsePositive.map(card => card.id), []);
+    const truePositive = selectRiskCards({
+      issueText: 'provider matrix and test oracle coverage',
+      paths: ['docs/notes/unrelated.md'],
+    });
+    assert.ok(truePositive.some(card => card.id === 'mode-provider-matrix' || card.id === 'oracle-quality'));
   });
 
   it('exports the catalog and selector from the package entry point', () => {

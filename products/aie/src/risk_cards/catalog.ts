@@ -22,9 +22,9 @@ export const REQUIRED_RISK_CARD_IDS = [
 ] as const;
 
 const KEBAB_CASE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-/** Imperative obligation to ship concrete test/fixture/assert coverage. */
-const TEST_OBLIGATION = /\b(?:write|add|ship|cover|include|create|require|demand)\b[\s\S]{0,80}\b(?:negative\s+)?(?:test|tests|fixture|fixtures|assert|asserts|oracle|counterexample)s?\b|\b(?:negative\s+test|positive\s+(?:case|observation)|oracle\s+fixture|malformed[- ]payload\s+fixture|stale-head\s+fixture|concurrent-write\s+fixture)\b/i;
-const TEST_PROHIBITION = /\b(?:do\s+not|don't|not\s+required|no\s+need\s+to)\b[^.!?]{0,60}\b(?:test|tests|fixture|fixtures|assert|oracle)\b|\btests?\s+are\s+not\s+required\b/i;
+/** Imperative obligation to ship concrete test/fixture/assert coverage within one sentence. */
+const TEST_OBLIGATION = /\b(?:write|add|ship|cover|include|create)\b[^.!?]{0,80}\b(?:negative\s+)?(?:test|tests|fixture|fixtures|assert|oracle|counterexample)s?\b|\b(?:negative\s+tests?|oracle\s+fixture|malformed[- ]payload\s+fixture|stale-head\s+fixture|concurrent-write\s+fixture)\b/i;
+const TEST_NON_OBLIGATION = /\b(?:optional\s+tests?|no\s+tests?|not\s+(?:required|necessary)|tests?\s+are\s+(?:useful|nice|good|optional)|do\s+not\s+(?:add|write|ship|cover|include|create)\b|don't\s+(?:add|write|ship|cover|include|create)\b)\b/i;
 
 let cachedCards: readonly RiskCard[] | null = null;
 
@@ -53,9 +53,9 @@ function sentenceCount(text: string): number {
 export function implementerFaceHasTestObligation(text: string): boolean {
   const normalized = text.trim();
   if (normalized.length === 0) return false;
-  // Prohibitions win: "do not add a fixture" must never count as an obligation.
-  if (TEST_PROHIBITION.test(normalized)) return false;
-  return TEST_OBLIGATION.test(normalized);
+  // Evaluate sentence-by-sentence so a later "tests are useful" cannot piggyback on an unrelated imperative.
+  const sentences = normalized.split(/(?<=[.!?])\s+/).map(part => part.trim()).filter(part => part.length > 0);
+  return sentences.some(sentence => !TEST_NON_OBLIGATION.test(sentence) && TEST_OBLIGATION.test(sentence));
 }
 
 export function loadRiskCardCatalog(): readonly RiskCard[] {
