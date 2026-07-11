@@ -40,7 +40,7 @@ const sampleDraft = {
     },
     {
       heading: "Acceptance Criteria",
-      body: "- Contracts do not require provider IDs.\n- Renderers adapt provider details at the edge."
+      body: "- [ ] Contracts do not require provider IDs. (verify: unit)\n- [ ] Renderers adapt provider details at the edge. (verify: unit)"
     }
   ]
 };

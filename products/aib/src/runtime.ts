@@ -38,6 +38,7 @@ import {
 } from "./state.js";
 import { createSpecDraft, requiredSpecSectionIds, specFileExists, validateSpecFile, writeSpecDraft } from "./spec.js";
 import type { SpecChapterId } from "./spec_chapters.js";
+import { WorkItemLintError } from "./work_item_lint.js";
 import { createWorkItemDrafts, renderWorkItemDrafts, WorkItemQueueOrderError, writeRenderedMarkdownWorkItems, writeWorkItemDrafts } from "./work_items.js";
 import type { RenderedMarkdownWorkItem, WorkItemDraftResult, WorkItemRenderProvider, WorkItemRenderResult } from "./work_items.js";
 
@@ -472,6 +473,17 @@ export const aibCli = createCli({
             ? createWorkItemDrafts(envelope.state, milestone, projectRoot)
             : writeWorkItemDrafts(envelope.state, milestone, projectRoot);
         } catch (error) {
+          if (error instanceof WorkItemLintError) {
+            throw createCliError({
+              command: "work-items generate",
+              kind: "work-item-lint-failed",
+              operation: "lint generated work-item drafts",
+              likelyCause: error.message,
+              suggestedNextAction: "Fix the milestone acceptance criteria or themes so every draft carries owned, observable, verification-tagged criteria, then rerun aib work-items generate --json.",
+              category: "validation",
+              exitCode: 3
+            });
+          }
           if (error instanceof WorkItemQueueOrderError) {
             throw createCliError({
               command: "work-items generate",
@@ -581,6 +593,17 @@ export const aibCli = createCli({
             ? await renderWorkItemDrafts(envelope.state, provider, { outputDir })
             : await writeRenderedMarkdownWorkItems(envelope.state, { outputDir, baseDir: projectRoot });
         } catch (error) {
+          if (error instanceof WorkItemLintError) {
+            throw createCliError({
+              command: "work-items render",
+              kind: "work-item-lint-failed",
+              operation: "lint recorded work-item drafts before render",
+              likelyCause: error.message,
+              suggestedNextAction: "Regenerate work-item drafts so every draft carries owned, observable, verification-tagged criteria, then rerun aib work-items render --json.",
+              category: "validation",
+              exitCode: 3
+            });
+          }
           if (error instanceof WorkItemQueueOrderError) {
             throw createCliError({
               command: "work-items render",

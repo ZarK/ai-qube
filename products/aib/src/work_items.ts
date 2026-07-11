@@ -1,3 +1,4 @@
+import { selectRiskCards } from "@tjalve/aie";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import {
@@ -11,6 +12,7 @@ import {
 import type { MilestoneDraft, PlanningArtifact, WorkItemDraft } from "./contracts.js";
 import { renderGitHubIssueDraft, renderMarkdownWorkItemDraft, type GitHubIssueDraft, type MarkdownWorkItem } from "./renderers.js";
 import type { BootstrapState } from "./state.js";
+import { assertWorkItemDraftsLint } from "./work_item_lint.js";
 
 export type WorkItemRenderProvider = "github" | "gitlab" | "linear" | "jira" | "markdown";
 
@@ -73,6 +75,7 @@ export function createWorkItemDrafts(
   const milestone = selectMilestone(state, milestoneSelector, baseDir);
   const issuesDir = `${dirname(state.artifacts.spec.path)}/issues`;
   const drafts = createDraftsForMilestone(state, milestone);
+  assertWorkItemDraftsLint(drafts);
   const queueOrder = validateWorkItemDraftOrder(drafts);
   if (!queueOrder.ok) {
     throw new WorkItemQueueOrderError(queueOrder.conflicts);
@@ -113,6 +116,7 @@ export async function renderWorkItemDrafts(
   if (drafts.length === 0) {
     throw new TypeError("no work item drafts are recorded in bootstrap state");
   }
+  assertWorkItemDraftsLint(drafts);
   const queueOrder = validateWorkItemDraftOrder(drafts);
   if (!queueOrder.ok) {
     throw new WorkItemQueueOrderError(queueOrder.conflicts);
@@ -242,12 +246,95 @@ export function validateWorkItemDraftOrder(drafts: readonly WorkItemDraft[]): Qu
   };
 }
 
+type CriterionVerificationKind = "unit" | "integration" | "manual observation" | "artifact review";
+
+interface AllocatedCriterion {
+  readonly text: string;
+  readonly kind: CriterionVerificationKind;
+  readonly sharedWith: readonly string[];
+  readonly sharedReason: string | null;
+}
+
+function themeTokens(theme: string): readonly string[] {
+  return theme.toLowerCase().split(/[^a-z0-9]+/u).filter((token) => token.length > 2);
+}
+
+function criterionThemeScore(criterion: string, theme: string): number {
+  const haystack = criterion.toLowerCase();
+  let score = 0;
+  for (const token of themeTokens(theme)) {
+    if (new RegExp(`(?:^|[^a-z0-9_])${token}(?:$|[^a-z0-9_])`, "u").test(haystack)) score += 1;
+  }
+  return score;
+}
+
+function verificationKindFor(criterion: string): CriterionVerificationKind {
+  if (/\b(?:end-to-end|e2e|cli|command|workflow|round-?trip|integration)\b/iu.test(criterion)) return "integration";
+  if (/\b(?:manual|manually|screenshot|browser|visual|visually|observe[ds]?|observation)\b/iu.test(criterion)) return "manual observation";
+  if (/\b(?:docs?|documentation|readme|rendered\s+body|prose|wording|artifact)\b/iu.test(criterion)) return "artifact review";
+  return "unit";
+}
+
+function allocateCriteria(criteria: readonly string[], themes: readonly string[]): ReadonlyMap<string, AllocatedCriterion[]> {
+  const allocation = new Map<string, AllocatedCriterion[]>(themes.map((theme) => [theme, []]));
+  for (const criterion of criteria) {
+    const scores = themes.map((theme) => criterionThemeScore(criterion, theme));
+    const top = Math.max(...scores);
+    const owners = top > 0 ? themes.filter((theme, index) => scores[index] === top) : [themes[0] ?? "scope"];
+    const shared = owners.length > 1;
+    const entry = (owner: string): AllocatedCriterion => ({
+      text: criterion,
+      kind: verificationKindFor(criterion),
+      sharedWith: shared ? owners.filter((theme) => theme !== owner) : [],
+      sharedReason: shared ? `names behavior spanning the ${owners.join(" and ")} slices` : null
+    });
+    for (const owner of owners) allocation.get(owner)?.push(entry(owner));
+  }
+  return allocation;
+}
+
+function renderCriterion(criterion: AllocatedCriterion): string {
+  const sharedSuffix = criterion.sharedReason !== null && criterion.sharedWith.length > 0
+    ? `; shared with ${criterion.sharedWith.join(" and ")}: ${criterion.sharedReason}`
+    : "";
+  return `- [ ] ${criterion.text} (verify: ${criterion.kind}${sharedSuffix})`;
+}
+
+function sliceScope(milestone: MilestoneDraft, theme: string): readonly string[] {
+  const matched = [...milestone.technicalDecisions, ...milestone.specAnchors]
+    .filter((entry) => criterionThemeScore(entry, theme) > 0);
+  if (matched.length > 0) return matched.map((entry) => `- ${entry}`);
+  return [`- Surfaces introduced by the ${theme} slice of ${milestone.id}.`];
+}
+
+function sliceSummary(milestone: MilestoneDraft, theme: string, siblingThemes: readonly string[], ownedCount: number): string {
+  const siblings = siblingThemes.length > 0
+    ? `Sibling work items deliver ${siblingThemes.join(" and ")}; this slice is separate so ${theme} lands with its own reviewable proof.`
+    : "This is the only work item for the milestone.";
+  return `Deliver the ${theme} slice of ${milestone.title}, owning ${ownedCount} acceptance criteri${ownedCount === 1 ? "on" : "a"} listed below. ${siblings}`;
+}
+
+function guidanceSection(title: string, criteria: readonly AllocatedCriterion[], scope: readonly string[]): WorkItemDraft["bodySections"][number] | null {
+  const issueText = [title, ...criteria.map((criterion) => criterion.text), ...scope].join("\n");
+  const cards = selectRiskCards({ issueText });
+  if (cards.length === 0) return null;
+  const body = cards
+    .map((card) => `- ${card.id}: ${card.title}\n  ${card.implementerFace.trim()}`)
+    .join("\n");
+  return section("Implementation guidance", body);
+}
+
 function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDraft): readonly WorkItemDraft[] {
   const component = componentForState(state);
   const baseSequence = sequenceFromMilestone(milestone);
-  const workThemes = milestone.likelyWorkItemThemes.length > 0
+  const candidateThemes = milestone.likelyWorkItemThemes.length > 0
     ? milestone.likelyWorkItemThemes.slice(0, 3)
     : ["scope", "validation", "handoff"];
+  const allocation = allocateCriteria(milestone.acceptanceCriteria, candidateThemes);
+  // A slice that owns no acceptance criteria is not an executable work item; drop it
+  // instead of emitting an issue that fails the empty-criteria lint.
+  const ownedThemes = candidateThemes.filter((theme) => (allocation.get(theme) ?? []).length > 0);
+  const workThemes = ownedThemes.length > 0 ? ownedThemes : candidateThemes.slice(0, 1);
   return workThemes.map((theme, index) => {
     const draftId = `${milestone.id}-work-${String(index + 1).padStart(2, "0")}-${slugify(theme)}`;
     const previousDraftId = index === 0 ? undefined : `${milestone.id}-work-${String(index).padStart(2, "0")}-${slugify(workThemes[index - 1] ?? "previous")}`;
@@ -255,6 +342,10 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
       ...(index === 0 ? milestone.dependencies : []),
       ...(previousDraftId ? [previousDraftId] : [])
     ];
+    const ownedCriteria = allocation.get(theme) ?? [];
+    const siblingThemes = workThemes.filter((candidate) => candidate !== theme);
+    const scope = sliceScope(milestone, theme);
+    const guidance = guidanceSection(`${milestone.title}: ${titleCase(theme)}`, ownedCriteria, scope);
     return {
       draftId,
       title: `${milestone.title}: ${titleCase(theme)}`,
@@ -270,18 +361,15 @@ function createDraftsForMilestone(state: BootstrapState, milestone: MilestoneDra
         }
       ],
       bodySections: [
-        section("Summary", `${theme} work for milestone ${milestone.id}.`),
-        section("Scope", milestone.boundaries.map((item) => `- ${item}`).join("\n")),
+        section("Summary", sliceSummary(milestone, theme, siblingThemes, ownedCriteria.length)),
+        section("Scope", scope.join("\n")),
         section("Blockers", blockedBy.length > 0 ? blockedBy.map((item) => `- ${item}`).join("\n") : "- None."),
         section("Stable selectors", [
           `- milestone:${milestone.id}`,
           `- draft:${draftId}`
         ].join("\n")),
-        section("Named E2E tests", [
-          `- e2e:${draftId}:happy-path`,
-          `- e2e:${draftId}:blocked-path`
-        ].join("\n")),
-        section("Acceptance criteria", milestone.acceptanceCriteria.map((item) => `- ${item}`).join("\n")),
+        section("Acceptance criteria", ownedCriteria.map((criterion) => renderCriterion(criterion)).join("\n")),
+        ...(guidance ? [guidance] : []),
         section("Definition of done", [
           "- Draft output is reviewable without prior chat context.",
           "- Validation evidence is named and reproducible for this milestone.",

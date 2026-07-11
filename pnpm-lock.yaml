@@ -161,6 +161,9 @@ importers:
 
   products/aib:
     dependencies:
+      '@tjalve/aie':
+        specifier: workspace:*
+        version: link:../aie
       '@tjalve/qube-cli':
         specifier: 0.2.0
         version: link:../../packages/qube-cli
