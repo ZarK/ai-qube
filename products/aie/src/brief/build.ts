@@ -74,10 +74,12 @@ export function extractExpectedPaths(issueText: string): string[] {
   const found = new Set<string>();
   for (const match of issueText.matchAll(/`([^`\n]+)`/g)) {
     const token = match[1].trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    // Globs quoted in issue text are patterns, not expected paths.
-    if (token.includes('/') && !/[\s*?]/.test(token)) found.add(token);
+    // Globs and placeholder templates quoted in issue text are patterns, not expected paths.
+    if (token.includes('/') && !/[\s*?<>]/.test(token)) found.add(token);
   }
-  for (const match of issueText.matchAll(/\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)+\b/g)) {
+  // Bare tokens qualify only with a file-extension tail so slash-separated prose
+  // such as "multi-provider/multi-mode" or "layout/ownership" is never treated as a path.
+  for (const match of issueText.matchAll(/\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
     found.add(match[0].replace(/^\.\//, ''));
   }
   return [...found].sort().slice(0, MAX_EXPECTED_PATHS).map(path => capText(path));

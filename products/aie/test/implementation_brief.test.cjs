@@ -213,4 +213,14 @@ describe('implementation brief builder', () => {
     assert.ok(!paths.some(path => path.includes(' ')));
     assert.ok(!paths.some(path => path.includes('*')));
   });
+
+  it('rejects slash-separated prose and placeholder templates as expected paths', () => {
+    const paths = extractExpectedPaths([
+      'Matrix fixtures cover a multi-provider/multi-mode issue.',
+      'No layout/ownership section in this issue.',
+      'Issue branches follow `issue/<number>-<slug>` conventions.',
+      'A real reference: products/aie/src/app/start_work.ts stays.',
+    ].join('\n'));
+    assert.deepEqual(paths, ['products/aie/src/app/start_work.ts']);
+  });
 });
