@@ -1,3 +1,4 @@
+import { formatBriefLines } from '../brief/index.js';
 import type { CompleteResult } from '../complete/index.js';
 import type { StartResult } from '../start/index.js';
 import type { SwitchResult } from '../switch/index.js';
@@ -78,6 +79,9 @@ export function formatStartHuman(result: StartResult): string {
   }
   if (result.branchRecommendation.suggested) {
     lines.push(`Branch: ${result.branchRecommendation.suggested}`);
+  }
+  if (result.brief) {
+    lines.push(...formatBriefLines(result.brief));
   }
   lines.push(`Labels: ${formatStartActionList(result, 'replace-status-labels')}`);
   lines.push(`Assignment: ${formatStartActionList(result, 'assign-issue')}`);

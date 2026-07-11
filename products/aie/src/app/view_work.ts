@@ -1,3 +1,4 @@
+import { buildImplementationBrief, type ImplementationBrief } from '../brief/index.js';
 import { suggestBranchName } from '../core/branch_rules.js';
 import { maybeWorkItemKeyNumber, parseWorkChecklist, parseWorkChecklistItems, workItemNumber, type WorkItem } from '../core/work_item.js';
 import { resolveBlockerDetails, type BlockerDetail } from '../deps.js';
@@ -12,6 +13,7 @@ export interface ViewServiceResult {
   dependency: { declaredBlockers: number[]; openBlockers: number[]; unresolvedBlockers: number[]; blockers: BlockerDetail[]; dependents: BlockerDetail[] };
   checklist: { total: number; checked: number; unchecked: number; items: string[] };
   branch: { suggested: string; current: string | null; matches: boolean };
+  brief: ImplementationBrief;
   warnings: string[];
   recommendedAction: string;
 }
@@ -73,6 +75,7 @@ export async function runViewService(options: { issueNumber: number; context: Li
     dependency: { declaredBlockers: blockerNumbers, openBlockers: openBlockers.map(blocker => blocker.number), unresolvedBlockers: unresolvedBlockers.map(blocker => blocker.number), blockers, dependents },
     checklist: { total: checklist.total, checked: checklist.completed, unchecked, items },
     branch: { suggested, current: currentBranch, matches: currentBranch !== null && currentBranch === suggested },
+    brief: buildImplementationBrief({ title: item.title, body: item.body, config: context.config }),
     warnings,
     recommendedAction: recommendedAction(issueNumber, status, unresolvedBlockers, hasOtherInProgress),
   };

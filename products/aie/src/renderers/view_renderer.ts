@@ -1,3 +1,4 @@
+import { formatBriefLines } from '../brief/index.js';
 import type { ViewIssueResult } from '../view.js';
 
 export function formatViewHuman(result: ViewIssueResult): string {
@@ -41,6 +42,9 @@ export function formatViewHuman(result: ViewIssueResult): string {
       lines.push(`  - ${item}`);
     }
   }
+
+  lines.push('');
+  lines.push(...formatBriefLines(result.brief));
 
   lines.push('');
   lines.push(`Branch: ${result.branch.suggested}`);
