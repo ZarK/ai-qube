@@ -886,7 +886,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     mergeBlockers,
     conversations,
     checkDiagnostics,
-    selfCheck: dryRun ? buildImplementerSelfCheck({ config, changedPaths, issueText: riskCardIssueText }) : null,
+    selfCheck: dryRun ? buildImplementerSelfCheck({ config, changedPaths }) : null,
     localReviewRunner,
     localReview,
     fixBatch,

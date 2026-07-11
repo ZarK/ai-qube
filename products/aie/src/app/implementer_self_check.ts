@@ -36,7 +36,7 @@ function laneReason(input: { required: string; activated: boolean; matched: bool
   return 'did not activate: not required for this head';
 }
 
-export function buildImplementerSelfCheck(input: { config: Config; changedPaths: readonly string[]; issueText: string }): ImplementerSelfCheck {
+export function buildImplementerSelfCheck(input: { config: Config; changedPaths: readonly string[] }): ImplementerSelfCheck {
   const activeLanes = new Set(activeLocalReviewFocusesForConfig(input.config, input.changedPaths));
   const lanes: SelfCheckLane[] = [];
   const seen = new Set<string>();
@@ -53,7 +53,9 @@ export function buildImplementerSelfCheck(input: { config: Config; changedPaths:
     seen.add(laneId);
     lanes.push({ lane: laneId, digest: LANE_HEURISTIC_DIGESTS[laneId], activated: true, reason: 'required by the review profile' });
   }
-  const riskCards = selectRiskCards({ issueText: input.issueText, paths: input.changedPaths })
+  // Path-only selection: the section is presented as diff-derived, so untrusted issue or
+  // PR text must have no input surface here. Issue-text activation is the start/view brief's job.
+  const riskCards = selectRiskCards({ paths: input.changedPaths })
     .map(card => ({ id: card.id, title: card.title, implementerFace: card.implementerFace.trim() }));
   return { instruction: SELF_CHECK_INSTRUCTION, lanes, riskCards };
 }
