@@ -56,12 +56,15 @@ export function extractExpectedPaths(issueText: string): string[] {
   const found = new Set<string>();
   for (const match of issueText.matchAll(/`([^`\n]+)`/g)) {
     const token = match[1].trim().replace(/\\/g, '/').replace(/^\.\//, '');
-    // Globs, placeholder templates, and traversal tokens are not repo-relative surfaces.
-    if (token.includes('/') && !/[\s*?<>]/.test(token) && !token.split('/').includes('..')) found.add(token);
+    // Globs, placeholder templates, traversal tokens, absolute/UNC paths, and scoped
+    // package names are not repo-relative surfaces.
+    if (token.includes('/') && !/[\s*?<>]/.test(token) && !token.split('/').includes('..')
+      && !/^(?:[A-Za-z]:\/|\/|@)/.test(token)) found.add(token);
   }
   // Bare tokens qualify only with a file-extension tail so slash-separated prose
   // such as "multi-provider/multi-mode" or "layout/ownership" is never treated as a path.
-  for (const match of issueText.matchAll(/\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
+  // The lookbehind keeps matches from starting inside absolute, drive-letter, UNC, or scoped-package tokens.
+  for (const match of issueText.matchAll(/(?<![:@/\\])\b[A-Za-z0-9_.-]+(?:\/[A-Za-z0-9_.-]+)*\/[A-Za-z0-9_.-]+\.[A-Za-z0-9]{1,6}\b/g)) {
     found.add(match[0].replace(/^\.\//, ''));
   }
   return [...found]
@@ -110,7 +113,7 @@ function projectRole(projectPath: string, inspectedKind: string): string {
 }
 
 function isDocumentationSurface(path: string): boolean {
-  return path.startsWith('docs/') || path.endsWith('.md');
+  return path.startsWith('docs/') || /\.(?:md|rst|adoc|txt)$/iu.test(path);
 }
 
 const ROOT_DOT_DIRECTORIES = new Set(['.github', '.qube', '.vscode', '.agents', '.codex']);
@@ -140,7 +143,7 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   // Documentation-only work renders no layout section, wherever the documentation lives —
   // including pathless documentation issues, unless code-work signals say otherwise.
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
-  if (expectedPaths.length === 0 && !expectsTestWork && /\b(?:readme|docs|documentation|wording|guide)\b/iu.test(issueText)) return null;
+  if (expectedPaths.length === 0 && !expectsTestWork && /\b(?:readme|docs|documentation|wording|guide|changelog|release\s+notes|announcement)\b/iu.test(issueText)) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
   // A lone root project owns unmatched paths in non-workspace layouts (single-app repos,

@@ -499,6 +499,42 @@ describe('implementation brief builder', () => {
     assert.equal(suspicious.layout.derived, false, 'traversal tokens and unknown hidden directories must not claim ownership');
   });
 
+  it('rejects absolute, UNC, and scoped-package tokens and treats rst documentation as docs-only', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const paths = extractExpectedPaths('Check `/etc/passwd.txt`, `C:/secrets/keys.ts`, `\\\\server\\share\\thing.ts`, and `@tjalve/aie` here.');
+    assert.deepEqual(paths, [], 'absolute, UNC, and scoped-package tokens are not repository surfaces');
+
+    const rstDocs = buildImplementationBrief({
+      title: 'Update the manual',
+      body: 'Rewrite `products/aie/manual/setup.rst` for the new flow.\n\n- [ ] The manual describes the new flow. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(rstDocs.layout, null, 'rst documentation work must not render ownership');
+
+    const changelog = buildImplementationBrief({
+      title: 'Draft the release notes',
+      body: 'Write the changelog entry for the next release of @tjalve/aie.\n\n- [ ] The changelog entry lists the shipped changes. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(changelog.layout, null, 'pathless release-notes work must not render ownership');
+  });
+
   it('keeps layout ownership for pathless code work that mentions documentation terms', () => {
     const layout = {
       kind: 'javascript-typescript-workspace',
