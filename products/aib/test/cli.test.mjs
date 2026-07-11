@@ -777,7 +777,7 @@ test("milestones generate writes planning-depth docs before work items", async (
     "--json"
   ]));
   assert.equal(workItemDryRun.mutated, false);
-  assert.equal(workItemDryRun.drafts.length, 3);
+  assert.equal(workItemDryRun.drafts.length, 1);
   assert.equal(workItemDryRun.queueOrder.ok, true);
   assert.ok(workItemDryRun.plannedWrites.every((item) => item.path.includes("docs/issues/")));
   await assert.rejects(readFile(join(dir, "docs", "issues", `${workItemDryRun.drafts[0].draftId}.md`), "utf8"));
@@ -793,23 +793,25 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(allowedWorkItems.allowed, true);
   assert.equal(allowedWorkItems.mutated, true);
-  assert.equal(allowedWorkItems.state.artifacts.workItems.length, 3);
-  assert.equal(allowedWorkItems.state.planning.workItemDrafts.length, 3);
+  assert.equal(allowedWorkItems.state.artifacts.workItems.length, 1);
+  assert.equal(allowedWorkItems.state.planning.workItemDrafts.length, 1);
   assert.equal(allowedWorkItems.queueOrder.ok, true);
   assert.equal(allowedWorkItems.drafts[0].priority, "high");
   assert.equal(allowedWorkItems.drafts[0].status, "ready");
   assert.deepEqual(allowedWorkItems.drafts[0].components, ["aib"]);
-  assert.ok(allowedWorkItems.drafts[1].blockedBy.includes(allowedWorkItems.drafts[0].draftId));
+  assert.equal(allowedWorkItems.drafts.length, 1);
   assert.equal(allowedWorkItems.drafts[0].providerMetadata.executor.sequence, allowedWorkItems.drafts[0].sequence);
-  assert.deepEqual(allowedWorkItems.drafts[1].providerMetadata.executor.blockedBy, [allowedWorkItems.drafts[0].draftId]);
+  assert.deepEqual(allowedWorkItems.drafts[0].providerMetadata.executor.blockedBy, []);
 
   const workItemDoc = await readFile(join(dir, "docs", "issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
   assert.match(workItemDoc, /^Sequence: \d+/m);
   assert.match(workItemDoc, /## Stable selectors/);
   assert.match(workItemDoc, /draft:/);
   assert.doesNotMatch(workItemDoc, /artifact:docs\//);
-  assert.match(workItemDoc, /## Named E2E tests/);
-  assert.match(workItemDoc, /e2e:/);
+  assert.doesNotMatch(workItemDoc, /## Named E2E tests/);
+  assert.doesNotMatch(workItemDoc, /e2e:/);
+  assert.match(workItemDoc, /- \[ \] .*\(verify: (?:unit|integration|manual observation|artifact review)/);
+  assert.doesNotMatch(workItemDoc, /work for milestone/);
   assert.match(workItemDoc, /## Definition of done/);
   assert.match(workItemDoc, /No placeholder commands, fake tests/);
   assert.match(workItemDoc, /## Spec anchors/);
@@ -827,7 +829,7 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(githubPreview.mutated, false);
   assert.equal(githubPreview.provider, "github");
-  assert.equal(githubPreview.plannedIssues.length, 3);
+  assert.equal(githubPreview.plannedIssues.length, 1);
   assert.match(githubPreview.plannedIssues[0].body, /^Sequence: \d+/m);
   assert.deepEqual(githubPreview.plannedIssues[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
 
@@ -843,7 +845,7 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(linearPreview.mutated, false);
   assert.equal(linearPreview.provider, "linear");
-  assert.equal(linearPreview.plannedLinearIssues.length, 3);
+  assert.equal(linearPreview.plannedLinearIssues.length, 1);
   assert.match(linearPreview.plannedLinearIssues[0].description, /^Sequence: \d+/m);
   assert.equal(linearPreview.plannedLinearIssues[0].priority, 2);
 
@@ -859,7 +861,7 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(gitlabPreview.mutated, false);
   assert.equal(gitlabPreview.provider, "gitlab");
-  assert.equal(gitlabPreview.plannedGitLabIssues.length, 3);
+  assert.equal(gitlabPreview.plannedGitLabIssues.length, 1);
   assert.match(gitlabPreview.plannedGitLabIssues[0].description, /^Sequence: \d+/m);
   assert.deepEqual(gitlabPreview.plannedGitLabIssues[0].labels.slice(0, 2), ["P2-High", "S-Ready"]);
 
@@ -875,7 +877,7 @@ test("milestones generate writes planning-depth docs before work items", async (
   ]));
   assert.equal(jiraPreview.mutated, false);
   assert.equal(jiraPreview.provider, "jira");
-  assert.equal(jiraPreview.plannedJiraIssues.length, 3);
+  assert.equal(jiraPreview.plannedJiraIssues.length, 1);
   assert.match(jiraPreview.plannedJiraIssues[0].description, /^Sequence: \d+/m);
   assert.equal(jiraPreview.plannedJiraIssues[0].priorityName, "High");
 
@@ -969,14 +971,34 @@ test("milestones generate writes planning-depth docs before work items", async (
     "--json"
   ]));
   assert.equal(markdownRendered.mutated, true);
-  assert.equal(markdownRendered.written.length, 3);
+  assert.equal(markdownRendered.written.length, 1);
   assert.equal(markdownRendered.state.planning.workItemDrafts[0].status, "rendered");
   const renderedDoc = await readFile(join(dir, "docs", "review-issues", `${allowedWorkItems.drafts[0].draftId}.md`), "utf8");
   assert.match(renderedDoc, /^Sequence: \d+/m);
 
   const status = parseJsonStdout(runAib(["status", "--state", init.statePath, "--json"]));
   assert.equal(status.artifacts.milestones.length, 3);
-  assert.equal(status.artifacts.workItems.length, 3);
+  assert.equal(status.artifacts.workItems.length, 1);
+
+  const lintState = JSON.parse(await readFile(init.statePath, "utf8"));
+  lintState.planning.workItemDrafts = [{
+    ...lintState.planning.workItemDrafts[0],
+    bodySections: [
+      { heading: "Summary", body: "Deliver the slice." },
+      { heading: "Acceptance criteria", body: "- [ ] Handles errors correctly. (verify: unit)" }
+    ]
+  }];
+  await writeFile(init.statePath, JSON.stringify(lintState), "utf8");
+
+  const lintJson = runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run", "--json"]);
+  assert.notEqual(lintJson.status, 0);
+  const lintError = JSON.parse(lintJson.stdout).error;
+  assert.equal(lintError.kind, "work-item-lint-failed");
+  assert.match(lintError.likelyCause, /work-item-vague-criterion/);
+
+  const lintHuman = runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run"]);
+  assert.notEqual(lintHuman.status, 0);
+  assert.match(`${lintHuman.stdout}\n${lintHuman.stderr}`, /work-item-vague-criterion/);
 });
 
 test("end-to-end bootstrap flow reaches renderable work item drafts from CLI answers", async () => {
@@ -1023,15 +1045,15 @@ test("end-to-end bootstrap flow reaches renderable work item drafts from CLI ans
     milestones.milestones[0].id,
     "--json"
   ]));
-  assert.equal(workItems.drafts.length, 3);
+  assert.equal(workItems.drafts.length, 1);
   assert.equal(workItems.queueOrder.ok, true);
 
   const githubPreview = parseJsonStdout(runAib(["work-items", "render", "--state", init.statePath, "--provider", "github", "--dry-run", "--json"]));
-  assert.equal(githubPreview.plannedIssues.length, 3);
+  assert.equal(githubPreview.plannedIssues.length, 1);
   assert.match(githubPreview.plannedIssues[0].body, /^Sequence: \d+/m);
 
   const markdownPreview = parseJsonStdout(runAib(["work-items", "render", "--state", init.statePath, "--provider", "markdown", "--dry-run", "--json"]));
-  assert.equal(markdownPreview.plannedWrites.length, 3);
+  assert.equal(markdownPreview.plannedWrites.length, 1);
 });
 
 test("milestones distinguish sequential foundations from independent features", async () => {

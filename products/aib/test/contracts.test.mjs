@@ -40,7 +40,7 @@ const sampleDraft = {
     },
     {
       heading: "Acceptance Criteria",
-      body: "- Contracts do not require provider IDs.\n- Renderers adapt provider details at the edge."
+      body: "- [ ] Contracts do not require provider IDs. (verify: unit)\n- [ ] Renderers adapt provider details at the edge. (verify: unit)"
     }
   ]
 };
@@ -260,6 +260,13 @@ test("provider-neutral work item drafts render to GitHub previews and markdown e
   assert.equal(markdown.artifacts[0].path, "review/issues/draft-foundation.md");
   assert.equal(markdown.artifacts[0].status, "ready");
   assert.match(markdown.rendered[0].content, /^Sequence: 2/m);
+
+  const checkbox = /- \[ \] .*\(verify: unit\)/;
+  assert.match(github.rendered[0].body, checkbox);
+  assert.match(linear.rendered[0].description, checkbox);
+  assert.match(gitlab.rendered[0].description, checkbox);
+  assert.match(jira.rendered[0].description, checkbox);
+  assert.match(markdown.rendered[0].content, checkbox);
 });
 
 test("work item queue ordering validates blockers against sequence metadata", () => {
