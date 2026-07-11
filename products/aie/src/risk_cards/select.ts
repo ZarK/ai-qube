@@ -14,9 +14,14 @@ function keywordHits(issueText: string, keywords: readonly string[]): number {
   return hits;
 }
 
+function cardActivates(card: RiskCard, issueText: string, paths: readonly string[]): boolean {
+  return keywordHits(issueText, card.issueKeywords) > 0 || pathsTouchPatterns(paths, card.pathGlobs);
+}
+
 /**
  * Deterministically select at most maxCards risk cards from issue text and paths.
- * Ranking: higher keyword+path score first, then lower rank, then id ascending.
+ * Activation: path glob OR issue keyword match.
+ * Cap order: lower rank first, then id ascending.
  */
 export function selectRiskCards(input: RiskCardSelectionInput = {}): readonly RiskCard[] {
   const maxCards = input.maxCards ?? DEFAULT_MAX_RISK_CARDS;
@@ -27,19 +32,11 @@ export function selectRiskCards(input: RiskCardSelectionInput = {}): readonly Ri
 
   const issueText = input.issueText ?? "";
   const paths = input.paths ?? [];
-  const scored = loadRiskCardCatalog()
-    .map(card => {
-      const keywords = keywordHits(issueText, card.issueKeywords);
-      const pathHit = pathsTouchPatterns(paths, card.pathGlobs) ? 1 : 0;
-      const score = keywords + pathHit * 2;
-      return { card, score };
-    })
-    .filter(entry => entry.score > 0)
+  return loadRiskCardCatalog()
+    .filter(card => cardActivates(card, issueText, paths))
     .sort((left, right) => {
-      if (right.score !== left.score) return right.score - left.score;
-      if (left.card.rank !== right.card.rank) return left.card.rank - right.card.rank;
-      return left.card.id.localeCompare(right.card.id);
-    });
-
-  return scored.slice(0, maxCards).map(entry => entry.card);
+      if (left.rank !== right.rank) return left.rank - right.rank;
+      return left.id.localeCompare(right.id);
+    })
+    .slice(0, maxCards);
 }

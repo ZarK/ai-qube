@@ -9,11 +9,6 @@ export interface IssueChecklistSummary {
     url: string;
   };
   checklist: ChecklistSummary;
-  /**
-   * Private activation corpus for risk-card selection.
-   * Kept off the public issue object so checklist/PR-gate JSON payloads do not re-serialize full bodies.
-   */
-  riskCardIssueText: string;
 }
 
 export interface ChecklistUpdateResult {
@@ -47,10 +42,6 @@ function issueSummary(issue: GitHubIssue): IssueChecklistSummary['issue'] {
   return { number: issue.number, title: issue.title, state: issue.state, url: issue.url };
 }
 
-function riskCardIssueTextFromIssue(issue: GitHubIssue): string {
-  return `${issue.title}\n${issue.body ?? ''}`;
-}
-
 function ensureGhSuccess(operation: string, result: Awaited<ReturnType<typeof runGh>>): void {
   if (result.exitCode !== 0) throw new Error(ghFailureMessage(operation, result.exitCode, result.stderr || result.stdout));
 }
@@ -59,8 +50,12 @@ export function summarizeIssueChecklist(issue: GitHubIssue): IssueChecklistSumma
   return {
     issue: issueSummary(issue),
     checklist: parseChecklist(issue.body),
-    riskCardIssueText: riskCardIssueTextFromIssue(issue),
   };
+}
+
+/** Activation corpus for risk-card selection; kept out of public checklist JSON. */
+export function riskCardIssueTextFromIssue(issue: Pick<GitHubIssue, 'title' | 'body'>): string {
+  return `${issue.title}\n${issue.body ?? ''}`;
 }
 
 export async function inspectIssueChecklist(issueNumber: number, options: { cwd?: string; exec?: GhExec } = {}): Promise<IssueChecklistSummary> {

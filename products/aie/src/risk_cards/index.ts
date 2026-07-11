@@ -5,8 +5,10 @@ export type {
 } from "./types.js";
 
 export {
+  REQUIRED_RISK_CARD_IDS,
   loadRiskCardCatalog,
   validateRiskCardCatalog,
+  implementerFaceHasTestObligation,
   riskCardFaceSha256,
   formatRiskCardReviewerFragment,
   formatRiskCardImplementerFragment,

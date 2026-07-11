@@ -5,10 +5,13 @@ const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
+const aie = require('../dist/index.js');
 const { getDefaults } = require('../dist/config/index.js');
 const {
   DEFAULT_MAX_RISK_CARDS,
+  REQUIRED_RISK_CARD_IDS,
   formatRiskCardReviewerFragment,
+  implementerFaceHasTestObligation,
   loadRiskCardCatalog,
   pathsTouchPatterns,
   selectRiskCards,
@@ -30,11 +33,30 @@ function localConfig() {
 }
 
 describe('aie risk cards', () => {
-  it('validates the shipped catalog', () => {
+  it('validates the shipped catalog against required ids and face standards', () => {
     const validation = validateRiskCardCatalog();
     assert.equal(validation.ok, true, validation.errors.join('; '));
     assert.ok(validation.cardCount >= 10);
     assert.equal(loadRiskCardCatalog().length, validation.cardCount);
+    for (const id of REQUIRED_RISK_CARD_IDS) {
+      assert.ok(loadRiskCardCatalog().some(card => card.id === id), `missing ${id}`);
+    }
+    for (const card of loadRiskCardCatalog()) {
+      assert.ok(implementerFaceHasTestObligation(card.implementerFace), card.id);
+    }
+  });
+
+  it('rejects implementer faces without a concrete test obligation', () => {
+    assert.equal(implementerFaceHasTestObligation('Handle errors correctly and keep states clean.'), false);
+    assert.equal(implementerFaceHasTestObligation('Write a negative test for each false-success path.'), true);
+  });
+
+  it('exports the catalog and selector from the package entry point', () => {
+    assert.equal(typeof aie.selectRiskCards, 'function');
+    assert.equal(typeof aie.loadRiskCardCatalog, 'function');
+    assert.equal(typeof aie.validateRiskCardCatalog, 'function');
+    assert.ok(Array.isArray(aie.REQUIRED_RISK_CARD_IDS));
+    assert.equal(aie.selectRiskCards, selectRiskCards);
   });
 
   it('matches path globs with the shared simple glob dialect', () => {
@@ -51,7 +73,7 @@ describe('aie risk cards', () => {
     assert.deepEqual(selected, []);
   });
 
-  it('selects exact ordered card ids for a representative fixture', () => {
+  it('selects exact ordered card ids by rank for a representative fixture', () => {
     const input = {
       issueText: 'provider capability trust marker stale pagination fixture test oracle false success',
       paths: [
@@ -64,17 +86,18 @@ describe('aie risk cards', () => {
     const first = selectRiskCards(input);
     const second = selectRiskCards(input);
     assert.deepEqual(first.map(card => card.id), [
-      'test-oracle-quality',
-      'mode-provider-matrix',
       'truthful-state-transitions',
-      'freshness-cache-identity',
+      'oracle-quality',
       'trust-identity-boundaries',
+      'filesystem-boundaries',
+      'mode-provider-matrix',
     ]);
     assert.deepEqual(first.map(card => card.id), second.map(card => card.id));
     assert.equal(first.length, DEFAULT_MAX_RISK_CARDS);
+    assert.ok(first.every((card, index) => index === 0 || first[index - 1].rank <= card.rank));
   });
 
-  it('bounds selection to exactly five cards when more than five match', () => {
+  it('bounds selection to exactly five cards chosen by rank when more than five match', () => {
     const selected = selectRiskCards({
       issueText: [
         'status success failed skipped unknown error gate check',
@@ -99,12 +122,13 @@ describe('aie risk cards', () => {
     });
     assert.equal(selected.length, DEFAULT_MAX_RISK_CARDS);
     assert.deepEqual(selected.map(card => card.id), [
-      'mode-provider-matrix',
       'truthful-state-transitions',
-      'test-oracle-quality',
+      'oracle-quality',
       'trust-identity-boundaries',
-      'serialization-encoding',
+      'filesystem-boundaries',
+      'mode-provider-matrix',
     ]);
+    assert.ok(selected.every((card, index) => index === 0 || selected[index - 1].rank <= card.rank));
   });
 
   it('includes activated reviewer faces in the prompt stack hash', () => {
@@ -166,7 +190,6 @@ describe('aie risk cards', () => {
     assert.notEqual(active.promptStackHash, inactive.promptStackHash);
     assert.equal(inactive.promptText.includes('Risk card '), false);
     assert.equal(inactive.promptFragmentIds.some(id => id.startsWith('command-supplied:')), false);
-
     for (const card of expectedCards) {
       assert.ok(active.promptText.includes(card.id), `missing activated card ${card.id}`);
     }

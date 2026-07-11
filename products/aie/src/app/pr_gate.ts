@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
-import { inspectIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
+import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
+import { getIssue } from '../providers/github_adapter_exports.js';
 import { configToExecutorPolicy, prThreadContextMode } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import {
@@ -640,16 +641,19 @@ async function applyReviewPlan(provider: ReviewForgeProvider, plan: ActionPlan):
   return actionsFromPlan(plan, results);
 }
 
-async function loadIssueChecklists(issueNumbers: number[], options: PrGateOptions, warnings: string[]): Promise<IssueChecklistSummary[]> {
+async function loadIssueChecklists(issueNumbers: number[], options: PrGateOptions, warnings: string[]): Promise<{ summaries: IssueChecklistSummary[]; riskCardIssueText: string }> {
   const summaries: IssueChecklistSummary[] = [];
+  const riskParts: string[] = [];
   for (const issueNumber of issueNumbers) {
     try {
-      summaries.push(await inspectIssueChecklist(issueNumber, { cwd: options.repoRoot, exec: options.exec }));
+      const issue = await getIssue(issueNumber, { cwd: options.repoRoot, exec: options.exec });
+      summaries.push(summarizeIssueChecklist(issue));
+      riskParts.push(riskCardIssueTextFromIssue(issue));
     } catch (error: unknown) {
       warnings.push(`Issue #${issueNumber} checklist state unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return summaries;
+  return { summaries, riskCardIssueText: riskParts.join('\n') };
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -789,12 +793,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const initialFeedback = prFeedback(finalSnapshot.item);
   const initialCheckDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const linkedChecklistWarnings: string[] = [];
-  const issueChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
+  const loadedChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
+  const issueChecklists = loadedChecklists.summaries;
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
-  const riskCardIssueText = [
-    finalSnapshot.pr.title,
-    ...issueChecklists.map(summary => summary.riskCardIssueText),
-  ].join('\n');
+  const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,

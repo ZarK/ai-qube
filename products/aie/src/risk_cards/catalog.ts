@@ -8,6 +8,22 @@ import type { RiskCard, RiskCardCatalogValidation } from "./types.js";
 const packageRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const catalogPath = join(packageRoot, "assets", "risk-cards", "catalog.json");
 
+export const REQUIRED_RISK_CARD_IDS = [
+  "truthful-state-transitions",
+  "mode-provider-matrix",
+  "trust-identity-boundaries",
+  "freshness-cache-identity",
+  "bounds-cancellation",
+  "multi-process-concurrency",
+  "filesystem-boundaries",
+  "serialization-encoding",
+  "workspace-shipped-parity",
+  "oracle-quality",
+] as const;
+
+const KEBAB_CASE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
+const TEST_OBLIGATION = /\b(test|tests|fixture|fixtures|assert|asserts|oracle|negative|counterexample)\b/i;
+
 let cachedCards: readonly RiskCard[] | null = null;
 
 function isStringArray(value: unknown): value is string[] {
@@ -24,6 +40,16 @@ function isRiskCard(value: unknown): value is RiskCard {
     && isStringArray(card.issueKeywords)
     && typeof card.implementerFace === "string" && card.implementerFace.trim().length > 0
     && typeof card.reviewerFace === "string" && card.reviewerFace.trim().length > 0;
+}
+
+function sentenceCount(text: string): number {
+  const trimmed = text.trim();
+  if (trimmed.length === 0) return 0;
+  return trimmed.split(/(?<=[.!?])\s+/).filter(part => part.trim().length > 0).length;
+}
+
+export function implementerFaceHasTestObligation(text: string): boolean {
+  return TEST_OBLIGATION.test(text);
 }
 
 export function loadRiskCardCatalog(): readonly RiskCard[] {
@@ -46,11 +72,35 @@ export function validateRiskCardCatalog(): RiskCardCatalogValidation {
     const cards = loadRiskCardCatalog();
     const errors: string[] = [];
     if (cards.length < 10) errors.push(`Expected at least 10 risk cards, found ${cards.length}.`);
+
+    const byId = new Map(cards.map(card => [card.id, card]));
+    for (const requiredId of REQUIRED_RISK_CARD_IDS) {
+      if (!byId.has(requiredId)) errors.push(`Missing required risk card id ${requiredId}.`);
+    }
+
     for (const card of cards) {
+      if (!KEBAB_CASE_ID.test(card.id)) {
+        errors.push(`Card id ${card.id} must be kebab-case.`);
+      }
+      if (!Number.isInteger(card.rank) || card.rank < 0) {
+        errors.push(`Card ${card.id} rank must be a non-negative integer.`);
+      }
       if (card.pathGlobs.length === 0 && card.issueKeywords.length === 0) {
         errors.push(`Card ${card.id} has no pathGlobs or issueKeywords triggers.`);
       }
+      const implementerSentences = sentenceCount(card.implementerFace);
+      const reviewerSentences = sentenceCount(card.reviewerFace);
+      if (implementerSentences < 2 || implementerSentences > 4) {
+        errors.push(`Card ${card.id} implementer face must be 2-4 sentences (found ${implementerSentences}).`);
+      }
+      if (reviewerSentences < 2 || reviewerSentences > 4) {
+        errors.push(`Card ${card.id} reviewer face must be 2-4 sentences (found ${reviewerSentences}).`);
+      }
+      if (!implementerFaceHasTestObligation(card.implementerFace)) {
+        errors.push(`Card ${card.id} implementer face must name a concrete test obligation.`);
+      }
     }
+
     return { ok: errors.length === 0, errors, cardCount: cards.length };
   } catch (error) {
     return {

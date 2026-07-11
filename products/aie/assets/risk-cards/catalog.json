@@ -5,7 +5,7 @@
     "rank": 10,
     "pathGlobs": ["**/src/**", "**/app/**", "**/providers/**", "**/*status*", "**/*result*"],
     "issueKeywords": ["status", "success", "failed", "skipped", "unknown", "error", "gate", "check"],
-    "implementerFace": "Design every terminal state so error, unknown, skipped, and pending never coerce into success. Map provider outcomes one-to-one, surface reason codes, and write a negative test for each false-success path.",
+    "implementerFace": "Design every terminal state so error, unknown, skipped, and pending never coerce into success. Map provider outcomes one-to-one and surface reason codes. Write a negative test for each false-success path that would pass if coercion returned.",
     "reviewerFace": "Hunt false-success paths: empty plans accepted as completed, dry-run reporting published, skipped/unknown mapped to pass, or missing observations treated as green. Require observed behavior for every success claim."
   },
   {
@@ -14,7 +14,7 @@
     "rank": 20,
     "pathGlobs": ["**/providers/**", "**/adapters/**", "**/config/**", "**/*provider*", "**/*adapter*"],
     "issueKeywords": ["provider", "adapter", "matrix", "unsupported", "capability", "permutation", "github", "gitlab", "jira"],
-    "implementerFace": "Enumerate supported and unsupported modes explicitly. Capability flags must match runtime behavior; partial support combinations must not inherit all-in-one assumptions.",
+    "implementerFace": "Enumerate supported and unsupported modes explicitly so capability flags match runtime behavior. Partial support combinations must not inherit all-in-one assumptions. Add a fixture that rejects each unsupported provider or host combination with a loud error.",
     "reviewerFace": "Check whether capability declarations and role flags are independently owned. Partial support must not force unrelated flags or reject valid combinations through shared-flag conflicts."
   },
   {
@@ -23,7 +23,7 @@
     "rank": 15,
     "pathGlobs": ["**/review/**", "**/*auth*", "**/*token*", "**/*marker*", "**/*trust*", "**/publisher*"],
     "issueKeywords": ["trust", "marker", "identity", "auth", "token", "untrusted", "forged", "reviewer", "approval"],
-    "implementerFace": "Separate trusted provider authority from untrusted author content. Forged markers, same-author approvals, and missing permission must never become gate authority without explicit identity checks.",
+    "implementerFace": "Separate trusted provider authority from untrusted author content. Forged markers, same-author approvals, and missing permission must never become gate authority. Write a negative test that injects a forged current-head marker and asserts the gate still fails.",
     "reviewerFace": "Verify forged current-head markers and stale-head markers stay untrusted. Confirm tokens and private material never appear in summaries, logs, or evidence."
   },
   {
@@ -32,7 +32,7 @@
     "rank": 25,
     "pathGlobs": ["**/*cache*", "**/*evidence*", "**/*review*", "**/*head*", "**/pr/**"],
     "issueKeywords": ["stale", "fresh", "head", "cache", "carry-forward", "evidence", "sha", "current-head"],
-    "implementerFace": "Key caches and evidence by exact head identity. Carry-forward and reuse paths must revalidate fragment digests and delta touch sets before treating prior approval as current.",
+    "implementerFace": "Key caches and evidence by exact head identity and fragment digests. Carry-forward and reuse paths must revalidate before treating prior approval as current. Cover a stale-head fixture that rejects reused evidence for a different SHA.",
     "reviewerFace": "Reject stale-head evidence, carry-forward without delta checks, and approvals bound to a different SHA. Confirm local evidence and provider feedback are current-head."
   },
   {
@@ -41,8 +41,8 @@
     "rank": 30,
     "pathGlobs": ["**/*page*", "**/*limit*", "**/*timeout*", "**/*abort*", "**/*budget*"],
     "issueKeywords": ["pagination", "limit", "timeout", "cancel", "abort", "budget", "pageSize", "cursor"],
-    "implementerFace": "Propagate limits, page sizes, timeouts, and cancellation tokens through every page or retry loop. Fail loudly when a bound is exhausted instead of silently truncating.",
-    "reviewerFace": "Look for unbounded loops, ignored pageSize/limit interactions, silent truncation at API caps, and timeouts that leave partial success without termination proof."
+    "implementerFace": "Propagate limits, page sizes, timeouts, and cancellation tokens through every page or retry loop. Fail loudly when a bound is exhausted instead of silently truncating. Add a test that exhausts pageSize or timeout and asserts termination rather than partial success.",
+    "reviewerFace": "Look for unbounded loops, ignored pageSize/limit interactions, and silent truncation at API caps. Demand termination proof when timeouts fire or budgets exhaust."
   },
   {
     "id": "multi-process-concurrency",
@@ -50,7 +50,7 @@
     "rank": 35,
     "pathGlobs": ["**/*lock*", "**/*session*", "**/*runner*", "**/*parallel*"],
     "issueKeywords": ["lock", "concurrency", "parallel", "race", "session", "atomic", "mutex"],
-    "implementerFace": "Protect shared session locks, evidence writes, and provider mutations against concurrent hosts. Prefer atomic create/replace and explicit lock owners over last-writer wins.",
+    "implementerFace": "Protect shared session locks, evidence writes, and provider mutations against concurrent hosts. Prefer atomic create/replace and explicit lock owners over last-writer wins. Write a concurrent-write fixture that proves the second process cannot clobber the first process's current-head artifact.",
     "reviewerFace": "Inspect race windows around review locks, evidence publish, and label mutations. Concurrent runs must not clobber each other's current-head artifacts."
   },
   {
@@ -59,7 +59,7 @@
     "rank": 18,
     "pathGlobs": ["**/*fixture*", "**/*path*", "**/*fs*", "**/*file*", "**/layout/**"],
     "issueKeywords": ["fixture", "path", "traversal", "symlink", "root", "absolute", "relative", "escape"],
-    "implementerFace": "Resolve fixture and evidence paths under an explicit root. Reject absolute paths, `..` traversal, and symlink escapes before any read or write.",
+    "implementerFace": "Resolve fixture and evidence paths under an explicit root. Reject absolute paths, `..` traversal, and symlink escapes before any read or write. Add negative tests for absolute, parent-directory, and symlink escape inputs.",
     "reviewerFace": "Confirm fixtureRoot/fixtureFile binding rejects path traversal and absolute escape hatches. Evidence writes must stay under the configured repository-scoped roots."
   },
   {
@@ -68,7 +68,7 @@
     "rank": 40,
     "pathGlobs": ["**/*codec*", "**/*parse*", "**/*json*", "**/*normalize*"],
     "issueKeywords": ["parse", "codec", "normalize", "encoding", "json", "malformed", "schema"],
-    "implementerFace": "Parse with strict shape checks. Do not manufacture empty titles, URLs, or arrays for missing required fields. Malformed payloads must fail loudly.",
+    "implementerFace": "Parse with strict shape checks. Do not manufacture empty titles, URLs, or arrays for missing required fields. Ship a malformed-payload fixture that fails loudly instead of normalizing into a plausible success value.",
     "reviewerFace": "Find parsers that accept partial objects and normalize them into plausible success values. Prefer GhMalformedOutputError-style failures over silent defaults."
   },
   {
@@ -77,16 +77,16 @@
     "rank": 45,
     "pathGlobs": ["**/package.json", "**/dist/**", "**/bin/**", "**/prompts/**", "**/assets/**"],
     "issueKeywords": ["package", "dist", "shipped", "workspace", "publish", "files", "assets"],
-    "implementerFace": "Keep package `files`, exports, and runtime loaders aligned so prompts, assets, and binaries resolve the same way in workspace and published installs.",
-    "reviewerFace": "Check that new assets are included in package files, loaded relative to the package root, and covered by pack/asset validation tests."
+    "implementerFace": "Keep package `files`, exports, and runtime loaders aligned so prompts, assets, and binaries resolve the same way in workspace and published installs. Cover a pack or asset-resolution test that fails if a new asset is omitted from the package surface.",
+    "reviewerFace": "Check that new assets are included in package files and loaded relative to the package root. Demand pack or asset-resolution tests for every newly shipped surface."
   },
   {
-    "id": "test-oracle-quality",
+    "id": "oracle-quality",
     "title": "Test oracle quality",
     "rank": 12,
     "pathGlobs": ["**/test/**", "**/*.test.*", "**/fixtures/**"],
     "issueKeywords": ["test", "negative", "fixture", "oracle", "conformance", "suite", "assert"],
-    "implementerFace": "For every acceptance criterion, ship a positive observation and a negative counterexample that would fail if the behavior regressed. Do not test only the happy path.",
+    "implementerFace": "For every acceptance criterion, ship a positive observation and a negative counterexample that would fail if the behavior regressed. Do not test only the happy path; add at least one oracle fixture that asserts production-path behavior rather than internal structure.",
     "reviewerFace": "Demand negative controls for false success, unbound fixtures, capability mismatches, and mutation isolation. Passing tests without behavior assertions are incomplete."
   }
 ]

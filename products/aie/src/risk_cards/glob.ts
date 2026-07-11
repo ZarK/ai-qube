@@ -2,6 +2,7 @@ function normalizePath(value: string): string {
   return value.replace(/\\/g, "/").replace(/^\.\//, "");
 }
 
+const PATTERN_REGEX_CACHE_LIMIT = 256;
 const patternRegexCache = new Map<string, RegExp | true>();
 
 function patternToRegex(pattern: string): RegExp | true {
@@ -9,6 +10,7 @@ function patternToRegex(pattern: string): RegExp | true {
   const cached = patternRegexCache.get(normalizedPattern);
   if (cached) return cached;
   if (normalizedPattern === "**" || normalizedPattern === "**/*") {
+    if (patternRegexCache.size >= PATTERN_REGEX_CACHE_LIMIT) patternRegexCache.clear();
     patternRegexCache.set(normalizedPattern, true);
     return true;
   }
@@ -31,6 +33,7 @@ function patternToRegex(pattern: string): RegExp | true {
     index += 1;
   }
   const compiled = new RegExp(`^${regex}$`);
+  if (patternRegexCache.size >= PATTERN_REGEX_CACHE_LIMIT) patternRegexCache.clear();
   patternRegexCache.set(normalizedPattern, compiled);
   return compiled;
 }
