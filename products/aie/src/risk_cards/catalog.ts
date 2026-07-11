@@ -22,7 +22,9 @@ export const REQUIRED_RISK_CARD_IDS = [
 ] as const;
 
 const KEBAB_CASE_ID = /^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$/;
-const TEST_OBLIGATION = /\b(test|tests|fixture|fixtures|assert|asserts|oracle|negative|counterexample)\b/i;
+/** Imperative obligation to ship concrete test/fixture/assert coverage. */
+const TEST_OBLIGATION = /\b(?:write|add|ship|cover|include|create|require|demand)\b[\s\S]{0,80}\b(?:negative\s+)?(?:test|tests|fixture|fixtures|assert|asserts|oracle|counterexample)s?\b|\b(?:negative\s+test|positive\s+(?:case|observation)|oracle\s+fixture|malformed[- ]payload\s+fixture|stale-head\s+fixture|concurrent-write\s+fixture)\b/i;
+const TEST_PROHIBITION = /\b(?:do\s+not|don't|not\s+required|no\s+need\s+to)\b[^.!?]{0,60}\b(?:test|tests|fixture|fixtures|assert|oracle)\b|\btests?\s+are\s+not\s+required\b/i;
 
 let cachedCards: readonly RiskCard[] | null = null;
 
@@ -49,7 +51,11 @@ function sentenceCount(text: string): number {
 }
 
 export function implementerFaceHasTestObligation(text: string): boolean {
-  return TEST_OBLIGATION.test(text);
+  const normalized = text.trim();
+  if (normalized.length === 0) return false;
+  // Prohibitions win: "do not add a fixture" must never count as an obligation.
+  if (TEST_PROHIBITION.test(normalized)) return false;
+  return TEST_OBLIGATION.test(normalized);
 }
 
 export function loadRiskCardCatalog(): readonly RiskCard[] {

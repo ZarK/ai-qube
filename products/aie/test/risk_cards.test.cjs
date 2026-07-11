@@ -48,7 +48,11 @@ describe('aie risk cards', () => {
 
   it('rejects implementer faces without a concrete test obligation', () => {
     assert.equal(implementerFaceHasTestObligation('Handle errors correctly and keep states clean.'), false);
+    assert.equal(implementerFaceHasTestObligation('Tests are useful. Handle errors correctly.'), false);
+    assert.equal(implementerFaceHasTestObligation('Tests are not required. Ship whatever seems convenient.'), false);
+    assert.equal(implementerFaceHasTestObligation('Do not add a fixture. Ship whatever seems convenient.'), false);
     assert.equal(implementerFaceHasTestObligation('Write a negative test for each false-success path.'), true);
+    assert.equal(implementerFaceHasTestObligation('Add a fixture that rejects each unsupported provider combination.'), true);
   });
 
   it('exports the catalog and selector from the package entry point', () => {
