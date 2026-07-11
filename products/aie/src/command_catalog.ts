@@ -19,6 +19,7 @@ import {
   REVIEW_AGENT_VALUES,
   REVIEW_DOCTOR_FLAG_DETAILS,
   REVIEW_GATE_FLAG_DETAILS,
+  REVIEW_STATS_FLAG_DETAILS,
   REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS,
   REVIEW_SETUP_TOKEN_FLAG_DETAILS,
 } from './command_flag_details.js';
@@ -327,6 +328,19 @@ const COMMAND_DEFINITIONS = [
     externalServices: ['github'],
     stableErrorKinds: ['config-error', 'publisher-validation-error', 'github-error', ...CONFIG_ERROR_KINDS],
     examples: ['aie review setup token', 'aie review setup token --token-env QUBE_REVIEW_TOKEN --login reviewer-bot --dry-run --json', 'aie review setup token --token-env QUBE_REVIEW_TOKEN --login reviewer-bot --yes'],
+  },
+  {
+    name: 'review stats',
+    description: 'Report review convergence stats over the latest closed pull requests from QUBE-published lane review metadata.',
+    args: [],
+    flags: REVIEW_STATS_FLAG_DETAILS.map(flag => flag.name),
+    flagDetails: REVIEW_STATS_FLAG_DETAILS,
+    mutationTargets: [],
+    supportsJson: true,
+    supportsDryRun: false,
+    externalServices: ['github'],
+    stableErrorKinds: ['config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie review stats', 'aie review stats --window 30 --json'],
   },
   {
     name: 'review doctor',

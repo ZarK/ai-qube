@@ -166,6 +166,7 @@ interface LoadedReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
+  listRecentPullRequests?(input: { limit: number }): Promise<Array<{ number: number; title: string; state: string; mergedAt: string | null; closedAt: string | null }>>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLocalReviewFeedback?(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;
@@ -204,6 +205,9 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
     loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
       ? (prNumber) => provider.loadPullRequestReviewTarget!(prNumber)
+      : undefined,
+    listRecentPullRequests: provider.listRecentPullRequests
+      ? (input) => provider.listRecentPullRequests!(input)
       : undefined,
     planReviewRequest: (item, policy, options) => provider.planReviewRequest(item, toReviewForgePolicy(policy), options),
     apply: async (plan) => [...await provider.apply(plan)],

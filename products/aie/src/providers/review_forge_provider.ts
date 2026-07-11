@@ -16,6 +16,14 @@ export interface ReviewForgeProviderOptions {
   readonly cwd?: string;
 }
 
+export interface ReviewForgePullRequestSummary {
+  number: number;
+  title: string;
+  state: string;
+  mergedAt: string | null;
+  closedAt: string | null;
+}
+
 export interface ReviewForgePullRequest {
   number: number;
   title: string;
@@ -135,6 +143,7 @@ export interface ReviewForgeProvider {
   findCurrentReview(): Promise<CurrentReviewForge>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
+  listRecentPullRequests?(input: { limit: number }): Promise<ReviewForgePullRequestSummary[]>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<ActionResult[]>;
   publishLocalReviewFeedback(item: ReviewItem, input: ReviewForgeLocalReviewPublishInput): Promise<ReviewForgeLocalReviewPublishResult>;

@@ -29,6 +29,7 @@ import { formatStatusHuman } from './renderers/status_renderer.js';
 import { formatViewHuman } from './renderers/view_renderer.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
 import { formatReviewGate, parseReviewIssueNumber, runReviewGate } from './review.js';
+import { formatReviewStats, runReviewStatsService } from './app/review_stats.js';
 import { formatReviewDoctor, runReviewDoctor } from './review_setup.js';
 import { formatReviewSetup, runReviewSetup, type ReviewSetupMode, type ReviewSetupPromptFunction } from './runtime_review_setup.js';
 import { startIssue } from './start/index.js';
@@ -374,6 +375,24 @@ async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], 
     return commandFailure(context, { ok: false, command, error: message }, message);
   } finally {
     closePrompt?.();
+  }
+}
+
+async function handleReviewStats(context: Parameters<RuntimeCommandHandler>[0]) {
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'review stats', loaded, 'Fix the selected Executor config, then rerun review stats.');
+  const windowRaw = stringFlag(context, 'window');
+  let window: number | undefined;
+  if (windowRaw !== undefined && windowRaw !== null && windowRaw !== '') {
+    window = /^\d+$/.test(windowRaw) ? Number(windowRaw) : Number.NaN;
+  }
+  try {
+    const result = await runReviewStatsService(loaded.config ?? getDefaults(), { window, repoRoot: loaded.root });
+    return commandResult(context, result, formatReviewStats(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to compute review convergence stats. Likely cause: ${cause}`;
+    return commandFailure(context, { ok: false, command: 'review stats', error: message }, message);
   }
 }
 
@@ -757,6 +776,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'review setup github-app': context => handleReviewSetup(context, 'github-app'),
   'review setup token': context => handleReviewSetup(context, 'token'),
   'review doctor': handleReviewDoctor,
+  'review stats': handleReviewStats,
   'review gate': context => handleConfigCommand(context, 'review gate'),
   schema: handleSchema,
   start: handleStart,

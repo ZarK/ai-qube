@@ -2990,6 +2990,60 @@ describe('PR gate service', () => {
     assert.equal(laneMetadata[0].summary, 'new lane passed');
   });
 
+  it('computes review convergence stats end to end from provider metadata', async () => {
+    const { runReviewStatsService, formatReviewStats } = require('../dist/app/review_stats.js');
+    const config = getDefaults();
+    const cleanPr = cleanLocalPr({ number: 14, state: 'MERGED', comments: [
+      laneReviewComment({ prNumber: 14, head: 'headA', lane: 'code-quality', recommendation: 'approve', status: 'passed', runId: 'a1', bodyFindingCount: 0 }),
+    ] });
+    const loopPr = cleanLocalPr({ number: 13, state: 'MERGED', comments: [
+      laneReviewComment({ prNumber: 13, head: 'h1', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', runId: 'b1', bodyFindingCount: 2 }),
+      laneReviewComment({ prNumber: 13, head: 'h2', lane: 'issue-compliance', recommendation: 'request-changes', status: 'failed', runId: 'b2', bodyFindingCount: 1 }),
+      laneReviewComment({ prNumber: 13, head: 'h2', lane: 'code-quality', recommendation: 'approve', status: 'passed', runId: 'b3', bodyFindingCount: 0 }),
+    ] });
+    const emptyPr = cleanLocalPr({ number: 11, state: 'CLOSED', comments: [] });
+    const base = makePrExec({ prViews: [cleanPr, loopPr, emptyPr] });
+    const exec = async (args) => {
+      if (args[0] === 'pr' && args[1] === 'list') {
+        return { args, exitCode: 0, stdout: JSON.stringify([
+          { number: 14, title: 'Clean PR', state: 'MERGED', mergedAt: '2026-07-10T00:00:00Z', closedAt: '2026-07-10T00:00:00Z' },
+          { number: 13, title: 'Loop PR', state: 'MERGED', mergedAt: '2026-07-09T00:00:00Z', closedAt: '2026-07-09T00:00:00Z' },
+          { number: 11, title: 'No evidence PR', state: 'CLOSED', mergedAt: null, closedAt: '2026-07-08T00:00:00Z' },
+        ]), stderr: '' };
+      }
+      // The fixture harness pins endpoint paths to PR 12; route every PR number there.
+      const rewritten = args.map(arg => typeof arg === 'string'
+        ? arg.replace(/(repos\/example\/repo\/(?:issues|pulls)\/)\d+(\/)/, '$1' + '12$2')
+        : arg);
+      return base.exec(rewritten);
+    };
+
+    const result = await runReviewStatsService(config, { window: 20, exec });
+
+    assert.deepEqual(result.prs.map(pr => pr.number), [14, 13, 11]);
+    assert.equal(result.prs[0].firstReviewClean, true);
+    assert.equal(result.prs[1].reviewedHeads, 2);
+    assert.equal(result.prs[1].failingHeads, 2);
+    assert.equal(result.prs[1].blockingEntries, 3);
+    assert.equal(result.prs[1].firstReviewClean, false);
+    assert.equal(result.prs[2].noLaneEvidence, true);
+    assert.match(result.prs[2].reason, /No QUBE lane reviews/);
+    assert.equal(result.summary.reviewedPrs, 2);
+    assert.equal(result.summary.firstReviewCleanRate, 0.5);
+    assert.equal(result.summary.blockingEntries, 3);
+    assert.equal(result.summary.blockingEntriesAfterFirstHead, 1);
+    assert.deepEqual(result.summary.blockingEntriesByLane, { 'code-quality': 2, 'issue-compliance': 1 });
+
+    const human = formatReviewStats(result);
+    assert.ok(human.includes('First-review-clean rate: 50% (1/2 reviewed; 1 without lane evidence).'));
+    assert.ok(human.includes('- issue-compliance: 1'));
+
+    await assert.rejects(
+      () => runReviewStatsService(config, { window: 51, exec }),
+      error => /between 1 and 50/.test(error instanceof Error ? error.message : String(error)),
+    );
+  });
+
   it('loads trusted lane feedback from pull request review bodies', async () => {
     const reviewBody = laneReviewComment({ recommendation: 'approve', status: 'passed', runId: 'review-api-run', summary: 'review api lane passed', inline: 'review-api' }).body;
     const provider = createGitHubReviewForgeProvider({

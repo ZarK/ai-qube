@@ -27,6 +27,12 @@ export const REVIEW_SETUP_TOKEN_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const REVIEW_STATS_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--window', type: 'string', description: 'Number of latest closed pull requests to aggregate, between 1 and 50', default: '20' },
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable convergence stats with the same fields as human output', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const REVIEW_DOCTOR_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable secret-free publisher readiness output', default: false },
   { name: '--no-probe', type: 'boolean', description: 'Inspect configured references without minting or using publisher credentials', default: false },

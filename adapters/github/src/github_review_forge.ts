@@ -1465,6 +1465,33 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     return this.loadPullRequestReview(Number(key.id));
   }
 
+  async listRecentPullRequests(input: { limit: number }): Promise<Array<{ number: number; title: string; state: string; mergedAt: string | null; closedAt: string | null }>> {
+    const limit = Math.max(1, Math.min(100, Math.trunc(input.limit)));
+    const result = await runGh(['pr', 'list', '--state', 'closed', '--json', 'number,title,state,mergedAt,closedAt', '--limit', String(limit)], this.options);
+    if (result.exitCode !== 0) {
+      throw new Error(`list recent pull requests failed: ${redact(result.stderr || result.stdout || 'gh pr list returned a non-zero exit code')}. Next action: verify GitHub authentication and repository access, then rerun the command.`);
+    }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(result.stdout);
+    } catch {
+      throw new Error('list recent pull requests failed: gh pr list returned malformed JSON. Next action: rerun the command; if it persists, inspect `gh pr list --state closed --json number` directly.');
+    }
+    if (!Array.isArray(parsed)) {
+      throw new Error('list recent pull requests failed: gh pr list did not return an array. Next action: rerun the command.');
+    }
+    return parsed
+      .filter(isRecord)
+      .filter(entry => typeof entry.number === 'number' && Number.isSafeInteger(entry.number) && entry.number > 0 && typeof entry.title === 'string' && typeof entry.state === 'string')
+      .map(entry => ({
+        number: entry.number as number,
+        title: entry.title as string,
+        state: entry.state as string,
+        mergedAt: typeof entry.mergedAt === 'string' && entry.mergedAt !== '' ? entry.mergedAt : null,
+        closedAt: typeof entry.closedAt === 'string' && entry.closedAt !== '' ? entry.closedAt : null,
+      }));
+  }
+
   async loadPullRequestReviewTarget(prNumber: number): Promise<{ pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }> {
     const rawPr = await this.getPullRequest(prNumber);
     return {
