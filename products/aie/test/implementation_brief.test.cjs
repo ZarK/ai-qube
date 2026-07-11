@@ -535,6 +535,50 @@ describe('implementation brief builder', () => {
     assert.equal(changelog.layout, null, 'pathless release-notes work must not render ownership');
   });
 
+  it('omits non-code coordination work and ignores generic root ids in prose', () => {
+    const layout = {
+      kind: 'javascript-typescript-workspace',
+      root: 'C:/repo',
+      remotes: [],
+      rootMarkers: [],
+      projects: [
+        { id: 'root', path: '.', kind: 'workspace', packageName: 'monorepo-root', packageManager: 'pnpm', gates: [] },
+        { id: 'aie', path: 'products/aie', kind: 'package', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] },
+      ],
+      packageManagers: [],
+      lockfiles: [],
+      ciHints: [],
+      generatedPaths: [],
+      vendorPaths: [],
+      warnings: [],
+    };
+    const coordination = buildImplementationBrief({
+      title: 'Schedule the release window',
+      body: 'Coordinate the next release window with stakeholders and confirm the sign-off order.\n\n- [ ] The sign-off order is confirmed. Verified by artifact review.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.equal(coordination.layout, null, 'coordination work without code evidence must render no layout section');
+
+    const rootProse = buildImplementationBrief({
+      title: 'Investigate flaky exports',
+      body: 'Investigate the root cause of flaky exports in `products/aie/src/export.ts`.\n\n- [ ] Unit test asserts exports are stable.',
+      config: briefConfig(),
+      layout,
+    });
+    assert.ok(rootProse.layout && rootProse.layout.derived);
+    assert.deepEqual(rootProse.layout.owningProjects.map(project => project.path), ['products/aie'], 'the word root in prose must not add the root project');
+
+    const unknownKind = buildImplementationBrief({
+      title: 'Touch a nested path',
+      body: 'Edit `src/deep/module.ts` to render output.\n\n- [ ] Unit test asserts the module renders.',
+      config: briefConfig(),
+      layout: { ...layout, kind: 'unknown', projects: [layout.projects[0]] },
+    });
+    assert.ok(unknownKind.layout);
+    assert.equal(unknownKind.layout.derived, false, 'an unknown-kind root-only layout must not claim unmatched paths');
+  });
+
   it('keeps layout ownership for pathless code work that mentions documentation terms', () => {
     const layout = {
       kind: 'javascript-typescript-workspace',

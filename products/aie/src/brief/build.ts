@@ -140,17 +140,18 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
   if (!layout || layout.root === null || layout.projects.length === 0) return null;
 
   const codeSurfaces = expectedPaths.filter(path => !isDocumentationSurface(path));
-  // Documentation-only work renders no layout section, wherever the documentation lives —
-  // including pathless documentation issues, unless code-work signals say otherwise.
+  // Ownership renders only on positive code-work evidence: a code surface or a stated
+  // test obligation. Documentation, coordination, and other non-code work is omitted
+  // without enumerating non-code categories.
   if (expectedPaths.length > 0 && codeSurfaces.length === 0) return null;
-  if (expectedPaths.length === 0 && !expectsTestWork && /\b(?:readme|docs|documentation|wording|guide|changelog|release\s+notes|announcement)\b/iu.test(issueText)) return null;
+  if (expectedPaths.length === 0 && !expectsTestWork) return null;
 
   const projects = layout.projects.map(project => ({ ...project, path: project.path.replace(/\\/g, '/') }));
-  // A lone root project owns unmatched paths in non-workspace layouts (single-app repos,
-  // including generated/vendor-heavy ones); workspace kinds keep could-not-derive instead.
+  // A lone root project owns unmatched paths only in the two single-app layout kinds;
+  // workspace and unknown kinds keep could-not-derive instead of a fabricated root claim.
   const rootOnly = projects.every(project => project.path === '.' || project.path === '');
   const rootOwnsUnmatched = layout.kind === 'single-app-service'
-    || (rootOnly && layout.kind !== 'javascript-typescript-workspace' && layout.kind !== 'python-workspace-monorepo');
+    || (rootOnly && layout.kind === 'generated-vendor-heavy');
   const owners = new Set<string>();
   // Each expected code surface is owned by the most specific containing project.
   for (const surface of codeSurfaces) {
@@ -160,9 +161,12 @@ function buildLayout(layout: RepoLayoutInspection | undefined, issueText: string
     if (containing.length > 0) owners.add(containing[0].id);
   }
   for (const project of projects) {
+    const isRootProject = project.path === '.' || project.path === '';
+    // Root projects match on package name only: generic ids like "root" appear in
+    // ordinary prose ("root cause") and must not derive ownership.
     const nameMentioned = (meaningfulIdentifier(project.packageName) && matchesToken(issueText, project.packageName))
-      || (meaningfulIdentifier(project.path) && matchesToken(issueText, project.path))
-      || (meaningfulIdentifier(project.id) && matchesToken(issueText, project.id));
+      || (!isRootProject && meaningfulIdentifier(project.path) && matchesToken(issueText, project.path))
+      || (!isRootProject && meaningfulIdentifier(project.id) && matchesToken(issueText, project.id));
     if (nameMentioned) owners.add(project.id);
   }
   const allOwningProjects: BriefLayoutProject[] = projects
