@@ -7,10 +7,12 @@ const {
   MAX_REVIEW_STATS_WINDOW,
   computeReviewStats,
   formatReviewStats,
+  reviewStatsFailure,
   reviewStatsWindow,
   runReviewStatsWithProvider,
 } = require('../dist/app/review_stats.js');
 const { getCommandMetadata } = require('../dist/command_metadata.js');
+const { listReviewForgeAdapters } = require('../dist/providers/review_forge_adapters.js');
 
 function lane({ head, lane, expectedLanes = [lane], recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z' }) {
   return { head, lane, expectedLanes, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt };
@@ -182,13 +184,18 @@ describe('review convergence stats', () => {
   it('rejects unsupported providers and windows beyond the hard cap', async () => {
     assert.equal(reviewStatsWindow(undefined), 20);
     assert.throws(() => reviewStatsWindow(0), /positive integer/);
-    assert.throws(() => reviewStatsWindow(MAX_REVIEW_STATS_WINDOW + 1), /cannot exceed 50.*--window 50/);
+    assert.throws(() => reviewStatsWindow(MAX_REVIEW_STATS_WINDOW + 1), error => {
+      assert.equal(error.kind, 'invalid-review-stats-window');
+      assert.match(error.likelyCause, /cannot exceed 50/);
+      assert.match(error.suggestedNextAction, /--window 50/);
+      return true;
+    });
 
     const fixture = providerFixture([], { id: 'gitlab', unsupported: true, reviewStats: false });
-    await assert.rejects(() => runReviewStatsWithProvider(fixture.provider, { window: 20 }), /not supported by the configured gitlab review provider/);
+    await assert.rejects(() => runReviewStatsWithProvider(fixture.provider, { window: 20 }), error => error.kind === 'review-stats-unsupported' && /gitlab/.test(error.likelyCause));
 
     const mismatch = providerFixture([], { id: 'github', reviewStats: false });
-    await assert.rejects(() => runReviewStatsWithProvider(mismatch.provider, { window: 20 }), /declares review stats capability/);
+    await assert.rejects(() => runReviewStatsWithProvider(mismatch.provider, { window: 20 }), error => error.kind === 'review-stats-unsupported' && /complete review stats capability/.test(error.likelyCause));
   });
 
   it('renders every JSON result field in human output from the same structure', async () => {
@@ -326,18 +333,67 @@ describe('review convergence stats', () => {
     assert.deepEqual(command.mutationTargets, []);
     assert.equal(windowFlag.default, 20);
     assert.match(windowFlag.description, /maximum 50/);
+    const adapters = listReviewForgeAdapters();
+    assert.equal(adapters.find(adapter => adapter.id === 'github').capabilities.reviewStats, true);
+    assert.equal(adapters.find(adapter => adapter.id === 'gitlab').capabilities.reviewStats, false);
   });
 
   it('enforces the hard cap through the executable JSON command path', () => {
-    const run = spawnSync(process.execPath, [join(process.cwd(), 'bin', 'run'), 'review', 'stats', '--window', '51', '--json'], {
-      cwd: process.cwd(),
+    const productRoot = join(__dirname, '..');
+    const run = spawnSync(process.execPath, [join(productRoot, 'bin', 'run'), 'review', 'stats', '--window', '51', '--json'], {
+      cwd: productRoot,
       encoding: 'utf8',
     });
     const result = JSON.parse(run.stdout);
 
-    assert.equal(run.status, 1);
+    assert.equal(run.status, 3);
     assert.equal(result.ok, false);
     assert.equal(result.command, 'review stats');
-    assert.match(result.error, /cannot exceed 50.*--window 50/);
+    assert.equal(result.error.kind, 'invalid-review-stats-window');
+    assert.equal(result.error.operation, 'validate review stats window');
+    assert.match(result.error.likelyCause, /cannot exceed 50/);
+    assert.match(result.error.suggestedNextAction, /--window 50/);
+    assert.equal(result.error.category, 'validation');
+    assert.equal(result.error.exitCode, 3);
+  });
+
+  it('uses the stable structured error shape for unsupported providers and provider reads', async () => {
+    const unsupported = providerFixture([], { id: 'gitlab', reviewStats: false });
+    const unsupportedError = await runReviewStatsWithProvider(unsupported.provider, { window: 1 }).catch(error => error);
+    const unsupportedFailure = reviewStatsFailure(unsupportedError);
+    assert.deepEqual(Object.keys(unsupportedFailure.result.error).sort(), ['category', 'exitCode', 'kind', 'likelyCause', 'operation', 'suggestedNextAction']);
+    assert.equal(unsupportedFailure.result.error.kind, 'review-stats-unsupported');
+    assert.equal(unsupportedFailure.result.error.category, 'validation');
+    assert.equal(unsupportedFailure.result.error.exitCode, 3);
+
+    const providerFailure = reviewStatsFailure(new Error('provider unavailable'));
+    assert.deepEqual(Object.keys(providerFailure.result.error).sort(), ['category', 'exitCode', 'kind', 'likelyCause', 'operation', 'suggestedNextAction']);
+    assert.equal(providerFailure.result.error.kind, 'review-stats-provider-read-failed');
+    assert.equal(providerFailure.result.error.category, 'external');
+    assert.equal(providerFailure.result.error.exitCode, 4);
+    assert.match(providerFailure.result.error.likelyCause, /provider unavailable/);
+  });
+
+  it('sanitizes provider-derived text in human tables and lane breakdowns', () => {
+    const result = computeReviewStats([{
+      number: 309,
+      title: 'Unsafe | title',
+      trustedLaneReviews: null,
+      unavailableReason: 'missing\nFake row\t| injected',
+    }]);
+    result.summary.blockingEntriesByLane = [{ lane: 'code|quality', blockingEntries: 1 }];
+    const human = formatReviewStats({
+      ok: true,
+      command: 'review stats',
+      provider: 'github',
+      window: 1,
+      ...result,
+      warnings: [],
+      nextAction: 'done',
+    });
+    assert.match(human, /Unsafe \\| title/);
+    assert.match(human, /missing Fake row \\| injected/);
+    assert.match(human, /code\\\|quality: 1/);
+    assert.doesNotMatch(human, /\nFake row/);
   });
 });

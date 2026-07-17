@@ -7,7 +7,7 @@ import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js'
 import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
-import { formatReviewStats, runReviewStats } from './app/review_stats.js';
+import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
 import { runBranchCommand } from './branch.js';
@@ -343,9 +343,8 @@ async function handleReviewStats(context: Parameters<RuntimeCommandHandler>[0]) 
     const result = await runReviewStats({ window: numberFlag(context, 'window') });
     return commandResult(context, result, formatReviewStats(result));
   } catch (error: unknown) {
-    const cause = error instanceof Error ? error.message : String(error);
-    const message = `Failed to run \`aie review stats\`. Likely cause: ${cause}. Next action: verify the configured review provider and rerun with \`--window 20 --json\`.`;
-    return commandFailure(context, { ok: false, command: 'review stats', error: message }, message);
+    const failure = reviewStatsFailure(error);
+    return commandFailure(context, failure.result, failure.human, failure.exitCode);
   }
 }
 

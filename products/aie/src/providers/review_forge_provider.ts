@@ -1,5 +1,10 @@
 import type { GhExec } from '@tjalve/qube-adapter-github';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import type {
+  ReviewFinding,
+  ReviewForgeLaneReviewHistory as CoreReviewForgeLaneReviewHistory,
+  ReviewForgePullRequest as CoreReviewForgePullRequest,
+  ReviewForgeRecentPullRequestOptions as CoreReviewForgeRecentPullRequestOptions,
+} from '@tjalve/qube-core';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
@@ -16,24 +21,8 @@ export interface ReviewForgeProviderOptions {
   readonly cwd?: string;
 }
 
-export interface ReviewForgePullRequest {
-  number: number;
-  title: string;
-  state: string;
-  url: string;
-  headRefOid: string;
-  authorLogin?: string | null;
-  reviewDecision: string;
-  mergeStateStatus: string;
-  mergeable: string;
-  isDraft: boolean;
-  closedAt?: string | null;
-}
-
-export interface ReviewForgeLaneReviewHistory {
-  trustedLaneReviews: unknown;
-  unavailableReason: string | null;
-}
+export type ReviewForgePullRequest = CoreReviewForgePullRequest;
+export type ReviewForgeLaneReviewHistory = CoreReviewForgeLaneReviewHistory;
 
 export interface ReviewForgeCiDiagnostic {
   checkName: string;
@@ -69,9 +58,7 @@ export interface ReviewForgeReviewTarget {
   closingIssueNumbers: number[];
 }
 
-export interface ReviewForgeRecentPullRequestOptions {
-  limit: number;
-}
+export type ReviewForgeRecentPullRequestOptions = CoreReviewForgeRecentPullRequestOptions;
 
 export interface CurrentReviewForge {
   item: ReviewItem | null;
@@ -144,7 +131,7 @@ export interface ReviewForgeProvider {
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
-  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
+  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
   loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;

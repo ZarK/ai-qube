@@ -29,7 +29,7 @@ import {
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
   type ReviewMergeBlock,
-  type ReviewForgeProvider,
+  type ReviewForgeStatsProvider,
   type ReviewItem,
   type ReviewItemKey,
 } from '@tjalve/qube-core';
@@ -65,7 +65,7 @@ const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatu
 const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt,updatedAt';
 const REVIEW_STATS_PR_FIELDS = 'number,title,state,url,headRefOid,comments,reviews';
 const MAX_RECENT_PR_LIMIT = 50;
-const MAX_RECENT_PR_CANDIDATES = 500;
+const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
@@ -1473,7 +1473,7 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
   });
 }
 
-export class GitHubReviewForgeProvider implements ReviewForgeProvider {
+export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   readonly id = 'github' as const;
   /** Process-local cache of distinct publisher login for trust matching; never stores tokens. */
   private cachedPublisherLogin: string | null | undefined = undefined;
@@ -1481,7 +1481,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewForgeCapabilities { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -1523,37 +1523,31 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_RECENT_PR_LIMIT) {
       throw new Error(`list recent GitHub pull requests failed: limit must be an integer from 1 to ${MAX_RECENT_PR_LIMIT}. Use a bounded review stats window.`);
     }
-    let candidateLimit = Math.min(MAX_RECENT_PR_CANDIDATES + 1, Math.max(options.limit + 1, options.limit * 2));
-    for (;;) {
-      const result = await runGh([
-        'pr',
-        'list',
-        '--state',
-        'all',
-        '--search',
-        'is:closed sort:updated-desc',
-        '--limit',
-        String(candidateLimit),
-        '--json',
-        RECENT_PR_FIELDS,
-      ], this.options);
-      ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
-      const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
-      if (listed.length > MAX_RECENT_PR_CANDIDATES) break;
-      const ordered = listed
-        .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
-        .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number);
-      const exhausted = listed.length < candidateLimit;
-      const cutoff = ordered.length >= options.limit ? Date.parse(ordered[options.limit - 1].mergedAt ?? ordered[options.limit - 1].closedAt ?? '') : Number.NaN;
-      const lastUpdatedAt = Date.parse(listed.at(-1)?.updatedAt ?? '');
-      if (exhausted || (Number.isFinite(cutoff) && Number.isFinite(lastUpdatedAt) && lastUpdatedAt <= cutoff)) {
-        return ordered.slice(0, options.limit).map(pr => normalizePr(pr));
-      }
-      const nextLimit = Math.min(MAX_RECENT_PR_CANDIDATES + 1, candidateLimit * 2);
-      if (nextLimit === candidateLimit) break;
-      candidateLimit = nextLimit;
+    const candidateLimit = Math.min(MAX_RECENT_PR_CANDIDATES, Math.max(options.limit + 1, options.limit * 2));
+    const result = await runGh([
+      'pr',
+      'list',
+      '--state',
+      'all',
+      '--search',
+      'is:closed sort:updated-desc',
+      '--limit',
+      String(candidateLimit),
+      '--json',
+      RECENT_PR_FIELDS,
+    ], this.options);
+    ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
+    const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
+    const ordered = listed
+      .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
+      .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number);
+    const exhausted = listed.length < candidateLimit;
+    const cutoff = ordered.length >= options.limit ? Date.parse(ordered[options.limit - 1].mergedAt ?? ordered[options.limit - 1].closedAt ?? '') : Number.NaN;
+    const lastUpdatedAt = Date.parse(listed.at(-1)?.updatedAt ?? '');
+    if (!exhausted && !(Number.isFinite(cutoff) && Number.isFinite(lastUpdatedAt) && lastUpdatedAt <= cutoff)) {
+      throw new Error(`list recent GitHub pull requests failed: one bounded listing pass over ${candidateLimit} candidates cannot prove the latest closure-time window. Use a smaller window or a provider with native closure-time ordering.`);
     }
-    throw new Error(`list recent GitHub pull requests failed: the bounded provider read reached ${MAX_RECENT_PR_CANDIDATES} candidates and cannot prove the latest closure-time window. Narrow the repository history or use a provider with native closure-time ordering.`);
+    return ordered.slice(0, options.limit).map(pr => normalizePr(pr));
   }
 
   async loadLaneReviewHistory(prNumber: number): Promise<{ trustedLaneReviews: JsonObject[]; unavailableReason: string | null }> {

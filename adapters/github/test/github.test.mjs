@@ -46,6 +46,10 @@ describe("github adapter contract", () => {
     assert.equal(resolveThreads.support, "supported");
     assert.match(resolveThreads.nextAction, /pr thread resolve/);
 
+    const reviewStats = getGitHubOperationSupport("review-stats");
+    assert.equal(reviewStats.support, "supported");
+    assert.equal(reviewStats.support === "supported", createGitHubReviewForgeProvider().capabilities().reviewStats);
+
     const workflowRun = getGitHubOperationSupport("trigger-workflow-run");
     assert.equal(workflowRun.support, "unsupported");
     assert.match(workflowRun.nextAction, /current-head run/);
@@ -56,7 +60,7 @@ describe("github adapter contract", () => {
     assert.match(unknown.summary, /No product package has registered real GitHub behavior/);
 
     const operations = listGitHubOperationSupport();
-    assert.equal(operations.filter((operation) => operation.support === "supported").length, 11);
+    assert.equal(operations.filter((operation) => operation.support === "supported").length, 12);
     assert.equal(operations.filter((operation) => operation.support === "standalone").length, 1);
     assert.equal(operations.filter((operation) => operation.support === "unsupported").length, 4);
   });
@@ -203,22 +207,30 @@ describe("github adapter contract", () => {
   });
 
   it("fails loudly when the bounded candidate read cannot prove closure-time recency", async () => {
-    const exec = async args => ({
-      args,
-      exitCode: 0,
-      stdout: JSON.stringify(Array.from({ length: 501 }, (_, index) => ({
-        number: index + 1,
-        title: `PR ${index + 1}`,
-        state: "CLOSED",
-        url: `https://example.invalid/${index + 1}`,
-        headRefOid: `head-${index + 1}`,
-        closedAt: "2026-01-01T00:00:00Z",
-      }))),
-      stderr: "",
-    });
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      const candidateLimit = Number(args[args.indexOf("--limit") + 1]);
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify(Array.from({ length: candidateLimit }, (_, index) => ({
+          number: index + 1,
+          title: `PR ${index + 1}`,
+          state: "CLOSED",
+          url: `https://example.invalid/${index + 1}`,
+          headRefOid: `head-${index + 1}`,
+          closedAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-07-01T00:00:00Z",
+        }))),
+        stderr: "",
+      };
+    };
     const provider = createGitHubReviewForgeProvider({ exec });
 
     await assert.rejects(() => provider.listRecentPullRequests({ limit: 50 }), /cannot prove the latest closure-time window/);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][calls[0].indexOf("--limit") + 1], "100");
   });
 
   it("ties recent pull request provider work to a small requested window", async () => {

@@ -1,4 +1,6 @@
 import { getDefaults, loadConfig } from '../config/index.js';
+import { createCliError, isCliError, renderCliErrorText, type CliErrorShape } from '@tjalve/qube-cli/errors';
+import { supportsReviewStats } from '@tjalve/qube-core';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
 
@@ -70,6 +72,43 @@ export interface ReviewStatsOptions {
   repoRoot?: string;
 }
 
+export interface ReviewStatsFailureResult {
+  readonly result: {
+    readonly ok: false;
+    readonly command: 'review stats';
+    readonly error: Omit<CliErrorShape, 'command'>;
+  };
+  readonly human: string;
+  readonly exitCode: number;
+}
+
+export function reviewStatsFailure(error: unknown): ReviewStatsFailureResult {
+  const failure: CliErrorShape = isCliError(error) ? error : createCliError({
+    command: 'review stats',
+    kind: 'review-stats-provider-read-failed',
+    operation: 'load review convergence statistics',
+    likelyCause: error instanceof Error ? error.message : String(error),
+    suggestedNextAction: 'Verify the configured review provider and rerun with `--window 20 --json`.',
+    category: 'external',
+  });
+  return {
+    result: {
+      ok: false,
+      command: 'review stats',
+      error: {
+        kind: failure.kind,
+        operation: failure.operation,
+        likelyCause: failure.likelyCause,
+        suggestedNextAction: failure.suggestedNextAction,
+        category: failure.category,
+        exitCode: failure.exitCode,
+      },
+    },
+    human: renderCliErrorText(failure),
+    exitCode: failure.exitCode,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
@@ -100,7 +139,7 @@ function validTimestamp(value: unknown): value is string {
 function laneNames(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0 || !value.every(nonEmptyString)) return null;
   const lanes = value.map(lane => lane.trim());
-  if (lanes.some((lane, index) => lane !== value[index]) || new Set(lanes).size !== lanes.length) return null;
+  if (lanes.some((lane, index) => lane !== value[index] || /[\u0000-\u001f\u007f]/.test(lane)) || new Set(lanes).size !== lanes.length) return null;
   return lanes.sort();
 }
 
@@ -289,10 +328,10 @@ export function computeReviewStats(inputs: readonly ReviewStatsInput[]): Pick<Re
 export function reviewStatsWindow(value: number | undefined): number {
   const window = value ?? DEFAULT_REVIEW_STATS_WINDOW;
   if (!Number.isSafeInteger(window) || window < 1) {
-    throw new Error('Review stats window must be a positive integer. Use `--window 20`.');
+    throw createCliError({ command: 'review stats', kind: 'invalid-review-stats-window', operation: 'validate review stats window', likelyCause: 'Review stats window must be a positive integer.', suggestedNextAction: 'Use `--window 20` or another integer from 1 to 50.', category: 'validation' });
   }
   if (window > MAX_REVIEW_STATS_WINDOW) {
-    throw new Error(`Review stats window cannot exceed ${MAX_REVIEW_STATS_WINDOW}. Use \`--window ${MAX_REVIEW_STATS_WINDOW}\` or a smaller value.`);
+    throw createCliError({ command: 'review stats', kind: 'invalid-review-stats-window', operation: 'validate review stats window', likelyCause: `Review stats window cannot exceed ${MAX_REVIEW_STATS_WINDOW}.`, suggestedNextAction: `Use \`--window ${MAX_REVIEW_STATS_WINDOW}\` or a smaller value.`, category: 'validation' });
   }
   return window;
 }
@@ -324,14 +363,8 @@ async function loadReviewStatsInput(provider: ReviewForgeProvider, pr: ReviewFor
 
 export async function runReviewStatsWithProvider(provider: ReviewForgeProvider, options: Pick<ReviewStatsOptions, 'window'> = {}): Promise<ReviewStatsResult> {
   const window = reviewStatsWindow(options.window);
-  if (provider.capabilities().reviewStats !== true) {
-    throw new Error(`Review stats are not supported by the configured ${provider.id} review provider. Select a provider that declares review stats capability.`);
-  }
-  if (!provider.listRecentPullRequests) {
-    throw new Error(`Review stats are not supported by the configured ${provider.id} review provider. Select a provider with bounded recent pull request listing support.`);
-  }
-  if (!provider.loadLaneReviewHistory) {
-    throw new Error(`Review stats are not supported by the configured ${provider.id} review provider. Select a provider with bounded lane review history support.`);
+  if (!supportsReviewStats(provider)) {
+    throw createCliError({ command: 'review stats', kind: 'review-stats-unsupported', operation: 'load review convergence statistics', likelyCause: `The configured ${provider.id} review provider does not declare the complete review stats capability.`, suggestedNextAction: 'Select a provider with bounded recent pull request listing and lane review history support.', category: 'validation' });
   }
   const listedPullRequests = await provider.listRecentPullRequests({ limit: window });
   const seen = new Set<number>();
@@ -384,14 +417,14 @@ function cell(value: number | boolean | null): string {
 }
 
 function tableCell(value: string): string {
-  return value.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+  return value.replace(/\|/g, '\\|').replace(/[\u0000-\u001f\u007f]+/g, ' ');
 }
 
 export function formatReviewStats(result: ReviewStatsResult): string {
   const lines = [`Review convergence stats (latest ${result.window} merged or closed PRs; provider=${result.provider})`];
   lines.push('PR | Title | Reviewed heads | Failing heads | Blocking entries | First review clean | Lane evidence');
   for (const pr of result.pullRequests) {
-    lines.push(`#${pr.number} | ${tableCell(pr.title)} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.firstReviewClean)} | ${pr.noLaneEvidence ? `none: ${pr.noLaneEvidenceReason}` : 'present'}`);
+    lines.push(`#${pr.number} | ${tableCell(pr.title)} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.firstReviewClean)} | ${pr.noLaneEvidence ? `none: ${tableCell(pr.noLaneEvidenceReason ?? 'unknown')}` : 'present'}`);
   }
   lines.push('', 'Rolling summary:');
   lines.push(`- Pull requests: ${result.summary.pullRequests}`);
@@ -403,7 +436,7 @@ export function formatReviewStats(result: ReviewStatsResult): string {
   lines.push(`- Blocking entries after first head: ${result.summary.blockingEntriesAfterFirstHead}/${result.summary.blockingEntries} (${percent(result.summary.blockingEntriesAfterFirstHeadShare)})`);
   lines.push('- Blocking entries by lane:');
   if (result.summary.blockingEntriesByLane.length === 0) lines.push('  - none');
-  for (const lane of result.summary.blockingEntriesByLane) lines.push(`  - ${lane.lane}: ${lane.blockingEntries}`);
+  for (const lane of result.summary.blockingEntriesByLane) lines.push(`  - ${tableCell(lane.lane)}: ${lane.blockingEntries}`);
   for (const warning of result.warnings) lines.push(`Warning: ${warning}`);
   lines.push(`Next action: ${result.nextAction}`);
   return lines.join('\n');

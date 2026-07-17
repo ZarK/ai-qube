@@ -195,6 +195,17 @@ const review = defineReviewForgeHarness({
   },
   capabilityCases: [
     {
+      capabilityId: "review-stats",
+      name: "exposes bounded review convergence reads",
+      run: () => {
+        const provider = createGitHubReviewForgeProvider({ exec: markFixtureTransport(reviewExec(reviewFixture)) });
+        assert.equal(assertGitHubOperationSupported("review-stats").support, "supported");
+        assert.equal(provider.capabilities().reviewStats, true);
+        assert.equal(typeof provider.listRecentPullRequests, "function");
+        assert.equal(typeof provider.loadLaneReviewHistory, "function");
+      },
+    },
+    {
       capabilityId: "approve-pull-request",
       name: "rejects fabricated provider approval",
       run: () => assertGitHubOperationSupported("approve-pull-request"),
