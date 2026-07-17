@@ -137,7 +137,9 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
     }
   }
 
-  const missing = input.requiredLanes.filter(laneId => !accepted.some(lane => lane.lane === laneId) && !rejected.some(entry => entry.lane === laneId));
+  const missing = input.requiredLanes.flatMap(laneId => input.issueNumbers
+    .filter(issueNumber => !accepted.some(lane => lane.lane === laneId && lane.issueNumber === issueNumber) && !rejected.some(entry => entry.lane === laneId && entry.issueNumber === issueNumber))
+    .map(issueNumber => input.issueNumbers.length > 1 ? `${laneId} (issue #${issueNumber})` : laneId));
   const parts: string[] = [];
   if (accepted.length > 0) parts.push(`${accepted.length} trusted current-head provider lane review(s) available for reuse: ${[...new Set(accepted.map(lane => input.issueNumbers.length > 1 ? `${lane.lane} (issue #${lane.issueNumber})` : lane.lane))].join(', ')}.`);
   if (rejected.length > 0) parts.push(`${rejected.length} provider record(s) rejected for reuse.`);

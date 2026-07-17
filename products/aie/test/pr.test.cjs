@@ -1775,6 +1775,34 @@ describe('PR gate service', () => {
     assert.match(result.localReviewPublish.nextAction, /reused/i);
   });
 
+  it('re-executes a lane whose local current-head evidence is non-terminal instead of provider-reusing it', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    assert.ok(laneIds.length > 1);
+    const nonTerminalLane = laneIds[0];
+    const laneDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    mkdirSync(laneDirectory, { recursive: true });
+    writeFileSync(join(laneDirectory, `${nonTerminalLane}.json`), `${JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: nonTerminalLane, status: 'unavailable', summary: 'host fault before verdict' })}\n`);
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `mixed-source-${lane}` }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    const byLane = new Map(result.localReviewRunner.lanes.map(lane => [lane.lane, lane]));
+    assert.equal(byLane.get(nonTerminalLane).status, 'planned');
+    assert.equal(byLane.get(nonTerminalLane).evidenceSource, 'fresh-run');
+    assert.ok(laneIds.slice(1).every(lane => byLane.get(lane).status === 'skipped' && byLane.get(lane).evidenceSource === 'trusted-provider'));
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

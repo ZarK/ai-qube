@@ -206,15 +206,19 @@ function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, link
   return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and fork_context false. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never reference .qube/aie/reviews/.../prompts/ files. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`${publishCommand}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR reviews/comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
 }
 
-// Exact-head reuse: valid current-head evidence (local file first, then a trusted
-// provider marker) satisfies the lane without reviewer execution. Non-terminal
-// local states (unavailable, inconclusive, pending, malformed) fall through so a
-// host fault never blocks a fresh attempt at the same head.
+// Exact-head reuse mirrors the evidence gate's precedence exactly: a present
+// local evidence file always owns the lane (terminal states reuse, non-terminal
+// states re-execute), and trusted provider markers apply only when no local file
+// exists. Any divergence here would let the runner skip a lane the gate then
+// reads differently.
 function reuseLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, linkedIssueNumbers: readonly number[], riskCardFragments: readonly string[], route: ModelReviewRoutePlan | null): LocalReviewLaneRun | null {
-  const localLane = readCurrentHeadLaneEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
-  if (localLane && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
-    const summary = `Existing current-head lane evidence (${localLane.status}) reused; no reviewer execution required.`;
-    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route), evidenceSource: 'local' };
+  if (existsSync(path)) {
+    const localLane = readCurrentHeadLaneEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
+    if (localLane && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
+      const summary = `Existing current-head lane evidence (${localLane.status}) reused; no reviewer execution required.`;
+      return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route), evidenceSource: 'local' };
+    }
+    return null;
   }
   const providerLane = acceptedProviderLane(input.providerLaneReuse, lane, issueNumber);
   if (providerLane) {
@@ -456,7 +460,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       : status === 'pending'
         ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
       : status === 'planned'
-        ? `Local review runner planned ${lanes.length} lane execution(s).`
+        ? `Local review runner planned ${lanes.filter(lane => lane.status === 'planned' || lane.status === 'pending').length} lane execution(s); ${lanes.filter(lane => lane.status === 'skipped').length} lane(s) reuse existing current-head evidence.`
         : `Local review runner could not complete all required lanes: ${unavailable.join('; ')}`,
   };
 }

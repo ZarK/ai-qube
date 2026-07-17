@@ -863,8 +863,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   if (deferProviderMutation) {
     const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
     const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
+    // Reused lanes (local current-head evidence or trusted provider records) are already
+    // provider-visible; publishing again would duplicate the audit trail.
+    const freshRoutedLaneKeys = new Set(localReviewRunner.lanes.filter(lane => lane.route !== null && lane.evidenceSource === 'fresh-run' && lane.status === 'completed').map(lane => `${lane.issueNumber} ${lane.lane}`));
     if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status !== 'passed') {
       localReviewPublish = pendingLocalReviewPublish('Routed review publishing was withheld because the complete current-head lane batch did not validate; no provider mutation was performed.');
+    } else if (freshRoutedLaneKeys.size === 0) {
+      localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' };
     } else {
       const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
@@ -879,11 +884,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           actions = await applyReviewPlan(provider, firstPlan);
           actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
           const publishedUrls: string[] = [];
-          // Reused lanes (local current-head evidence or trusted provider records) are already
-          // provider-visible; publishing again would duplicate the audit trail.
-          const freshRoutedLanes = new Set(localReviewRunner.lanes.filter(lane => lane.route !== null && lane.evidenceSource === 'fresh-run' && lane.status === 'completed').map(lane => `${lane.issueNumber}\0${lane.lane}`));
           for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
-            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLanes.has(`${evidence.issueNumber}\0${entry.id}`))) {
+            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
               try {
                 if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
                 const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
@@ -895,9 +897,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           }
           localReviewPublish = publishUnavailable.length > 0
             ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
-            : freshRoutedLanes.size === 0
-              ? { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' }
-              : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${freshRoutedLanes.size} routed current-head lane review(s) from the QUBE orchestrator.` };
+            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${freshRoutedLaneKeys.size} routed current-head lane review(s) from the QUBE orchestrator.` };
           finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
         }
       }

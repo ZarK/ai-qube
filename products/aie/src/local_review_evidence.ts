@@ -103,7 +103,7 @@ export interface LocalReviewEvidence {
   prNumber: number;
   headSha: string;
   profile: LocalReviewProfile;
-  adapter: 'local-command' | 'local-host' | 'manual-evidence';
+  adapter: 'local-command' | 'local-host' | 'manual-evidence' | 'trusted-provider';
   status: LocalReviewStatus;
   path: string | null;
   reviewer: {
@@ -1037,7 +1037,8 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
     const missingRejections = (providerReuse?.rejected ?? []).filter(entry => missing.includes(entry.lane) && (entry.issueNumber === null || entry.issueNumber === issueNumber)).map(entry => entry.reason);
-    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: [...missing.map(lane => `Missing local review evidence for ${lane}.`), ...missingRejections] };
+    const coveredNote = lanesWithPublishStatus.length > 0 ? ` Covered lanes remain valid: ${lanesWithPublishStatus.map(lane => `${lane.id} (${lane.origin ?? 'local'})`).join(', ')}.` : '';
+    return { ...evidence, lanes: lanesWithPublishStatus, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.${coveredNote}`, blockers: [...missing.map(lane => `Missing local review evidence for ${lane}.`), ...missingRejections] };
   }
   const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
   const contextReviewed = lanesWithPublishStatus.flatMap(lane => lane.contextReviewed);
@@ -1046,7 +1047,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
   const locallyCoveredLanes = requiredLanes.filter(laneId => laneAdapters.has(laneId));
   const contractBlockers = localLanesWithPublishStatus.length > 0 ? evidenceContractBlockers(localLanesWithPublishStatus, profile, promptStack, locallyCoveredLanes) : [];
-  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
+  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : localLanes.length === 0 && providerLanes.length > 0 ? 'trusted-provider' : 'local-host';
   const runnerBlockers = localLanesWithPublishStatus.length > 0 ? provenanceBlockers(localLanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, locallyCoveredLanes, carryForwardScope) : [];
   const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
