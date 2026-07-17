@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 
 import {
   assertGitHubOperationSupported,
+  createGitHubReviewForgeProvider,
   getGitHubOperationSupport,
   githubAdapter,
   githubIssueReference,
@@ -172,5 +173,31 @@ describe("github adapter contract", () => {
     assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "ERROR" }).result, "failed");
     assert.equal(mapGitHubCheckStatus({ name: "legacy", state: "PENDING" }).result, "pending");
     assert.equal(mapGitHubCheckStatus({}, 2).name, "GitHub check 3");
+  });
+
+  it("lists a bounded newest-first window of merged or closed pull requests", async () => {
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify([
+          { number: 41, title: "Open", state: "OPEN", url: "https://example.invalid/41", headRefOid: "open" },
+          { number: 39, title: "Closed", state: "CLOSED", url: "https://example.invalid/39", headRefOid: "closed" },
+          { number: 40, title: "Merged", state: "MERGED", url: "https://example.invalid/40", headRefOid: "merged" },
+        ]),
+        stderr: "",
+      };
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const listed = await provider.listRecentPullRequests({ limit: 3 });
+
+    assert.deepEqual(listed.map(pr => pr.number), [40, 39]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed --limit 3 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft");
+    await assert.rejects(() => provider.listRecentPullRequests({ limit: 51 }), /limit must be an integer from 1 to 50/);
+    assert.equal(calls.length, 1);
   });
 });

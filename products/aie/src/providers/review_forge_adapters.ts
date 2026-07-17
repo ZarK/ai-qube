@@ -17,6 +17,8 @@ import {
   type ReviewForgeProvider,
   type ReviewForgeProviderFactory,
   type ReviewForgeProviderId,
+  type ReviewForgePullRequest,
+  type ReviewForgeRecentPullRequestOptions,
   type ReviewForgeReviewTarget,
   type ReviewForgeSnapshot,
 } from './review_forge_provider.js';
@@ -164,6 +166,7 @@ interface LoadedReviewForgeProvider {
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
+  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
@@ -201,6 +204,9 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     getReviewItem: (key) => provider.getReviewItem(key),
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),
     findCurrentReview: () => provider.findCurrentReview(),
+    listRecentPullRequests: provider.listRecentPullRequests
+      ? (options) => provider.listRecentPullRequests!(options)
+      : undefined,
     loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
     loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
       ? (prNumber) => provider.loadPullRequestReviewTarget!(prNumber)

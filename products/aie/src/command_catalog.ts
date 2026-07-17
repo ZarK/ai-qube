@@ -21,6 +21,7 @@ import {
   REVIEW_GATE_FLAG_DETAILS,
   REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS,
   REVIEW_SETUP_TOKEN_FLAG_DETAILS,
+  REVIEW_STATS_FLAG_DETAILS,
 } from './command_flag_details.js';
 import { defineExecutorCommands } from './command_definition.js';
 import { RUN_COMMAND_DEFINITIONS } from './command_catalog_run.js';
@@ -284,13 +285,13 @@ const COMMAND_DEFINITIONS = [
   ...RUN_COMMAND_DEFINITIONS,
   {
     name: 'review',
-    description: 'Set up and validate provider publishing, or render host-run review-agent gate prompts and evidence requirements.',
+    description: 'Set up and validate provider publishing, report review convergence stats, or render host-run review-agent gate prompts and evidence requirements.',
     args: [],
     flags: ['--help'],
     mutationTargets: [],
     supportsJson: false,
     supportsDryRun: false,
-    examples: ['aie review', 'aie review setup github-app', 'aie review setup token', 'aie review doctor --json', 'aie review gate 93 --prompt'],
+    examples: ['aie review', 'aie review setup github-app', 'aie review setup token', 'aie review doctor --json', 'aie review stats --window 20 --json', 'aie review gate 93 --prompt'],
   },
   {
     name: 'review setup',
@@ -340,6 +341,19 @@ const COMMAND_DEFINITIONS = [
     externalServices: ['github'],
     stableErrorKinds: ['config-error', 'github-error', 'publisher-unavailable', ...CONFIG_ERROR_KINDS],
     examples: ['aie review doctor', 'aie review doctor --json', 'aie review doctor --no-probe --json'],
+  },
+  {
+    name: 'review stats',
+    description: 'Compute bounded review convergence metrics from trusted provider-visible QUBE lane review metadata. Read-only.',
+    args: [],
+    flags: REVIEW_STATS_FLAG_DETAILS.map(flag => flag.name),
+    flagDetails: REVIEW_STATS_FLAG_DETAILS,
+    mutationTargets: [],
+    supportsJson: true,
+    supportsDryRun: false,
+    externalServices: ['github'],
+    stableErrorKinds: ['config-error', 'github-error', 'review-state-unavailable', 'unsupported-provider', ...CONFIG_ERROR_KINDS],
+    examples: ['aie review stats', 'aie review stats --window 30', 'aie review stats --window 20 --json'],
   },
   {
     name: 'review gate',

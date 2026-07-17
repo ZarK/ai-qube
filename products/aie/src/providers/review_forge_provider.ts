@@ -63,6 +63,10 @@ export interface ReviewForgeReviewTarget {
   closingIssueNumbers: number[];
 }
 
+export interface ReviewForgeRecentPullRequestOptions {
+  limit: number;
+}
+
 export interface CurrentReviewForge {
   item: ReviewItem | null;
   pr: ReviewForgePullRequest | null;
@@ -133,6 +137,7 @@ export interface ReviewForgeProvider {
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
+  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;

@@ -62,6 +62,8 @@ export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolv
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
+const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft';
+const MAX_RECENT_PR_LIMIT = 50;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
@@ -196,6 +198,10 @@ function isRecord(value: unknown): value is Record<string, unknown> { return val
 function isRawPrView(value: unknown): value is RawPrView {
   if (!isRecord(value)) return false;
   return typeof value.number === 'number' && typeof value.title === 'string' && typeof value.state === 'string' && typeof value.url === 'string';
+}
+
+function isRawPrList(value: unknown): value is RawPrView[] {
+  return Array.isArray(value) && value.every(isRawPrView);
 }
 
 function isRawReviewCommentArray(value: unknown): value is RawReviewComment[] | RawReviewComment[][] { return Array.isArray(value) && value.every(item => isRecord(item) || (Array.isArray(item) && item.every(isRecord))); }
@@ -1463,6 +1469,31 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     if (key.providerId !== this.id) throw new Error(`load GitHub review snapshot failed: providerId ${key.providerId} is unsupported.`);
     if (!/^[1-9]\d*$/.test(key.id)) throw new Error(`load GitHub review snapshot failed: key id ${redactReviewKeyId(key.id)} is not a positive pull request number.`);
     return this.loadPullRequestReview(Number(key.id));
+  }
+
+  async listRecentPullRequests(options: { limit: number }): Promise<GitHubReviewPullRequest[]> {
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_RECENT_PR_LIMIT) {
+      throw new Error(`list recent GitHub pull requests failed: limit must be an integer from 1 to ${MAX_RECENT_PR_LIMIT}. Use a bounded review stats window.`);
+    }
+    const result = await runGh([
+      'pr',
+      'list',
+      '--state',
+      'all',
+      '--search',
+      'is:closed',
+      '--limit',
+      String(options.limit),
+      '--json',
+      RECENT_PR_FIELDS,
+    ], this.options);
+    ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
+    const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
+    return listed
+      .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
+      .sort((left, right) => right.number - left.number)
+      .slice(0, options.limit)
+      .map(pr => normalizePr(pr));
   }
 
   async loadPullRequestReviewTarget(prNumber: number): Promise<{ pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }> {
