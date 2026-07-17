@@ -1404,6 +1404,9 @@ describe('PR gate service', () => {
 
     assert.equal(resolveModelReviewPlan(config, 'issue-compliance'), null);
     assert.equal(resolveModelReviewPlan(config, 'code-quality').host, 'grok');
+
+    config.reviewLanes = [];
+    assert.equal(resolveModelReviewPlan(config, 'issue-compliance').host, 'grok');
   });
 
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
@@ -1457,6 +1460,60 @@ describe('PR gate service', () => {
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
     assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
+  });
+
+  it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = ['@coderabbitai'];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let localHead = 'abc123';
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => localHead,
+      onBeforeMutate: async () => { localHead = 'changed-head'; },
+    });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'pending');
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'edit'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
   it('withholds every provider mutation when a routed lane batch is incomplete', async () => {

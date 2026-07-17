@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -254,9 +254,18 @@ function safeArtifactPath(repoRoot: string, kind: string, path: string): boolean
   if (path.trim() === '' || path.includes('\0')) return false;
   if (/^(command|terminal|test-output):/i.test(path)) return /command|terminal|test/i.test(kind);
   if (isAbsolute(path)) return false;
-  const resolvedPath = resolve(repoRoot, path);
-  const relativePath = relative(repoRoot, resolvedPath);
-  return relativePath !== '' && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(relativePath) && existsSync(resolvedPath);
+  try {
+    const resolvedRoot = realpathSync(repoRoot);
+    const resolvedPath = realpathSync(resolve(repoRoot, path));
+    const relativePath = relative(resolvedRoot, resolvedPath);
+    return relativePath !== ''
+      && relativePath !== '..'
+      && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`)
+      && !isAbsolute(relativePath)
+      && statSync(resolvedPath).isFile();
+  } catch {
+    return false;
+  }
 }
 
 function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): boolean {
@@ -320,7 +329,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     if (input.plan.model) args.push('--model', input.plan.model);
     if (input.plan.effort) args.push('--config', `model_reasoning_effort="${input.plan.effort}"`);
     args.push(
-      '--ignore-user-config', '--strict-config',
+      '--ignore-user-config', '--strict-config', '--config', 'mcp_servers={}', '--config', 'web_search="disabled"',
       '--disable', 'apps', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use',
       '--disable', 'in_app_browser', '--disable', 'standalone_web_search', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'plugins',
       '--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--json', '-',

@@ -857,28 +857,31 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
         publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the complete routed lane batch.`);
         localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no provider mutation was performed.');
-      } else if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
-        publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
-        localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no provider mutation was performed.');
       } else {
         await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
-        actions = await applyReviewPlan(provider, firstPlan);
-        actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
-        const publishedUrls: string[] = [];
-        for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
-          for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null)) {
-            try {
-              const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
-              if (published.publish.url) publishedUrls.push(published.publish.url);
-            } catch (error: unknown) {
-              publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+        if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
+          publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
+          localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no provider mutation was performed.');
+        } else {
+          actions = await applyReviewPlan(provider, firstPlan);
+          actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
+          const publishedUrls: string[] = [];
+          for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
+            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null)) {
+              try {
+                if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
+                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+                if (published.publish.url) publishedUrls.push(published.publish.url);
+              } catch (error: unknown) {
+                publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+              }
             }
           }
+          localReviewPublish = publishUnavailable.length === 0
+            ? { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${routedRuns.length} routed current-head lane review(s) from the QUBE orchestrator.` }
+            : { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' };
+          finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
         }
-        localReviewPublish = publishUnavailable.length === 0
-          ? { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${routedRuns.length} routed current-head lane review(s) from the QUBE orchestrator.` }
-          : { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' };
-        finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
       }
     }
   }

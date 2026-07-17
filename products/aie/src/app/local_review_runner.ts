@@ -112,7 +112,7 @@ function lanePolicy(config: Config, lane: LocalReviewLaneId): ReviewLanePolicy |
 }
 
 function laneRunner(config: Config, lane: LocalReviewLaneId): ReviewLanePolicy['runner'] {
-  return lanePolicy(config, lane)?.runner ?? 'manual-evidence';
+  return lanePolicy(config, lane)?.runner ?? (config.reviewRoute ? 'local-host' : 'manual-evidence');
 }
 
 function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
@@ -122,7 +122,7 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
 
 export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId): ModelReviewRoutePlan | null {
   const policy = lanePolicy(config, lane);
-  if (policy && policy.runner !== 'local-host') return null;
+  if (laneRunner(config, lane) !== 'local-host') return null;
   const route = policy?.route ?? config.reviewRoute;
   if (!route) return null;
   const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host);

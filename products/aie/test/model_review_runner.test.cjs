@@ -117,6 +117,8 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
     assert.ok(invocation.args.includes('--ignore-user-config'));
     assert.ok(invocation.args.includes('multi_agent'));
+    assert.ok(invocation.args.includes('mcp_servers={}'));
+    assert.ok(invocation.args.includes('web_search="disabled"'));
   });
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {
@@ -270,6 +272,16 @@ describe('model review runner', () => {
       runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(forgedDigest), sessionId: 'forged' }) }),
     });
     assert.equal(forgedEvidence.reasonCode, 'model-route-contract-mismatch');
+
+    const directoryArtifact = laneResult();
+    mkdirSync(join(repoRoot, 'artifact-directory'));
+    directoryArtifact.artifacts = [{ kind: 'source', path: 'artifact-directory', sha256: null }];
+    const directoryEvidence = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(directoryArtifact), sessionId: 'directory' }) }),
+    });
+    assert.equal(directoryEvidence.reasonCode, 'model-route-contract-mismatch');
   });
 
   it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
