@@ -99,8 +99,11 @@ describe('model review runner', () => {
   it('keeps Codex prompt content on stdin and uses fixed read-only arguments', () => {
     const input = reviewInput('C:\\repo with spaces', 'codex');
     const prompt = buildModelReviewPrompt(input);
-    const invocation = buildModelRouteInvocation(input, 'codex.exe', prompt, null);
+    const codexScript = 'C:\\npm path\\node_modules\\@openai\\codex\\bin\\codex.js';
+    const invocation = buildModelRouteInvocation(input, { executable: 'node.exe', prefixArgs: [codexScript] }, prompt, null);
 
+    assert.equal(invocation.executable, 'node.exe');
+    assert.equal(invocation.args[0], codexScript);
     assert.equal(invocation.stdin, prompt);
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);

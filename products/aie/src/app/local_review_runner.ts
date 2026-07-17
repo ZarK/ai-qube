@@ -8,7 +8,7 @@ import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
 import { blockedLane, buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LaneEvidence, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
-import { runModelReview, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
+import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 
@@ -72,7 +72,7 @@ interface LocalReviewRunnerInput {
   /** Issue/PR titles used only for risk-card activation (not the full review context blob). */
   riskCardIssueText?: string;
   modelRouteProcess?: ModelRouteProcess;
-  resolveModelHost?: (host: RoutedReviewHostId) => Promise<string>;
+  resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {

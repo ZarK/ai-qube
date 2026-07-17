@@ -32,6 +32,8 @@ export interface ModelRouteInvocation {
   timeoutMs: number;
 }
 
+export type ModelHostExecutable = string | { executable: string; prefixArgs: string[] };
+
 export interface ModelRouteProcessResult {
   exitCode: number;
   stdout: string;
@@ -52,7 +54,7 @@ export interface ModelReviewRunInput {
   promptStackHash: string;
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
-  resolveExecutable?: (host: RoutedReviewHostId) => Promise<string>;
+  resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   runProcess?: ModelRouteProcess;
 }
 
@@ -80,7 +82,16 @@ async function findOnPath(name: string): Promise<string | null> {
   }
 }
 
-export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<string> {
+export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<ModelHostExecutable> {
+  if (process.platform === 'win32' && host === 'codex') {
+    const shim = await findOnPath('codex.cmd');
+    if (shim) {
+      const script = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      const adjacentNode = join(dirname(shim), 'node.exe');
+      const node = existsSync(adjacentNode) ? adjacentNode : await findOnPath('node.exe');
+      if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
+    }
+  }
   const names = process.platform === 'win32'
     ? host === 'codex' ? ['codex.exe'] : ['grok.exe']
     : [host];
@@ -194,8 +205,9 @@ function grokReviewSchema(input: ModelReviewRunInput): string {
   });
 }
 
-export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: string, prompt: string, promptPath: string | null): ModelRouteInvocation {
-  const args: string[] = [];
+export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null): ModelRouteInvocation {
+  const executablePath = typeof executable === 'string' ? executable : executable.executable;
+  const args: string[] = typeof executable === 'string' ? [] : [...executable.prefixArgs];
   let stdin: string | null = null;
   if (input.plan.host === 'codex') {
     args.push('exec');
@@ -230,7 +242,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     if (input.plan.model) args.push('--model', input.plan.model);
     args.push('--verbatim', '--prompt-file', promptPath);
   }
-  return { executable, args, cwd: input.repoRoot, stdin, promptPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
+  return { executable: executablePath, args, cwd: input.repoRoot, stdin, promptPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {

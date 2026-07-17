@@ -22,7 +22,7 @@ import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock }
 import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import type { ModelRouteProcess } from './model_review_runner.js';
+import type { ModelHostExecutable, ModelRouteProcess } from './model_review_runner.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
@@ -180,7 +180,7 @@ export interface PrGateOptions {
   sleep?: (milliseconds: number) => Promise<void>;
   onBeforeMutate?: (message: string) => void | Promise<void>;
   modelRouteProcess?: ModelRouteProcess;
-  resolveModelHost?: (host: RoutedReviewHostId) => Promise<string>;
+  resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
 }
 
 function getString(action: Action, key: string): string | null {
