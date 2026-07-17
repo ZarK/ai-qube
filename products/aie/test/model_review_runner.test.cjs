@@ -225,8 +225,7 @@ describe('model review runner', () => {
         assert.equal(existsSync(invocation.promptPath), true);
         assert.match(readFileSync(invocation.promptPath, 'utf8'), /INSPECT EXACT LANE PROMPT/);
         assert.equal(invocation.args.some(arg => arg.includes('INSPECT EXACT LANE PROMPT')), false);
-        const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
-        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }) };
       },
     });
 
@@ -300,6 +299,20 @@ describe('model review runner', () => {
     });
     assert.equal(malformed.evidence, null);
     assert.equal(malformed.reasonCode, 'model-route-malformed-json');
+
+    const multipleObjects = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: `${JSON.stringify(laneResult())}\n${JSON.stringify(laneResult())}`, sessionId: 'multiple' }),
+      }),
+    });
+    assert.equal(multipleObjects.evidence, null);
+    assert.equal(multipleObjects.reasonCode, 'model-route-output-envelope');
 
     const incompleteResult = laneResult();
     incompleteResult.artifacts = [];
