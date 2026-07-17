@@ -255,17 +255,28 @@ describe('model review runner', () => {
 
   it('redacts model-derived evidence before persistence or publication', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-redact-'));
-    const token = 'ghp_abcdefghijklmnopqrstuvwxyz123456';
+    const token = (...parts) => parts.join('');
+    const tokens = [
+      token('gh', 'p_', 'abcdefghijklmnopqrstuvwxyz123456'),
+      token('s', 'k-proj-', 'abcdefghijklmnopqrstuvwxyz123456'),
+      token('xa', 'i-', 'abcdefghijklmnopqrstuvwxyz123456'),
+      token('gl', 'pat-', 'abcdefghijklmnopqrstuvwxyz123456'),
+      token('np', 'm_', 'abcdefghijklmnopqrstuvwxyz123456'),
+      token('xo', 'xb-', '1234567890-abcdefghijklmnopqrstuvwxyz'),
+      token('AI', 'za', 'abcdefghijklmnopqrstuvwxyz1234567890'),
+      token('AK', 'IA', 'ABCDEFGHIJKLMNOP'),
+      token('ey', 'Jabcdefghijk', '.abcdefghijklmnop.abcdefghijklmnop'),
+    ];
     const body = laneResult();
-    body.summary = `Summary ${token}`;
-    body.blockers = [`Blocker ${token}`];
-    body.findings = [{ severity: 'advisory', message: `Message ${token}`, suggestion: `Suggestion ${token}`, location: { path: `source-${token}.ts` } }];
-    body.commands = [`command ${token}`];
-    body.surfaces = [`surface ${token}`];
-    body.contextReviewed = [{ kind: 'diff', source: `source ${token}`, trust: 'local-evidence', freshness: 'current' }];
-    body.toolsUsed = [`tool ${token}`];
-    body.completeness = `Complete ${token}`;
-    body.preconditions = [`Precondition ${token}`];
+    body.summary = `Summary ${tokens[0]} ${tokens[1]}`;
+    body.blockers = [`Blocker ${tokens[2]}`, 'client_secret=lowercase-punctuation_secret-value'];
+    body.findings = [{ severity: 'advisory', message: `Message ${tokens[3]}`, suggestion: `Suggestion ${tokens[4]}`, location: { path: `source-${tokens[5]}.ts` } }];
+    body.commands = [`command ${tokens[6]}`];
+    body.surfaces = [`surface ${tokens[7]}`];
+    body.contextReviewed = [{ kind: 'diff', source: `source ${tokens[8]}`, trust: 'local-evidence', freshness: 'current' }];
+    body.toolsUsed = ['tool password="lowercase-secret-value"'];
+    body.completeness = 'Complete -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----';
+    body.preconditions = ['Precondition auth_token=lowercase-secret-value'];
 
     const result = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
@@ -275,7 +286,8 @@ describe('model review runner', () => {
 
     assert.equal(result.error, null);
     const serialized = JSON.stringify(result.evidence);
-    assert.doesNotMatch(serialized, new RegExp(token));
+    for (const token of tokens) assert.doesNotMatch(serialized, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    assert.doesNotMatch(serialized, /lowercase-secret-value|private-key-material/);
     assert.match(serialized, /\[REDACTED\]/);
   });
 

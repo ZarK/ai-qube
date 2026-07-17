@@ -7,6 +7,7 @@ import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import type { LocalReviewLaneId, LocalReviewProfile, LocalReviewRunnerProvenance } from '../local_review_evidence.js';
+import { redact } from '../redact.js';
 import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_support.js';
 
 const execFileAsync = promisify(execFile);
@@ -79,11 +80,7 @@ export interface ModelReviewRunResult {
 }
 
 function sanitizedDiagnostic(value: string): string {
-  return value
-    .replace(/\b(?:gh[pousr]_|github_pat_|ghs_|glpat-|sk-)[A-Za-z0-9_-]+\b/giu, '[REDACTED]')
-    .replace(/[A-Za-z0-9_\-]{40,}/g, '[REDACTED]')
-    .trim()
-    .slice(0, 600);
+  return redact(value).trim().slice(0, 600);
 }
 
 async function findOnPath(name: string): Promise<string | null> {
