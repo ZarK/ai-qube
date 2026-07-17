@@ -166,6 +166,16 @@ describe('model review runner', () => {
     });
     assert.equal(incomplete.evidence, null);
     assert.equal(incomplete.reasonCode, 'model-route-incomplete-evidence');
+
+    const mismatchedResult = laneResult();
+    mismatchedResult.lane = 'security';
+    const mismatched = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(mismatchedResult), sessionId: 'wrong-lane' }) }),
+    });
+    assert.equal(mismatched.evidence, null);
+    assert.equal(mismatched.reasonCode, 'model-route-contract-mismatch');
   });
 
   it('classifies timeout and authentication failures without returning raw model output', async () => {
@@ -184,5 +194,29 @@ describe('model review runner', () => {
     });
     assert.equal(auth.reasonCode, 'model-route-authentication');
     assert.doesNotMatch(auth.error, /abcdefghijklmnopqrstuvwxyz/);
+  });
+
+  it('classifies missing hosts, rejected models, and generic non-zero exits', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-errors-'));
+    const missingHost = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => { throw new Error('grok executable was not found'); },
+    });
+    assert.equal(missingHost.reasonCode, 'model-route-unavailable');
+
+    const rejectedModel = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 2, stderr: 'configured model is unavailable', stdout: '', timedOut: false }),
+    });
+    assert.equal(rejectedModel.reasonCode, 'model-route-model-unavailable');
+
+    const nonZero = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({ exitCode: 17, stderr: 'runner stopped', stdout: '', timedOut: false }),
+    });
+    assert.equal(nonZero.reasonCode, 'model-route-process-failed');
+    assert.match(nonZero.error, /code 17/);
   });
 });
