@@ -196,21 +196,41 @@ describe("github adapter contract", () => {
 
     assert.deepEqual(listed.map(pr => pr.number), [39, 40]);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed sort:updated-desc --limit 50 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt");
+    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed sort:updated-desc --limit 501 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt");
     await assert.rejects(() => provider.listRecentPullRequests({ limit: 51 }), /limit must be an integer from 1 to 50/);
     assert.equal(calls.length, 1);
   });
 
+  it("fails loudly when the bounded candidate read cannot prove closure-time recency", async () => {
+    const exec = async args => ({
+      args,
+      exitCode: 0,
+      stdout: JSON.stringify(Array.from({ length: 501 }, (_, index) => ({
+        number: index + 1,
+        title: `PR ${index + 1}`,
+        state: "CLOSED",
+        url: `https://example.invalid/${index + 1}`,
+        headRefOid: `head-${index + 1}`,
+        closedAt: "2026-01-01T00:00:00Z",
+      }))),
+      stderr: "",
+    });
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    await assert.rejects(() => provider.listRecentPullRequests({ limit: 50 }), /cannot prove the latest closure-time window/);
+  });
+
   it("loads trusted lane history with bounded calls, chronology, and malformed diagnostics", async () => {
     const calls = [];
-    const laneMarker = ({ head, lane, recommendation, status, blockingFindingCount }) => `<!-- qube-pr-review:${JSON.stringify({
+    const laneMarker = ({ head, lane, recommendation, status, blockingFindingCount, prNumber = 12 }) => `<!-- qube-pr-review:${JSON.stringify({
       version: 1,
       head,
       lane,
+      expectedLanes: [lane],
       profile: "local-focused",
       runId: `${head}-${lane}`,
       issueNumber: 290,
-      prNumber: 12,
+      prNumber,
       host: "codex",
       recommendation,
       status,
@@ -240,8 +260,12 @@ describe("github adapter contract", () => {
           state: "MERGED",
           url: "https://example.invalid/12",
           headRefOid: "later",
-          comments: [{ author: { login: "trusted" }, createdAt: "2026-02-02T00:00:00Z", body: laneMarker({ head: "later", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) }],
-          reviews: [{ author: { login: "trusted" }, submittedAt: "2026-02-01T00:00:00Z", body: laneMarker({ head: "first", lane: "issue-compliance", recommendation: "approve", status: "passed", blockingFindingCount: 0 }) }],
+          comments: [
+            { author: { login: "trusted" }, createdAt: "2026-02-01T00:00:00Z", body: laneMarker({ head: "first", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) },
+            { author: { login: "trusted" }, createdAt: "2026-02-02T00:00:00Z", body: laneMarker({ head: "later", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) },
+            { author: { login: "trusted" }, createdAt: "2026-02-03T00:00:00Z", body: laneMarker({ head: "foreign", lane: "code-quality", recommendation: "approve", status: "passed", blockingFindingCount: 0, prNumber: 999 }) },
+          ],
+          reviews: [{ author: { login: "trusted" }, submittedAt: "2026-02-01T01:00:00Z", body: laneMarker({ head: "first", lane: "code-quality", recommendation: "approve", status: "passed", blockingFindingCount: 0 }) }],
         }),
         stderr: "",
       };
@@ -251,12 +275,29 @@ describe("github adapter contract", () => {
     const history = await provider.loadLaneReviewHistory(12);
     const malformed = await provider.loadLaneReviewHistory(13);
 
-    assert.deepEqual(history.trustedLaneReviews.map(record => record.head), ["first", "later"]);
-    assert.deepEqual(history.trustedLaneReviews.map(record => record.blockingFindingCount), [0, 1]);
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.head), ["first", "first", "later"]);
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.recommendation), ["request-changes", "approve", "request-changes"]);
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.blockingFindingCount), [1, 0, 1]);
+    assert.ok(history.trustedLaneReviews.every(record => record.prNumber === 12));
     assert.equal(history.unavailableReason, null);
     assert.match(malformed.unavailableReason, /1 malformed marker/);
     assert.equal(calls.filter(args => args.join(" ") === "api user").length, 1);
     assert.equal(calls.filter(args => args[0] === "pr" && args[1] === "view").length, 2);
     assert.ok(calls.filter(args => args[0] === "pr" && args[1] === "view").every(args => !args.includes("--paginate")));
+  });
+
+  it("reports distinct publisher identity as unavailable when its public login is omitted", async () => {
+    const exec = async args => ({
+      args,
+      exitCode: 0,
+      stdout: JSON.stringify({ number: 12, title: "History", state: "CLOSED", url: "https://example.invalid/12", headRefOid: "head", comments: [], reviews: [] }),
+      stderr: "",
+    });
+    const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN" } } });
+
+    const history = await provider.loadLaneReviewHistory(12);
+
+    assert.deepEqual(history.trustedLaneReviews, []);
+    assert.match(history.unavailableReason, /publisher login was unavailable/);
   });
 });

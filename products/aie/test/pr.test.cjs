@@ -2901,6 +2901,7 @@ describe('PR gate service', () => {
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
       profile: 'local-standard',
       status: 'passed',
       recommendation: 'approve',
@@ -3142,6 +3143,7 @@ describe('PR gate service', () => {
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',
@@ -3164,6 +3166,7 @@ describe('PR gate service', () => {
     assert.equal(result.inlineCommentCount, 1);
     assert.equal(result.bodyFindingCount, 0);
     assert.match(fixture.reviewPayloads[0].body, /"blockingFindingCount":1/);
+    assert.match(fixture.reviewPayloads[0].body, /"expectedLanes":\["code-quality","issue-compliance","performance"\]/);
     assert.equal(fixture.reviewPayloads[0].comments[0].path, 'src/review.ts');
     assert.equal(fixture.reviewPayloads[0].comments[0].line, 1);
     assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');

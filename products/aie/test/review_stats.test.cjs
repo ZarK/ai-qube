@@ -12,8 +12,8 @@ const {
 } = require('../dist/app/review_stats.js');
 const { getCommandMetadata } = require('../dist/command_metadata.js');
 
-function lane({ head, lane, recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z' }) {
-  return { head, lane, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt };
+function lane({ head, lane, expectedLanes = [lane], recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z' }) {
+  return { head, lane, expectedLanes, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt };
 }
 
 function pullRequest(number, title = `PR ${number}`) {
@@ -34,7 +34,7 @@ function providerFixture(entries, options = {}) {
   const calls = { list: [], history: [] };
   const provider = {
     id: options.id ?? 'github',
-    capabilities: () => ({ loadReview: true, findCurrentBranchReview: true, planReviewRequests: false, applyReviewRequests: false }),
+    capabilities: () => ({ loadReview: true, reviewStats: options.reviewStats ?? true, findCurrentBranchReview: true, planReviewRequests: false, applyReviewRequests: false }),
     listRecentPullRequests: options.unsupported ? undefined : async input => {
       calls.list.push(input);
       return entries.map(entry => entry.pr);
@@ -63,10 +63,10 @@ describe('review convergence stats', () => {
       number: 102,
       title: 'Three reviewed heads',
       trustedLaneReviews: [
-        lane({ head: 'a', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2 }),
-        lane({ head: 'a', lane: 'issue-compliance' }),
-        lane({ head: 'b', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', bodyFindingCount: 1 }),
-        lane({ head: 'b', lane: 'performance', recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2 }),
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality', 'issue-compliance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2 }),
+        lane({ head: 'a', lane: 'issue-compliance', expectedLanes: ['code-quality', 'issue-compliance'] }),
+        lane({ head: 'b', lane: 'code-quality', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 1 }),
+        lane({ head: 'b', lane: 'performance', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2 }),
         lane({ head: 'c', lane: 'code-quality' }),
       ],
     },
@@ -75,8 +75,8 @@ describe('review convergence stats', () => {
       number: 101,
       title: 'Clean first review',
       trustedLaneReviews: [
-        lane({ head: 'a', lane: 'code-quality' }),
-        lane({ head: 'a', lane: 'issue-compliance' }),
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality', 'issue-compliance'] }),
+        lane({ head: 'a', lane: 'issue-compliance', expectedLanes: ['code-quality', 'issue-compliance'] }),
       ],
     },
   ];
@@ -91,7 +91,6 @@ describe('review convergence stats', () => {
       reviewedHeads: 3,
       failingHeads: 2,
       blockingEntries: 5,
-      blockingEntriesEstimated: false,
       firstReviewClean: false,
       noLaneEvidence: false,
       noLaneEvidenceReason: null,
@@ -102,7 +101,6 @@ describe('review convergence stats', () => {
       reviewedHeads: null,
       failingHeads: null,
       blockingEntries: null,
-      blockingEntriesEstimated: null,
       firstReviewClean: null,
       noLaneEvidence: true,
       noLaneEvidenceReason: 'No trusted QUBE lane review metadata was found.',
@@ -122,7 +120,6 @@ describe('review convergence stats', () => {
         { lane: 'issue-compliance', blockingEntries: 2 },
         { lane: 'performance', blockingEntries: 2 },
       ],
-      estimatedBlockingEntriesPullRequests: 0,
     });
   });
 
@@ -139,7 +136,7 @@ describe('review convergence stats', () => {
 
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
     assert.equal(result.pullRequests[0].reviewedHeads, null);
-    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, recommendation, status, or publication time/);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, expected lane set, recommendation, status, or publication time/);
     assert.equal(result.summary.reviewedPullRequests, 0);
     assert.equal(result.summary.firstReviewCleanRate, null);
   });
@@ -165,6 +162,7 @@ describe('review convergence stats', () => {
     const prs = [406, 405, 404, 403, 402, 401].map(number => pullRequest(number));
     const provider = {
       id: 'github',
+      capabilities: () => ({ reviewStats: true }),
       listRecentPullRequests: async () => prs,
       loadLaneReviewHistory: async number => {
         activeLoads += 1;
@@ -186,8 +184,11 @@ describe('review convergence stats', () => {
     assert.throws(() => reviewStatsWindow(0), /positive integer/);
     assert.throws(() => reviewStatsWindow(MAX_REVIEW_STATS_WINDOW + 1), /cannot exceed 50.*--window 50/);
 
-    const fixture = providerFixture([], { id: 'gitlab', unsupported: true });
+    const fixture = providerFixture([], { id: 'gitlab', unsupported: true, reviewStats: false });
     await assert.rejects(() => runReviewStatsWithProvider(fixture.provider, { window: 20 }), /not supported by the configured gitlab review provider/);
+
+    const mismatch = providerFixture([], { id: 'github', reviewStats: false });
+    await assert.rejects(() => runReviewStatsWithProvider(mismatch.provider, { window: 20 }), /declares review stats capability/);
   });
 
   it('renders every JSON result field in human output from the same structure', async () => {
@@ -195,12 +196,11 @@ describe('review convergence stats', () => {
     const result = await runReviewStatsWithProvider(fixture.provider, { window: 1 });
     const human = formatReviewStats(result);
 
-    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| no \| yes \| present/);
+    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| yes \| present/);
     assert.match(human, /Pull requests: 1/);
     assert.match(human, /Reviewed pull requests: 1/);
     assert.match(human, /First-review-clean: 1\/1 \(100\.0%\)/);
     assert.match(human, /Median reviewed heads: 1/);
-    assert.match(human, /legacy estimated blocking counts: 0/);
     assert.match(human, /Blocking entries after first head: 0\/0 \(n\/a\)/);
     assert.match(human, new RegExp(`provider=${result.provider}`));
     assert.match(human, new RegExp(`Next action: ${result.nextAction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
@@ -227,6 +227,31 @@ describe('review convergence stats', () => {
     assert.match(invalid.pullRequests[0].noLaneEvidenceReason, /invalid recommendation and status combination/);
   });
 
+  it('preserves earlier same-head failures and orders offset timestamps chronologically', () => {
+    const sameHead = computeReviewStats([{
+      number: 305,
+      title: 'Repeated lane verdict',
+      trustedLaneReviews: [
+        lane({ head: 'a', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', blockingFindingCount: 1, publishedAt: '2026-02-01T00:00:00Z' }),
+        lane({ head: 'a', lane: 'code-quality', publishedAt: '2026-02-01T01:00:00Z' }),
+      ],
+    }]);
+    assert.equal(sameHead.pullRequests[0].failingHeads, 1);
+    assert.equal(sameHead.pullRequests[0].blockingEntries, 1);
+    assert.equal(sameHead.pullRequests[0].firstReviewClean, false);
+
+    const offsets = computeReviewStats([{
+      number: 306,
+      title: 'Offset chronology',
+      trustedLaneReviews: [
+        lane({ head: 'later', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', blockingFindingCount: 1, publishedAt: '2026-02-01T00:30:00Z' }),
+        lane({ head: 'first', lane: 'code-quality', publishedAt: '2026-02-01T02:00:00+02:00' }),
+      ],
+    }]);
+    assert.equal(offsets.pullRequests[0].firstReviewClean, true);
+    assert.equal(offsets.summary.blockingEntriesAfterFirstHead, 1);
+  });
+
   it('does not report an incomplete first head as clean', () => {
     const result = computeReviewStats([{
       number: 303,
@@ -234,25 +259,35 @@ describe('review convergence stats', () => {
       trustedLaneReviews: [lane({
         head: 'a',
         lane: 'code-quality',
-        recommendation: 'pending',
-        status: 'pending',
+        expectedLanes: ['code-quality', 'issue-compliance'],
       })],
     }]);
 
-    assert.equal(result.pullRequests[0].firstReviewClean, false);
-    assert.equal(result.pullRequests[0].failingHeads, 0);
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.equal(result.pullRequests[0].firstReviewClean, null);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing expected lane.*issue-compliance/);
   });
 
-  it('marks legacy request-changes body counts as estimates', async () => {
+  it('keeps legacy body counts out of exact blocking metrics', async () => {
     const legacy = lane({ head: 'a', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2 });
     delete legacy.blockingFindingCount;
     const fixture = providerFixture([{ pr: pullRequest(303), laneReviews: [legacy] }]);
     const result = await runReviewStatsWithProvider(fixture.provider, { window: 1 });
 
-    assert.equal(result.pullRequests[0].blockingEntries, 2);
-    assert.equal(result.pullRequests[0].blockingEntriesEstimated, true);
-    assert.equal(result.summary.estimatedBlockingEntriesPullRequests, 1);
-    assert.match(result.warnings.join(' '), /legacy request-changes body finding count/);
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.equal(result.pullRequests[0].blockingEntries, null);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /exact severity-aware blocking finding count/);
+  });
+
+  it('rejects approve metadata that carries blocking findings', () => {
+    const result = computeReviewStats([{
+      number: 304,
+      title: 'Contradictory approval',
+      trustedLaneReviews: [lane({ head: 'a', lane: 'code-quality', blockingFindingCount: 2 })],
+    }]);
+
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /contradicted its recommendation/);
   });
 
   it('registers the read-only JSON command and bounded window flag', () => {

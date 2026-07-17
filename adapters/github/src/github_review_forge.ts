@@ -65,6 +65,7 @@ const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatu
 const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt';
 const REVIEW_STATS_PR_FIELDS = 'number,title,state,url,headRefOid,comments,reviews';
 const MAX_RECENT_PR_LIMIT = 50;
+const MAX_RECENT_PR_CANDIDATES = 500;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
@@ -131,6 +132,7 @@ interface LaneReviewMetadata {
   version: number;
   head: string;
   lane: string;
+  expectedLanes?: string[];
   profile: string;
   runId: string;
   issueNumber: number;
@@ -161,6 +163,7 @@ export interface GitHubLaneReviewPublishInput {
   prNumber: number;
   headSha: string;
   lane: string;
+  expectedLanes?: readonly string[];
   profile: string;
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
@@ -400,6 +403,11 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
     if (parsed.version !== 1) return null;
     if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
     if (typeof parsed.lane !== 'string' || parsed.lane.trim() === '') return null;
+    const expectedLanes = Array.isArray(parsed.expectedLanes)
+      && parsed.expectedLanes.length > 0
+      && parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')
+      ? [...new Set(parsed.expectedLanes.map(lane => redact(String(lane).trim())))].sort()
+      : undefined;
     if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
     if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
     const issueNumber = parsed.issueNumber;
@@ -415,6 +423,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       version: 1,
       head: redact(parsed.head),
       lane: redact(parsed.lane),
+      expectedLanes,
       profile: redact(parsed.profile),
       runId: redact(parsed.runId),
       issueNumber,
@@ -456,25 +465,25 @@ function trustedLaneReviewComment(comment: RawComment, trustedAuthor: TrustedAut
 }
 
 function laneReviewComments(comments: RawComment[], trustedAuthor: TrustedAuthorInput, headSha: string): LaneReviewComment[] {
-  const latest = new Map<string, LaneReviewComment>();
+  const records: LaneReviewComment[] = [];
   for (const comment of comments) {
     const metadata = trustedLaneReviewComment(comment, trustedAuthor);
     if (!metadata) continue;
-    latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha, publishedAt: comment.createdAt ?? null });
+    records.push({ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha, publishedAt: comment.createdAt ?? null });
   }
-  return [...latest.values()];
+  return records;
 }
 
 function laneReviewReviews(reviews: RawReview[], trustedAuthor: TrustedAuthorInput, headSha: string): LaneReviewComment[] {
-  const latest = new Map<string, LaneReviewComment>();
+  const records: LaneReviewComment[] = [];
   if (trustedAuthor !== 'any-valid-marker' && trustedAuthorsList(trustedAuthor).length === 0) return [];
   for (const review of reviews) {
     if (!authorIsTrusted(review.author?.login, trustedAuthor)) continue;
     const metadata = parseLaneReviewMetadata(review.body);
     if (!metadata) continue;
-    latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
+    records.push({ metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
   }
-  return [...latest.values()];
+  return records;
 }
 
 function isQubeLaneReviewDraft(review: RawReview, headSha: string): boolean {
@@ -495,22 +504,33 @@ function isEmptyStaleDraftReview(review: RawReview, headSha: string, reviewComme
   return !hasReviewComments(reviewComments, review.id);
 }
 
-function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string }): LaneReviewComment[] {
-  const latest = new Map<string, LaneReviewComment>();
-  const records = [
+function chronologicalLaneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
+  return [
     ...laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha),
     ...laneReviewReviews(input.latestReviews, input.trustedMarkerAuthor, input.headSha),
-  ];
+  ]
+    .filter(record => record.metadata.prNumber === input.prNumber)
+    .sort((left, right) => (Date.parse(left.publishedAt ?? '') - Date.parse(right.publishedAt ?? '')) || left.metadata.lane.localeCompare(right.metadata.lane));
+}
+
+function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
+  const latest = new Map<string, LaneReviewComment>();
+  const records = chronologicalLaneReviewRecords(input);
   for (const record of records) {
     const key = `${record.metadata.head}\0${record.metadata.lane}`;
     const existing = latest.get(key);
-    if (!existing || (record.publishedAt ?? '') >= (existing.publishedAt ?? '')) latest.set(key, record);
+    if (!existing || (Date.parse(record.publishedAt ?? '') || 0) >= (Date.parse(existing.publishedAt ?? '') || 0)) latest.set(key, record);
   }
-  return [...latest.values()].sort((left, right) => (left.publishedAt ?? '').localeCompare(right.publishedAt ?? '') || left.metadata.lane.localeCompare(right.metadata.lane));
+  return [...latest.values()].sort((left, right) => (Date.parse(left.publishedAt ?? '') - Date.parse(right.publishedAt ?? '')) || left.metadata.lane.localeCompare(right.metadata.lane));
 }
 
 function laneReviewSummary(comment: LaneReviewComment): string {
   return `QUBE review (${comment.metadata.lane}): ${comment.metadata.recommendation} — ${summarize(comment.body)}`;
+}
+
+function expectedLaneNames(input: GitHubLaneReviewPublishInput): string[] {
+  const lanes = input.expectedLanes && input.expectedLanes.length > 0 ? input.expectedLanes : [input.lane];
+  return [...new Set(lanes)].sort();
 }
 
 function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
@@ -518,6 +538,7 @@ function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
     .update(JSON.stringify({
       head: input.headSha,
       lane: input.lane,
+      expectedLanes: expectedLaneNames(input),
       issueNumber: input.issueNumber,
       prNumber: input.prNumber,
     }))
@@ -563,6 +584,7 @@ function laneReviewBody(
     version: 1,
     head: input.headSha,
     lane: input.lane,
+    expectedLanes: expectedLaneNames(input),
     profile: input.profile,
     runId,
     issueNumber: input.issueNumber,
@@ -618,6 +640,8 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
     if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
     return review.head === input.headSha
       && review.lane === input.lane
+      && Array.isArray(review.expectedLanes)
+      && JSON.stringify([...review.expectedLanes].sort()) === JSON.stringify(expectedLaneNames(input))
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
@@ -626,12 +650,16 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   });
 }
 
-function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: TrustedAuthorInput, headSha: string): JsonObject[] {
-  return laneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha }).map(comment => {
+function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: TrustedAuthorInput, headSha: string, prNumber: number, preserveHistory = false): JsonObject[] {
+  const records = preserveHistory
+    ? chronologicalLaneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha, prNumber })
+    : laneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha, prNumber });
+  return records.map(comment => {
     const metadata = comment.metadata;
     return {
       head: metadata.head,
       lane: metadata.lane,
+      expectedLanes: metadata.expectedLanes ?? null,
       profile: metadata.profile,
       runId: metadata.runId,
       issueNumber: metadata.issueNumber,
@@ -1157,7 +1185,7 @@ function latestThreadComment(thread: RawThreadNode) {
   return threadComments(thread).at(-1) ?? null;
 }
 
-function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: TrustedAuthorInput; headRefOid: string; reviewAgents?: readonly string[] }): ReviewFeedback[] {
+function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: TrustedAuthorInput; headRefOid: string; prNumber: number; reviewAgents?: readonly string[] }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
   for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
     if (localReview.stale) continue;
@@ -1170,7 +1198,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
       trust: 'untrusted',
     });
   }
-  for (const laneReview of laneReviewRecords({ comments: raw.comments, latestReviews: raw.latestReviews, trustedMarkerAuthor: raw.trustedMarkerAuthor, headSha: raw.headRefOid })) {
+  for (const laneReview of laneReviewRecords({ comments: raw.comments, latestReviews: raw.latestReviews, trustedMarkerAuthor: raw.trustedMarkerAuthor, headSha: raw.headRefOid, prNumber: raw.prNumber })) {
     if (laneReview.stale) continue;
     items.push({
       source: laneReview.metadata.inline === 'review-api' ? 'review' : 'comment',
@@ -1317,7 +1345,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
       url: comment.url ? redact(comment.url) : null,
     }];
   });
-  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid);
+  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid, raw.pr.number);
   const conversations = reviewConversations(raw.unresolvedThreads);
   const blockers = mergeBlockers({ pr: raw.pr, unresolvedThreads: raw.unresolvedThreads, checks: raw.checks });
   return {
@@ -1503,15 +1531,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       '--search',
       'is:closed sort:updated-desc',
       '--limit',
-      String(MAX_RECENT_PR_LIMIT),
+      String(MAX_RECENT_PR_CANDIDATES + 1),
       '--json',
       RECENT_PR_FIELDS,
     ], this.options);
     ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
     const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
+    if (listed.length > MAX_RECENT_PR_CANDIDATES) {
+      throw new Error(`list recent GitHub pull requests failed: more than ${MAX_RECENT_PR_CANDIDATES} closed pull requests exist, so the bounded provider read cannot prove the latest closure-time window. Narrow the repository history or use a provider with native closure-time ordering.`);
+    }
     return listed
       .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
-      .sort((left, right) => (right.mergedAt ?? right.closedAt ?? '').localeCompare(left.mergedAt ?? left.closedAt ?? '') || right.number - left.number)
+      .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number)
       .slice(0, options.limit)
       .map(pr => normalizePr(pr));
   }
@@ -1520,6 +1551,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     const result = await runGh(['pr', 'view', String(prNumber), '--json', REVIEW_STATS_PR_FIELDS], this.options);
     ensureGhSuccess(`gh pr view ${prNumber} review stats metadata`, result);
     const rawPr = parseGhJson<RawPrView>(result.stdout, `gh pr view ${prNumber} review stats metadata`, isRawPrView);
+    if (this.configuredPublisherLoginMissing()) {
+      return { trustedLaneReviews: [], unavailableReason: 'Configured distinct QUBE review publisher login was unavailable; trusted lane marker authors could not be identified safely.' };
+    }
     const trustedAuthors = await this.trustedAuthorsForLoad();
     if (trustedAuthors.length === 0) {
       return { trustedLaneReviews: [], unavailableReason: 'Trusted QUBE lane review author identity was unavailable from GitHub.' };
@@ -1534,7 +1568,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       };
     }
     return {
-      trustedLaneReviews: laneReviewMetadata(comments, reviews, trustedAuthors, rawPr.headRefOid ?? 'UNKNOWN'),
+      trustedLaneReviews: laneReviewMetadata(comments, reviews, trustedAuthors, rawPr.headRefOid ?? 'UNKNOWN', prNumber, true),
       unavailableReason: null,
     };
   }
@@ -1694,7 +1728,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       mergeability: 'unknown',
       feedback: [],
       checks: [],
-      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, laneReviews, trustedMarkerAuthor, input.headSha) },
+      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, laneReviews, trustedMarkerAuthor, input.headSha, input.prNumber) },
     });
     if (matchingCurrentLaneReview(trustedItem, input, plannedBody.runId)) {
       return localReviewPublishResult({ status: 'skipped', runId: plannedBody.runId, marker: plannedBody.marker, body: null, publisher: publisher.identity, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
@@ -2162,6 +2196,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     return authors;
   }
 
+  private configuredPublisherLoginMissing(): boolean {
+    const publisher = this.options.publisher;
+    if (!publisher || publisher.mode === 'user') return false;
+    const login = publisher.mode === 'github-app' ? publisher.githubApp?.login : publisher.token?.login;
+    return this.cachedPublisherLogin === undefined && (typeof login !== 'string' || login.trim() === '');
+  }
+
   private async currentLogin(): Promise<string> {
     if (!this.currentLoginPromise) {
       this.currentLoginPromise = (async () => {
@@ -2258,7 +2299,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       state: mapReviewState(rawPr),
       reviewDecision: mapReviewDecision(rawPr.reviewDecision),
       mergeability: mapMergeability(rawPr),
-      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid, reviewAgents: this.options.reviewAgents }),
+      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid, prNumber: pr.number, reviewAgents: this.options.reviewAgents }),
       mergeBlockers: blockers,
       conversations,
       checks: normalizedChecks,
