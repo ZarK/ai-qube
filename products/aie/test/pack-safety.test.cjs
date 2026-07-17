@@ -80,7 +80,7 @@ describe('package publish surface safety', () => {
     const workflowPath = join(__dirname, '..', '..', '..', '.github', 'workflows', 'publish.yml');
     assert.equal(existsSync(workflowPath), true);
 
-    const workflow = readFileSync(workflowPath, 'utf8');
+    const workflow = readFileSync(workflowPath, 'utf8').replace(/\r\n/g, '\n');
     const actionPins = [...workflow.matchAll(/uses: ([^@\s]+)@([0-9a-f]{40})/g)];
 
     assert.equal(pkg.publishConfig.access, 'public');

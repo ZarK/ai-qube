@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { carryForwardDeltaTouched } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
@@ -414,7 +414,7 @@ function readRecommendation(value: unknown, status: LocalReviewStatus): LocalRev
   return 'inconclusive';
 }
 
-function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string): LaneEvidence | null {
+export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string): LaneEvidence | null {
   if (!isRecord(value)) return null;
   const id = readLaneId(value.lane ?? value.id);
   if (id !== lane) return null;
@@ -460,6 +460,10 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' ? value.runnerProvenance.promptStackHash : null,
       headSha: typeof value.runnerProvenance.headSha === 'string' ? value.runnerProvenance.headSha : headSha,
       providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? value.runnerProvenance.providerPublishStatus : null,
+      model: typeof value.runnerProvenance.model === 'string' ? value.runnerProvenance.model : null,
+      effort: typeof value.runnerProvenance.effort === 'string' ? value.runnerProvenance.effort : null,
+      isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
+      invocationId: typeof value.runnerProvenance.invocationId === 'string' ? value.runnerProvenance.invocationId : null,
     },
   };
 }
@@ -619,6 +623,38 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  return path;
+}
+
+export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LaneEvidence): string | null {
+  const provenance = lane.runnerProvenance;
+  if (!provenance || provenance.runnerKind !== 'local-host' || provenance.freshContext !== true || provenance.promptOnly === true) return null;
+  const evidencePath = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  const evidence: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
+  if (!isRecord(evidence)) return null;
+  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({
+    version: 1,
+    issueNumber,
+    prNumber,
+    headSha,
+    lane: lane.id,
+    evidenceSha256: localReviewEvidenceSha256(evidence),
+    runnerKind: 'local-host',
+    host: provenance.host,
+    freshContext: provenance.freshContext,
+    promptOnly: provenance.promptOnly,
+    taskId: provenance.taskId,
+    sessionId: provenance.sessionId,
+    threadId: provenance.threadId,
+    promptStackHash: provenance.promptStackHash,
+    model: provenance.model,
+    effort: provenance.effort,
+    isolation: provenance.isolation,
+    invocationId: provenance.invocationId,
+    recordedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
   return path;
 }
 

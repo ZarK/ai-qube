@@ -118,6 +118,51 @@ describe('config validation', () => {
     assert.equal(result.config.opencodeCommandAlias, true);
   });
 
+  it('validates global and per-lane isolated review routes', () => {
+    const input = defaultFile();
+    input.policy.reviews.models = {
+      review: {
+        grok: { model: 'grok-4.5', effort: null },
+        codex: { model: 'gpt-5.6-luna', effort: 'high' },
+      },
+      economy: {},
+      synthesis: {},
+    };
+    input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    input.policy.reviews.lanes = [{
+      id: 'code-quality',
+      required: 'always',
+      match: [],
+      severityThreshold: 'high',
+      prompt: [],
+      tools: [],
+      runner: 'local-host',
+      rereview: 'delta',
+      route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 },
+    }];
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    assert.equal(result.config.reviewRoute.host, 'grok');
+    assert.equal(result.config.reviewModels.review.grok.model, 'grok-4.5');
+    assert.equal(result.config.reviewLanes[0].route.host, 'codex');
+    assert.equal(result.config.reviewModels.review.codex.model, 'gpt-5.6-luna');
+    assert.equal(result.config.reviewModels.review.codex.effort, 'high');
+  });
+
+  it('rejects unsupported review route hosts and unsafe execution bounds', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'shell', tier: 'review', timeoutSeconds: 5, maxTurns: 50 };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.host'));
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.timeoutSeconds'));
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.maxTurns'));
+  });
+
   it('validates non-secret connection settings against the selected provider contract', () => {
     const valid = defaultFile();
     valid.providers.work = {

@@ -224,6 +224,10 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
     sessionId: provenance.sessionId,
     threadId: provenance.threadId,
     promptStackHash: provenance.promptStackHash,
+    model: provenance.model ?? null,
+    effort: provenance.effort ?? null,
+    isolation: provenance.isolation ?? null,
+    invocationId: provenance.invocationId ?? null,
     recordedAt: '2026-06-22T00:00:00.000Z',
   }, null, 2)}\n`);
 }
@@ -1363,6 +1367,114 @@ describe('PR gate service', () => {
     assert.match(result.localReview.evidence[0].path, /\.qube[\\/]aie[\\/]reviews[\\/]93[\\/]12[\\/]abc123/);
     assert.equal(result.localReviewPublish.status, 'disabled');
     assert.equal(result.status, 'pending');
+  });
+
+  it('plans isolated model routes without spawning native Codex subagents', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewLanes.find(lane => lane.id === 'code-quality').route = { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 };
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'high' };
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec, includeLocalReviewPrompts: true });
+
+    assert.equal(result.localReviewRunner.status, 'planned');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.spawnContract === null));
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.host, 'codex');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.model, 'gpt-5.6-luna');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.effort, 'high');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.host, 'grok');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.model, 'grok-4.5');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route.isolation === 'read-only'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.promptStackHash.length === 64));
+  });
+
+  it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const order = [];
+    const exec = async args => {
+      if ((args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST')) order.push('provider-mutation');
+      return fixture.exec(args);
+    };
+    const modelRouteProcess = async invocation => {
+      order.push('model');
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      assert.ok(lane);
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'source', path: 'src/review.ts', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe' });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
+    assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
+    assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
+  });
+
+  it('withholds every provider mutation when a routed lane batch is incomplete', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let modelCalls = 0;
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      resolveModelHost: async () => 'grok.exe',
+      modelRouteProcess: async () => {
+        modelCalls += 1;
+        return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false };
+      },
+    });
+
+    assert.ok(modelCalls > 0);
+    assert.equal(result.localReviewRunner.status, 'failed');
+    assert.equal(result.localReviewPublish.status, 'pending');
+    assert.match(result.localReviewPublish.nextAction, /no provider mutation/i);
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
   it('surfaces provider feedback when local review evidence is still missing', async () => {
@@ -3512,6 +3624,26 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'inconclusive');
     assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('evidence digest does not match')));
+  });
+
+  it('rejects routed model provenance that disagrees with the trusted host record', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const evidence = localEvidence();
+    for (const lane of evidence.lanes) {
+      lane.runnerProvenance = { ...lane.runnerProvenance, model: 'gpt-5.6-luna', effort: 'high', isolation: 'read-only', invocationId: `route-${lane.id}` };
+    }
+    writeLocalEvidence(repo, evidence);
+    const provenancePath = trustedLocalHostProvenancePath(repo, 93, 12, 'abc123', 'code-quality');
+    const provenance = JSON.parse(readFileSync(provenancePath, 'utf8'));
+    writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, model: 'forged-model' }, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('routed model provenance does not match')));
   });
 
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {

@@ -1,0 +1,150 @@
+const assert = require('node:assert/strict');
+const { existsSync, readFileSync } = require('node:fs');
+const { mkdtempSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { describe, it } = require('node:test');
+
+const {
+  buildModelReviewPrompt,
+  buildModelRouteInvocation,
+  runModelReview,
+} = require('../dist/app/model_review_runner.js');
+
+function reviewInput(repoRoot, host = 'grok') {
+  return {
+    plan: {
+      host,
+      tier: 'review',
+      model: host === 'grok' ? 'grok-4.5' : 'gpt-5.6-luna',
+      effort: host === 'codex' ? 'high' : null,
+      isolation: 'read-only',
+      timeoutSeconds: 60,
+      maxTurns: 8,
+      substitution: null,
+    },
+    repoRoot,
+    lane: 'code-quality',
+    issueNumber: 309,
+    prNumber: 310,
+    headSha: 'abc123',
+    profile: 'local-focused',
+    promptStackHash: 'hash123',
+    promptText: 'INSPECT EXACT LANE PROMPT',
+    promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+  };
+}
+
+function laneResult() {
+  return {
+    issueNumber: 309,
+    prNumber: 310,
+    headSha: 'abc123',
+    lane: 'code-quality',
+    status: 'passed',
+    severity: 'none',
+    recommendation: 'approve',
+    summary: 'No blocking code-quality defects found.',
+    blockers: [],
+    findings: [],
+    artifacts: [{ kind: 'source', path: 'products/aie/src/app/model_review_runner.ts', sha256: null }],
+    commands: ['git diff --check'],
+    surfaces: ['routed review runner'],
+    contextReviewed: [{ kind: 'diff', source: 'git diff', trust: 'local-evidence', freshness: 'current' }],
+    toolsUsed: ['git'],
+    completeness: 'Inspected the routed runner and its focused tests; no broad suite was run.',
+    preconditions: [],
+  };
+}
+
+describe('model review runner', () => {
+  it('keeps Codex prompt content on stdin and uses fixed read-only arguments', () => {
+    const input = reviewInput('C:\\repo with spaces', 'codex');
+    const prompt = buildModelReviewPrompt(input);
+    const invocation = buildModelRouteInvocation(input, 'codex.exe', prompt, null);
+
+    assert.equal(invocation.stdin, prompt);
+    assert.equal(invocation.args.includes(prompt), false);
+    assert.deepEqual(invocation.args.slice(-3), ['--ephemeral', '--json', '-']);
+    assert.ok(invocation.args.includes('read-only'));
+    assert.ok(invocation.args.includes('gpt-5.6-luna'));
+    assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
+  });
+
+  it('routes Grok through a private prompt file and injects trusted provenance', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-'));
+    const input = reviewInput(repoRoot, 'grok');
+    let capturedPromptPath = null;
+    let capturedArgs = null;
+
+    const result = await runModelReview({
+      ...input,
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async invocation => {
+        capturedPromptPath = invocation.promptPath;
+        capturedArgs = invocation.args;
+        assert.equal(invocation.stdin, null);
+        assert.equal(existsSync(invocation.promptPath), true);
+        assert.match(readFileSync(invocation.promptPath, 'utf8'), /INSPECT EXACT LANE PROMPT/);
+        assert.equal(invocation.args.some(arg => arg.includes('INSPECT EXACT LANE PROMPT')), false);
+        return { exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }) };
+      },
+    });
+
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.runnerProvenance.host, 'grok');
+    assert.equal(result.evidence.runnerProvenance.model, 'grok-4.5');
+    assert.equal(result.evidence.runnerProvenance.isolation, 'read-only');
+    assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-session');
+    assert.equal(result.evidence.promptStack[0].id, 'review-lanes/code-quality');
+    assert.ok(capturedArgs.includes('plan'));
+    assert.ok(capturedArgs.includes('--no-subagents'));
+    assert.ok(capturedArgs.includes('--disable-web-search'));
+    const schemaIndex = capturedArgs.indexOf('--json-schema');
+    assert.ok(schemaIndex >= 0);
+    const schema = JSON.parse(capturedArgs[schemaIndex + 1]);
+    assert.equal(schema.properties.issueNumber.const, 309);
+    assert.equal(schema.properties.lane.const, 'code-quality');
+    assert.equal(schema.properties.artifacts.minItems, 1);
+    assert.equal(existsSync(capturedPromptPath), false);
+  });
+
+  it('fails closed on malformed or incomplete routed output', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-bad-'));
+    const malformed = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: '{"type":"item.completed","item":{"type":"agent_message","text":"not-json"}}\n' }),
+    });
+    assert.equal(malformed.evidence, null);
+    assert.equal(malformed.reasonCode, 'model-route-malformed-json');
+
+    const incompleteResult = laneResult();
+    incompleteResult.artifacts = [];
+    const incomplete = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(incompleteResult), sessionId: 'bad' }) }),
+    });
+    assert.equal(incomplete.evidence, null);
+    assert.equal(incomplete.reasonCode, 'model-route-incomplete-evidence');
+  });
+
+  it('classifies timeout and authentication failures without returning raw model output', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-fail-'));
+    const timedOut = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({ exitCode: 1, stderr: '', stdout: '', timedOut: true }),
+    });
+    assert.equal(timedOut.reasonCode, 'model-route-timeout');
+
+    const auth = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 1, stderr: 'login required token abcdefghijklmnopqrstuvwxyz1234567890', stdout: '', timedOut: false }),
+    });
+    assert.equal(auth.reasonCode, 'model-route-authentication');
+    assert.doesNotMatch(auth.error, /abcdefghijklmnopqrstuvwxyz/);
+  });
+});
