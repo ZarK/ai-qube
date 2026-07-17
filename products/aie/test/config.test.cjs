@@ -151,6 +151,37 @@ describe('config validation', () => {
     assert.equal(result.config.reviewModels.review.codex.effort, 'high');
   });
 
+  it('validates per-lane carry-forward context modes with conservative defaults', () => {
+    const input = defaultFile();
+    input.policy.reviews.lanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', carryForwardContext: 'all' },
+      { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'security', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    const byId = new Map(result.config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext]));
+    assert.equal(byId.get('code-quality'), 'all');
+    assert.equal(byId.get('performance'), 'scope');
+    assert.equal(byId.get('security'), 'config');
+    assert.equal(byId.get('issue-compliance'), 'all');
+  });
+
+  it('rejects unknown carry-forward context modes', () => {
+    const input = defaultFile();
+    input.policy.reviews.lanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', carryForwardContext: 'everything' },
+    ];
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.lanes[0].carryForwardContext'));
+  });
+
   it('rejects unsupported review route hosts and unsafe execution bounds', () => {
     const input = defaultFile();
     input.policy.reviews.route = { host: 'shell', tier: 'review', timeoutSeconds: 5, maxTurns: 50 };

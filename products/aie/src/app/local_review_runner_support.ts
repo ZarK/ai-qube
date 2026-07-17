@@ -5,7 +5,7 @@ import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
-import { carryForwardDeltaTouched } from '../review_focus.js';
+import { carryForwardDeltaTouched, type CarryForwardContextMode } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
@@ -96,6 +96,7 @@ export async function findCarryForwardSource(input: {
   lane: LocalReviewLaneId;
   matchPatterns: readonly string[];
   contextPatterns: readonly string[];
+  contextMode?: CarryForwardContextMode;
   expectedFragmentDigest: string;
   expectedCommandSuppliedIdentity?: string;
   expectedAdapter: 'local-host' | 'local-command';
@@ -140,7 +141,7 @@ export async function findCarryForwardSource(input: {
   for (const candidate of candidates.slice(0, 5)) {
     const deltaPaths = await gitDeltaPaths(input.repoRoot, candidate.fromHeadSha, input.headSha);
     if (deltaPaths === null) continue;
-    if (carryForwardDeltaTouched(deltaPaths, input.matchPatterns, input.contextPatterns)) continue;
+    if (carryForwardDeltaTouched(deltaPaths, input.matchPatterns, input.contextPatterns, input.contextMode ?? 'all')) continue;
     const deltaSummary = deltaPaths.length === 0
       ? `no files changed between ${candidate.fromHeadSha} and ${input.headSha}`
       : `${deltaPaths.length} changed file(s) between ${candidate.fromHeadSha} and ${input.headSha} did not touch this lane's scope`;

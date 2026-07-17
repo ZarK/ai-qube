@@ -21,7 +21,7 @@ import {
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
@@ -840,6 +840,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
     contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
   };
   const localReview = readLocalReviewGate({
     repoRoot,

@@ -347,7 +347,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     if (deltaPaths === null) {
       throw new Error(`publish lane review failed. Likely cause: the carried-forward delta from ${carriedForward} could not be verified with git. Next action: rerun the lane review for the current head instead of carrying it forward.`);
     }
-    if (carryForwardDeltaTouched(deltaPaths, options.carryForwardScope?.laneMatchPatterns[options.lane] ?? [], options.carryForwardScope?.contextPatterns ?? [])) {
+    if (carryForwardDeltaTouched(deltaPaths, options.carryForwardScope?.laneMatchPatterns[options.lane] ?? [], options.carryForwardScope?.contextPatterns ?? [], options.carryForwardScope?.laneContextModes?.[options.lane] ?? 'all')) {
       throw new Error(`publish lane review failed. Likely cause: the head delta touches the ${options.lane} lane scope or review context, so carried-forward evidence is invalid. Next action: rerun the lane review for the current head.`);
     }
   }

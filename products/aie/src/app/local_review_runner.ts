@@ -2,7 +2,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy, RoutedReviewHostId } from '../core/policy.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
@@ -243,6 +243,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     lane,
     matchPatterns: lanePolicy?.match ?? [],
     contextPatterns,
+    contextMode: lanePolicy?.carryForwardContext ?? defaultCarryForwardContext(lane),
     expectedFragmentDigest: expectedLaneFragmentDigest(lane),
     expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
     expectedAdapter: runner,
