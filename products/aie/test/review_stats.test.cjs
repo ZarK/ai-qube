@@ -12,8 +12,8 @@ const {
 } = require('../dist/app/review_stats.js');
 const { getCommandMetadata } = require('../dist/command_metadata.js');
 
-function lane({ head, lane, recommendation = 'approve', status = 'passed', bodyFindingCount = 0 }) {
-  return { head, lane, recommendation, status, bodyFindingCount };
+function lane({ head, lane, recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z' }) {
+  return { head, lane, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt };
 }
 
 function pullRequest(number, title = `PR ${number}`) {
@@ -30,23 +30,8 @@ function pullRequest(number, title = `PR ${number}`) {
   };
 }
 
-function snapshot(pr, trustedLaneReviews, unavailable = []) {
-  return {
-    item: { trustedMetadata: { trustedLaneReviews } },
-    pr,
-    ciDiagnostics: [],
-    closingIssueNumbers: [],
-    reviewRequests: [],
-    commentsCount: 0,
-    reviewsCount: 0,
-    reviewCommentsCount: 0,
-    unresolvedThreadsCount: 0,
-    unavailable,
-  };
-}
-
 function providerFixture(entries, options = {}) {
-  const calls = { list: [], load: [] };
+  const calls = { list: [], history: [] };
   const provider = {
     id: options.id ?? 'github',
     capabilities: () => ({ loadReview: true, findCurrentBranchReview: true, planReviewRequests: false, applyReviewRequests: false }),
@@ -54,11 +39,11 @@ function providerFixture(entries, options = {}) {
       calls.list.push(input);
       return entries.map(entry => entry.pr);
     },
-    loadPullRequestReview: async number => {
-      calls.load.push(number);
+    loadLaneReviewHistory: options.unsupportedHistory ? undefined : async number => {
+      calls.history.push(number);
       const entry = entries.find(candidate => candidate.pr.number === number);
       if (!entry || entry.error) throw new Error('fixture load failed');
-      return snapshot(entry.pr, entry.laneReviews, entry.unavailable);
+      return { trustedLaneReviews: entry.laneReviews, unavailableReason: entry.unavailableReason ?? null };
     },
   };
   return { provider, calls };
@@ -106,6 +91,7 @@ describe('review convergence stats', () => {
       reviewedHeads: 3,
       failingHeads: 2,
       blockingEntries: 5,
+      blockingEntriesEstimated: false,
       firstReviewClean: false,
       noLaneEvidence: false,
       noLaneEvidenceReason: null,
@@ -116,6 +102,7 @@ describe('review convergence stats', () => {
       reviewedHeads: null,
       failingHeads: null,
       blockingEntries: null,
+      blockingEntriesEstimated: null,
       firstReviewClean: null,
       noLaneEvidence: true,
       noLaneEvidenceReason: 'No trusted QUBE lane review metadata was found.',
@@ -135,6 +122,7 @@ describe('review convergence stats', () => {
         { lane: 'issue-compliance', blockingEntries: 2 },
         { lane: 'performance', blockingEntries: 2 },
       ],
+      estimatedBlockingEntriesPullRequests: 0,
     });
   });
 
@@ -151,7 +139,7 @@ describe('review convergence stats', () => {
 
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
     assert.equal(result.pullRequests[0].reviewedHeads, null);
-    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, recommendation, or status/);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, recommendation, status, or publication time/);
     assert.equal(result.summary.reviewedPullRequests, 0);
     assert.equal(result.summary.firstReviewCleanRate, null);
   });
@@ -165,7 +153,7 @@ describe('review convergence stats', () => {
     const result = await runReviewStatsWithProvider(fixture.provider, { window: 2 });
 
     assert.deepEqual(fixture.calls.list, [{ limit: 2 }]);
-    assert.deepEqual(fixture.calls.load, [202, 201]);
+    assert.deepEqual(fixture.calls.history, [202, 201]);
     assert.equal(result.pullRequests[1].noLaneEvidence, true);
     assert.match(result.pullRequests[1].noLaneEvidenceReason, /could not be loaded/);
     assert.equal(result.summary.reviewedPullRequests, 1);
@@ -178,13 +166,12 @@ describe('review convergence stats', () => {
     const provider = {
       id: 'github',
       listRecentPullRequests: async () => prs,
-      loadPullRequestReview: async number => {
+      loadLaneReviewHistory: async number => {
         activeLoads += 1;
         maximumActiveLoads = Math.max(maximumActiveLoads, activeLoads);
         await new Promise(resolve => setTimeout(resolve, 5));
         activeLoads -= 1;
-        const pr = prs.find(candidate => candidate.number === number);
-        return snapshot(pr, [lane({ head: `head-${number}`, lane: 'code-quality' })]);
+        return { trustedLaneReviews: [lane({ head: `head-${number}`, lane: 'code-quality' })], unavailableReason: null };
       },
     };
 
@@ -208,14 +195,64 @@ describe('review convergence stats', () => {
     const result = await runReviewStatsWithProvider(fixture.provider, { window: 1 });
     const human = formatReviewStats(result);
 
-    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| yes \| present/);
+    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| no \| yes \| present/);
     assert.match(human, /Pull requests: 1/);
     assert.match(human, /Reviewed pull requests: 1/);
     assert.match(human, /First-review-clean: 1\/1 \(100\.0%\)/);
     assert.match(human, /Median reviewed heads: 1/);
+    assert.match(human, /legacy estimated blocking counts: 0/);
     assert.match(human, /Blocking entries after first head: 0\/0 \(n\/a\)/);
     assert.match(human, new RegExp(`provider=${result.provider}`));
     assert.match(human, new RegExp(`Next action: ${result.nextAction.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
+  });
+
+  it('uses provider publication time for the first reviewed head and rejects invalid state pairs', () => {
+    const chronological = computeReviewStats([{
+      number: 301,
+      title: 'Chronological history',
+      trustedLaneReviews: [
+        lane({ head: 'later', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', bodyFindingCount: 1, publishedAt: '2026-02-02T00:00:00Z' }),
+        lane({ head: 'first', lane: 'code-quality', publishedAt: '2026-02-01T00:00:00Z' }),
+      ],
+    }]);
+    assert.equal(chronological.pullRequests[0].firstReviewClean, true);
+    assert.equal(chronological.summary.blockingEntriesAfterFirstHead, 1);
+
+    const invalid = computeReviewStats([{
+      number: 302,
+      title: 'Invalid state pair',
+      trustedLaneReviews: [lane({ head: 'a', lane: 'code-quality', recommendation: 'request-changes', status: 'passed' })],
+    }]);
+    assert.equal(invalid.pullRequests[0].noLaneEvidence, true);
+    assert.match(invalid.pullRequests[0].noLaneEvidenceReason, /invalid recommendation and status combination/);
+  });
+
+  it('does not report an incomplete first head as clean', () => {
+    const result = computeReviewStats([{
+      number: 303,
+      title: 'Incomplete first head',
+      trustedLaneReviews: [lane({
+        head: 'a',
+        lane: 'code-quality',
+        recommendation: 'pending',
+        status: 'pending',
+      })],
+    }]);
+
+    assert.equal(result.pullRequests[0].firstReviewClean, false);
+    assert.equal(result.pullRequests[0].failingHeads, 0);
+  });
+
+  it('marks legacy request-changes body counts as estimates', async () => {
+    const legacy = lane({ head: 'a', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2 });
+    delete legacy.blockingFindingCount;
+    const fixture = providerFixture([{ pr: pullRequest(303), laneReviews: [legacy] }]);
+    const result = await runReviewStatsWithProvider(fixture.provider, { window: 1 });
+
+    assert.equal(result.pullRequests[0].blockingEntries, 2);
+    assert.equal(result.pullRequests[0].blockingEntriesEstimated, true);
+    assert.equal(result.summary.estimatedBlockingEntriesPullRequests, 1);
+    assert.match(result.warnings.join(' '), /legacy request-changes body finding count/);
   });
 
   it('registers the read-only JSON command and bounded window flag', () => {

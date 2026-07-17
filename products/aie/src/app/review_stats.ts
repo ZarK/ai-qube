@@ -12,12 +12,15 @@ interface LaneReviewRecord {
   head: string;
   lane: string;
   recommendation: LaneRecommendation;
-  bodyFindingCount: number;
+  blockingFindingCount: number;
+  estimated: boolean;
+  publishedAt: string;
 }
 
 export interface ReviewStatsInput {
   number: number;
   title: string;
+  closedAt?: string | null;
   trustedLaneReviews: unknown;
   unavailableReason?: string | null;
 }
@@ -28,6 +31,7 @@ export interface ReviewStatsPullRequest {
   reviewedHeads: number | null;
   failingHeads: number | null;
   blockingEntries: number | null;
+  blockingEntriesEstimated: boolean | null;
   firstReviewClean: boolean | null;
   noLaneEvidence: boolean;
   noLaneEvidenceReason: string | null;
@@ -49,6 +53,7 @@ export interface ReviewStatsSummary {
   blockingEntriesAfterFirstHead: number;
   blockingEntriesAfterFirstHeadShare: number | null;
   blockingEntriesByLane: ReviewStatsLaneCount[];
+  estimatedBlockingEntriesPullRequests: number;
 }
 
 export interface ReviewStatsResult {
@@ -83,6 +88,17 @@ function isLaneRecommendation(value: unknown): value is LaneRecommendation {
   return value === 'approve' || value === 'request-changes' || value === 'pending' || value === 'inconclusive';
 }
 
+function validRecommendationStatus(recommendation: LaneRecommendation, status: string): boolean {
+  if (recommendation === 'approve') return status === 'passed';
+  if (recommendation === 'request-changes') return status === 'failed' || status === 'needs-work';
+  if (recommendation === 'pending') return status === 'pending' || status === 'missing' || status === 'stale';
+  return status === 'inconclusive' || status === 'unavailable' || status === 'malformed';
+}
+
+function validTimestamp(value: unknown): value is string {
+  return nonEmptyString(value) && Number.isFinite(Date.parse(value));
+}
+
 function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
   if (value === undefined || value === null) {
     return { records: null, reason: 'No trusted QUBE lane review metadata was found.' };
@@ -99,23 +115,35 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
     if (!isRecord(candidate)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was malformed.` };
     }
-    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status)) {
-      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, recommendation, or status.` };
+    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt)) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, recommendation, status, or publication time.` };
+    }
+    if (!validRecommendationStatus(candidate.recommendation, candidate.status)) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid recommendation and status combination.` };
     }
     const bodyFindingCount = candidate.bodyFindingCount;
     if (bodyFindingCount !== null && bodyFindingCount !== undefined && !nonNegativeInteger(bodyFindingCount)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid bodyFindingCount.` };
     }
-    if (candidate.recommendation === 'request-changes' && !nonNegativeInteger(bodyFindingCount)) {
+    const blockingFindingCount = candidate.blockingFindingCount;
+    if (blockingFindingCount !== null && blockingFindingCount !== undefined && !nonNegativeInteger(blockingFindingCount)) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid blockingFindingCount.` };
+    }
+    const exactCount = nonNegativeInteger(blockingFindingCount) ? blockingFindingCount : null;
+    const legacyCount = nonNegativeInteger(bodyFindingCount) ? bodyFindingCount : null;
+    if (candidate.recommendation === 'request-changes' && exactCount === null && legacyCount === null) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} did not provide a valid blocking finding count.` };
     }
     records.push({
       head: candidate.head,
       lane: candidate.lane,
       recommendation: candidate.recommendation,
-      bodyFindingCount: nonNegativeInteger(bodyFindingCount) ? bodyFindingCount : 0,
+      blockingFindingCount: candidate.recommendation === 'request-changes' ? exactCount ?? legacyCount ?? 0 : 0,
+      estimated: candidate.recommendation === 'request-changes' && exactCount === null,
+      publishedAt: candidate.publishedAt,
     });
   }
+  records.sort((left, right) => left.publishedAt.localeCompare(right.publishedAt));
   return { records, reason: null };
 }
 
@@ -126,6 +154,7 @@ function noLaneEvidence(input: ReviewStatsInput, reason: string): ReviewStatsPul
     reviewedHeads: null,
     failingHeads: null,
     blockingEntries: null,
+    blockingEntriesEstimated: null,
     firstReviewClean: null,
     noLaneEvidence: true,
     noLaneEvidenceReason: reason,
@@ -147,15 +176,16 @@ function summarizePullRequest(input: ReviewStatsInput): {
 
   const reviewedHeads = [...new Set(parsed.records.map(record => record.head))];
   const firstHead = reviewedHeads[0];
+  const firstHeadRecords = parsed.records.filter(record => record.head === firstHead);
   const failingHeads = new Set(parsed.records.filter(record => record.recommendation === 'request-changes').map(record => record.head));
   const blockingRecords = parsed.records.filter(record => record.recommendation === 'request-changes');
   const laneCounts = new Map<string, number>();
   let blockingEntries = 0;
   let blockingAfterFirstHead = 0;
   for (const record of blockingRecords) {
-    blockingEntries += record.bodyFindingCount;
-    if (record.head !== firstHead) blockingAfterFirstHead += record.bodyFindingCount;
-    if (record.bodyFindingCount > 0) laneCounts.set(record.lane, (laneCounts.get(record.lane) ?? 0) + record.bodyFindingCount);
+    blockingEntries += record.blockingFindingCount;
+    if (record.head !== firstHead) blockingAfterFirstHead += record.blockingFindingCount;
+    if (record.blockingFindingCount > 0) laneCounts.set(record.lane, (laneCounts.get(record.lane) ?? 0) + record.blockingFindingCount);
   }
 
   return {
@@ -165,7 +195,8 @@ function summarizePullRequest(input: ReviewStatsInput): {
       reviewedHeads: reviewedHeads.length,
       failingHeads: failingHeads.size,
       blockingEntries,
-      firstReviewClean: !failingHeads.has(firstHead),
+      blockingEntriesEstimated: blockingRecords.some(record => record.estimated),
+      firstReviewClean: firstHeadRecords.every(record => record.recommendation === 'approve'),
       noLaneEvidence: false,
       noLaneEvidenceReason: null,
     },
@@ -182,7 +213,12 @@ function median(values: number[]): number | null {
 }
 
 export function computeReviewStats(inputs: readonly ReviewStatsInput[]): Pick<ReviewStatsResult, 'pullRequests' | 'summary'> {
-  const orderedInputs = [...inputs].sort((left, right) => right.number - left.number);
+  const orderedInputs = [...inputs].sort((left, right) => {
+    const leftClosedAt = left.closedAt ?? '';
+    const rightClosedAt = right.closedAt ?? '';
+    if (leftClosedAt !== '' || rightClosedAt !== '') return rightClosedAt.localeCompare(leftClosedAt) || right.number - left.number;
+    return right.number - left.number;
+  });
   const summaries = orderedInputs.map(summarizePullRequest);
   const pullRequests = summaries.map(summary => summary.pullRequest);
   const reviewed = pullRequests.filter(pullRequest => !pullRequest.noLaneEvidence);
@@ -209,6 +245,7 @@ export function computeReviewStats(inputs: readonly ReviewStatsInput[]): Pick<Re
       blockingEntriesByLane: [...laneTotals.entries()]
         .map(([lane, count]) => ({ lane, blockingEntries: count }))
         .sort((left, right) => left.lane.localeCompare(right.lane)),
+      estimatedBlockingEntriesPullRequests: reviewed.filter(pullRequest => pullRequest.blockingEntriesEstimated === true).length,
     },
   };
 }
@@ -224,30 +261,25 @@ export function reviewStatsWindow(value: number | undefined): number {
   return window;
 }
 
-function unavailableReason(unavailable: readonly string[]): string | null {
-  return unavailable.some(reason => /PR issue comments unavailable/i.test(reason))
-    ? 'Trusted lane review metadata was unavailable from the configured review provider.'
-    : null;
-}
-
-function inputFromSnapshot(pr: ReviewForgePullRequest, snapshot: Awaited<ReturnType<ReviewForgeProvider['loadPullRequestReview']>>): ReviewStatsInput {
-  const trustedLaneReviews = snapshot.item.trustedMetadata.trustedLaneReviews;
+function inputFromHistory(pr: ReviewForgePullRequest, history: Awaited<ReturnType<NonNullable<ReviewForgeProvider['loadLaneReviewHistory']>>>): ReviewStatsInput {
   return {
     number: pr.number,
     title: pr.title,
-    trustedLaneReviews,
-    unavailableReason: Array.isArray(trustedLaneReviews) && trustedLaneReviews.length > 0 ? null : unavailableReason(snapshot.unavailable),
+    closedAt: pr.closedAt,
+    trustedLaneReviews: history.trustedLaneReviews,
+    unavailableReason: history.unavailableReason,
   };
 }
 
 async function loadReviewStatsInput(provider: ReviewForgeProvider, pr: ReviewForgePullRequest): Promise<ReviewStatsInput> {
   try {
-    const snapshot = await provider.loadPullRequestReview(pr.number);
-    return inputFromSnapshot(pr, snapshot);
+    const history = await provider.loadLaneReviewHistory!(pr.number);
+    return inputFromHistory(pr, history);
   } catch {
     return {
       number: pr.number,
       title: pr.title,
+      closedAt: pr.closedAt,
       trustedLaneReviews: null,
       unavailableReason: 'Trusted lane review metadata could not be loaded from the configured review provider.',
     };
@@ -258,6 +290,9 @@ export async function runReviewStatsWithProvider(provider: ReviewForgeProvider, 
   const window = reviewStatsWindow(options.window);
   if (!provider.listRecentPullRequests) {
     throw new Error(`Review stats are not supported by the configured ${provider.id} review provider. Select a provider with bounded recent pull request listing support.`);
+  }
+  if (!provider.loadLaneReviewHistory) {
+    throw new Error(`Review stats are not supported by the configured ${provider.id} review provider. Select a provider with bounded lane review history support.`);
   }
   const listedPullRequests = await provider.listRecentPullRequests({ limit: window });
   const seen = new Set<number>();
@@ -278,7 +313,12 @@ export async function runReviewStatsWithProvider(provider: ReviewForgeProvider, 
     provider: provider.id,
     window,
     ...computed,
-    warnings: ['Only structured QUBE lane review metadata trusted by the configured provider is counted; all other PR content is ignored.'],
+    warnings: [
+      'Only structured QUBE lane review metadata trusted by the configured provider is counted; all other PR content is ignored.',
+      ...(computed.summary.estimatedBlockingEntriesPullRequests > 0
+        ? [`${computed.summary.estimatedBlockingEntriesPullRequests} pull request(s) used the legacy request-changes body finding count because older markers did not publish a severity-aware blocking count.`]
+        : []),
+    ],
     nextAction: 'Compare this bounded window with an earlier run after guidance changes, and use the lane breakdown to target remaining first-pass findings.',
   };
 }
@@ -307,11 +347,15 @@ function cell(value: number | boolean | null): string {
   return String(value);
 }
 
+function tableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/[\r\n]+/g, ' ');
+}
+
 export function formatReviewStats(result: ReviewStatsResult): string {
   const lines = [`Review convergence stats (latest ${result.window} merged or closed PRs; provider=${result.provider})`];
-  lines.push('PR | Title | Reviewed heads | Failing heads | Blocking entries | First review clean | Lane evidence');
+  lines.push('PR | Title | Reviewed heads | Failing heads | Blocking entries | Estimated | First review clean | Lane evidence');
   for (const pr of result.pullRequests) {
-    lines.push(`#${pr.number} | ${pr.title} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.firstReviewClean)} | ${pr.noLaneEvidence ? `none: ${pr.noLaneEvidenceReason}` : 'present'}`);
+    lines.push(`#${pr.number} | ${tableCell(pr.title)} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.blockingEntriesEstimated)} | ${cell(pr.firstReviewClean)} | ${pr.noLaneEvidence ? `none: ${pr.noLaneEvidenceReason}` : 'present'}`);
   }
   lines.push('', 'Rolling summary:');
   lines.push(`- Pull requests: ${result.summary.pullRequests}`);
@@ -320,6 +364,7 @@ export function formatReviewStats(result: ReviewStatsResult): string {
   lines.push(`- First-review-clean: ${result.summary.firstReviewCleanPullRequests}/${result.summary.reviewedPullRequests} (${percent(result.summary.firstReviewCleanRate)})`);
   lines.push(`- Median reviewed heads: ${result.summary.medianReviewedHeads ?? 'n/a'}`);
   lines.push(`- Blocking entries: ${result.summary.blockingEntries}`);
+  lines.push(`- Pull requests with legacy estimated blocking counts: ${result.summary.estimatedBlockingEntriesPullRequests}`);
   lines.push(`- Blocking entries after first head: ${result.summary.blockingEntriesAfterFirstHead}/${result.summary.blockingEntries} (${percent(result.summary.blockingEntriesAfterFirstHeadShare)})`);
   lines.push('- Blocking entries by lane:');
   if (result.summary.blockingEntriesByLane.length === 0) lines.push('  - none');

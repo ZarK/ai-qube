@@ -3163,6 +3163,7 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'published');
     assert.equal(result.inlineCommentCount, 1);
     assert.equal(result.bodyFindingCount, 0);
+    assert.match(fixture.reviewPayloads[0].body, /"blockingFindingCount":1/);
     assert.equal(fixture.reviewPayloads[0].comments[0].path, 'src/review.ts');
     assert.equal(fixture.reviewPayloads[0].comments[0].line, 1);
     assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');

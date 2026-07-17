@@ -184,8 +184,8 @@ describe("github adapter contract", () => {
         exitCode: 0,
         stdout: JSON.stringify([
           { number: 41, title: "Open", state: "OPEN", url: "https://example.invalid/41", headRefOid: "open" },
-          { number: 39, title: "Closed", state: "CLOSED", url: "https://example.invalid/39", headRefOid: "closed" },
-          { number: 40, title: "Merged", state: "MERGED", url: "https://example.invalid/40", headRefOid: "merged" },
+          { number: 39, title: "Closed", state: "CLOSED", url: "https://example.invalid/39", headRefOid: "closed", closedAt: "2026-07-03T00:00:00Z" },
+          { number: 40, title: "Merged", state: "MERGED", url: "https://example.invalid/40", headRefOid: "merged", closedAt: "2026-07-01T00:00:00Z", mergedAt: "2026-07-01T00:00:00Z" },
         ]),
         stderr: "",
       };
@@ -194,10 +194,69 @@ describe("github adapter contract", () => {
 
     const listed = await provider.listRecentPullRequests({ limit: 3 });
 
-    assert.deepEqual(listed.map(pr => pr.number), [40, 39]);
+    assert.deepEqual(listed.map(pr => pr.number), [39, 40]);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed --limit 3 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft");
+    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed sort:updated-desc --limit 50 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt");
     await assert.rejects(() => provider.listRecentPullRequests({ limit: 51 }), /limit must be an integer from 1 to 50/);
     assert.equal(calls.length, 1);
+  });
+
+  it("loads trusted lane history with bounded calls, chronology, and malformed diagnostics", async () => {
+    const calls = [];
+    const laneMarker = ({ head, lane, recommendation, status, blockingFindingCount }) => `<!-- qube-pr-review:${JSON.stringify({
+      version: 1,
+      head,
+      lane,
+      profile: "local-focused",
+      runId: `${head}-${lane}`,
+      issueNumber: 290,
+      prNumber: 12,
+      host: "codex",
+      recommendation,
+      status,
+      summary: "review summary",
+      inline: "review-api",
+      bodyFindingCount: blockingFindingCount,
+      blockingFindingCount,
+    })} -->`;
+    const exec = async args => {
+      calls.push(args);
+      if (args.join(" ") === "api user") return { args, exitCode: 0, stdout: JSON.stringify({ login: "trusted" }), stderr: "" };
+      const number = Number(args[2]);
+      if (number === 13) {
+        return {
+          args,
+          exitCode: 0,
+          stdout: JSON.stringify({ number, title: "Malformed", state: "CLOSED", url: "https://example.invalid/13", headRefOid: "bad", comments: [{ author: { login: "trusted" }, createdAt: "2026-01-01T00:00:00Z", body: "<!-- qube-pr-review:{bad json} -->" }], reviews: [] }),
+          stderr: "",
+        };
+      }
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify({
+          number,
+          title: "History",
+          state: "MERGED",
+          url: "https://example.invalid/12",
+          headRefOid: "later",
+          comments: [{ author: { login: "trusted" }, createdAt: "2026-02-02T00:00:00Z", body: laneMarker({ head: "later", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) }],
+          reviews: [{ author: { login: "trusted" }, submittedAt: "2026-02-01T00:00:00Z", body: laneMarker({ head: "first", lane: "issue-compliance", recommendation: "approve", status: "passed", blockingFindingCount: 0 }) }],
+        }),
+        stderr: "",
+      };
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const history = await provider.loadLaneReviewHistory(12);
+    const malformed = await provider.loadLaneReviewHistory(13);
+
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.head), ["first", "later"]);
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.blockingFindingCount), [0, 1]);
+    assert.equal(history.unavailableReason, null);
+    assert.match(malformed.unavailableReason, /1 malformed marker/);
+    assert.equal(calls.filter(args => args.join(" ") === "api user").length, 1);
+    assert.equal(calls.filter(args => args[0] === "pr" && args[1] === "view").length, 2);
+    assert.ok(calls.filter(args => args[0] === "pr" && args[1] === "view").every(args => !args.includes("--paginate")));
   });
 });

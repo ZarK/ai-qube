@@ -27,6 +27,12 @@ export interface ReviewForgePullRequest {
   mergeStateStatus: string;
   mergeable: string;
   isDraft: boolean;
+  closedAt?: string | null;
+}
+
+export interface ReviewForgeLaneReviewHistory {
+  trustedLaneReviews: unknown;
+  unavailableReason: string | null;
 }
 
 export interface ReviewForgeCiDiagnostic {
@@ -122,6 +128,7 @@ export interface ReviewForgePublisherIdentity {
 
 export interface ReviewForgeProviderCapabilities {
   loadReview: boolean;
+  reviewStats: boolean;
   findCurrentBranchReview: boolean;
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
@@ -138,6 +145,7 @@ export interface ReviewForgeProvider {
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
+  loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
@@ -151,6 +159,7 @@ export interface ReviewForgeProvider {
 
 export interface ReviewForgeCapabilities {
   loadReview: boolean;
+  reviewStats: boolean;
   findCurrentBranchReview: boolean;
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
@@ -163,6 +172,7 @@ export interface ReviewForgeCapabilities {
 
 export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   loadReview: false,
+  reviewStats: false,
   findCurrentBranchReview: false,
   planReviewRequests: false,
   applyReviewRequests: false,

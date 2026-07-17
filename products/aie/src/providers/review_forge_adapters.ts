@@ -12,6 +12,7 @@ import {
   type ReviewForgeCapabilities,
   type ReviewForgeLaneReviewPublishInput,
   type ReviewForgeLaneReviewPublishResult,
+  type ReviewForgeLaneReviewHistory,
   type ReviewForgeLocalReviewPublishInput,
   type ReviewForgeLocalReviewPublishResult,
   type ReviewForgeProvider,
@@ -60,6 +61,7 @@ interface ReviewForgeAdapter extends ReviewForgeAdapterMetadata {
 
 const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   loadReview: true,
+  reviewStats: true,
   findCurrentBranchReview: true,
   planReviewRequests: true,
   applyReviewRequests: true,
@@ -72,6 +74,7 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
 
 const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   loadReview: true,
+  reviewStats: false,
   findCurrentBranchReview: true,
   planReviewRequests: true,
   applyReviewRequests: true,
@@ -167,6 +170,7 @@ interface LoadedReviewForgeProvider {
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
   listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<ReviewForgePullRequest[]>;
+  loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewProviderPlanOptions): ActionPlan;
@@ -192,6 +196,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     id: provider.id,
     capabilities: () => ({
       loadReview: capabilities.loadReview,
+      reviewStats: typeof provider.listRecentPullRequests === 'function' && typeof provider.loadLaneReviewHistory === 'function',
       findCurrentBranchReview: capabilities.findCurrentBranchReview,
       planReviewRequests: capabilities.planReviewRequests,
       applyReviewRequests: capabilities.applyReviewRequests,
@@ -206,6 +211,9 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     findCurrentReview: () => provider.findCurrentReview(),
     listRecentPullRequests: provider.listRecentPullRequests
       ? (options) => provider.listRecentPullRequests!(options)
+      : undefined,
+    loadLaneReviewHistory: provider.loadLaneReviewHistory
+      ? (prNumber) => provider.loadLaneReviewHistory!(prNumber)
       : undefined,
     loadPullRequestReview: (prNumber) => provider.loadPullRequestReview(prNumber),
     loadPullRequestReviewTarget: provider.loadPullRequestReviewTarget
@@ -252,6 +260,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
   capabilities() {
     return {
       loadReview: MISSING_REVIEW_FORGE_CAPABILITIES.loadReview,
+      reviewStats: MISSING_REVIEW_FORGE_CAPABILITIES.reviewStats,
       findCurrentBranchReview: MISSING_REVIEW_FORGE_CAPABILITIES.findCurrentBranchReview,
       planReviewRequests: MISSING_REVIEW_FORGE_CAPABILITIES.planReviewRequests,
       applyReviewRequests: MISSING_REVIEW_FORGE_CAPABILITIES.applyReviewRequests,
