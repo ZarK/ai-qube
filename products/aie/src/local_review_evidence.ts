@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { carryForwardDeltaTouched, type CarryForwardContextMode } from './review_focus.js';
+import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
 import { acceptedProviderLane } from './provider_lane_evidence.js';
 import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evidence.js';
 import { redact } from './redact.js';
@@ -775,7 +775,7 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
       const deltaPaths = gitDeltaPathsSync(repoRoot, lane.carriedForward.fromHeadSha, headSha);
       if (deltaPaths === null) {
         blockers.push(`${laneId} carried-forward delta from ${lane.carriedForward.fromHeadSha} could not be verified with git.`);
-      } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [], carryForwardScope?.laneContextModes?.[laneId] ?? 'all')) {
+      } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [], carryForwardScope?.laneContextModes?.[laneId] ?? defaultCarryForwardContext(laneId))) {
         blockers.push(`${laneId} carried-forward evidence is invalid because the head delta touches the lane scope or review context.`);
       }
     } else {

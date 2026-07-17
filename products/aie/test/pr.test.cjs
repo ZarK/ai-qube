@@ -2266,6 +2266,7 @@ describe('PR gate service', () => {
     config.reviewLanes = [
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
       { id: 'task-record-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
     ];
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
@@ -2299,10 +2300,13 @@ describe('PR gate service', () => {
 
     const performance = result.localReviewRunner.lanes.find(lane => lane.lane === 'performance');
     const taskRecord = result.localReviewRunner.lanes.find(lane => lane.lane === 'task-record-compliance');
+    const issueCompliance = result.localReviewRunner.lanes.find(lane => lane.lane === 'issue-compliance');
     assert.equal(performance.status, 'completed');
     assert.match(performance.summary, /Carried forward from approved review at/);
     assert.notEqual(taskRecord.status, 'completed');
     assert.doesNotMatch(taskRecord.summary, /Carried forward/);
+    assert.notEqual(issueCompliance.status, 'completed');
+    assert.doesNotMatch(issueCompliance.summary, /Carried forward/);
   });
 
   it('reruns config-mode lanes on a configuration delta while scope-mode lanes carry forward', async () => {
@@ -2311,6 +2315,7 @@ describe('PR gate service', () => {
     config.reviewLanes = [
       { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
       { id: 'security', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
     ];
     mkdirSync(join(repo, 'src'), { recursive: true });
     writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
@@ -2345,10 +2350,58 @@ describe('PR gate service', () => {
 
     const performance = result.localReviewRunner.lanes.find(lane => lane.lane === 'performance');
     const security = result.localReviewRunner.lanes.find(lane => lane.lane === 'security');
+    const issueCompliance = result.localReviewRunner.lanes.find(lane => lane.lane === 'issue-compliance');
     assert.equal(performance.status, 'completed');
     assert.match(performance.summary, /Carried forward from approved review at/);
     assert.notEqual(security.status, 'completed');
     assert.doesNotMatch(security.summary, /Carried forward/);
+    assert.notEqual(issueCompliance.status, 'completed');
+    assert.doesNotMatch(issueCompliance.summary, /Carried forward/);
+  });
+
+  it('rejects tampered head-mismatched carried evidence under scoped invalidation', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    const base = evidence.lanes.find(lane => lane.id === 'code-quality');
+    evidence.lanes = [{
+      ...base,
+      id: 'performance',
+      summary: 'performance reviewed',
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/performance.json`, sha256: 'test-hash' }],
+      promptStack: promptStackForLane('performance'),
+      runnerProvenance: { ...base.runnerProvenance, promptStackHash: promptStackHash(promptStackForLane('performance')) },
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }];
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'CLAUDE.md'), 'updated machine instructions\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'instructions only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const firstRun = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] }).exec });
+    assert.equal(firstRun.localReview.status, 'passed');
+    const carriedPath = join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead, 'performance.json');
+    const carried = JSON.parse(readFileSync(carriedPath, 'utf8'));
+    carried.carriedForward.fromHeadSha = 'f'.repeat(40);
+    writeFileSync(carriedPath, `${JSON.stringify(carried, null, 2)}\n`);
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] }).exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    const blockers = result.localReview.evidence.flatMap(entry => entry.blockers).join(' ');
+    assert.match(blockers, /carried-forward|prior head|prior approved/i);
   });
 
   it('carries forward with non-empty risk card activation when prior fragment identity matches', async () => {
