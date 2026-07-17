@@ -268,6 +268,9 @@ describe('model review runner', () => {
       token('ey', 'Jabcdefghijk', '.abcdefghijklmnop.abcdefghijklmnop'),
     ];
     const body = laneResult();
+    body.status = 'needs-work';
+    body.severity = 'high';
+    body.recommendation = 'request-changes';
     body.summary = `Summary ${tokens[0]} ${tokens[1]}`;
     body.blockers = [`Blocker ${tokens[2]}`, 'client_secret=lowercase-punctuation_secret-value'];
     body.findings = [{ severity: 'advisory', message: `Message ${tokens[3]}`, suggestion: `Suggestion ${tokens[4]}`, location: { path: `source-${tokens[5]}.ts` } }];
@@ -383,6 +386,16 @@ describe('model review runner', () => {
     });
     assert.equal(blockingPassed.evidence, null);
     assert.equal(blockingPassed.reasonCode, 'model-route-contract-mismatch');
+
+    const blockersApproved = laneResult();
+    blockersApproved.blockers = ['This result cannot be approved.'];
+    const approvedWithBlockers = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(blockersApproved), sessionId: 'blockers-approved' }) }),
+    });
+    assert.equal(approvedWithBlockers.evidence, null);
+    assert.equal(approvedWithBlockers.reasonCode, 'model-route-contract-mismatch');
   });
 
   it('classifies timeout and authentication failures without returning raw model output', async () => {

@@ -374,7 +374,11 @@ function readFindings(value: unknown): ReviewFinding[] {
           path: redact(item.location.path.trim()),
           ...(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0 ? { line: item.location.line } : {}),
           ...(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0 ? { endLine: item.location.endLine } : {}),
-          side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
+          ...(item.location.side === 'source'
+            ? { side: 'source' as const }
+            : item.location.side === 'destination'
+              ? { side: 'destination' as const }
+              : {}),
         }
       : undefined;
     findings.push({
