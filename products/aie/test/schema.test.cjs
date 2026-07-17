@@ -81,6 +81,7 @@ describe('schema command', () => {
     const migrateMap = parsed.commands.find(command => command.name === 'migrate map');
     const auditUi = parsed.commands.find(command => command.name === 'audit ui');
     const reviewGate = parsed.commands.find(command => command.name === 'review gate');
+    const reviewStats = parsed.commands.find(command => command.name === 'review stats');
     const prView = parsed.commands.find(command => command.name === 'pr view');
     const prBody = parsed.commands.find(command => command.name === 'pr body');
     const prGate = parsed.commands.find(command => command.name === 'pr gate');
@@ -174,6 +175,9 @@ describe('schema command', () => {
     assert.ok(serviceNames(auditUi).includes('agent-browser'));
     assert.ok(reviewGate.extensions.reviewAgentValues.includes('oracle'));
     assert.ok(reviewGate.extensions.reviewAgentValues.includes('custom'));
+    assert.deepEqual(errorKinds(reviewStats), ['invalid-command-usage', 'invalid-review-stats-window', 'review-stats-provider-read-failed', 'review-stats-unsupported']);
+    assert.deepEqual(exitCodes(reviewStats), [0, 2, 3, 4]);
+    assert.deepEqual(reviewStats.exitCodes.map(exitCode => exitCode.category), ['success', 'usage', 'validation', 'external']);
     assert.ok(serviceNames(prBody).includes('github'));
     assert.ok(prBody.extensions.reviewAgentValues.includes('coderabbit'));
     assert.ok(serviceNames(prGate).includes('github-copilot'));

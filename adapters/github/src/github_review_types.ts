@@ -136,6 +136,18 @@ export interface RawThreadNode {
 }
 export interface RawThreadPage { nodes?: RawThreadNode[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
 export interface RawThreadResponse { data?: { repository?: { pullRequest?: { reviewThreads?: RawThreadPage } | null } | null } }
+export interface RawLaneHistoryPage<T> { nodes?: T[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
+export interface RawLaneHistoryResponse {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        headRefOid?: string;
+        comments?: RawLaneHistoryPage<RawComment>;
+        reviews?: RawLaneHistoryPage<RawReview>;
+      } | null;
+    } | null;
+  };
+}
 export interface RawMergeUiState {
   viewerMergeHeadlineText?: string | null;
   viewerMergeBodyText?: string | null;

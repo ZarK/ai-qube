@@ -275,31 +275,28 @@ describe("github adapter contract", () => {
     const exec = async args => {
       calls.push(args);
       if (args.join(" ") === "api user") return { args, exitCode: 0, stdout: JSON.stringify({ login: "trusted" }), stderr: "" };
-      const number = Number(args[2]);
+      if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };
+      const number = Number(args.find(arg => arg.startsWith("pr="))?.slice(3));
       if (number === 13) {
         return {
           args,
           exitCode: 0,
-          stdout: JSON.stringify({ number, title: "Malformed", state: "CLOSED", url: "https://example.invalid/13", headRefOid: "bad", comments: [{ author: { login: "trusted" }, createdAt: "2026-01-01T00:00:00Z", body: "<!-- qube-pr-review:{bad json} -->" }], reviews: [] }),
+          stdout: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "bad", comments: { nodes: [{ author: { login: "trusted" }, createdAt: "2026-01-01T00:00:00Z", body: "<!-- qube-pr-review:{bad json} -->" }], pageInfo: { hasNextPage: false } }, reviews: { nodes: [], pageInfo: { hasNextPage: false } } } } } }),
           stderr: "",
         };
       }
       return {
         args,
         exitCode: 0,
-        stdout: JSON.stringify({
-          number,
-          title: "History",
-          state: "MERGED",
-          url: "https://example.invalid/12",
+        stdout: JSON.stringify({ data: { repository: { pullRequest: {
           headRefOid: "later",
-          comments: [
+          comments: { nodes: [
             { author: { login: "trusted" }, createdAt: "2026-02-01T00:00:00Z", body: laneMarker({ head: "first", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) },
             { author: { login: "trusted" }, createdAt: "2026-02-02T00:00:00Z", body: laneMarker({ head: "later", lane: "code-quality", recommendation: "request-changes", status: "failed", blockingFindingCount: 1 }) },
             { author: { login: "trusted" }, createdAt: "2026-02-03T00:00:00Z", body: laneMarker({ head: "foreign", lane: "code-quality", recommendation: "approve", status: "passed", blockingFindingCount: 0, prNumber: 999 }) },
-          ],
-          reviews: [{ author: { login: "trusted" }, submittedAt: "2026-02-01T01:00:00Z", body: laneMarker({ head: "first", lane: "code-quality", recommendation: "approve", status: "passed", blockingFindingCount: 0 }) }],
-        }),
+          ], pageInfo: { hasNextPage: false } },
+          reviews: { nodes: [{ author: { login: "trusted" }, submittedAt: "2026-02-01T01:00:00Z", body: laneMarker({ head: "first", lane: "code-quality", recommendation: "approve", status: "passed", blockingFindingCount: 0 }) }], pageInfo: { hasNextPage: false } },
+        } } } }),
         stderr: "",
       };
     };
@@ -315,23 +312,46 @@ describe("github adapter contract", () => {
     assert.equal(history.unavailableReason, null);
     assert.match(malformed.unavailableReason, /1 malformed marker/);
     assert.equal(calls.filter(args => args.join(" ") === "api user").length, 1);
-    assert.equal(calls.filter(args => args[0] === "pr" && args[1] === "view").length, 2);
-    assert.ok(calls.filter(args => args[0] === "pr" && args[1] === "view").every(args => !args.includes("--paginate")));
+    assert.equal(calls.filter(args => args.join(" ") === "repo view --json nameWithOwner,url").length, 1);
+    assert.equal(calls.filter(args => args[0] === "api" && args[1] === "graphql").length, 2);
+    assert.ok(calls.filter(args => args[0] === "api" && args[1] === "graphql").every(args => args.join(" ").includes("comments(first: 100)") && args.join(" ").includes("reviews(first: 100)") && !args.includes("--paginate")));
+  });
+
+  it("degrades truncated lane history instead of counting a partial bounded page", async () => {
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };
+      return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "head", comments: { nodes: [{ author: { login: "trusted" }, body: "partial" }], pageInfo: { hasNextPage: true, endCursor: "next" } }, reviews: { nodes: [], pageInfo: { hasNextPage: false } } } } } }), stderr: "" };
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const history = await provider.loadLaneReviewHistory(12);
+
+    assert.deepEqual(history.trustedLaneReviews, []);
+    assert.match(history.unavailableReason, /exceeded the bounded 100-comment or 100-review read.*not counted partially/);
+    assert.equal(calls.filter(args => args[0] === "api" && args[1] === "graphql").length, 1);
+    assert.equal(calls.filter(args => args.join(" ") === "api user").length, 0);
   });
 
   it("reports distinct publisher identity as unavailable when its public login is omitted", async () => {
-    const exec = async args => ({
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      return {
       args,
       exitCode: 0,
-      stdout: JSON.stringify({ number: 12, title: "History", state: "CLOSED", url: "https://example.invalid/12", headRefOid: "head", comments: [], reviews: [] }),
+      stdout: JSON.stringify({}),
       stderr: "",
-    });
+      };
+    };
     const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN" } } });
 
     const history = await provider.loadLaneReviewHistory(12);
 
     assert.deepEqual(history.trustedLaneReviews, []);
     assert.match(history.unavailableReason, /publisher login was unavailable/);
+    assert.equal(calls.length, 0);
   });
 
   it("trusts only the configured distinct publisher for lane history", async () => {
@@ -340,14 +360,11 @@ describe("github adapter contract", () => {
       createdAt: "2026-01-01T00:00:00Z",
       body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
     });
-    const exec = async args => ({
-      args,
-      exitCode: 0,
-      stdout: args.join(" ") === "api user"
-        ? JSON.stringify({ login: "actor-user" })
-        : JSON.stringify({ number: 12, title: "History", state: "CLOSED", url: "https://example.invalid/12", headRefOid: "head", comments: [marker("actor-user"), marker("review-bot")], reviews: [] }),
-      stderr: "",
-    });
+    const exec = async args => {
+      if (args.join(" ") === "api user") return { args, exitCode: 0, stdout: JSON.stringify({ login: "actor-user" }), stderr: "" };
+      if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };
+      return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "head", comments: { nodes: [marker("actor-user"), marker("review-bot")], pageInfo: { hasNextPage: false } }, reviews: { nodes: [], pageInfo: { hasNextPage: false } } } } } }), stderr: "" };
+    };
     const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN", login: "review-bot" } } });
 
     const history = await provider.loadLaneReviewHistory(12);

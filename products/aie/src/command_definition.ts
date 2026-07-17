@@ -179,11 +179,7 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       kind,
       description: `Stable ${kind} error.`,
     })),
-    exitCodes: (command.exitCodes ?? [0, 1]).map(code => ({
-      code,
-      category: code === 0 ? 'success' : 'unexpected',
-      description: code === 0 ? 'Command completed successfully.' : 'Command failed.',
-    })),
+    exitCodes: (command.exitCodes ?? [0, 1]).map(exitCodeMetadata),
     extensions: {
       helpForms: [
         `aie ${command.name} --help`,
@@ -198,6 +194,15 @@ function toCommandMetadata(command: ExecutorCommandDefinition, commonErrorKinds:
       ...(command.migrationConfidenceValues ? { migrationConfidenceValues: [...command.migrationConfidenceValues] } : {}),
     },
   });
+}
+
+function exitCodeMetadata(code: number) {
+  if (code === 0) return { code, category: 'success' as const, description: 'Command completed successfully.' };
+  if (code === 2) return { code, category: 'usage' as const, description: 'Command usage or argument parsing failed.' };
+  if (code === 3) return { code, category: 'validation' as const, description: 'Command input or configured capability validation failed.' };
+  if (code === 4) return { code, category: 'external' as const, description: 'An external provider read failed.' };
+  if (code === 5) return { code, category: 'safety' as const, description: 'A safety policy blocked the command.' };
+  return { code, category: 'unexpected' as const, description: 'Command failed unexpectedly.' };
 }
 
 export function defineExecutorCommands(commands: readonly ExecutorCommandDefinition[], commonErrorKinds: readonly string[]): readonly CommandMetadata<ExecutorCommandExtensions>[] {

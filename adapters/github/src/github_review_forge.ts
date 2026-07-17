@@ -47,7 +47,7 @@ import {
   sanitizeFeedbackText,
   triggerFor,
 } from './github_review_agents.js';
-import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawMergeUiState, RawMergeUiStateResponse, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawLaneHistoryResponse, RawMergeUiState, RawMergeUiStateResponse, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
 import { GhExecutionError, parseGhJson, redact, runGh, type GhRunResult } from './gh.js';
 import {
   emptyPublisherIdentity,
@@ -63,9 +63,9 @@ export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolv
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
 const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt,updatedAt';
-const REVIEW_STATS_PR_FIELDS = 'number,title,state,url,headRefOid,comments,reviews';
 const MAX_RECENT_PR_LIMIT = 50;
 const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
+const MAX_LANE_HISTORY_RECORDS = 100;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
@@ -217,6 +217,8 @@ function isRawIssueCommentArray(value: unknown): value is RawIssueComment[] | Ra
 function isRawPrCommentsView(value: unknown): value is { comments?: RawComment[] } { return isRecord(value) && (value.comments === undefined || Array.isArray(value.comments)); }
 
 function isRawThreadResponse(value: unknown): value is RawThreadResponse { return isRecord(value); }
+
+function isRawLaneHistoryResponse(value: unknown): value is RawLaneHistoryResponse { return isRecord(value); }
 
 function isRawMergeUiStateResponse(value: unknown): value is RawMergeUiStateResponse { return isRecord(value); }
 
@@ -1478,6 +1480,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   /** Process-local cache of distinct publisher login for trust matching; never stores tokens. */
   private cachedPublisherLogin: string | null | undefined = undefined;
   private currentLoginPromise: Promise<string> | null = null;
+  private repositoryIdentityPromise: Promise<{ nameWithOwner: string; url: string }> | null = null;
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
@@ -1551,18 +1554,30 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   }
 
   async loadLaneReviewHistory(prNumber: number): Promise<{ trustedLaneReviews: JsonObject[]; unavailableReason: string | null }> {
-    const result = await runGh(['pr', 'view', String(prNumber), '--json', REVIEW_STATS_PR_FIELDS], this.options);
-    ensureGhSuccess(`gh pr view ${prNumber} review stats metadata`, result);
-    const rawPr = parseGhJson<RawPrView>(result.stdout, `gh pr view ${prNumber} review stats metadata`, isRawPrView);
     if (this.configuredPublisherLoginMissing()) {
       return { trustedLaneReviews: [], unavailableReason: 'Configured distinct QUBE review publisher login was unavailable; trusted lane marker authors could not be identified safely.' };
+    }
+    const repository = await this.getRepositoryIdentity();
+    const [owner, repo] = repository.nameWithOwner.split('/');
+    if (!owner || !repo) {
+      return { trustedLaneReviews: [], unavailableReason: 'GitHub repository identity was malformed; bounded lane review history could not be loaded.' };
+    }
+    const query = `query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { headRefOid comments(first: ${MAX_LANE_HISTORY_RECORDS}) { nodes { author { login } body url createdAt } pageInfo { hasNextPage endCursor } } reviews(first: ${MAX_LANE_HISTORY_RECORDS}) { nodes { id author { login } body state submittedAt url commit { oid } } pageInfo { hasNextPage endCursor } } } } }`;
+    const result = await runGh(['api', 'graphql', '-F', `owner=${owner}`, '-F', `repo=${repo}`, '-F', `pr=${prNumber}`, '-f', `query=${query}`], this.options);
+    ensureGhSuccess(`gh api graphql bounded review stats metadata for PR ${prNumber}`, result);
+    const rawPr = parseGhJson<RawLaneHistoryResponse>(result.stdout, `gh api graphql bounded review stats metadata for PR ${prNumber}`, isRawLaneHistoryResponse).data?.repository?.pullRequest;
+    if (!rawPr) {
+      return { trustedLaneReviews: [], unavailableReason: 'GitHub pull request lane review history was unavailable.' };
+    }
+    if (rawPr.comments?.pageInfo?.hasNextPage || rawPr.reviews?.pageInfo?.hasNextPage) {
+      return { trustedLaneReviews: [], unavailableReason: `Trusted QUBE lane review history exceeded the bounded ${MAX_LANE_HISTORY_RECORDS}-comment or ${MAX_LANE_HISTORY_RECORDS}-review read and was not counted partially.` };
     }
     const trustedAuthors = await this.trustedAuthorsForLoad();
     if (trustedAuthors.length === 0) {
       return { trustedLaneReviews: [], unavailableReason: 'Trusted QUBE lane review author identity was unavailable from GitHub.' };
     }
-    const comments = rawPr.comments ?? [];
-    const reviews = laneMarkerReviews(rawPr);
+    const comments = rawPr.comments?.nodes ?? [];
+    const reviews = rawPr.reviews?.nodes ?? [];
     const malformedCount = malformedTrustedLaneMarkerCount(comments, reviews, trustedAuthors);
     if (malformedCount > 0) {
       return {
@@ -2323,9 +2338,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   }
 
   private async getRepositoryIdentity(): Promise<{ nameWithOwner: string; url: string }> {
-    const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], this.options);
-    ensureGhSuccess('gh repo view', result);
-    return parseGhJson<{ nameWithOwner: string; url: string }>(result.stdout, 'gh repo view', (value): value is { nameWithOwner: string; url: string } => isRecord(value) && typeof value.nameWithOwner === 'string' && typeof value.url === 'string');
+    if (!this.repositoryIdentityPromise) {
+      this.repositoryIdentityPromise = (async () => {
+        const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], this.options);
+        ensureGhSuccess('gh repo view', result);
+        return parseGhJson<{ nameWithOwner: string; url: string }>(result.stdout, 'gh repo view', (value): value is { nameWithOwner: string; url: string } => isRecord(value) && typeof value.nameWithOwner === 'string' && typeof value.url === 'string');
+      })();
+    }
+    try {
+      return await this.repositoryIdentityPromise;
+    } catch (error) {
+      this.repositoryIdentityPromise = null;
+      throw error;
+    }
   }
 }
 

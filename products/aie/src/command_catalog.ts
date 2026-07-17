@@ -352,7 +352,8 @@ const COMMAND_DEFINITIONS = [
     supportsJson: true,
     supportsDryRun: false,
     externalServices: ['github'],
-    stableErrorKinds: ['config-error', 'github-error', 'review-state-unavailable', 'unsupported-provider', ...CONFIG_ERROR_KINDS],
+    stableErrorKinds: ['invalid-command-usage', 'invalid-review-stats-window', 'review-stats-unsupported', 'review-stats-provider-read-failed'],
+    exitCodes: [0, 2, 3, 4],
     examples: ['aie review stats', 'aie review stats --window 30', 'aie review stats --window 20 --json'],
   },
   {
