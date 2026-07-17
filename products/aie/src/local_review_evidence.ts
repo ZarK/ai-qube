@@ -604,6 +604,7 @@ function severityRank(severity: LocalReviewSeverity): number {
 }
 
 function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSeverity): boolean {
+  if (lane.findings.some(finding => finding.severity === 'blocking')) return true;
   if (lane.severity === 'none') return false;
   if (severityRank(lane.severity) < severityRank(threshold)) return false;
   return lane.recommendation === 'request-changes' || lane.blockers.length > 0;
@@ -612,7 +613,9 @@ function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSever
 function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalReviewSeverity): string[] {
   return lanes
     .filter(lane => laneExceedsThreshold(lane, threshold))
-    .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
+    .map(lane => lane.findings.some(finding => finding.severity === 'blocking')
+      ? `${lane.id} recorded blocking structured findings.`
+      : `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
 }
 
 function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[], requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
@@ -624,6 +627,10 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
   for (const lane of lanes) {
     if (!validRecommendationStatus(lane.recommendation, lane.status)) {
       blockers.push(`${lane.id} recommendation ${lane.recommendation} is not valid with status ${lane.status}; ${recommendationStatusRule()}.`);
+    }
+    if (lane.findings.some(finding => finding.severity === 'blocking')
+      && (lane.status === 'passed' || lane.recommendation !== 'request-changes')) {
+      blockers.push(`${lane.id} recorded blocking structured findings but claimed status ${lane.status} with recommendation ${lane.recommendation}.`);
     }
   }
   for (const laneId of requiredLanes) {

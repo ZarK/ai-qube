@@ -233,6 +233,16 @@ describe('model review runner', () => {
     });
     assert.equal(mismatched.evidence, null);
     assert.equal(mismatched.reasonCode, 'model-route-contract-mismatch');
+
+    const falseSuccess = laneResult();
+    falseSuccess.findings = [{ severity: 'blocking', message: 'Fix the false-success path.' }];
+    const blockingPassed = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(falseSuccess), sessionId: 'false-success' }) }),
+    });
+    assert.equal(blockingPassed.evidence, null);
+    assert.equal(blockingPassed.reasonCode, 'model-route-contract-mismatch');
   });
 
   it('classifies timeout and authentication failures without returning raw model output', async () => {

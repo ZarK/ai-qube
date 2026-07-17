@@ -2790,6 +2790,25 @@ describe('PR gate service', () => {
     assert.match(JSON.stringify(result.localReview), /recommendation request-changes is not valid with status passed/);
   });
 
+  it('blocks gate aggregation when a passed lane contains blocking structured findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      findings: lane.id === 'code-quality'
+        ? [{ severity: 'blocking', message: 'Fix the false-success path.', location: { path: 'src/review.ts', line: 4 } }]
+        : lane.findings,
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /recorded blocking structured findings/);
+  });
+
   it('rejects lane evidence publishing without a completeness self-check', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -2992,6 +3011,10 @@ describe('PR gate service', () => {
     evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
       ? {
           ...lane,
+          status: 'needs-work',
+          severity: 'high',
+          recommendation: 'request-changes',
+          blockers: ['Anchor the blocking finding on the changed line.'],
           summary: 'code quality found structured findings',
           findings: [
             { id: 'inline-1', severity: 'blocking', location: { path: 'src/review.ts', line: 2, side: 'destination' }, message: 'Anchor this on the changed line.' },
@@ -3713,6 +3736,30 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'inconclusive');
     assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('evidence digest does not match')));
+  });
+
+  it('rejects passed lane evidence that contains blocking structured findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      findings: lane.id === 'code-quality'
+        ? [{ severity: 'blocking', message: 'Fix the false-success path.', location: { path: 'src/review.ts', line: 4 } }]
+        : lane.findings,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /recorded blocking structured findings but claimed status passed with recommendation approve/,
+    );
   });
 
   it('rejects routed model provenance that disagrees with the trusted host record', async () => {

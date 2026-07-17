@@ -296,6 +296,10 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
     throw laneEvidenceFailure(path, `recommendation ${recommendation} is not valid with status ${raw.status}; ${recommendationStatusRule()}.`);
   }
+  if (structuredFindings.some(finding => finding.severity === 'blocking')
+    && (raw.status === 'passed' || recommendation !== 'request-changes')) {
+    throw laneEvidenceFailure(path, `recorded blocking structured findings but claimed status ${raw.status} with recommendation ${recommendation}.`);
+  }
   return {
     evidence: raw,
     path,

@@ -309,6 +309,11 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
       && (item.location.line === undefined || (Number.isSafeInteger(item.location.line) && Number(item.location.line) > 0))
       && (item.location.endLine === undefined || (Number.isSafeInteger(item.location.endLine) && Number(item.location.endLine) > 0))
       && (item.location.side === undefined || item.location.side === 'source' || item.location.side === 'destination'))))) return null;
+  const hasBlockingFinding = value.findings.some(item => isRecord(item) && item.severity === 'blocking');
+  if (hasBlockingFinding && (value.status !== 'failed' && value.status !== 'needs-work'
+    || value.recommendation !== 'request-changes'
+    || value.severity !== 'high' && value.severity !== 'critical'
+    || value.blockers.length === 0)) return null;
   if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
     && hasExactKeys(item, ['kind', 'path'], ['sha256'])
     && typeof item.kind === 'string' && item.kind.trim() !== ''
