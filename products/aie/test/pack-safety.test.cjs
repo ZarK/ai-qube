@@ -1,6 +1,8 @@
 const assert = require('node:assert/strict');
-const { existsSync, readFileSync } = require('node:fs');
+const { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
 const { join } = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { describe, it } = require('node:test');
 
 const { normalizeHelpArgs } = require('../dist/bin/run.js');
@@ -36,6 +38,18 @@ describe('package publish surface safety', () => {
         `Package files must not expose repository-only path ${entry}`
       );
     }
+  });
+
+  it('resolves the routed review runtime from a staged package surface outside the checkout', async () => {
+    const packageRoot = join(__dirname, '..');
+    const stagedRoot = mkdtempSync(join(tmpdir(), 'aie-packed-route-'));
+    assert.ok(pkg.files.includes('dist/'));
+    cpSync(join(packageRoot, 'dist'), join(stagedRoot, 'dist'), { recursive: true });
+    copyFileSync(join(packageRoot, 'package.json'), join(stagedRoot, 'package.json'));
+
+    const routedRuntime = await import(pathToFileURL(join(stagedRoot, 'dist', 'app', 'model_review_runner.js')).href);
+    assert.equal(typeof routedRuntime.runModelReview, 'function');
+    assert.equal(typeof routedRuntime.buildModelRouteInvocation, 'function');
   });
 
   it('preserves public help normalization forms', () => {

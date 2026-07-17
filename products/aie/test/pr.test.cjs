@@ -59,6 +59,21 @@ function trustReviewCommands(repo, remote = 'origin', branch = 'main') {
   commitTrustedBase(repo, remote, branch);
 }
 
+function commitRoutedReviewHead(repo) {
+  writeConfig(repo, {
+    version: 1,
+    policy: {
+      reviews: {
+        adapter: 'local',
+        models: { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} },
+        route: { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 },
+      },
+    },
+  });
+  execFileSync('git', ['add', '.qube/aie/config.json'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'configure routed review'], { cwd: repo, stdio: 'ignore' });
+}
+
 function writeWorkflow(repo, body) {
   mkdirSync(join(repo, '.github', 'workflows'), { recursive: true });
   writeFileSync(join(repo, '.github', 'workflows', 'ci.yml'), body);
@@ -1413,6 +1428,7 @@ describe('PR gate service', () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1458,6 +1474,7 @@ describe('PR gate service', () => {
     assert.equal(result.localReviewPublish.status, 'published');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok'));
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
+    assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
     assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
   });
@@ -1466,6 +1483,7 @@ describe('PR gate service', () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = ['@coderabbitai'];
     config.reviewWaitMinutes = 0;

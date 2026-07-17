@@ -286,7 +286,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.`
         : runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.';
       const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], route ? { model: route.model, effort: route.effort, substitution: route.substitution } : reviewTierResolution, riskCardFragments, route);
-      if (!input.dryRun && (command || route) && !commandTrust) {
+      if (!input.dryRun && command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';
         unavailable.push(`${lane}: ${summary}`);

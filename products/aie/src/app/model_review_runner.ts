@@ -412,14 +412,56 @@ function parseCodexOutput(stdout: string): { text: string; sessionId: string | n
   return text ? { text, sessionId } : null;
 }
 
+function finalJsonObjectText(text: string): string | null {
+  let index = 0;
+  let finalObject: string | null = null;
+  while (index < text.length) {
+    while (index < text.length && /\s/.test(text[index])) index += 1;
+    if (index >= text.length) break;
+    if (text[index] !== '{') return null;
+    const start = index;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          index += 1;
+          break;
+        }
+      }
+    }
+    if (depth !== 0 || inString) return null;
+    const candidate = text.slice(start, index);
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (!isRecord(parsed)) return null;
+    } catch {
+      return null;
+    }
+    finalObject = candidate;
+  }
+  return finalObject;
+}
+
 function parseGrokOutput(stdout: string): { text: string; sessionId: string | null } | null {
   try {
     const value: unknown = JSON.parse(stdout);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
-    return typeof record.text === 'string'
-      ? { text: record.text, sessionId: typeof record.sessionId === 'string' ? record.sessionId : null }
-      : null;
+    if (typeof record.text !== 'string') return null;
+    const text = finalJsonObjectText(record.text);
+    return text ? { text, sessionId: typeof record.sessionId === 'string' ? record.sessionId : null } : null;
   } catch {
     return null;
   }
