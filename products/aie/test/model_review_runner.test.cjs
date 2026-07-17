@@ -301,6 +301,20 @@ describe('model review runner', () => {
     assert.equal(malformed.evidence, null);
     assert.equal(malformed.reasonCode, 'model-route-malformed-json');
 
+    const multipleCodexMessages = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'multiple-codex' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } })}\n`,
+      }),
+    });
+    assert.equal(multipleCodexMessages.evidence, null);
+    assert.equal(multipleCodexMessages.reasonCode, 'model-route-output-envelope');
+
     const multipleFinalObjects = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',

@@ -474,7 +474,7 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
 }
 
 function parseCodexOutput(stdout: string): { text: string; sessionId: string | null } | null {
-  let text: string | null = null;
+  const messages: string[] = [];
   let sessionId: string | null = null;
   for (const line of stdout.split(/\r?\n/).filter(line => line.trim() !== '')) {
     let event: unknown;
@@ -484,10 +484,10 @@ function parseCodexOutput(stdout: string): { text: string; sessionId: string | n
     if (record.type === 'thread.started' && typeof record.thread_id === 'string') sessionId = record.thread_id;
     if (record.type === 'item.completed' && record.item && typeof record.item === 'object' && !Array.isArray(record.item)) {
       const item = record.item as Record<string, unknown>;
-      if (item.type === 'agent_message' && typeof item.text === 'string') text = item.text;
+      if (item.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
     }
   }
-  return text ? { text, sessionId } : null;
+  return messages.length === 1 ? { text: messages[0], sessionId } : null;
 }
 
 function jsonObjectSequence(text: string): string[] | null {
