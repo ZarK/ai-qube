@@ -2,7 +2,7 @@
 
 <!-- BEGIN EXECUTOR MANAGED SECTION -->
 <!-- executor-managed-version: 1 -->
-<!-- executor-managed-checksum: 14bc8941d752808ee190897ff95ddf0cc5b2c44117140e6c438368de47284517 -->
+<!-- executor-managed-checksum: a03778daf9ed1a8eadacbf0c1fd595290c5844b620725fd6304f56a0427c8aba -->
 ## Executor Issue Workflow
 
 This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through `aie` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
@@ -69,7 +69,7 @@ Todo requirements:
 
 Host capability profile:
 
-- Codex: instructions target `AGENTS.md`, project commands or agents are installed when configured (.codex/agents/qube-review-focus.toml), todo tools `update_plan`, dialogue expectation: Use Codex plan/todo support in the main session, spawn independent Codex subagents for local PR review focuses, wait for all review subagents before publishing provider feedback, and keep durable state in configured provider records.. Subagent guidance: For local PR review, create the review session lock, spawn one independent Codex subagent per active focus with `agent_type: "qube-review-focus"` and `fork_context: false` by pasting each lane `spawnPrompt` verbatim from `pr gate --dry-run --json --local-review-prompts`, wait for all subagents before editing or testing in the main session, run `pr gate <pr> --json` without `--dry-run` to publish provider-visible GitHub feedback, delete the review session lock, then inspect PR comments for merge guidance. Hook support: Codex host hooks may exist in trusted host configuration; Executor init does not install them.
+- Codex: instructions target `AGENTS.md`, project commands or agents are installed when configured (.codex/agents/qube-review-focus.toml), todo tools `update_plan`, dialogue expectation: Use host plan/todo support in the main session; run the configured `pr gate` route batch and do not spawn native review subagents for routed lanes. Routed review guidance: QUBE owns exact prompt execution, evidence, and provider publication from the main process. Hook support: Codex host hooks may exist in trusted host configuration; Executor init does not install them.
 
 Stop conditions:
 
