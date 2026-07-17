@@ -106,6 +106,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
 export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   return [
     'You are an isolated read-only QUBE review lane runner.',
+    `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
     reviewResultContract(input),
     '',
     '--- EXACT QUBE LANE PROMPT START ---',
@@ -204,7 +205,27 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     stdin = prompt;
   } else {
     if (!promptPath) throw new Error('Grok review routing requires a private prompt file.');
-    args.push('--cwd', input.repoRoot, '--permission-mode', 'plan', '--no-subagents', '--disable-web-search', '--no-memory', '--max-turns', String(input.plan.maxTurns), '--json-schema', grokReviewSchema(input));
+    args.push(
+      '--cwd', input.repoRoot,
+      '--permission-mode', 'dontAsk',
+      '--sandbox', 'strict',
+      '--allow', 'Read',
+      '--allow', 'Grep',
+      '--allow', 'Bash(git diff *)',
+      '--allow', 'Bash(git show *)',
+      '--allow', 'Bash(git status *)',
+      '--allow', 'Bash(git log *)',
+      '--allow', 'Bash(git rev-parse *)',
+      '--deny', 'Edit',
+      '--deny', 'WebFetch',
+      '--deny', 'MCPTool(*)',
+      '--no-plan',
+      '--no-subagents',
+      '--disable-web-search',
+      '--no-memory',
+      '--max-turns', String(input.plan.maxTurns),
+      '--json-schema', grokReviewSchema(input),
+    );
     if (input.plan.effort) args.push('--reasoning-effort', input.plan.effort);
     if (input.plan.model) args.push('--model', input.plan.model);
     args.push('--verbatim', '--prompt-file', promptPath);

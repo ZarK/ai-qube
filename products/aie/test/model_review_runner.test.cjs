@@ -102,6 +102,8 @@ describe('model review runner', () => {
     const invocation = buildModelRouteInvocation(input, 'codex.exe', prompt, null);
 
     assert.equal(invocation.stdin, prompt);
+    assert.match(prompt, /at most 8 turns/);
+    assert.match(prompt, /reserve the final turn/);
     assert.equal(invocation.args.includes(prompt), false);
     assert.deepEqual(invocation.args.slice(-3), ['--ephemeral', '--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
@@ -135,7 +137,12 @@ describe('model review runner', () => {
     assert.equal(result.evidence.runnerProvenance.isolation, 'read-only');
     assert.equal(result.evidence.runnerProvenance.sessionId, 'grok-session');
     assert.equal(result.evidence.promptStack[0].id, 'review-lanes/code-quality');
-    assert.ok(capturedArgs.includes('plan'));
+    assert.ok(capturedArgs.includes('dontAsk'));
+    assert.ok(capturedArgs.includes('strict'));
+    assert.ok(capturedArgs.includes('--no-plan'));
+    assert.ok(capturedArgs.includes('Bash(git diff *)'));
+    assert.ok(capturedArgs.includes('Edit'));
+    assert.equal(capturedArgs.includes('plan'), false);
     assert.ok(capturedArgs.includes('--no-subagents'));
     assert.ok(capturedArgs.includes('--disable-web-search'));
     const schemaIndex = capturedArgs.indexOf('--json-schema');
