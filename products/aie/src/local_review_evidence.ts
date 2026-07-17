@@ -4,6 +4,8 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched } from './review_focus.js';
+import { acceptedProviderLane } from './provider_lane_evidence.js';
+import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evidence.js';
 import { redact } from './redact.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
@@ -82,6 +84,7 @@ export interface LocalReviewLane {
   preconditions: string[] | null;
   carriedForward: LocalReviewCarriedForward | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
+  origin?: 'local' | 'trusted-provider';
 }
 
 export interface LocalReviewCarriedForward {
@@ -128,6 +131,7 @@ export interface LocalReviewGate {
   status: LocalReviewStatus;
   summary: string;
   nextAction: string;
+  providerReuse?: ProviderLaneReuse;
 }
 
 interface TrustedLocalHostProvenance {
@@ -947,6 +951,18 @@ function readLocalReviewPublishEvidence(directory: string, issueNumber: number, 
   }
 }
 
+export function readCurrentHeadLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): LocalReviewLane | null {
+  const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+    if (!parsed || parsed.lane.id !== lane) return null;
+    return parsed.lane;
+  } catch {
+    return null;
+  }
+}
+
 function withProviderPublishStatus(lane: LocalReviewLane, status: string | null): LocalReviewLane {
   if (!status || !lane.runnerProvenance) return lane;
   return {
@@ -958,11 +974,36 @@ function withProviderPublishStatus(lane: LocalReviewLane, status: string | null)
   };
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[], carryForwardScope?: CarryForwardScope): LocalReviewEvidence | null {
+function providerReuseLane(record: TrustedProviderLane): LocalReviewLane {
+  return {
+    id: record.lane,
+    status: 'passed',
+    severity: 'none',
+    recommendation: 'approve',
+    summary: `Trusted provider current-head review reused: ${record.summary}`,
+    blockers: [],
+    findings: [],
+    artifacts: [],
+    commands: [],
+    surfaces: [],
+    contextReviewed: [],
+    promptStack: [],
+    toolsUsed: [],
+    completeness: 'Reused the trusted provider-visible lane review for the exact current head; full findings, severities, prompt stack, and runner provenance remain provider-side.',
+    preconditions: null,
+    carriedForward: null,
+    runnerProvenance: null,
+    origin: 'trusted-provider',
+  };
+}
+
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[], carryForwardScope?: CarryForwardScope, providerReuse?: ProviderLaneReuse): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
-  if (!existsSync(directory)) return null;
+  const directoryExists = existsSync(directory);
+  if (!directoryExists && (providerReuse?.accepted.length ?? 0) === 0) return null;
   const requiredLanes = requiredLanesInput ?? requiredLocalReviewLanes(profile);
-  const lanes: LocalReviewLane[] = [];
+  const localLanes: LocalReviewLane[] = [];
+  const providerLanes: LocalReviewLane[] = [];
   const missing: string[] = [];
   const adapters: LocalReviewEvidence['adapter'][] = [];
   const laneAdapters = new Map<LocalReviewLaneId, LocalReviewEvidence['adapter']>();
@@ -970,35 +1011,43 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   try {
     for (const laneId of requiredLanes) {
       const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
-      if (!existsSync(path)) {
-        missing.push(laneId);
+      if (directoryExists && existsSync(path)) {
+        const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+        if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+        localLanes.push({ ...parsed.lane, origin: 'local' });
+        adapters.push(parsed.adapter);
+        laneAdapters.set(laneId, parsed.adapter);
+        evidenceHashes.set(laneId, parsed.evidenceSha256);
         continue;
       }
-      const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
-      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
-      lanes.push(parsed.lane);
-      adapters.push(parsed.adapter);
-      laneAdapters.set(laneId, parsed.adapter);
-      evidenceHashes.set(laneId, parsed.evidenceSha256);
+      const providerRecord = acceptedProviderLane(providerReuse, laneId, issueNumber);
+      if (providerRecord) {
+        providerLanes.push(providerReuseLane(providerRecord));
+        continue;
+      }
+      missing.push(laneId);
     }
   } catch {
     return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
   }
-  if (lanes.length === 0) return null;
-  const publishStatus = readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null;
-  const lanesWithPublishStatus = lanes.map(lane => withProviderPublishStatus(lane, publishStatus));
+  if (localLanes.length === 0 && providerLanes.length === 0) return null;
+  const publishStatus = directoryExists ? readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null : null;
+  const localLanesWithPublishStatus = localLanes.map(lane => withProviderPublishStatus(lane, publishStatus));
+  const lanesWithPublishStatus = [...localLanesWithPublishStatus, ...providerLanes];
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
-    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
+    const missingRejections = (providerReuse?.rejected ?? []).filter(entry => missing.includes(entry.lane)).map(entry => entry.reason);
+    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: [...missing.map(lane => `Missing local review evidence for ${lane}.`), ...missingRejections] };
   }
   const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
   const contextReviewed = lanesWithPublishStatus.flatMap(lane => lane.contextReviewed);
   const promptStack = lanesWithPublishStatus.flatMap(lane => lane.promptStack);
   const missingContext = missingRequiredContext(lanesWithPublishStatus, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
-  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack, requiredLanes);
+  const locallyCoveredLanes = requiredLanes.filter(laneId => laneAdapters.has(laneId));
+  const contractBlockers = localLanesWithPublishStatus.length > 0 ? evidenceContractBlockers(localLanesWithPublishStatus, profile, promptStack, locallyCoveredLanes) : [];
   const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes, carryForwardScope);
+  const runnerBlockers = localLanesWithPublishStatus.length > 0 ? provenanceBlockers(localLanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, locallyCoveredLanes, carryForwardScope) : [];
   const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -1012,7 +1061,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     status,
     path: redact(directory),
     reviewer: fallbackReviewer(reviewers),
-    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}`,
+    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}${providerLanes.length > 0 ? ` Reused trusted provider current-head reviews for: ${providerLanes.map(lane => lane.id).join(', ')}.` : ''}`,
     blockers,
     lanes: lanesWithPublishStatus,
     contextReviewed,
@@ -1202,6 +1251,7 @@ export function readLocalReviewGate(input: {
   activeFocuses?: readonly LocalReviewLaneId[];
   providerFirst?: boolean;
   carryForwardScope?: CarryForwardScope;
+  providerLaneReuse?: ProviderLaneReuse;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
@@ -1216,7 +1266,7 @@ export function readLocalReviewGate(input: {
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = laneEvidenceDirectory(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     const legacyPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes, input.carryForwardScope);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes, input.carryForwardScope, input.providerLaneReuse);
     if (laneEvidence) return laneEvidence;
     if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);
@@ -1234,6 +1284,7 @@ export function readLocalReviewGate(input: {
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
     nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false),
+    providerReuse: input.providerLaneReuse,
   };
 }
 
