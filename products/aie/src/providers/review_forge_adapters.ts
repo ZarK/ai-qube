@@ -1,4 +1,4 @@
-import type { ReviewForgePolicy } from '@tjalve/qube-core';
+import type { ReviewForgeCapabilities as CoreReviewForgeCapabilities, ReviewForgePolicy } from '@tjalve/qube-core';
 import type { GhExec } from '@tjalve/qube-adapter-github';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
@@ -165,7 +165,7 @@ export function reviewForgeAdapterPackage(id: ReviewForgeProviderId): string {
 
 interface LoadedReviewForgeProvider {
   readonly id: ReviewForgeProviderId;
-  capabilities(): { loadReview: boolean; findCurrentBranchReview: boolean; planReviewRequests: boolean; applyReviewRequests: boolean; publishLaneReview?: boolean; publishLaneReviewInline?: boolean; publishLocalReview?: boolean; resolveReviewThreads?: boolean };
+  capabilities(): CoreReviewForgeCapabilities;
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
@@ -196,7 +196,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     id: provider.id,
     capabilities: () => ({
       loadReview: capabilities.loadReview,
-      reviewStats: typeof provider.listRecentPullRequests === 'function' && typeof provider.loadLaneReviewHistory === 'function',
+      reviewStats: capabilities.reviewStats === true,
       findCurrentBranchReview: capabilities.findCurrentBranchReview,
       planReviewRequests: capabilities.planReviewRequests,
       applyReviewRequests: capabilities.applyReviewRequests,

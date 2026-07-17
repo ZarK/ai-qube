@@ -15,7 +15,7 @@ export interface GitHubReviewPullRequest {
   mergeStateStatus: string;
   mergeable: string;
   isDraft: boolean;
-  closedAt: string | null;
+  closedAt?: string | null;
   mergeUiHeadline: string | null;
   mergeUiBody: string | null;
   viewerCannotUpdateReasons: string[];
@@ -110,7 +110,7 @@ export interface RawReview { id?: string | number; author?: RawAuthor | null; us
 export interface RawReviewRequest { login?: string; name?: string; slug?: string }
 export interface RawClosingIssueReference { number?: number }
 export interface RawStatusCheck { conclusion?: string; status?: string; state?: string; name?: string; context?: string; workflowName?: string; startedAt?: string; createdAt?: string; completedAt?: string; detailsUrl?: string; targetUrl?: string }
-export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; author?: RawAuthor | null; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; closedAt?: string | null; mergedAt?: string | null; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
+export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; author?: RawAuthor | null; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; closedAt?: string | null; mergedAt?: string | null; updatedAt?: string | null; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
 export interface RawIssueComment { body?: string; html_url?: string; user?: RawAuthor | null }
 export interface RawReviewComment { body?: string; html_url?: string; path?: string; user?: { login?: string } | null; pull_request_review_id?: number | string | null }
 export interface RawThreadComment {

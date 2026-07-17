@@ -40,6 +40,7 @@ export interface ReviewForgePlanOptions {
 export interface ReviewForgeCapabilities {
   readonly loadReview: boolean;
   readonly loadReviewSnapshot: boolean;
+  readonly reviewStats?: boolean;
   readonly findCurrentBranchReview: boolean;
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;

@@ -55,19 +55,19 @@ describe('review convergence stats', () => {
       number: 100,
       title: 'Clean first head then one failing head',
       trustedLaneReviews: [
-        lane({ head: 'a', lane: 'issue-compliance' }),
-        lane({ head: 'b', lane: 'issue-compliance', recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2 }),
+        lane({ head: 'a', lane: 'issue-compliance', publishedAt: '2026-01-01T00:00:00Z' }),
+        lane({ head: 'b', lane: 'issue-compliance', recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2, publishedAt: '2026-01-02T00:00:00Z' }),
       ],
     },
     {
       number: 102,
       title: 'Three reviewed heads',
       trustedLaneReviews: [
-        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality', 'issue-compliance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2 }),
-        lane({ head: 'a', lane: 'issue-compliance', expectedLanes: ['code-quality', 'issue-compliance'] }),
-        lane({ head: 'b', lane: 'code-quality', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 1 }),
-        lane({ head: 'b', lane: 'performance', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2 }),
-        lane({ head: 'c', lane: 'code-quality' }),
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality', 'issue-compliance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2, publishedAt: '2026-01-01T00:00:00Z' }),
+        lane({ head: 'a', lane: 'issue-compliance', expectedLanes: ['code-quality', 'issue-compliance'], publishedAt: '2026-01-01T00:00:00Z' }),
+        lane({ head: 'b', lane: 'code-quality', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'failed', bodyFindingCount: 1, publishedAt: '2026-01-02T00:00:00Z' }),
+        lane({ head: 'b', lane: 'performance', expectedLanes: ['code-quality', 'performance'], recommendation: 'request-changes', status: 'needs-work', bodyFindingCount: 2, publishedAt: '2026-01-02T00:00:00Z' }),
+        lane({ head: 'c', lane: 'code-quality', publishedAt: '2026-01-03T00:00:00Z' }),
       ],
     },
     { number: 103, title: 'No lane evidence', trustedLaneReviews: [] },
@@ -266,6 +266,34 @@ describe('review convergence stats', () => {
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
     assert.equal(result.pullRequests[0].firstReviewClean, null);
     assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing expected lane.*issue-compliance/);
+  });
+
+  it('rejects observed lanes outside the declared expected lane set', () => {
+    const result = computeReviewStats([{
+      number: 307,
+      title: 'Unexpected lane',
+      trustedLaneReviews: [
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'] }),
+        lane({ head: 'a', lane: 'issue-compliance', expectedLanes: ['code-quality'] }),
+      ],
+    }]);
+
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /lane issue-compliance outside its expected lane set/);
+  });
+
+  it('degrades ambiguous cross-head timestamps instead of choosing an arbitrary first head', () => {
+    const result = computeReviewStats([{
+      number: 308,
+      title: 'Ambiguous chronology',
+      trustedLaneReviews: [
+        lane({ head: 'clean', lane: 'code-quality', publishedAt: '2026-02-01T00:00:00Z' }),
+        lane({ head: 'failed', lane: 'code-quality', recommendation: 'request-changes', status: 'failed', blockingFindingCount: 1, publishedAt: '2026-02-01T00:00:00Z' }),
+      ],
+    }]);
+
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /ambiguous publication order/);
   });
 
   it('keeps legacy body counts out of exact blocking metrics', async () => {

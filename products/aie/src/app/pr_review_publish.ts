@@ -371,10 +371,7 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const changedPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
-  if (!changedPaths) {
-    throw new Error(`publish lane review failed. Likely cause: changed paths could not be compared with ${config.baseRemote}/${config.baseBranch}. Next action: refresh the configured base branch, rerun pr gate, and retry lane publish.`);
-  }
-  const expectedLanes = activeLocalReviewFocusesForConfig(config, changedPaths);
+  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
   return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, expectedLanes, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
 }
 

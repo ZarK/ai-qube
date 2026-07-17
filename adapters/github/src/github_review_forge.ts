@@ -62,7 +62,7 @@ export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolv
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
-const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt';
+const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt,updatedAt';
 const REVIEW_STATS_PR_FIELDS = 'number,title,state,url,headRefOid,comments,reviews';
 const MAX_RECENT_PR_LIMIT = 50;
 const MAX_RECENT_PR_CANDIDATES = 500;
@@ -1481,7 +1481,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewForgeCapabilities { return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
+  capabilities(): ReviewForgeCapabilities { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -1523,28 +1523,37 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_RECENT_PR_LIMIT) {
       throw new Error(`list recent GitHub pull requests failed: limit must be an integer from 1 to ${MAX_RECENT_PR_LIMIT}. Use a bounded review stats window.`);
     }
-    const result = await runGh([
-      'pr',
-      'list',
-      '--state',
-      'all',
-      '--search',
-      'is:closed sort:updated-desc',
-      '--limit',
-      String(MAX_RECENT_PR_CANDIDATES + 1),
-      '--json',
-      RECENT_PR_FIELDS,
-    ], this.options);
-    ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
-    const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
-    if (listed.length > MAX_RECENT_PR_CANDIDATES) {
-      throw new Error(`list recent GitHub pull requests failed: more than ${MAX_RECENT_PR_CANDIDATES} closed pull requests exist, so the bounded provider read cannot prove the latest closure-time window. Narrow the repository history or use a provider with native closure-time ordering.`);
+    let candidateLimit = Math.min(MAX_RECENT_PR_CANDIDATES + 1, Math.max(options.limit + 1, options.limit * 2));
+    for (;;) {
+      const result = await runGh([
+        'pr',
+        'list',
+        '--state',
+        'all',
+        '--search',
+        'is:closed sort:updated-desc',
+        '--limit',
+        String(candidateLimit),
+        '--json',
+        RECENT_PR_FIELDS,
+      ], this.options);
+      ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
+      const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
+      if (listed.length > MAX_RECENT_PR_CANDIDATES) break;
+      const ordered = listed
+        .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
+        .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number);
+      const exhausted = listed.length < candidateLimit;
+      const cutoff = ordered.length >= options.limit ? Date.parse(ordered[options.limit - 1].mergedAt ?? ordered[options.limit - 1].closedAt ?? '') : Number.NaN;
+      const lastUpdatedAt = Date.parse(listed.at(-1)?.updatedAt ?? '');
+      if (exhausted || (Number.isFinite(cutoff) && Number.isFinite(lastUpdatedAt) && lastUpdatedAt <= cutoff)) {
+        return ordered.slice(0, options.limit).map(pr => normalizePr(pr));
+      }
+      const nextLimit = Math.min(MAX_RECENT_PR_CANDIDATES + 1, candidateLimit * 2);
+      if (nextLimit === candidateLimit) break;
+      candidateLimit = nextLimit;
     }
-    return listed
-      .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
-      .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number)
-      .slice(0, options.limit)
-      .map(pr => normalizePr(pr));
+    throw new Error(`list recent GitHub pull requests failed: the bounded provider read reached ${MAX_RECENT_PR_CANDIDATES} candidates and cannot prove the latest closure-time window. Narrow the repository history or use a provider with native closure-time ordering.`);
   }
 
   async loadLaneReviewHistory(prNumber: number): Promise<{ trustedLaneReviews: JsonObject[]; unavailableReason: string | null }> {
@@ -2180,18 +2189,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
    */
   private async trustedAuthorsForLoad(): Promise<string[]> {
     const authors: string[] = [];
+    const publisher = this.options.publisher;
+    if (publisher && publisher.mode !== 'user') {
+      const configuredLogin = publisher.mode === 'github-app' ? publisher.githubApp?.login : publisher.token?.login;
+      if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '') authors.push(configuredLogin.trim());
+      if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) authors.push(this.cachedPublisherLogin);
+      return authors;
+    }
     try {
       const login = await this.currentLogin();
       if (login) authors.push(login);
     } catch {
       // optional on load
-    }
-    const configuredLogin = this.options.publisher?.githubApp?.login ?? this.options.publisher?.token?.login;
-    if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '' && !authors.some(author => authorMatches(author, configuredLogin))) {
-      authors.push(configuredLogin.trim());
-    }
-    if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) {
-      authors.push(this.cachedPublisherLogin);
     }
     return authors;
   }

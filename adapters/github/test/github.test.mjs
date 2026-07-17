@@ -196,7 +196,8 @@ describe("github adapter contract", () => {
 
     assert.deepEqual(listed.map(pr => pr.number), [39, 40]);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed sort:updated-desc --limit 501 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt");
+    assert.equal(calls[0].join(" "), "pr list --state all --search is:closed sort:updated-desc --limit 6 --json number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt,updatedAt");
+    assert.equal(provider.capabilities().reviewStats, true);
     await assert.rejects(() => provider.listRecentPullRequests({ limit: 51 }), /limit must be an integer from 1 to 50/);
     assert.equal(calls.length, 1);
   });
@@ -218,6 +219,26 @@ describe("github adapter contract", () => {
     const provider = createGitHubReviewForgeProvider({ exec });
 
     await assert.rejects(() => provider.listRecentPullRequests({ limit: 50 }), /cannot prove the latest closure-time window/);
+  });
+
+  it("ties recent pull request provider work to a small requested window", async () => {
+    const calls = [];
+    const exec = async args => {
+      calls.push(args);
+      return {
+        args,
+        exitCode: 0,
+        stdout: JSON.stringify([{ number: 7, title: "Recent", state: "CLOSED", url: "https://example.invalid/7", headRefOid: "head-7", closedAt: "2026-07-01T00:00:00Z", updatedAt: "2026-07-01T00:00:00Z" }]),
+        stderr: "",
+      };
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+
+    const listed = await provider.listRecentPullRequests({ limit: 1 });
+
+    assert.deepEqual(listed.map(pr => pr.number), [7]);
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0][calls[0].indexOf("--limit") + 1], "2");
   });
 
   it("loads trusted lane history with bounded calls, chronology, and malformed diagnostics", async () => {
@@ -299,5 +320,26 @@ describe("github adapter contract", () => {
 
     assert.deepEqual(history.trustedLaneReviews, []);
     assert.match(history.unavailableReason, /publisher login was unavailable/);
+  });
+
+  it("trusts only the configured distinct publisher for lane history", async () => {
+    const marker = login => ({
+      author: { login },
+      createdAt: "2026-01-01T00:00:00Z",
+      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
+    });
+    const exec = async args => ({
+      args,
+      exitCode: 0,
+      stdout: args.join(" ") === "api user"
+        ? JSON.stringify({ login: "actor-user" })
+        : JSON.stringify({ number: 12, title: "History", state: "CLOSED", url: "https://example.invalid/12", headRefOid: "head", comments: [marker("actor-user"), marker("review-bot")], reviews: [] }),
+      stderr: "",
+    });
+    const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN", login: "review-bot" } } });
+
+    const history = await provider.loadLaneReviewHistory(12);
+
+    assert.deepEqual(history.trustedLaneReviews.map(record => record.author), ["review-bot"]);
   });
 });

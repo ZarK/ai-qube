@@ -99,7 +99,9 @@ function validTimestamp(value: unknown): value is string {
 
 function laneNames(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0 || !value.every(nonEmptyString)) return null;
-  return [...new Set(value.map(lane => lane.trim()))].sort();
+  const lanes = value.map(lane => lane.trim());
+  if (lanes.some((lane, index) => lane !== value[index]) || new Set(lanes).size !== lanes.length) return null;
+  return lanes.sort();
 }
 
 function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
@@ -119,8 +121,11 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was malformed.` };
     }
     const expectedLanes = laneNames(candidate.expectedLanes);
-    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt) || !expectedLanes) {
+    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt) || !expectedLanes) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, expected lane set, recommendation, status, or publication time.` };
+    }
+    if (!expectedLanes.includes(candidate.lane)) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} declared lane ${candidate.lane} outside its expected lane set.` };
     }
     if (!validRecommendationStatus(candidate.recommendation, candidate.status)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} had an invalid recommendation and status combination.` };
@@ -149,6 +154,15 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
       publishedAt: Date.parse(candidate.publishedAt),
     });
   }
+  const headsByTimestamp = new Map<number, Set<string>>();
+  for (const record of records) {
+    const heads = headsByTimestamp.get(record.publishedAt) ?? new Set<string>();
+    heads.add(record.head);
+    headsByTimestamp.set(record.publishedAt, heads);
+  }
+  if ([...headsByTimestamp.values()].some(heads => heads.size > 1)) {
+    return { records: null, reason: 'Trusted QUBE lane review metadata had ambiguous publication order because different heads shared the same timestamp.' };
+  }
   records.sort((left, right) => left.publishedAt - right.publishedAt || left.lane.localeCompare(right.lane));
   return { records, reason: null };
 }
@@ -162,6 +176,8 @@ function incompleteLaneReason(records: readonly LaneReviewRecord[]): string | nu
     const observed = new Set(headRecords.map(record => record.lane));
     const missing = expected.filter(lane => !observed.has(lane));
     if (missing.length > 0) return `Trusted QUBE lane review metadata for head ${head} was incomplete; missing expected lane(s): ${missing.join(', ')}.`;
+    const unexpected = [...observed].filter(lane => !expected.includes(lane));
+    if (unexpected.length > 0) return `Trusted QUBE lane review metadata for head ${head} contained unexpected lane(s): ${unexpected.join(', ')}.`;
   }
   return null;
 }
