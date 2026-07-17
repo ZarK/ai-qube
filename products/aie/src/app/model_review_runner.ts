@@ -11,6 +11,8 @@ import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
+const FORCE_KILL_GRACE_MS = 500;
+const FORCE_KILL_COMMAND_MS = 1_000;
 
 export interface ModelReviewRoutePlan {
   host: RoutedReviewHostId;
@@ -397,6 +399,7 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
   return new Promise(resolve => {
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
+      detached: process.platform !== 'win32',
       windowsHide: true,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -406,19 +409,54 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     let timedOut = false;
     let stdinDelivered = false;
     let stdinFailed = false;
+    let settled = false;
+    let forceTimer: NodeJS.Timeout | null = null;
+    let forceCommandTimer: NodeJS.Timeout | null = null;
     const append = (current: string, chunk: Buffer): string => (current + chunk.toString('utf8')).slice(-MAX_OUTPUT_BYTES);
+    const finish = (code: number | null): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (forceTimer) clearTimeout(forceTimer);
+      if (forceCommandTimer) clearTimeout(forceCommandTimer);
+      resolve({ exitCode: typeof code === 'number' ? code : 1, stdout, stderr, timedOut, stdinDelivered });
+    };
+    const killPosixGroup = (signal: NodeJS.Signals): void => {
+      if (!child.pid) return;
+      try { process.kill(-child.pid, signal); }
+      catch {
+        try { child.kill(signal); } catch { /* process already exited */ }
+      }
+    };
+    const forceKill = (): void => {
+      if (process.platform !== 'win32' || !child.pid) {
+        killPosixGroup('SIGKILL');
+        finish(1);
+        return;
+      }
+      const killer = spawn('taskkill.exe', ['/pid', String(child.pid), '/t', '/f'], {
+        windowsHide: true,
+        shell: false,
+        stdio: 'ignore',
+      });
+      const finishKill = (): void => {
+        try { child.kill('SIGKILL'); } catch { /* process already exited */ }
+        finish(1);
+      };
+      killer.once('error', finishKill);
+      killer.once('close', finishKill);
+      forceCommandTimer = setTimeout(finishKill, FORCE_KILL_COMMAND_MS);
+    };
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
     child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
     child.stdin.on('error', error => { stdinFailed = true; stdinDelivered = false; stderr = `${stderr}\n${error.message}`; });
     child.on('error', error => { stderr = `${stderr}\n${error.message}`; });
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill();
+      if (process.platform !== 'win32') killPosixGroup('SIGTERM');
+      forceTimer = setTimeout(forceKill, FORCE_KILL_GRACE_MS);
     }, invocation.timeoutMs);
-    child.on('close', code => {
-      clearTimeout(timer);
-      resolve({ exitCode: typeof code === 'number' ? code : 1, stdout, stderr, timedOut, stdinDelivered });
-    });
+    child.on('close', finish);
     if (invocation.stdin !== null) child.stdin.end(invocation.stdin, 'utf8', () => { stdinDelivered = !stdinFailed; });
     else child.stdin.end(() => { stdinDelivered = !stdinFailed; });
   });

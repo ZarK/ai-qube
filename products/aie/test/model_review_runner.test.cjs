@@ -101,6 +101,27 @@ describe('model review runner', () => {
     assert.notEqual(result.exitCode, 0);
   });
 
+  it('force-terminates a fake host that ignores graceful shutdown', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-fake-hard-timeout-'));
+    const fakeHost = join(repoRoot, 'fake-hard-timeout.cjs');
+    writeFileSync(fakeHost, `process.on('SIGTERM', () => {}); setInterval(() => {}, 1_000);\n`);
+    const startedAt = Date.now();
+
+    const result = await runModelRouteProcess({
+      executable: process.execPath,
+      args: [fakeHost],
+      cwd: repoRoot,
+      stdin: null,
+      promptPath: null,
+      schemaPath: null,
+      timeoutMs: 100,
+    });
+
+    assert.equal(result.timedOut, true);
+    assert.notEqual(result.exitCode, 0);
+    assert.ok(Date.now() - startedAt < 3_000);
+  });
+
   it('keeps Codex prompt content on stdin and uses fixed read-only arguments', () => {
     const input = reviewInput('C:\\repo with spaces', 'codex');
     const prompt = buildModelReviewPrompt(input);

@@ -3607,7 +3607,7 @@ describe('PR gate service', () => {
             status: 'passed',
             severity: 'none',
             recommendation: 'approve',
-            summary: `${lane} passed without artifacts`,
+            summary: `${lane} passed without artifacts ghp_abcdefghijklmnopqrstuvwxyz123456`,
             artifacts: [],
             contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
             promptStack,
@@ -3636,6 +3636,8 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'inconclusive');
     assert.equal(result.status, 'pending');
     assert.match(rawOutput.stdout, /passed without artifacts/);
+    assert.match(rawOutput.stdout, /\[REDACTED\]/);
+    assert.doesNotMatch(rawOutput.stdout, /ghp_abcdefghijklmnopqrstuvwxyz123456/);
     assert.ok(writtenLane.artifacts.some(artifact => typeof artifact.path === 'string' && artifact.path.endsWith('issue-compliance.raw-output.json')));
     assert.ok(result.localReview.evidence[0].blockers.length > 0);
   });

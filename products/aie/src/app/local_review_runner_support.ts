@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
+import { redact } from '../redact.js';
 import { carryForwardDeltaTouched } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
@@ -576,10 +577,10 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
     headSha,
     lane,
     runnerKind,
-    args,
+    args: args.map(redact),
     exitCode: result.exitCode,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: redact(result.stdout),
+    stderr: redact(result.stderr),
     recordedAt: new Date().toISOString(),
   };
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
