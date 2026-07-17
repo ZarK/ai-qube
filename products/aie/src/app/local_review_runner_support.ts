@@ -359,7 +359,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string').map(item => redact(item.trim()))
+    : [];
 }
 
 function readFindings(value: unknown): ReviewFinding[] {
@@ -369,18 +371,18 @@ function readFindings(value: unknown): ReviewFinding[] {
     if (!isRecord(item) || typeof item.message !== 'string' || item.message.trim() === '') continue;
     const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
       ? {
-          path: item.location.path.trim(),
+          path: redact(item.location.path.trim()),
           ...(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0 ? { line: item.location.line } : {}),
           ...(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0 ? { endLine: item.location.endLine } : {}),
           side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
         }
       : undefined;
     findings.push({
-      id: typeof item.id === 'string' && item.id.trim() !== '' ? item.id.trim() : `finding-${findings.length + 1}`,
+      id: typeof item.id === 'string' && item.id.trim() !== '' ? redact(item.id.trim()) : `finding-${findings.length + 1}`,
       severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
       ...(location ? { location } : {}),
-      message: item.message.trim(),
-      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+      message: redact(item.message.trim()),
+      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: redact(item.suggestion.trim()) } : {}),
     });
   }
   return findings;
@@ -389,8 +391,8 @@ function readFindings(value: unknown): ReviewFinding[] {
 function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map(item => ({
-    kind: typeof item.kind === 'string' ? item.kind : 'json',
-    path: typeof item.path === 'string' ? item.path : '',
+    kind: typeof item.kind === 'string' ? redact(item.kind) : 'json',
+    path: typeof item.path === 'string' ? redact(item.path) : '',
     sha256: typeof item.sha256 === 'string' ? item.sha256 : '',
   }));
 }
@@ -427,7 +429,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     status,
     severity: readSeverity(value.severity),
     recommendation: readRecommendation(value.recommendation, status),
-    summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? value.summary.trim() : `${id} local review completed.`,
+    summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? redact(value.summary.trim()) : `${id} local review completed.`,
     blockers: readStringArray(value.blockers),
     findings: readFindings(value.findings),
     artifacts: readArtifacts(value.artifacts),
@@ -435,7 +437,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     surfaces: readStringArray(value.surfaces),
     contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).map(item => ({
       kind: typeof item.kind === 'string' ? item.kind as LocalReviewContextReviewed['kind'] : 'diff',
-      source: typeof item.source === 'string' ? item.source : 'local-command',
+      source: typeof item.source === 'string' ? redact(item.source) : 'local-command',
       trust: typeof item.trust === 'string' ? item.trust as LocalReviewContextReviewed['trust'] : 'local-evidence',
       freshness: typeof item.freshness === 'string' ? item.freshness as LocalReviewContextReviewed['freshness'] : 'current',
     })) : [],
@@ -448,7 +450,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       trust: typeof item.trust === 'string' ? item.trust : 'local-evidence',
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
-    completeness: typeof value.completeness === 'string' ? value.completeness.trim() : '',
+    completeness: typeof value.completeness === 'string' ? redact(value.completeness.trim()) : '',
     preconditions: readStringArray(value.preconditions),
     runnerProvenance: {
       runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',

@@ -225,6 +225,32 @@ describe('model review runner', () => {
     assert.equal(existsSync(capturedPromptPath), false);
   });
 
+  it('redacts model-derived evidence before persistence or publication', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-redact-'));
+    const token = 'ghp_abcdefghijklmnopqrstuvwxyz123456';
+    const body = laneResult();
+    body.summary = `Summary ${token}`;
+    body.blockers = [`Blocker ${token}`];
+    body.findings = [{ severity: 'advisory', message: `Message ${token}`, suggestion: `Suggestion ${token}`, location: { path: `source-${token}.ts` } }];
+    body.commands = [`command ${token}`];
+    body.surfaces = [`surface ${token}`];
+    body.contextReviewed = [{ kind: 'diff', source: `source ${token}`, trust: 'local-evidence', freshness: 'current' }];
+    body.toolsUsed = [`tool ${token}`];
+    body.completeness = `Complete ${token}`;
+    body.preconditions = [`Precondition ${token}`];
+
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'redacted' }) }),
+    });
+
+    assert.equal(result.error, null);
+    const serialized = JSON.stringify(result.evidence);
+    assert.doesNotMatch(serialized, new RegExp(token));
+    assert.match(serialized, /\[REDACTED\]/);
+  });
+
   it('fails closed on malformed or incomplete routed output', async () => {
     const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-bad-'));
     const malformed = await runModelReview({

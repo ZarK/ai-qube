@@ -445,7 +445,11 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
       };
       killer.once('error', finishKill);
       killer.once('close', finishKill);
-      forceCommandTimer = setTimeout(finishKill, FORCE_KILL_COMMAND_MS);
+      killer.unref();
+      forceCommandTimer = setTimeout(() => {
+        try { killer.kill(); } catch { /* taskkill already exited */ }
+        finishKill();
+      }, FORCE_KILL_COMMAND_MS);
     };
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
     child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
