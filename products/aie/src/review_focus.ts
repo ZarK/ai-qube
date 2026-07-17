@@ -55,15 +55,31 @@ export function pathsTouchPatterns(paths: readonly string[], patterns: readonly 
   return sharedPathsTouchPatterns(paths, patterns);
 }
 
-export function carryForwardDeltaTouched(deltaPaths: readonly string[], matchPatterns: readonly string[], contextPatterns: readonly string[]): boolean {
+export type CarryForwardContextMode = 'all' | 'config' | 'scope';
+
+export function defaultCarryForwardContext(laneId: string): CarryForwardContextMode {
+  if (laneId === 'issue-compliance' || laneId === 'final-gate' || laneId === 'task-record-compliance') return 'all';
+  if (laneId === 'security' || laneId === 'release-ci-supply-chain') return 'config';
+  return 'scope';
+}
+
+export function carryForwardDeltaTouched(deltaPaths: readonly string[], matchPatterns: readonly string[], contextPatterns: readonly string[], contextMode: CarryForwardContextMode = 'all'): boolean {
   const normalized = deltaPaths.map(path => normalizePath(path));
-  if (normalized.some(path => path.startsWith('.qube/') && !path.startsWith('.qube/aie/reviews/'))) return true;
-  if (normalized.some(path => {
+  const isConfigPath = (path: string): boolean => path.startsWith('.qube/') && !path.startsWith('.qube/aie/reviews/');
+  const isContextPath = (path: string): boolean => {
+    if (isConfigPath(path)) return true;
     const baseName = path.split('/').pop() ?? '';
-    return baseName === 'AGENTS.md' || baseName === 'CLAUDE.md';
-  })) return true;
-  if (contextPatterns.length > 0 && pathMatchesAny(normalized, contextPatterns)) return true;
-  return matchPatterns.length > 0 ? pathMatchesAny(normalized, matchPatterns) : normalized.length > 0;
+    if (baseName === 'AGENTS.md' || baseName === 'CLAUDE.md') return true;
+    return contextPatterns.length > 0 && pathMatchesAny([path], contextPatterns);
+  };
+  const contextPaths = normalized.filter(isContextPath);
+  if (contextMode === 'all' && contextPaths.length > 0) return true;
+  if (contextMode === 'config' && contextPaths.some(isConfigPath)) return true;
+  // Scope evaluation runs on the delta minus context paths and review-evidence
+  // audit files, so doc-only or evidence-only commits carry scoped lanes forward
+  // while a mixed doc+source commit still re-runs them.
+  const scopePaths = normalized.filter(path => !isContextPath(path) && !path.startsWith('.qube/aie/reviews/'));
+  return matchPatterns.length > 0 ? pathMatchesAny(scopePaths, matchPatterns) : scopePaths.length > 0;
 }
 
 function readFocusId(lane: ReviewLanePolicy): LocalReviewLaneId | null {

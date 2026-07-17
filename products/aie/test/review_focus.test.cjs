@@ -82,3 +82,46 @@ describe('review focus selection', () => {
     assert.deepEqual(focuses, ['issue-compliance', 'code-quality', 'performance']);
   });
 });
+
+const { carryForwardDeltaTouched, defaultCarryForwardContext } = require('../dist/review_focus.js');
+
+describe('carry-forward context modes', () => {
+  const contextPatterns = ['AGENTS.md', '**/AGENTS.md', 'docs/spec.md'];
+
+  it('keeps fail-closed all-mode behavior as the default', () => {
+    assert.equal(carryForwardDeltaTouched(['CLAUDE.md'], [], contextPatterns), true);
+    assert.equal(carryForwardDeltaTouched(['.qube/aie/config.json'], [], contextPatterns), true);
+    assert.equal(carryForwardDeltaTouched(['docs/spec.md'], [], contextPatterns, 'all'), true);
+  });
+
+  it('scope mode carries doc-only deltas and still honors lane globs', () => {
+    assert.equal(carryForwardDeltaTouched(['CLAUDE.md'], [], contextPatterns, 'scope'), false);
+    assert.equal(carryForwardDeltaTouched(['.qube/aie/config.json'], [], contextPatterns, 'scope'), false);
+    assert.equal(carryForwardDeltaTouched(['docs/spec.md'], ['src/**'], contextPatterns, 'scope'), false);
+    assert.equal(carryForwardDeltaTouched(['src/app.ts'], ['src/**'], contextPatterns, 'scope'), true);
+    assert.equal(carryForwardDeltaTouched(['notes.md'], ['src/**'], contextPatterns, 'scope'), false);
+  });
+
+  it('scope mode still reruns broad empty-match lanes on any non-context delta', () => {
+    assert.equal(carryForwardDeltaTouched(['src/app.ts'], [], contextPatterns, 'scope'), true);
+    assert.equal(carryForwardDeltaTouched(['CLAUDE.md', 'src/app.ts'], [], contextPatterns, 'scope'), true);
+    assert.equal(carryForwardDeltaTouched(['CLAUDE.md', 'AGENTS.md'], [], contextPatterns, 'scope'), false);
+  });
+
+  it('config mode reruns on configuration surfaces only', () => {
+    assert.equal(carryForwardDeltaTouched(['.qube/aie/config.json'], [], contextPatterns, 'config'), true);
+    assert.equal(carryForwardDeltaTouched(['CLAUDE.md'], [], contextPatterns, 'config'), false);
+    assert.equal(carryForwardDeltaTouched(['.qube/aie/reviews/93/12/abc/code-quality.json'], [], contextPatterns, 'config'), false);
+    assert.equal(carryForwardDeltaTouched(['src/app.ts'], [], contextPatterns, 'config'), true);
+  });
+
+  it('assigns conservative per-lane defaults', () => {
+    assert.equal(defaultCarryForwardContext('issue-compliance'), 'all');
+    assert.equal(defaultCarryForwardContext('final-gate'), 'all');
+    assert.equal(defaultCarryForwardContext('task-record-compliance'), 'all');
+    assert.equal(defaultCarryForwardContext('security'), 'config');
+    assert.equal(defaultCarryForwardContext('release-ci-supply-chain'), 'config');
+    assert.equal(defaultCarryForwardContext('performance'), 'scope');
+    assert.equal(defaultCarryForwardContext('code-quality'), 'scope');
+  });
+});

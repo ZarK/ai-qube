@@ -1,4 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
+import { defaultCarryForwardContext } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
@@ -280,7 +281,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
@@ -302,6 +303,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       command,
       rereview: readReviewRereviewMode(entry.rereview, defaultRereviewMode(id), `${lanePath}.rereview`, errors),
       route,
+      carryForwardContext: readCarryForwardContext(entry.carryForwardContext, defaultCarryForwardContext(id), `${lanePath}.carryForwardContext`, errors),
     });
   });
   return lanes;
@@ -321,6 +323,13 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
   const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
   const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 1, 20, path, errors);
   return host && tier ? { host, tier, timeoutSeconds, maxTurns } : null;
+}
+
+function readCarryForwardContext(value: unknown, defaultValue: ReviewLanePolicy['carryForwardContext'], path: string, errors: ValidationError[]): ReviewLanePolicy['carryForwardContext'] {
+  if (value === undefined) return defaultValue;
+  if (value === 'all' || value === 'config' || value === 'scope') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "all", "config", or "scope"` });
+  return defaultValue;
 }
 
 export function defaultRereviewMode(laneId: string): ReviewLaneRereviewMode {

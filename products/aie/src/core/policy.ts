@@ -103,6 +103,7 @@ export interface ReviewLanePolicy {
   command?: string;
   rereview: ReviewLaneRereviewMode;
   route: ReviewRoutePolicy | null;
+  carryForwardContext: 'all' | 'config' | 'scope';
 }
 
 export interface ReviewPolicy {
