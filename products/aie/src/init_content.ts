@@ -284,14 +284,20 @@ function renderTodoRequirementLines(config: Config, hosts: AgentHostProfile[]): 
   ];
 }
 
-function renderHostCapabilityLines(hosts: AgentHostProfile[]): string[] {
+function renderHostCapabilityLines(config: Config, hosts: AgentHostProfile[]): string[] {
+  const routedReview = routedLocalReviewEnabled(config);
   return hosts.map(host => {
     const commandText = host.supportsProjectCommands
       ? `project commands or agents are installed when configured (${host.commandTargets.map(target => target.path).join(', ') || 'none'})`
       : 'project command files are not installed by Executor for this host';
-    const subagentText = host.subagents.supported ? ` Subagent guidance: ${host.subagents.instruction}` : '';
+    const dialogueText = routedReview
+      ? 'Use host plan/todo support in the main session; run the configured `pr gate` route batch and do not spawn native review subagents for routed lanes'
+      : host.dialogue.expectation;
+    const subagentText = routedReview
+      ? ' Routed review guidance: QUBE owns exact prompt execution, evidence, and provider publication from the main process.'
+      : host.subagents.supported ? ` Subagent guidance: ${host.subagents.instruction}` : '';
     const hookText = host.hooks.supported ? host.hooks.description : 'No host hook support is modeled for this profile.';
-    return `${host.displayName}: instructions target ${host.instructionTargets.map(target => `\`${target.path}\``).join(', ')}, ${commandText}, todo tools ${host.todo.tools.map(tool => `\`${tool}\``).join(', ') || 'visible checklist'}, dialogue expectation: ${host.dialogue.expectation}.${subagentText} Hook support: ${hookText}`;
+    return `${host.displayName}: instructions target ${host.instructionTargets.map(target => `\`${target.path}\``).join(', ')}, ${commandText}, todo tools ${host.todo.tools.map(tool => `\`${tool}\``).join(', ') || 'visible checklist'}, dialogue expectation: ${dialogueText}.${subagentText} Hook support: ${hookText}`;
   });
 }
 
@@ -464,7 +470,7 @@ ${renderBulletList(renderTodoRequirementLines(config, hosts))}
 
 Host capability profile:
 
-${renderBulletList(renderHostCapabilityLines(hosts))}
+${renderBulletList(renderHostCapabilityLines(config, hosts))}
 
 Stop conditions:
 

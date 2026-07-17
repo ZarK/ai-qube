@@ -324,7 +324,10 @@ describe('init service', () => {
     assert.match(agents, /Configured routed local review executes through/);
     assert.match(agents, /complete lane batch in fresh read-only model sessions/);
     assert.match(agents, /Do not spawn native review subagents for routed lanes/);
-    assert.doesNotMatch(agents, /spawn one independent Codex subagent per lane/);
+    assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
+    assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
+    assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
+    assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
     assert.doesNotMatch(reviewAgent, /model = /);
   });
 
