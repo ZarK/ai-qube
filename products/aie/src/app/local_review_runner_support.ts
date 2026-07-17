@@ -608,6 +608,8 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   mkdirSync(directory, { recursive: true });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  const reviewerId = adapter === 'local-host' ? lane.runnerProvenance?.host ?? 'codex' : 'local-command';
+  const reviewerName = reviewerId === 'codex' ? 'Codex' : reviewerId === 'grok' ? 'Grok' : reviewerId;
   const body = {
     version: 1,
     issueNumber,
@@ -615,9 +617,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     headSha,
     profile,
     adapter,
-    reviewer: adapter === 'local-host'
-      ? { id: 'codex', name: 'Codex', adapterKind: 'local' }
-      : { id: 'local-command', name: 'local-command', adapterKind: 'local' },
+    reviewer: { id: reviewerId, name: reviewerName, adapterKind: 'local' },
     lane: lane.id,
     ...lane,
     runnerProvenance: lane.runnerProvenance,
