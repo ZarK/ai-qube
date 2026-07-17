@@ -130,12 +130,7 @@
           "tools": [],
           "runner": "local-host",
           "rereview": "delta",
-          "route": {
-            "host": "codex",
-            "tier": "review",
-            "timeoutSeconds": 900,
-            "maxTurns": 1
-          }
+          "route": null
         },
         {
           "id": "performance",
