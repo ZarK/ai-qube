@@ -159,13 +159,13 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
     additionalProperties: false,
     required: ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions'],
     properties: {
-      issueNumber: { const: input.issueNumber },
-      prNumber: { const: input.prNumber },
-      headSha: { const: input.headSha },
-      lane: { const: input.lane },
-      status: { enum: ['passed', 'failed', 'needs-work', 'pending', 'missing', 'stale', 'unavailable', 'malformed', 'inconclusive'] },
-      severity: { enum: ['none', 'low', 'medium', 'high', 'critical'] },
-      recommendation: { enum: ['approve', 'request-changes', 'pending', 'inconclusive'] },
+      issueNumber: { type: 'integer', const: input.issueNumber },
+      prNumber: { type: 'integer', const: input.prNumber },
+      headSha: { type: 'string', const: input.headSha },
+      lane: { type: 'string', const: input.lane },
+      status: { type: 'string', enum: ['passed', 'failed', 'needs-work', 'pending', 'missing', 'stale', 'unavailable', 'malformed', 'inconclusive'] },
+      severity: { type: 'string', enum: ['none', 'low', 'medium', 'high', 'critical'] },
+      recommendation: { type: 'string', enum: ['approve', 'request-changes', 'pending', 'inconclusive'] },
       summary: { type: 'string', minLength: 1 },
       blockers: stringArray,
       findings: {
@@ -173,22 +173,24 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['severity', 'message'],
+          required: ['id', 'severity', 'message', 'suggestion', 'location'],
           properties: {
-            id: { type: 'string' },
-            severity: { enum: ['blocking', 'advisory'] },
+            id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            severity: { type: 'string', enum: ['blocking', 'advisory'] },
             message: { type: 'string', minLength: 1 },
-            suggestion: { type: 'string' },
+            suggestion: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             location: {
-              type: 'object',
-              additionalProperties: false,
-              required: ['path'],
-              properties: {
-                path: { type: 'string', minLength: 1 },
-                line: { type: 'integer', minimum: 1 },
-                endLine: { type: 'integer', minimum: 1 },
-                side: { enum: ['source', 'destination'] },
-              },
+              anyOf: [{ type: 'null' }, {
+                type: 'object',
+                additionalProperties: false,
+                required: ['path', 'line', 'endLine', 'side'],
+                properties: {
+                  path: { type: 'string', minLength: 1 },
+                  line: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+                  endLine: { anyOf: [{ type: 'integer', minimum: 1 }, { type: 'null' }] },
+                  side: { anyOf: [{ type: 'string', enum: ['source', 'destination'] }, { type: 'null' }] },
+                },
+              }],
             },
           },
         },
@@ -199,7 +201,7 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['kind', 'path'],
+          required: ['kind', 'path', 'sha256'],
           properties: {
             kind: { type: 'string', minLength: 1 },
             path: { type: 'string', minLength: 1 },
@@ -217,10 +219,10 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
           additionalProperties: false,
           required: ['kind', 'source', 'trust', 'freshness'],
           properties: {
-            kind: { enum: [...CONTEXT_KIND_VALUES] },
+            kind: { type: 'string', enum: [...CONTEXT_KIND_VALUES] },
             source: { type: 'string' },
-            trust: { enum: [...CONTEXT_TRUST_VALUES] },
-            freshness: { enum: [...CONTEXT_FRESHNESS_VALUES] },
+            trust: { type: 'string', enum: [...CONTEXT_TRUST_VALUES] },
+            freshness: { type: 'string', enum: [...CONTEXT_FRESHNESS_VALUES] },
           },
         },
       },
@@ -320,6 +322,28 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
   const candidate = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
   return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
+}
+
+function normalizeSchemaOptionals(value: unknown): unknown {
+  if (!isRecord(value) || !Array.isArray(value.findings)) return value;
+  return {
+    ...value,
+    findings: value.findings.map(finding => {
+      if (!isRecord(finding)) return finding;
+      const normalized = { ...finding };
+      if (normalized.id === null) delete normalized.id;
+      if (normalized.suggestion === null) delete normalized.suggestion;
+      if (normalized.location === null) delete normalized.location;
+      else if (isRecord(normalized.location)) {
+        const location = { ...normalized.location };
+        if (location.line === null) delete location.line;
+        if (location.endLine === null) delete location.endLine;
+        if (location.side === null) delete location.side;
+        normalized.location = location;
+      }
+      return normalized;
+    }),
+  };
 }
 
 export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null, schemaPath: string | null = null): ModelRouteInvocation {
@@ -528,7 +552,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       invocationId,
     };
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
-    const evidence = strictRoutedLane(modelResult, input, provenance);
+    const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
     if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || evidence.artifacts.length === 0) {
       return { evidence: null, reasonCode: 'model-route-incomplete-evidence', error: 'Model review result omitted required completeness, contextReviewed, or artifacts evidence.' };

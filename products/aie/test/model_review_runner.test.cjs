@@ -139,7 +139,11 @@ describe('model review runner', () => {
         assert.equal(existsSync(invocation.schemaPath), true);
         const schema = JSON.parse(readFileSync(invocation.schemaPath, 'utf8'));
         assert.equal(schema.properties.issueNumber.const, 309);
+        assert.equal(schema.properties.issueNumber.type, 'integer');
         assert.equal(schema.properties.lane.const, 'code-quality');
+        assert.equal(schema.properties.lane.type, 'string');
+        assert.deepEqual(schema.properties.findings.items.required, ['id', 'severity', 'message', 'suggestion', 'location']);
+        assert.deepEqual(schema.properties.artifacts.items.required, ['kind', 'path', 'sha256']);
         assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], invocation.schemaPath);
         return {
           exitCode: 0,
