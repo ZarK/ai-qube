@@ -225,7 +225,8 @@ describe('model review runner', () => {
         assert.equal(existsSync(invocation.promptPath), true);
         assert.match(readFileSync(invocation.promptPath, 'utf8'), /INSPECT EXACT LANE PROMPT/);
         assert.equal(invocation.args.some(arg => arg.includes('INSPECT EXACT LANE PROMPT')), false);
-        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }) };
+        const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) };
       },
     });
 
@@ -300,7 +301,7 @@ describe('model review runner', () => {
     assert.equal(malformed.evidence, null);
     assert.equal(malformed.reasonCode, 'model-route-malformed-json');
 
-    const multipleObjects = await runModelReview({
+    const multipleFinalObjects = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',
       runProcess: async () => ({
@@ -311,8 +312,23 @@ describe('model review runner', () => {
         stdout: JSON.stringify({ text: `${JSON.stringify(laneResult())}\n${JSON.stringify(laneResult())}`, sessionId: 'multiple' }),
       }),
     });
-    assert.equal(multipleObjects.evidence, null);
-    assert.equal(multipleObjects.reasonCode, 'model-route-output-envelope');
+    assert.equal(multipleFinalObjects.evidence, null);
+    assert.equal(multipleFinalObjects.reasonCode, 'model-route-contract-mismatch');
+
+    const contradictoryPending = { ...laneResult(), status: 'pending', recommendation: 'pending', blockers: ['Contradictory blocker.'] };
+    const contradictorySequence = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: `${JSON.stringify(contradictoryPending)}\n${JSON.stringify(laneResult())}`, sessionId: 'contradictory' }),
+      }),
+    });
+    assert.equal(contradictorySequence.evidence, null);
+    assert.equal(contradictorySequence.reasonCode, 'model-route-contract-mismatch');
 
     const incompleteResult = laneResult();
     incompleteResult.artifacts = [];

@@ -490,25 +490,56 @@ function parseCodexOutput(stdout: string): { text: string; sessionId: string | n
   return text ? { text, sessionId } : null;
 }
 
-function singleJsonObjectText(text: string): string | null {
-  const candidate = text.trim();
-  if (candidate === '') return null;
-  try {
-    const parsed: unknown = JSON.parse(candidate);
-    return isRecord(parsed) ? candidate : null;
-  } catch {
-    return null;
+function jsonObjectSequence(text: string): string[] | null {
+  let index = 0;
+  const objects: string[] = [];
+  while (index < text.length) {
+    while (index < text.length && /\s/.test(text[index])) index += 1;
+    if (index >= text.length) break;
+    if (text[index] !== '{') return null;
+    const start = index;
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+    for (; index < text.length; index += 1) {
+      const character = text[index];
+      if (inString) {
+        if (escaped) escaped = false;
+        else if (character === '\\') escaped = true;
+        else if (character === '"') inString = false;
+        continue;
+      }
+      if (character === '"') inString = true;
+      else if (character === '{') depth += 1;
+      else if (character === '}') {
+        depth -= 1;
+        if (depth === 0) {
+          index += 1;
+          break;
+        }
+      }
+    }
+    if (depth !== 0 || inString) return null;
+    const candidate = text.slice(start, index);
+    try {
+      const parsed: unknown = JSON.parse(candidate);
+      if (!isRecord(parsed)) return null;
+    } catch {
+      return null;
+    }
+    objects.push(candidate);
   }
+  return objects.length > 0 ? objects : null;
 }
 
-function parseGrokOutput(stdout: string): { text: string; sessionId: string | null } | null {
+function parseGrokOutput(stdout: string): { text: string; priorTexts: string[]; sessionId: string | null } | null {
   try {
     const value: unknown = JSON.parse(stdout);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const record = value as Record<string, unknown>;
     if (typeof record.text !== 'string') return null;
-    const text = singleJsonObjectText(record.text);
-    return text ? { text, sessionId: typeof record.sessionId === 'string' ? record.sessionId : null } : null;
+    const objects = jsonObjectSequence(record.text);
+    return objects ? { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId: typeof record.sessionId === 'string' ? record.sessionId : null } : null;
   } catch {
     return null;
   }
@@ -574,6 +605,30 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       isolation: 'read-only',
       invocationId,
     };
+    if ('priorTexts' in parsedHostOutput) {
+      const priorTexts = parsedHostOutput.priorTexts;
+      if (!Array.isArray(priorTexts) || !priorTexts.every((text): text is string => typeof text === 'string')) {
+        return { evidence: null, reasonCode: 'model-route-output-envelope', error: 'Grok review route returned an invalid structured snapshot envelope.' };
+      }
+      if (priorTexts.length >= input.plan.maxTurns) {
+        return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Grok review route returned more structured snapshots than the configured turn bound.' };
+      }
+      for (const priorText of priorTexts) {
+        let priorResult: unknown;
+        try { priorResult = JSON.parse(priorText); } catch {
+          return { evidence: null, reasonCode: 'model-route-malformed-json', error: 'Grok review route returned a malformed structured progress snapshot.' };
+        }
+        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance);
+        if (!priorEvidence
+          || priorEvidence.status !== 'pending'
+          || priorEvidence.recommendation !== 'pending'
+          || priorEvidence.severity !== 'none'
+          || priorEvidence.blockers.length > 0
+          || priorEvidence.findings.length > 0) {
+          return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Grok review route returned a contradictory or non-pending progress snapshot before its final result.' };
+        }
+      }
+    }
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
