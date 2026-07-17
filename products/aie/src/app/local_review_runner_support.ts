@@ -4,8 +4,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
+import { redact } from '../redact.js';
 import { carryForwardDeltaTouched } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
@@ -358,7 +359,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function readStringArray(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string').map(item => redact(item.trim()))
+    : [];
 }
 
 function readFindings(value: unknown): ReviewFinding[] {
@@ -368,18 +371,22 @@ function readFindings(value: unknown): ReviewFinding[] {
     if (!isRecord(item) || typeof item.message !== 'string' || item.message.trim() === '') continue;
     const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
       ? {
-          path: item.location.path.trim(),
+          path: redact(item.location.path.trim()),
           ...(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0 ? { line: item.location.line } : {}),
           ...(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0 ? { endLine: item.location.endLine } : {}),
-          side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
+          ...(item.location.side === 'source'
+            ? { side: 'source' as const }
+            : item.location.side === 'destination'
+              ? { side: 'destination' as const }
+              : {}),
         }
       : undefined;
     findings.push({
-      id: typeof item.id === 'string' && item.id.trim() !== '' ? item.id.trim() : `finding-${findings.length + 1}`,
+      id: typeof item.id === 'string' && item.id.trim() !== '' ? redact(item.id.trim()) : `finding-${findings.length + 1}`,
       severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
       ...(location ? { location } : {}),
-      message: item.message.trim(),
-      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+      message: redact(item.message.trim()),
+      ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: redact(item.suggestion.trim()) } : {}),
     });
   }
   return findings;
@@ -388,8 +395,8 @@ function readFindings(value: unknown): ReviewFinding[] {
 function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
   if (!Array.isArray(value)) return [];
   return value.filter(isRecord).map(item => ({
-    kind: typeof item.kind === 'string' ? item.kind : 'json',
-    path: typeof item.path === 'string' ? item.path : '',
+    kind: typeof item.kind === 'string' ? redact(item.kind) : 'json',
+    path: typeof item.path === 'string' ? redact(item.path) : '',
     sha256: typeof item.sha256 === 'string' ? item.sha256 : '',
   }));
 }
@@ -414,7 +421,7 @@ function readRecommendation(value: unknown, status: LocalReviewStatus): LocalRev
   return 'inconclusive';
 }
 
-function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string): LaneEvidence | null {
+export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string): LaneEvidence | null {
   if (!isRecord(value)) return null;
   const id = readLaneId(value.lane ?? value.id);
   if (id !== lane) return null;
@@ -426,7 +433,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
     status,
     severity: readSeverity(value.severity),
     recommendation: readRecommendation(value.recommendation, status),
-    summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? value.summary.trim() : `${id} local review completed.`,
+    summary: typeof value.summary === 'string' && value.summary.trim() !== '' ? redact(value.summary.trim()) : `${id} local review completed.`,
     blockers: readStringArray(value.blockers),
     findings: readFindings(value.findings),
     artifacts: readArtifacts(value.artifacts),
@@ -434,7 +441,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
     surfaces: readStringArray(value.surfaces),
     contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).map(item => ({
       kind: typeof item.kind === 'string' ? item.kind as LocalReviewContextReviewed['kind'] : 'diff',
-      source: typeof item.source === 'string' ? item.source : 'local-command',
+      source: typeof item.source === 'string' ? redact(item.source) : 'local-command',
       trust: typeof item.trust === 'string' ? item.trust as LocalReviewContextReviewed['trust'] : 'local-evidence',
       freshness: typeof item.freshness === 'string' ? item.freshness as LocalReviewContextReviewed['freshness'] : 'current',
     })) : [],
@@ -447,7 +454,7 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       trust: typeof item.trust === 'string' ? item.trust : 'local-evidence',
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
-    completeness: typeof value.completeness === 'string' ? value.completeness.trim() : '',
+    completeness: typeof value.completeness === 'string' ? redact(value.completeness.trim()) : '',
     preconditions: readStringArray(value.preconditions),
     runnerProvenance: {
       runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',
@@ -460,6 +467,10 @@ function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, issueNum
       promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' ? value.runnerProvenance.promptStackHash : null,
       headSha: typeof value.runnerProvenance.headSha === 'string' ? value.runnerProvenance.headSha : headSha,
       providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? value.runnerProvenance.providerPublishStatus : null,
+      model: typeof value.runnerProvenance.model === 'string' ? value.runnerProvenance.model : null,
+      effort: typeof value.runnerProvenance.effort === 'string' ? value.runnerProvenance.effort : null,
+      isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
+      invocationId: typeof value.runnerProvenance.invocationId === 'string' ? value.runnerProvenance.invocationId : null,
     },
   };
 }
@@ -572,10 +583,10 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
     headSha,
     lane,
     runnerKind,
-    args,
+    args: args.map(redact),
     exitCode: result.exitCode,
-    stdout: result.stdout,
-    stderr: result.stderr,
+    stdout: redact(result.stdout),
+    stderr: redact(result.stderr),
     recordedAt: new Date().toISOString(),
   };
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
@@ -603,6 +614,8 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
   mkdirSync(directory, { recursive: true });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  const reviewerId = adapter === 'local-host' ? lane.runnerProvenance?.host ?? 'codex' : 'local-command';
+  const reviewerName = reviewerId === 'codex' ? 'Codex' : reviewerId === 'grok' ? 'Grok' : reviewerId;
   const body = {
     version: 1,
     issueNumber,
@@ -610,15 +623,45 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     headSha,
     profile,
     adapter,
-    reviewer: adapter === 'local-host'
-      ? { id: 'codex', name: 'Codex', adapterKind: 'local' }
-      : { id: 'local-command', name: 'local-command', adapterKind: 'local' },
+    reviewer: { id: reviewerId, name: reviewerName, adapterKind: 'local' },
     lane: lane.id,
     ...lane,
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
   writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  return path;
+}
+
+export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LaneEvidence): string | null {
+  const provenance = lane.runnerProvenance;
+  if (!provenance || provenance.runnerKind !== 'local-host' || provenance.freshContext !== true || provenance.promptOnly === true) return null;
+  const evidencePath = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  const evidence: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
+  if (!isRecord(evidence)) return null;
+  const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify({
+    version: 1,
+    issueNumber,
+    prNumber,
+    headSha,
+    lane: lane.id,
+    evidenceSha256: localReviewEvidenceSha256(evidence),
+    runnerKind: 'local-host',
+    host: provenance.host,
+    freshContext: provenance.freshContext,
+    promptOnly: provenance.promptOnly,
+    taskId: provenance.taskId,
+    sessionId: provenance.sessionId,
+    threadId: provenance.threadId,
+    promptStackHash: provenance.promptStackHash,
+    model: provenance.model,
+    effort: provenance.effort,
+    isolation: provenance.isolation,
+    invocationId: provenance.invocationId,
+    recordedAt: new Date().toISOString(),
+  }, null, 2)}\n`);
   return path;
 }
 

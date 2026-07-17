@@ -305,6 +305,32 @@ describe('init service', () => {
     assert.match(agent, /model_reasoning_effort = "high"/);
   });
 
+  it('renders routed review workflow instructions instead of native subagent steps', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(agents, /Configured routed local review executes through/);
+    assert.match(agents, /complete lane batch in fresh read-only model sessions/);
+    assert.match(agents, /Do not spawn native review subagents for routed lanes/);
+    assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
+    assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
+    assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
+    assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
+    assert.doesNotMatch(reviewAgent, /model = /);
+  });
+
   it('renders review-focus agents with tier models and effort for Claude Code and OpenCode hosts', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();

@@ -25,6 +25,7 @@ try {
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../dist/app/pr_review_publish.js');
+const { resolveModelReviewPlan } = require('../dist/app/local_review_runner.js');
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
@@ -56,6 +57,21 @@ function commitTrustedBase(repo, remote = 'origin', branch = 'main') {
 function trustReviewCommands(repo, remote = 'origin', branch = 'main') {
   writeConfig(repo, { version: 1, policy: { reviews: { adapter: 'local' } } });
   commitTrustedBase(repo, remote, branch);
+}
+
+function commitRoutedReviewHead(repo) {
+  writeConfig(repo, {
+    version: 1,
+    policy: {
+      reviews: {
+        adapter: 'local',
+        models: { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} },
+        route: { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 },
+      },
+    },
+  });
+  execFileSync('git', ['add', '.qube/aie/config.json'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', 'configure routed review'], { cwd: repo, stdio: 'ignore' });
 }
 
 function writeWorkflow(repo, body) {
@@ -224,6 +240,10 @@ function writeTestTrustedLocalHostProvenance({ repo, issueNumber, prNumber, head
     sessionId: provenance.sessionId,
     threadId: provenance.threadId,
     promptStackHash: provenance.promptStackHash,
+    model: provenance.model ?? null,
+    effort: provenance.effort ?? null,
+    isolation: provenance.isolation ?? null,
+    invocationId: provenance.invocationId ?? null,
     recordedAt: '2026-06-22T00:00:00.000Z',
   }, null, 2)}\n`);
 }
@@ -1363,6 +1383,189 @@ describe('PR gate service', () => {
     assert.match(result.localReview.evidence[0].path, /\.qube[\\/]aie[\\/]reviews[\\/]93[\\/]12[\\/]abc123/);
     assert.equal(result.localReviewPublish.status, 'disabled');
     assert.equal(result.status, 'pending');
+  });
+
+  it('plans isolated model routes without spawning native Codex subagents', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewLanes.find(lane => lane.id === 'code-quality').route = { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 };
+    config.reviewModels.review.codex = { model: 'gpt-5.6-luna', effort: 'high' };
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec, includeLocalReviewPrompts: true });
+
+    assert.equal(result.localReviewRunner.status, 'planned');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.spawnContract === null));
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.host, 'codex');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.model, 'gpt-5.6-luna');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality').route.effort, 'high');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.host, 'grok');
+    assert.equal(result.localReviewRunner.lanes.find(lane => lane.lane !== 'code-quality').route.model, 'grok-4.5');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route.isolation === 'read-only'));
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.promptStackHash.length === 64));
+  });
+
+  it('does not apply a global model route to non-host lane runners', () => {
+    const config = localHostConfig(null);
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const lane = config.reviewLanes.find(item => item.id === 'issue-compliance');
+    lane.runner = 'local-command';
+    lane.command = 'review-fixture';
+
+    assert.equal(resolveModelReviewPlan(config, 'issue-compliance'), null);
+    assert.equal(resolveModelReviewPlan(config, 'code-quality').host, 'grok');
+
+    config.reviewLanes = [];
+    assert.equal(resolveModelReviewPlan(config, 'issue-compliance').host, 'grok');
+  });
+
+  it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const order = [];
+    const exec = async args => {
+      if ((args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST')) order.push('provider-mutation');
+      return fixture.exec(args);
+    };
+    const modelRouteProcess = async invocation => {
+      order.push('model');
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      assert.ok(lane);
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.route?.host === 'grok'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.runnerProvenance.host === 'grok'));
+    const writtenLane = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json'), 'utf8'));
+    assert.deepEqual(writtenLane.reviewer, { id: 'grok', name: 'Grok', adapterKind: 'local' });
+    assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
+    assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
+    assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
+  });
+
+  it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = ['@coderabbitai'];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let localHead = 'abc123';
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => localHead,
+      onBeforeMutate: async () => { localHead = 'changed-head'; },
+    });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'pending');
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'edit'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
+  });
+
+  it('withholds every provider mutation when a routed lane batch is incomplete', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let modelCalls = 0;
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+      modelRouteProcess: async () => {
+        modelCalls += 1;
+        return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false, stdinDelivered: true };
+      },
+    });
+
+    assert.ok(modelCalls > 0);
+    assert.equal(result.localReviewRunner.status, 'failed');
+    assert.equal(result.localReviewPublish.status, 'pending');
+    assert.match(result.localReviewPublish.nextAction, /no provider mutation/i);
+    assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
   it('surfaces provider feedback when local review evidence is still missing', async () => {
@@ -2589,6 +2792,25 @@ describe('PR gate service', () => {
     assert.match(JSON.stringify(result.localReview), /recommendation request-changes is not valid with status passed/);
   });
 
+  it('blocks gate aggregation when a passed lane contains blocking structured findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      findings: lane.id === 'code-quality'
+        ? [{ severity: 'blocking', message: 'Fix the false-success path.', location: { path: 'src/review.ts', line: 4 } }]
+        : lane.findings,
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /recorded blocking structured findings/);
+  });
+
   it('rejects lane evidence publishing without a completeness self-check', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -2791,6 +3013,10 @@ describe('PR gate service', () => {
     evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
       ? {
           ...lane,
+          status: 'needs-work',
+          severity: 'high',
+          recommendation: 'request-changes',
+          blockers: ['Anchor the blocking finding on the changed line.'],
           summary: 'code quality found structured findings',
           findings: [
             { id: 'inline-1', severity: 'blocking', location: { path: 'src/review.ts', line: 2, side: 'destination' }, message: 'Anchor this on the changed line.' },
@@ -3383,7 +3609,7 @@ describe('PR gate service', () => {
             status: 'passed',
             severity: 'none',
             recommendation: 'approve',
-            summary: `${lane} passed without artifacts`,
+            summary: `${lane} passed without artifacts ghp_abcdefghijklmnopqrstuvwxyz123456`,
             artifacts: [],
             contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
             promptStack,
@@ -3412,6 +3638,8 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'inconclusive');
     assert.equal(result.status, 'pending');
     assert.match(rawOutput.stdout, /passed without artifacts/);
+    assert.match(rawOutput.stdout, /\[REDACTED\]/);
+    assert.doesNotMatch(rawOutput.stdout, /ghp_abcdefghijklmnopqrstuvwxyz123456/);
     assert.ok(writtenLane.artifacts.some(artifact => typeof artifact.path === 'string' && artifact.path.endsWith('issue-compliance.raw-output.json')));
     assert.ok(result.localReview.evidence[0].blockers.length > 0);
   });
@@ -3512,6 +3740,50 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'pending');
     assert.equal(result.localReview.status, 'inconclusive');
     assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('evidence digest does not match')));
+  });
+
+  it('rejects passed lane evidence that contains blocking structured findings', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      findings: lane.id === 'code-quality'
+        ? [{ severity: 'blocking', message: 'Fix the false-success path.', location: { path: 'src/review.ts', line: 4 } }]
+        : lane.findings,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /recorded blocking structured findings but claimed status passed with recommendation approve/,
+    );
+  });
+
+  it('rejects routed model provenance that disagrees with the trusted host record', async () => {
+    const repo = makeGitRepo();
+    const config = localReviewConfig();
+    const evidence = localEvidence();
+    for (const lane of evidence.lanes) {
+      lane.runnerProvenance = { ...lane.runnerProvenance, model: 'gpt-5.6-luna', effort: 'high', isolation: 'read-only', invocationId: `route-${lane.id}` };
+    }
+    writeLocalEvidence(repo, evidence);
+    const provenancePath = trustedLocalHostProvenancePath(repo, 93, 12, 'abc123', 'code-quality');
+    const provenance = JSON.parse(readFileSync(provenancePath, 'utf8'));
+    writeFileSync(provenancePath, `${JSON.stringify({ ...provenance, model: 'forged-model' }, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.equal(result.status, 'pending');
+    assert.equal(result.localReview.status, 'inconclusive');
+    assert.ok(result.localReview.evidence[0].blockers.some(blocker => blocker.includes('routed model provenance does not match')));
   });
 
   it('ignores non-file JSON entries when searching for stale local evidence', async () => {

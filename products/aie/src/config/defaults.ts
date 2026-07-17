@@ -90,6 +90,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       requestText: '',
       carryForwardPublish: 'note',
       models: { review: {}, economy: {}, synthesis: {} },
+      route: null,
     },
     gates: {
       definitions: [],
@@ -163,7 +164,7 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
 
 function cloneReviewModelTierMap(tierMap: ReviewModelsPolicy['review'] | undefined): ReviewModelsPolicy['review'] {
   const cloned: ReviewModelsPolicy['review'] = {};
-  for (const host of ['codex', 'claude-code', 'opencode'] as const) {
+  for (const host of ['codex', 'claude-code', 'opencode', 'grok'] as const) {
     const binding = tierMap?.[host];
     if (binding) cloned[host] = { ...binding };
   }
@@ -242,6 +243,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           match: [...lane.match],
           prompt: [...lane.prompt],
           tools: [...lane.tools],
+          route: lane.route ? { ...lane.route } : null,
         })),
         agents: [...input.policy.reviews.agents],
         localAgents: [...input.policy.reviews.localAgents],
@@ -252,6 +254,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
             synthesis: cloneReviewModelTierMap(input.policy.reviews.models.synthesis),
           },
         } : {}),
+        route: input.policy.reviews.route ? { ...input.policy.reviews.route } : null,
       },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),
@@ -336,6 +339,7 @@ export function configFromFile(input: ConfigFileShape): Config {
         match: [...lane.match],
         prompt: [...lane.prompt],
         tools: [...lane.tools],
+        route: lane.route ? { ...lane.route } : null,
       })),
       reviewers: [...policy.reviews.agents],
       localReviewers: [...policy.reviews.localAgents],
@@ -347,6 +351,7 @@ export function configFromFile(input: ConfigFileShape): Config {
         economy: { ...policy.reviews.models.economy },
         synthesis: { ...policy.reviews.models.synthesis },
       },
+      route: policy.reviews.route ? { ...policy.reviews.route } : null,
     },
     gates: { definitions: policyGateDefinitions(policy.gates) },
     audit: {
@@ -413,6 +418,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       economy: { ...policy.reviews.models.economy },
       synthesis: { ...policy.reviews.models.synthesis },
     },
+    reviewRoute: policy.reviews.route ? { ...policy.reviews.route } : null,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,

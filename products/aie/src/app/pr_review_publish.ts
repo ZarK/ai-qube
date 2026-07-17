@@ -235,6 +235,9 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   if (typeof parsed.evidenceSha256 !== 'string' || parsed.evidenceSha256 !== localReviewEvidenceSha256(evidence)) {
     throw laneEvidenceFailure(evidencePath, 'trusted local-host provenance evidence digest does not match lane evidence.');
   }
+  for (const field of ['host', 'model', 'effort', 'isolation', 'invocationId'] as const) {
+    if ((parsed[field] ?? null) !== (provenance[field] ?? null)) throw laneEvidenceFailure(evidencePath, `trusted local-host provenance ${field} does not match lane evidence.`);
+  }
 }
 
 function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
@@ -292,6 +295,10 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   const recommendation = readRecommendation(raw.recommendation ?? raw.status);
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
     throw laneEvidenceFailure(path, `recommendation ${recommendation} is not valid with status ${raw.status}; ${recommendationStatusRule()}.`);
+  }
+  if (structuredFindings.some(finding => finding.severity === 'blocking')
+    && (raw.status === 'passed' || recommendation !== 'request-changes')) {
+    throw laneEvidenceFailure(path, `recorded blocking structured findings but claimed status ${raw.status} with recommendation ${recommendation}.`);
   }
   return {
     evidence: raw,

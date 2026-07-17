@@ -58,6 +58,10 @@ export interface LocalReviewRunnerProvenance {
   promptStackHash: string | null;
   headSha: string;
   providerPublishStatus: string | null;
+  model: string | null;
+  effort: string | null;
+  isolation: 'read-only' | null;
+  invocationId: string | null;
 }
 
 export interface LocalReviewLane {
@@ -142,6 +146,10 @@ interface TrustedLocalHostProvenance {
   threadId: string | null;
   promptStackHash: string;
   recordedAt: string;
+  model: string | null;
+  effort: string | null;
+  isolation: 'read-only' | null;
+  invocationId: string | null;
 }
 
 interface LocalReviewPublishEvidence {
@@ -422,6 +430,10 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     promptStackHash: readNullableString(value.promptStackHash),
     headSha: stringValue(value.headSha, 'unknown-head'),
     providerPublishStatus: readNullableString(value.providerPublishStatus),
+    model: readNullableString(value.model),
+    effort: readNullableString(value.effort),
+    isolation: value.isolation === 'read-only' ? 'read-only' : null,
+    invocationId: readNullableString(value.invocationId),
   };
 }
 
@@ -592,6 +604,7 @@ function severityRank(severity: LocalReviewSeverity): number {
 }
 
 function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSeverity): boolean {
+  if (lane.findings.some(finding => finding.severity === 'blocking')) return true;
   if (lane.severity === 'none') return false;
   if (severityRank(lane.severity) < severityRank(threshold)) return false;
   return lane.recommendation === 'request-changes' || lane.blockers.length > 0;
@@ -600,7 +613,9 @@ function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSever
 function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalReviewSeverity): string[] {
   return lanes
     .filter(lane => laneExceedsThreshold(lane, threshold))
-    .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
+    .map(lane => lane.findings.some(finding => finding.severity === 'blocking')
+      ? `${lane.id} recorded blocking structured findings.`
+      : `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
 }
 
 function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[], requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
@@ -612,6 +627,10 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
   for (const lane of lanes) {
     if (!validRecommendationStatus(lane.recommendation, lane.status)) {
       blockers.push(`${lane.id} recommendation ${lane.recommendation} is not valid with status ${lane.status}; ${recommendationStatusRule()}.`);
+    }
+    if (lane.findings.some(finding => finding.severity === 'blocking')
+      && (lane.status === 'passed' || lane.recommendation !== 'request-changes')) {
+      blockers.push(`${lane.id} recorded blocking structured findings but claimed status ${lane.status} with recommendation ${lane.recommendation}.`);
     }
   }
   for (const laneId of requiredLanes) {
@@ -666,6 +685,10 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
       threadId: readNullableString(parsed.threadId),
       promptStackHash: parsed.promptStackHash,
       recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '',
+      model: readNullableString(parsed.model),
+      effort: readNullableString(parsed.effort),
+      isolation: parsed.isolation === 'read-only' ? 'read-only' : null,
+      invocationId: readNullableString(parsed.invocationId),
     };
   } catch {
     return null;
@@ -690,6 +713,7 @@ function trustedLocalHostBlockers(input: {
   if (trusted.host !== input.provenance.host) blockers.push(`${input.laneId} local-host provenance host does not match the host record.`);
   if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the host record.`);
   if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the host record.`);
+  if (trusted.model !== input.provenance.model || trusted.effort !== input.provenance.effort || trusted.isolation !== input.provenance.isolation || trusted.invocationId !== input.provenance.invocationId) blockers.push(`${input.laneId} routed model provenance does not match the trusted host record.`);
   if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
   return blockers;
 }
