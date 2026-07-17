@@ -344,6 +344,16 @@ describe('model review runner', () => {
     assert.equal(contradictorySequence.evidence, null);
     assert.equal(contradictorySequence.reasonCode, 'model-route-contract-mismatch');
 
+    const missingDigest = laneResult();
+    delete missingDigest.artifacts[0].sha256;
+    const missingDigestResult = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(missingDigest), sessionId: 'missing-digest' }) }),
+    });
+    assert.equal(missingDigestResult.evidence, null);
+    assert.equal(missingDigestResult.reasonCode, 'model-route-contract-mismatch');
+
     const incompleteResult = laneResult();
     incompleteResult.artifacts = [];
     const incomplete = await runModelReview({

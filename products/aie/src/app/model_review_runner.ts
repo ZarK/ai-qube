@@ -281,7 +281,7 @@ function safeArtifactPath(repoRoot: string, kind: string, path: string): boolean
 }
 
 function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): boolean {
-  if (sha256 === null || sha256 === undefined) return true;
+  if (sha256 === null) return true;
   if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sha256) || /^(command|terminal|test-output):/i.test(path)) return false;
   try {
     return createHash('sha256').update(readFileSync(resolve(repoRoot, path))).digest('hex') === sha256.toLowerCase();
@@ -323,7 +323,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     || value.severity !== 'high' && value.severity !== 'critical'
     || value.blockers.length === 0)) return null;
   if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
-    && hasExactKeys(item, ['kind', 'path'], ['sha256'])
+    && hasExactKeys(item, ['kind', 'path', 'sha256'])
     && typeof item.kind === 'string' && item.kind.trim() !== ''
     && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
     && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
