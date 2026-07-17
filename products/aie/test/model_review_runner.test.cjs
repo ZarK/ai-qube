@@ -8,6 +8,7 @@ const { describe, it } = require('node:test');
 const {
   buildModelReviewPrompt,
   buildModelRouteInvocation,
+  modelRouteEnvironment,
   runModelReview,
   runModelRouteProcess,
   resolveWindowsNodeShim,
@@ -80,6 +81,33 @@ describe('model review runner', () => {
     assert.equal(result.timedOut, false);
     assert.equal(result.stdinDelivered, true);
     assert.deepEqual(JSON.parse(result.stdout), { args: args.slice(1), input: 'exact prompt bytes' });
+  });
+
+  it('does not inherit unrelated parent secrets in routed host processes', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-fake-env-'));
+    const fakeHost = join(repoRoot, 'fake-env.cjs');
+    const secretName = 'QUBE_ROUTE_TEST_SECRET';
+    writeFileSync(fakeHost, `process.stdout.write(JSON.stringify({ secret: process.env.${secretName} ?? null, path: process.env.PATH ?? null }));\n`);
+    const previous = process.env[secretName];
+    process.env[secretName] = 'must-not-reach-review-host';
+    try {
+      const result = await runModelRouteProcess({
+        executable: process.execPath,
+        args: [fakeHost],
+        cwd: repoRoot,
+        stdin: null,
+        promptPath: null,
+        schemaPath: null,
+        timeoutMs: 5_000,
+      });
+      assert.deepEqual(JSON.parse(result.stdout), { secret: null, path: process.env.PATH ?? null });
+      assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' }).PATH, 'kept');
+      assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' })[secretName], undefined);
+      assert.equal(modelRouteEnvironment({ [secretName]: 'hidden', PATH: 'kept', GH_TOKEN: 'hidden' }).GH_TOKEN, undefined);
+    } finally {
+      if (previous === undefined) delete process.env[secretName];
+      else process.env[secretName] = previous;
+    }
   });
 
   it('terminates a fake host at the configured execution bound', async () => {

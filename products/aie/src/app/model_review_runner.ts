@@ -13,6 +13,11 @@ const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const FORCE_KILL_GRACE_MS = 500;
 const FORCE_KILL_COMMAND_MS = 1_000;
+const ROUTE_ENVIRONMENT_KEYS = new Set([
+  'APPDATA', 'CODEX_HOME', 'COMSPEC', 'HOME', 'LANG', 'LC_ALL', 'LOCALAPPDATA', 'LOGNAME',
+  'PATH', 'PATHEXT', 'SHELL', 'SYSTEMROOT', 'TEMP', 'TERM', 'TMP', 'TMPDIR', 'USER',
+  'USERPROFILE', 'USERNAME', 'WINDIR', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
+]);
 
 export interface ModelReviewRoutePlan {
   host: RoutedReviewHostId;
@@ -46,6 +51,10 @@ export interface ModelRouteProcessResult {
 }
 
 export type ModelRouteProcess = (invocation: ModelRouteInvocation) => Promise<ModelRouteProcessResult>;
+
+export function modelRouteEnvironment(source: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(source).filter(([key, value]) => value !== undefined && ROUTE_ENVIRONMENT_KEYS.has(key.toUpperCase())));
+}
 
 export interface ModelReviewRunInput {
   plan: ModelReviewRoutePlan;
@@ -400,6 +409,7 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     const child = spawn(invocation.executable, invocation.args, {
       cwd: invocation.cwd,
       detached: process.platform !== 'win32',
+      env: modelRouteEnvironment(),
       windowsHide: true,
       shell: false,
       stdio: ['pipe', 'pipe', 'pipe'],
