@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
@@ -39,6 +39,7 @@ export interface ModelRouteProcessResult {
   stdout: string;
   stderr: string;
   timedOut: boolean;
+  stdinDelivered: boolean;
 }
 
 export type ModelRouteProcess = (invocation: ModelRouteInvocation) => Promise<ModelRouteProcessResult>;
@@ -55,6 +56,7 @@ export interface ModelReviewRunInput {
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
+  resolveHead?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
 }
 
@@ -82,14 +84,34 @@ async function findOnPath(name: string): Promise<string | null> {
   }
 }
 
+export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExecutable | null> {
+  let contents: string;
+  try {
+    contents = readFileSync(shim, 'utf8');
+  } catch {
+    return null;
+  }
+  const scriptMatch = contents.match(/%dp0%[\\/]([^"\r\n]*?\.js)/i);
+  if (!scriptMatch) return null;
+  const script = resolve(dirname(shim), scriptMatch[1].replace(/[\\/]/g, process.platform === 'win32' ? '\\' : '/'));
+  const scriptRelative = relative(dirname(shim), script);
+  if (scriptRelative === '..' || scriptRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(scriptRelative)) return null;
+  const adjacentNode = join(dirname(shim), 'node.exe');
+  const node = existsSync(adjacentNode) ? adjacentNode : await findOnPath(process.platform === 'win32' ? 'node.exe' : 'node');
+  return node && existsSync(script) ? { executable: node, prefixArgs: [script] } : null;
+}
+
 export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<ModelHostExecutable> {
-  if (process.platform === 'win32' && host === 'codex') {
-    const shim = await findOnPath('codex.cmd');
+  if (process.platform === 'win32') {
+    const shim = await findOnPath(`${host}.cmd`);
     if (shim) {
-      const script = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-      const adjacentNode = join(dirname(shim), 'node.exe');
-      const node = existsSync(adjacentNode) ? adjacentNode : await findOnPath('node.exe');
-      if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
+      const resolvedShim = await resolveWindowsNodeShim(shim);
+      if (resolvedShim) return resolvedShim;
+      if (host === 'codex') {
+        const script = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+        const node = await findOnPath('node.exe');
+        if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
+      }
     }
   }
   const names = process.platform === 'win32'
@@ -109,6 +131,8 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Return exactly one JSON object and no Markdown or commentary.',
     `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, and preconditions.`,
     'Every artifact must identify a real repository source, test, command result, or other inspected surface using {"kind":"...","path":"...","sha256":null}.',
+    'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
+    'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
     'Do not include runnerProvenance or promptStack; QUBE records those from the trusted invocation.',
     'Do not write files, publish feedback, modify provider state, use subagents, use web tools, or reveal hidden reasoning.',
   ].join('\n');
@@ -177,7 +201,7 @@ function grokReviewSchema(input: ModelReviewRunInput): string {
           properties: {
             kind: { type: 'string', minLength: 1 },
             path: { type: 'string', minLength: 1 },
-            sha256: { type: ['string', 'null'] },
+            sha256: { anyOf: [{ type: 'string', pattern: '^[a-fA-F0-9]{64}$' }, { type: 'null' }] },
           },
         },
       },
@@ -191,10 +215,10 @@ function grokReviewSchema(input: ModelReviewRunInput): string {
           additionalProperties: false,
           required: ['kind', 'source', 'trust', 'freshness'],
           properties: {
-            kind: { type: 'string' },
+            kind: { enum: [...CONTEXT_KIND_VALUES] },
             source: { type: 'string' },
-            trust: { type: 'string' },
-            freshness: { type: 'string' },
+            trust: { enum: [...CONTEXT_TRUST_VALUES] },
+            freshness: { enum: [...CONTEXT_FRESHNESS_VALUES] },
           },
         },
       },
@@ -205,6 +229,88 @@ function grokReviewSchema(input: ModelReviewRunInput): string {
   });
 }
 
+const STATUS_VALUES = new Set(['passed', 'failed', 'needs-work', 'pending', 'missing', 'stale', 'unavailable', 'malformed', 'inconclusive']);
+const SEVERITY_VALUES = new Set(['none', 'low', 'medium', 'high', 'critical']);
+const RECOMMENDATION_VALUES = new Set(['approve', 'request-changes', 'pending', 'inconclusive']);
+const FINDING_SEVERITY_VALUES = new Set(['blocking', 'advisory']);
+const CONTEXT_KIND_VALUES = new Set(['agents', 'issue-body', 'issue-comment', 'milestone', 'functional-requirement', 'linked-issue', 'pr-body', 'pr-comment', 'review-thread', 'doc', 'diff', 'ci', 'manual-qa']);
+const CONTEXT_TRUST_VALUES = new Set(['policy', 'trusted-provider', 'repo-doc', 'untrusted-task-input', 'local-evidence']);
+const CONTEXT_FRESHNESS_VALUES = new Set(['current', 'stale', 'unknown', 'missing', 'unavailable', 'not-configured']);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasExactKeys(value: Record<string, unknown>, required: readonly string[], optional: readonly string[] = []): boolean {
+  const allowed = new Set([...required, ...optional]);
+  return required.every(key => Object.hasOwn(value, key)) && Object.keys(value).every(key => allowed.has(key));
+}
+
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every(item => typeof item === 'string');
+}
+
+function safeArtifactPath(repoRoot: string, kind: string, path: string): boolean {
+  if (path.trim() === '' || path.includes('\0')) return false;
+  if (/^(command|terminal|test-output):/i.test(path)) return /command|terminal|test/i.test(kind);
+  if (isAbsolute(path)) return false;
+  const resolvedPath = resolve(repoRoot, path);
+  const relativePath = relative(repoRoot, resolvedPath);
+  return relativePath !== '' && relativePath !== '..' && !relativePath.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) && !isAbsolute(relativePath) && existsSync(resolvedPath);
+}
+
+function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): boolean {
+  if (sha256 === null || sha256 === undefined) return true;
+  if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sha256) || /^(command|terminal|test-output):/i.test(path)) return false;
+  try {
+    return createHash('sha256').update(readFileSync(resolve(repoRoot, path))).digest('hex') === sha256.toLowerCase();
+  } catch {
+    return false;
+  }
+}
+
+function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
+  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions'];
+  if (!isRecord(value) || !hasExactKeys(value, required)) return null;
+  if (value.issueNumber !== input.issueNumber || value.prNumber !== input.prNumber || value.headSha !== input.headSha || value.lane !== input.lane) return null;
+  if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status) || typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity) || typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return null;
+  const expectedRecommendation = value.status === 'passed'
+    ? 'approve'
+    : value.status === 'failed' || value.status === 'needs-work'
+      ? 'request-changes'
+      : value.status === 'pending' || value.status === 'missing' || value.status === 'stale'
+        ? 'pending'
+        : 'inconclusive';
+  if (value.recommendation !== expectedRecommendation) return null;
+  if (typeof value.summary !== 'string' || value.summary.trim() === '' || typeof value.completeness !== 'string' || value.completeness.trim() === '') return null;
+  if (!isStringArray(value.blockers) || !isStringArray(value.commands) || !isStringArray(value.surfaces) || !isStringArray(value.toolsUsed) || !isStringArray(value.preconditions)) return null;
+  if (!Array.isArray(value.findings) || !value.findings.every(item => isRecord(item)
+    && hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location'])
+    && typeof item.severity === 'string' && FINDING_SEVERITY_VALUES.has(item.severity)
+    && typeof item.message === 'string' && item.message.trim() !== ''
+    && (item.id === undefined || typeof item.id === 'string')
+    && (item.suggestion === undefined || typeof item.suggestion === 'string')
+    && (item.location === undefined || (isRecord(item.location)
+      && hasExactKeys(item.location, ['path'], ['line', 'endLine', 'side'])
+      && typeof item.location.path === 'string' && item.location.path.trim() !== ''
+      && (item.location.line === undefined || (Number.isSafeInteger(item.location.line) && Number(item.location.line) > 0))
+      && (item.location.endLine === undefined || (Number.isSafeInteger(item.location.endLine) && Number(item.location.endLine) > 0))
+      && (item.location.side === undefined || item.location.side === 'source' || item.location.side === 'destination'))))) return null;
+  if (!Array.isArray(value.artifacts) || value.artifacts.length === 0 || !value.artifacts.every(item => isRecord(item)
+    && hasExactKeys(item, ['kind', 'path'], ['sha256'])
+    && typeof item.kind === 'string' && item.kind.trim() !== ''
+    && typeof item.path === 'string' && safeArtifactPath(input.repoRoot, item.kind, item.path)
+    && validArtifactDigest(input.repoRoot, item.path, item.sha256))) return null;
+  if (!Array.isArray(value.contextReviewed) || value.contextReviewed.length === 0 || !value.contextReviewed.every(item => isRecord(item)
+    && hasExactKeys(item, ['kind', 'source', 'trust', 'freshness'])
+    && typeof item.kind === 'string' && CONTEXT_KIND_VALUES.has(item.kind)
+    && typeof item.source === 'string' && item.source.trim() !== ''
+    && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
+    && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
+  const candidate = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
+  return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
+}
+
 export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null): ModelRouteInvocation {
   const executablePath = typeof executable === 'string' ? executable : executable.executable;
   const args: string[] = typeof executable === 'string' ? [] : [...executable.prefixArgs];
@@ -213,7 +319,12 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
     args.push('exec');
     if (input.plan.model) args.push('--model', input.plan.model);
     if (input.plan.effort) args.push('--config', `model_reasoning_effort="${input.plan.effort}"`);
-    args.push('--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--json', '-');
+    args.push(
+      '--ignore-user-config', '--strict-config',
+      '--disable', 'apps', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use',
+      '--disable', 'in_app_browser', '--disable', 'standalone_web_search', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'plugins',
+      '--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--json', '-',
+    );
     stdin = prompt;
   } else {
     if (!promptPath) throw new Error('Grok review routing requires a private prompt file.');
@@ -223,11 +334,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
       '--sandbox', 'strict',
       '--allow', 'Read',
       '--allow', 'Grep',
-      '--allow', 'Bash(git diff *)',
-      '--allow', 'Bash(git show *)',
-      '--allow', 'Bash(git status *)',
-      '--allow', 'Bash(git log *)',
-      '--allow', 'Bash(git rev-parse *)',
+      '--deny', 'Bash(*)',
       '--deny', 'Edit',
       '--deny', 'WebFetch',
       '--deny', 'MCPTool(*)',
@@ -256,10 +363,12 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     let stdout = '';
     let stderr = '';
     let timedOut = false;
+    let stdinDelivered = false;
+    let stdinFailed = false;
     const append = (current: string, chunk: Buffer): string => (current + chunk.toString('utf8')).slice(-MAX_OUTPUT_BYTES);
     child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
     child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
-    child.stdin.on('error', error => { stderr = `${stderr}\n${error.message}`; });
+    child.stdin.on('error', error => { stdinFailed = true; stdinDelivered = false; stderr = `${stderr}\n${error.message}`; });
     child.on('error', error => { stderr = `${stderr}\n${error.message}`; });
     const timer = setTimeout(() => {
       timedOut = true;
@@ -267,10 +376,10 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
     }, invocation.timeoutMs);
     child.on('close', code => {
       clearTimeout(timer);
-      resolve({ exitCode: typeof code === 'number' ? code : 1, stdout, stderr, timedOut });
+      resolve({ exitCode: typeof code === 'number' ? code : 1, stdout, stderr, timedOut, stdinDelivered });
     });
-    if (invocation.stdin !== null) child.stdin.end(invocation.stdin, 'utf8');
-    else child.stdin.end();
+    if (invocation.stdin !== null) child.stdin.end(invocation.stdin, 'utf8', () => { stdinDelivered = !stdinFailed; });
+    else child.stdin.end(() => { stdinDelivered = !stdinFailed; });
   });
 }
 
@@ -312,11 +421,18 @@ function failureReason(result: ModelRouteProcessResult): { reasonCode: string; e
   return { reasonCode: 'model-route-process-failed', error: `Model review route exited with code ${result.exitCode}.${diagnostic ? ` Diagnostic: ${diagnostic}` : ''}` };
 }
 
+export async function resolveModelReviewHead(repoRoot: string): Promise<string> {
+  const result = await execFileAsync('git', ['-C', repoRoot, 'rev-parse', '--verify', 'HEAD'], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
+  return result.stdout.trim();
+}
+
 export async function runModelReview(input: ModelReviewRunInput): Promise<ModelReviewRunResult> {
   const invocationId = randomUUID();
   const prompt = buildModelReviewPrompt(input);
   let promptPath: string | null = null;
   try {
+    const resolveHead = input.resolveHead ?? resolveModelReviewHead;
+    if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD does not match the requested pull request head.' };
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
     if (input.plan.host === 'grok') {
       promptPath = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route', `${invocationId}.prompt`);
@@ -329,6 +445,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       const failure = failureReason(result);
       return { evidence: null, ...failure };
     }
+    if (!result.stdinDelivered) return { evidence: null, reasonCode: 'model-route-prompt-delivery', error: 'Model review route did not confirm complete prompt delivery.' };
     const parsedHostOutput = input.plan.host === 'codex' ? parseCodexOutput(result.stdout) : parseGrokOutput(result.stdout);
     if (!parsedHostOutput) return { evidence: null, reasonCode: 'model-route-output-envelope', error: 'Model review route returned no supported final-response envelope.' };
     let modelResult: unknown;
@@ -351,10 +468,8 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       isolation: 'read-only',
       invocationId,
     };
-    const candidate = modelResult && typeof modelResult === 'object' && !Array.isArray(modelResult)
-      ? { ...(modelResult as Record<string, unknown>), promptStack: input.promptStack, runnerProvenance: provenance }
-      : modelResult;
-    const evidence = normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
+    if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
+    const evidence = strictRoutedLane(modelResult, input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
     if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || evidence.artifacts.length === 0) {
       return { evidence: null, reasonCode: 'model-route-incomplete-evidence', error: 'Model review result omitted required completeness, contextReviewed, or artifacts evidence.' };

@@ -25,6 +25,7 @@ try {
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../dist/app/pr_review_publish.js');
+const { resolveModelReviewPlan } = require('../dist/app/local_review_runner.js');
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
@@ -1393,6 +1394,18 @@ describe('PR gate service', () => {
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.promptStackHash.length === 64));
   });
 
+  it('does not apply a global model route to non-host lane runners', () => {
+    const config = localHostConfig(null);
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const lane = config.reviewLanes.find(item => item.id === 'issue-compliance');
+    lane.runner = 'local-command';
+    lane.command = 'review-fixture';
+
+    assert.equal(resolveModelReviewPlan(config, 'issue-compliance'), null);
+    assert.equal(resolveModelReviewPlan(config, 'code-quality').host, 'grok');
+  });
+
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
@@ -1424,7 +1437,7 @@ describe('PR gate service', () => {
         summary: `${lane} routed review passed.`,
         blockers: [],
         findings: [],
-        artifacts: [{ kind: 'source', path: 'src/review.ts', sha256: null }],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
         commands: ['git diff --check'],
         surfaces: ['PR diff'],
         contextReviewed: requiredTaskContext(),
@@ -1432,10 +1445,10 @@ describe('PR gate service', () => {
         completeness: `Inspected the complete ${lane} scope at the current head.`,
         preconditions: [],
       };
-      return { exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
     };
 
-    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe' });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
 
     assert.equal(result.localReviewRunner.status, 'completed');
     assert.equal(result.localReview.status, 'passed');
@@ -1463,9 +1476,10 @@ describe('PR gate service', () => {
       repoRoot: repo,
       exec: fixture.exec,
       resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
       modelRouteProcess: async () => {
         modelCalls += 1;
-        return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false };
+        return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false, stdinDelivered: true };
       },
     });
 

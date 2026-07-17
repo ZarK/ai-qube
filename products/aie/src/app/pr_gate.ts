@@ -22,7 +22,7 @@ import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock }
 import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import type { ModelHostExecutable, ModelRouteProcess } from './model_review_runner.js';
+import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
@@ -181,6 +181,7 @@ export interface PrGateOptions {
   onBeforeMutate?: (message: string) => void | Promise<void>;
   modelRouteProcess?: ModelRouteProcess;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
+  resolveModelHead?: (repoRoot: string) => Promise<string>;
 }
 
 function getString(action: Action, key: string): string | null {
@@ -822,6 +823,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     riskCardIssueText,
     modelRouteProcess: options.modelRouteProcess,
     resolveModelHost: options.resolveModelHost,
+    resolveModelHead: options.resolveModelHead,
   });
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
@@ -848,13 +850,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   if (deferProviderMutation) {
     const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
     const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
-    if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status === 'missing' || localReview.status === 'malformed') {
+    if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status !== 'passed') {
       localReviewPublish = pendingLocalReviewPublish('Routed review publishing was withheld because the complete current-head lane batch did not validate; no provider mutation was performed.');
     } else {
       const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
         publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the complete routed lane batch.`);
         localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no provider mutation was performed.');
+      } else if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
+        publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
+        localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no provider mutation was performed.');
       } else {
         await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
         actions = await applyReviewPlan(provider, firstPlan);

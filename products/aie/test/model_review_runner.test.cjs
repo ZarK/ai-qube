@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { existsSync, readFileSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -10,6 +10,7 @@ const {
   buildModelRouteInvocation,
   runModelReview,
   runModelRouteProcess,
+  resolveWindowsNodeShim,
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok') {
@@ -33,6 +34,7 @@ function reviewInput(repoRoot, host = 'grok') {
     promptStackHash: 'hash123',
     promptText: 'INSPECT EXACT LANE PROMPT',
     promptStack: [{ id: 'review-lanes/code-quality', source: 'builtin', path: null, sha256: null, trust: 'policy' }],
+    resolveHead: async () => 'abc123',
   };
 }
 
@@ -48,7 +50,7 @@ function laneResult() {
     summary: 'No blocking code-quality defects found.',
     blockers: [],
     findings: [],
-    artifacts: [{ kind: 'source', path: 'products/aie/src/app/model_review_runner.ts', sha256: null }],
+    artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
     commands: ['git diff --check'],
     surfaces: ['routed review runner'],
     contextReviewed: [{ kind: 'diff', source: 'git diff', trust: 'local-evidence', freshness: 'current' }],
@@ -75,6 +77,7 @@ describe('model review runner', () => {
 
     assert.equal(result.exitCode, 0);
     assert.equal(result.timedOut, false);
+    assert.equal(result.stdinDelivered, true);
     assert.deepEqual(JSON.parse(result.stdout), { args: args.slice(1), input: 'exact prompt bytes' });
   });
 
@@ -112,6 +115,8 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('read-only'));
     assert.ok(invocation.args.includes('gpt-5.6-luna'));
     assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
+    assert.ok(invocation.args.includes('--ignore-user-config'));
+    assert.ok(invocation.args.includes('multi_agent'));
   });
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {
@@ -130,7 +135,7 @@ describe('model review runner', () => {
         assert.equal(existsSync(invocation.promptPath), true);
         assert.match(readFileSync(invocation.promptPath, 'utf8'), /INSPECT EXACT LANE PROMPT/);
         assert.equal(invocation.args.some(arg => arg.includes('INSPECT EXACT LANE PROMPT')), false);
-        return { exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }) };
+        return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }) };
       },
     });
 
@@ -143,7 +148,7 @@ describe('model review runner', () => {
     assert.ok(capturedArgs.includes('dontAsk'));
     assert.ok(capturedArgs.includes('strict'));
     assert.ok(capturedArgs.includes('--no-plan'));
-    assert.ok(capturedArgs.includes('Bash(git diff *)'));
+    assert.ok(capturedArgs.includes('Bash(*)'));
     assert.ok(capturedArgs.includes('Edit'));
     assert.equal(capturedArgs.includes('plan'), false);
     assert.ok(capturedArgs.includes('--no-subagents'));
@@ -162,7 +167,7 @@ describe('model review runner', () => {
     const malformed = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
       resolveExecutable: async () => 'codex.exe',
-      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: '{"type":"item.completed","item":{"type":"agent_message","text":"not-json"}}\n' }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: '{"type":"item.completed","item":{"type":"agent_message","text":"not-json"}}\n' }),
     });
     assert.equal(malformed.evidence, null);
     assert.equal(malformed.reasonCode, 'model-route-malformed-json');
@@ -172,17 +177,17 @@ describe('model review runner', () => {
     const incomplete = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(incompleteResult), sessionId: 'bad' }) }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(incompleteResult), sessionId: 'bad' }) }),
     });
     assert.equal(incomplete.evidence, null);
-    assert.equal(incomplete.reasonCode, 'model-route-incomplete-evidence');
+    assert.equal(incomplete.reasonCode, 'model-route-contract-mismatch');
 
     const mismatchedResult = laneResult();
     mismatchedResult.lane = 'security';
     const mismatched = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdout: JSON.stringify({ text: JSON.stringify(mismatchedResult), sessionId: 'wrong-lane' }) }),
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(mismatchedResult), sessionId: 'wrong-lane' }) }),
     });
     assert.equal(mismatched.evidence, null);
     assert.equal(mismatched.reasonCode, 'model-route-contract-mismatch');
@@ -193,14 +198,14 @@ describe('model review runner', () => {
     const timedOut = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
       resolveExecutable: async () => 'codex.exe',
-      runProcess: async () => ({ exitCode: 1, stderr: '', stdout: '', timedOut: true }),
+      runProcess: async () => ({ exitCode: 1, stderr: '', stdout: '', timedOut: true, stdinDelivered: true }),
     });
     assert.equal(timedOut.reasonCode, 'model-route-timeout');
 
     const auth = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 1, stderr: 'login required token abcdefghijklmnopqrstuvwxyz1234567890', stdout: '', timedOut: false }),
+      runProcess: async () => ({ exitCode: 1, stderr: 'login required token abcdefghijklmnopqrstuvwxyz1234567890', stdout: '', timedOut: false, stdinDelivered: true }),
     });
     assert.equal(auth.reasonCode, 'model-route-authentication');
     assert.doesNotMatch(auth.error, /abcdefghijklmnopqrstuvwxyz/);
@@ -217,16 +222,66 @@ describe('model review runner', () => {
     const rejectedModel = await runModelReview({
       ...reviewInput(repoRoot, 'grok'),
       resolveExecutable: async () => 'grok.exe',
-      runProcess: async () => ({ exitCode: 2, stderr: 'configured model is unavailable', stdout: '', timedOut: false }),
+      runProcess: async () => ({ exitCode: 2, stderr: 'configured model is unavailable', stdout: '', timedOut: false, stdinDelivered: true }),
     });
     assert.equal(rejectedModel.reasonCode, 'model-route-model-unavailable');
 
     const nonZero = await runModelReview({
       ...reviewInput(repoRoot, 'codex'),
       resolveExecutable: async () => 'codex.exe',
-      runProcess: async () => ({ exitCode: 17, stderr: 'runner stopped', stdout: '', timedOut: false }),
+      runProcess: async () => ({ exitCode: 17, stderr: 'runner stopped', stdout: '', timedOut: false, stdinDelivered: true }),
     });
     assert.equal(nonZero.reasonCode, 'model-route-process-failed');
     assert.match(nonZero.error, /code 17/);
+  });
+
+  it('rejects checkout drift, incomplete prompt delivery, and permissively malformed evidence', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-strict-'));
+    const checkoutMismatch = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveHead: async () => 'different-head',
+      resolveExecutable: async () => 'grok.exe',
+    });
+    assert.equal(checkoutMismatch.reasonCode, 'model-route-checkout-mismatch');
+
+    const promptFailure = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: 'EPIPE', stdout: '', timedOut: false, stdinDelivered: false }),
+    });
+    assert.equal(promptFailure.reasonCode, 'model-route-prompt-delivery');
+
+    const invalid = laneResult();
+    invalid.severity = 'surprising';
+    invalid.artifacts = [{}];
+    const malformedEvidence = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(invalid), sessionId: 'invalid' }) }),
+    });
+    assert.equal(malformedEvidence.reasonCode, 'model-route-contract-mismatch');
+
+    const forgedDigest = laneResult();
+    forgedDigest.artifacts = [{ kind: 'source', path: 'tracked.txt', sha256: '0'.repeat(64) }];
+    writeFileSync(join(repoRoot, 'tracked.txt'), 'trusted bytes');
+    const forgedEvidence = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(forgedDigest), sessionId: 'forged' }) }),
+    });
+    assert.equal(forgedEvidence.reasonCode, 'model-route-contract-mismatch');
+  });
+
+  it('resolves an npm Windows command shim to its Node entrypoint without a shell', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-grok-shim-'));
+    const script = join(root, 'node_modules', '@xai', 'grok', 'bin', 'grok.js');
+    mkdirSync(join(root, 'node_modules', '@xai', 'grok', 'bin'), { recursive: true });
+    writeFileSync(script, '');
+    const shim = join(root, 'grok.cmd');
+    writeFileSync(shim, '@ECHO off\r\nnode "%dp0%\\node_modules\\@xai\\grok\\bin\\grok.js" %*\r\n');
+
+    const resolved = await resolveWindowsNodeShim(shim);
+    assert.ok(resolved && typeof resolved === 'object');
+    assert.equal(resolved.prefixArgs[0], script);
   });
 });

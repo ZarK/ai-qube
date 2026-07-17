@@ -45,7 +45,9 @@ function opencodeLocalReviewEnabled(config: Config): boolean {
 }
 
 function routedLocalReviewEnabled(config: Config): boolean {
-  return localReviewEnabled(config) && (config.reviewRoute !== null || config.reviewLanes.some(lane => lane.route !== null));
+  if (!localReviewEnabled(config)) return false;
+  if (config.reviewLanes.some(lane => lane.runner === 'local-host' && lane.route !== null)) return true;
+  return config.reviewRoute !== null && (config.reviewLanes.length === 0 || config.reviewLanes.some(lane => lane.runner === 'local-host'));
 }
 
 function renderOpenCodeLocalReviewBoundary(config: Config): string {

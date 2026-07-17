@@ -73,6 +73,7 @@ interface LocalReviewRunnerInput {
   riskCardIssueText?: string;
   modelRouteProcess?: ModelRouteProcess;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
+  resolveModelHead?: (repoRoot: string) => Promise<string>;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -120,7 +121,9 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
 }
 
 export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId): ModelReviewRoutePlan | null {
-  const route = lanePolicy(config, lane)?.route ?? config.reviewRoute;
+  const policy = lanePolicy(config, lane);
+  if (policy && policy.runner !== 'local-host') return null;
+  const route = policy?.route ?? config.reviewRoute;
   if (!route) return null;
   const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host);
   return {
@@ -316,6 +319,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             promptText: rendered.text,
             promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
             resolveExecutable: input.resolveModelHost,
+            resolveHead: input.resolveModelHead,
             runProcess: input.modelRouteProcess,
           });
           if (!routed.evidence) {
