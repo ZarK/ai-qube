@@ -1597,6 +1597,9 @@ describe('PR gate service', () => {
     assert.equal(result.localReview.status, 'passed');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'skipped' && lane.evidenceSource === 'trusted-provider'));
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'trusted-provider'));
+    assert.ok(result.reviewParticipantRollup);
+    assert.equal(result.reviewParticipantRollup.hostLaneReceived, result.reviewParticipantRollup.hostLaneExpected);
+    assert.ok(result.reviewParticipantRollup.hostLaneExpected > 0);
     assert.equal(result.localReviewPublish.status, 'skipped');
     assert.match(result.localReviewPublish.nextAction, /reused/i);
     assert.equal(fixture.calls.some(args => args.join(' ').includes('qube-pr-review:')), false);

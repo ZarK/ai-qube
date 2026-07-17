@@ -75,6 +75,12 @@ describe('readTrustedProviderLanes', () => {
     assert.match(reuse.rejected[0].reason, /findings, severities, prompt stack, and runner provenance are local-only fields/);
   });
 
+  it('rejects records explicitly marked stale even when the head field matches', () => {
+    const reuse = readTrustedProviderLanes([record({ stale: true })], gate);
+    assert.equal(reuse.accepted.length, 0);
+    assert.match(reuse.rejected[0].reason, /explicitly marked stale/);
+  });
+
   it('rejects records missing required marker fields', () => {
     const reuse = readTrustedProviderLanes([record({ runId: '' })], gate);
     assert.equal(reuse.accepted.length, 0);

@@ -452,7 +452,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     written,
     unavailable,
     summary: status === 'completed'
-      ? `Local review runner wrote ${written.length} lane evidence file(s).`
+      ? `Local review runner wrote ${written.length} lane evidence file(s).${lanes.some(lane => lane.evidenceSource === 'local' && lane.status === 'completed') ? ` Reused existing current-head local evidence for: ${lanes.filter(lane => lane.evidenceSource === 'local' && lane.status === 'completed').map(lane => lane.lane).join(', ')}.` : ''}${lanes.some(lane => lane.evidenceSource === 'trusted-provider') ? ` Reused trusted provider current-head reviews for: ${lanes.filter(lane => lane.evidenceSource === 'trusted-provider').map(lane => lane.lane).join(', ')}.` : ''}`
       : status === 'pending'
         ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
       : status === 'planned'
