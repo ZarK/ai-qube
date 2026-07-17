@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto';
-import type { Config } from '../config/index.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
@@ -25,9 +24,12 @@ export interface PrTriageResult {
   pr: number;
   headSha: string;
   dryRun: boolean;
+  approvedHead: boolean;
+  blockingLanes: string[];
   advisories: PrTriageAdvisory[];
   lanesInspected: string[];
   limitation: string | null;
+  failures: string[];
   linkComment: 'planned' | 'posted' | 'skipped';
   summary: string;
   nextAction: string;
@@ -108,12 +110,13 @@ function advisoryIssueBody(pr: TriagePrContext, advisory: PrTriageAdvisory): str
 }
 
 async function findExistingAdvisoryIssue(dedupeKey: string, cwd: string | undefined, exec: GhExec | undefined): Promise<{ number: number; url: string } | null> {
-  const result = await runGh(['issue', 'list', '--state', 'open', '--search', `"${dedupeKey}" in:body`, '--json', 'number,url'], { cwd, exec });
+  const result = await runGh(['issue', 'list', '--state', 'open', '--search', `"${dedupeKey}" in:body`, '--json', 'number,url,body'], { cwd, exec });
   if (result.exitCode !== 0) throw new Error(ghFailureMessage('gh issue list --search', result.exitCode, result.stderr || result.stdout));
   const parsed: unknown = JSON.parse(result.stdout);
   if (!Array.isArray(parsed)) return null;
   for (const entry of parsed) {
-    if (isRecord(entry) && typeof entry.number === 'number' && entry.number > 0) {
+    // Provider search is fuzzy; only an exact dedupe-key match in the body counts.
+    if (isRecord(entry) && typeof entry.number === 'number' && entry.number > 0 && typeof entry.body === 'string' && entry.body.includes(dedupeKey)) {
       return { number: entry.number, url: typeof entry.url === 'string' ? entry.url : '' };
     }
   }
@@ -124,7 +127,7 @@ function terminalLane(lane: LocalReviewLane | null): lane is LocalReviewLane {
   return lane !== null && (lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work');
 }
 
-export async function runPrTriageService(config: Config, options: PrTriageOptions): Promise<PrTriageResult> {
+export async function runPrTriageService(options: PrTriageOptions): Promise<PrTriageResult> {
   const dryRun = options.dryRun ?? false;
   const repoRoot = options.repoRoot ?? process.cwd();
   const pr = await triagePrContext(options.prNumber, repoRoot, options.exec);
@@ -134,6 +137,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   const advisories: PrTriageAdvisory[] = [];
   const seenKeys = new Set<string>();
   const lanesInspected: string[] = [];
+  const blockingLanes: string[] = [];
   let anyEvidence = false;
   for (const issueNumber of pr.issueNumbers) {
     for (const laneId of laneIds) {
@@ -141,6 +145,10 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
       if (!terminalLane(lane)) continue;
       anyEvidence = true;
       if (!lanesInspected.includes(laneId)) lanesInspected.push(laneId);
+      if (lane.status !== 'passed' || lane.recommendation !== 'approve') {
+        if (!blockingLanes.includes(laneId)) blockingLanes.push(laneId);
+        continue;
+      }
       for (const finding of lane.findings.filter(entry => entry.severity === 'advisory')) {
         const location = finding.location && typeof finding.location.path === 'string'
           ? { path: finding.location.path, line: typeof finding.location.line === 'number' ? finding.location.line : null }
@@ -167,6 +175,8 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   const limitation = anyEvidence
     ? null
     : 'No terminal current-head local lane evidence was found. Full findings, severities, and locations are local-only fields; trusted provider markers carry verdict-level state only, so advisories cannot be enumerated from provider metadata. Run the PR gate on this machine first.';
+  const approvedHead = anyEvidence && blockingLanes.length === 0;
+  const failures: string[] = [];
 
   for (const advisory of advisories) {
     const existing = await findExistingAdvisoryIssue(advisory.dedupeKey, repoRoot, options.exec);
@@ -176,9 +186,14 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
       advisory.issueUrl = existing.url;
       continue;
     }
-    if (dryRun) continue;
+    if (dryRun || !approvedHead) continue;
     const created = await runGh(['issue', 'create', '--title', advisoryIssueTitle(advisory.message), '--body', advisoryIssueBody(pr, advisory)], { cwd: repoRoot, exec: options.exec });
-    if (created.exitCode !== 0) throw new Error(ghFailureMessage('gh issue create', created.exitCode, created.stderr || created.stdout));
+    if (created.exitCode !== 0) {
+      // Keep the remaining advisories moving and report the partial state instead of
+      // abandoning the run after earlier issues were already filed.
+      failures.push(`${advisory.lane} (${advisory.dedupeKey}): ${ghFailureMessage('gh issue create', created.exitCode, created.stderr || created.stdout)}`);
+      continue;
+    }
     const url = created.stdout.trim().split('\n').pop() ?? '';
     const numberMatch = url.match(/\/issues\/(\d+)/);
     advisory.disposition = 'created';
@@ -187,29 +202,33 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   }
 
   let linkComment: PrTriageResult['linkComment'] = 'skipped';
-  const linkable = advisories.filter(advisory => advisory.issueUrl || advisory.issueNumber !== null || advisory.disposition === 'planned');
-  if (linkable.length > 0) {
-    if (dryRun) {
-      linkComment = 'planned';
+  const createdAdvisories = advisories.filter(advisory => advisory.disposition === 'created');
+  if (dryRun && approvedHead && advisories.length > 0) {
+    linkComment = 'planned';
+  } else if (createdAdvisories.length > 0) {
+    // Only newly filed advisories warrant a link comment; existing-only reruns stay silent.
+    const lines = [
+      `Advisory triage for head ${pr.headSha}: ${advisories.length} residual advisory finding(s) moved to follow-up issues instead of new commits on the approved head.`,
+      ...advisories.map(advisory => `- ${advisory.lane}: ${advisory.disposition === 'created' ? 'filed' : 'already tracked as'} ${advisory.issueUrl || `#${advisory.issueNumber ?? '?'}`} — ${advisory.message.slice(0, 120)}`),
+    ];
+    const comment = await runGh(['pr', 'comment', String(pr.number), '--body', lines.join('\n')], { cwd: repoRoot, exec: options.exec });
+    if (comment.exitCode !== 0) {
+      failures.push(`link comment: ${ghFailureMessage('gh pr comment', comment.exitCode, comment.stderr || comment.stdout)}`);
     } else {
-      const lines = [
-        `Advisory triage for head ${pr.headSha}: ${advisories.length} residual advisory finding(s) moved to follow-up issues instead of new commits on the approved head.`,
-        ...advisories.map(advisory => `- ${advisory.lane}: ${advisory.disposition === 'created' ? 'filed' : 'already tracked as'} ${advisory.issueUrl || `#${advisory.issueNumber ?? '?'}`} — ${advisory.message.slice(0, 120)}`),
-      ];
-      const comment = await runGh(['pr', 'comment', String(pr.number), '--body', lines.join('\n')], { cwd: repoRoot, exec: options.exec });
-      if (comment.exitCode !== 0) throw new Error(ghFailureMessage('gh pr comment', comment.exitCode, comment.stderr || comment.stdout));
       linkComment = 'posted';
     }
   }
 
-  const created = advisories.filter(advisory => advisory.disposition === 'created').length;
+  const created = createdAdvisories.length;
   const existing = advisories.filter(advisory => advisory.disposition === 'existing').length;
   const planned = advisories.filter(advisory => advisory.disposition === 'planned').length;
   const summaryParts = [
     `${advisories.length} advisory finding(s) at head ${pr.headSha.slice(0, 12)} across ${lanesInspected.length} lane(s).`,
+    ...(blockingLanes.length > 0 ? [`Head is not approved: ${blockingLanes.join(', ')} recorded blocking verdicts, so no follow-up issues were filed.`] : []),
     ...(created > 0 ? [`Filed ${created} follow-up issue(s).`] : []),
     ...(existing > 0 ? [`${existing} already tracked.`] : []),
-    ...(dryRun && planned > 0 ? [`${planned} would be filed.`] : []),
+    ...(dryRun && approvedHead && planned > 0 ? [`${planned} would be filed.`] : []),
+    ...(failures.length > 0 ? [`${failures.length} provider call(s) failed; rerun to complete the remaining filings.`] : []),
     ...(limitation ? [limitation] : []),
   ];
   return {
@@ -218,23 +237,31 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     pr: pr.number,
     headSha: redact(pr.headSha),
     dryRun,
+    approvedHead,
+    blockingLanes,
     advisories,
     lanesInspected,
     limitation,
+    failures,
     linkComment,
     summary: summaryParts.join(' '),
     nextAction: limitation
       ? 'Run `aie pr gate <pr>` on this machine to record local lane evidence, then rerun `aie pr triage <pr>`.'
-      : advisories.length === 0
-        ? 'No residual advisories; merge when the PR gate reports ship-ready.'
-        : dryRun
-          ? 'Rerun without --dry-run to file the planned follow-up issues and link them on the pull request.'
-          : 'Follow-up issues are linked on the pull request; merge when the PR gate reports ship-ready.',
+      : !approvedHead
+        ? 'The current head carries blocking lane verdicts; resolve them through the PR gate before triaging advisories.'
+        : advisories.length === 0
+          ? 'No residual advisories; merge when the PR gate reports ship-ready.'
+          : failures.length > 0
+            ? 'Some provider calls failed; rerun `aie pr triage <pr>` to complete the remaining filings.'
+            : dryRun
+              ? 'Rerun without --dry-run to file the planned follow-up issues and link them on the pull request.'
+              : 'Follow-up issues are linked on the pull request; merge when the PR gate reports ship-ready.',
   };
 }
 
 export function formatPrTriage(result: PrTriageResult): string {
   const lines = [`PR advisory triage for #${result.pr}${result.dryRun ? ' (dry-run)' : ''}: ${result.summary}`];
+  if (!result.approvedHead && result.blockingLanes.length > 0) lines.push(`Blocking lane verdicts at this head: ${result.blockingLanes.join(', ')}.`);
   for (const advisory of result.advisories) {
     const location = advisory.location ? ` (${advisory.location.path}${advisory.location.line !== null ? `:${advisory.location.line}` : ''})` : '';
     lines.push(`- [${advisory.disposition}] ${advisory.lane}${location}: ${advisory.message.slice(0, 140)}${advisory.issueUrl ? ` -> ${advisory.issueUrl}` : ''}`);

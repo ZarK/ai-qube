@@ -958,6 +958,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const advisoryCount = localReview.evidence.flatMap(evidence => evidence.lanes).reduce((total, lane) => total + lane.findings.filter(finding => finding.severity === 'advisory').length, 0);
   const shipReadyReasons: string[] = [];
   if (status !== 'complete') shipReadyReasons.push(`PR gate status is ${status}, not complete.`);
+  if (hasIncompleteChecks(finalSnapshot.item)) shipReadyReasons.push('One or more required checks are incomplete at the current head.');
   if ((localRequired || localShadow) && localReview.status !== 'passed') shipReadyReasons.push(`Local review gate is ${localReview.status}, not passed, at the current head.`);
   for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
   if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);

@@ -550,7 +550,7 @@ async function handlePrTriage(context: Parameters<RuntimeCommandHandler>[0]) {
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr triage', loaded, 'Fix the selected Executor config, then rerun advisory triage.');
   try {
-    const result = await runPrTriageService(loaded.config ?? getDefaults(), { prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
+    const result = await runPrTriageService({ prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
     return commandResult(context, result, formatPrTriage(result));
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
@@ -710,7 +710,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr triage <pr>` when the gate reports ship-ready with residual advisories to file them as follow-up issues instead of new commits on the approved head.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,

@@ -24,6 +24,15 @@ export {
   type PrGatePullRequest,
   type PrGateResult,
   type PrGateReviewer,
+  type PrGateShipReady,
   type PrGateStatus,
   type PrReviewerTrigger,
 } from '../app/pr_gate.js';
+
+export {
+  formatPrTriage,
+  runPrTriageService,
+  type PrTriageAdvisory,
+  type PrTriageOptions,
+  type PrTriageResult,
+} from '../app/pr_triage.js';

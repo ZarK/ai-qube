@@ -7,7 +7,6 @@ const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { runPrTriageService, formatPrTriage } = require('../dist/app/pr_triage.js');
-const { getDefaults } = require('../dist/config/index.js');
 
 const HEAD = 'abc123';
 
@@ -54,7 +53,7 @@ function fakeGh({ existingSearchHits = {}, createdUrls = [] } = {}) {
       const searchIndex = args.indexOf('--search');
       const query = searchIndex >= 0 ? args[searchIndex + 1] : '';
       const hit = Object.entries(existingSearchHits).find(([key]) => query.includes(key));
-      return { args, exitCode: 0, stdout: JSON.stringify(hit ? [hit[1]] : []), stderr: '' };
+      return { args, exitCode: 0, stdout: JSON.stringify(hit ? [{ ...hit[1], body: hit[1].body ?? `Dedupe key: ${hit[0]}` }] : []), stderr: '' };
     }
     if (args[0] === 'issue' && args[1] === 'create') {
       const url = createdUrls[createIndex] ?? `https://github.com/example/repo/issues/${900 + createIndex}`;
@@ -80,7 +79,7 @@ describe('pr triage', () => {
     const gh = fakeGh();
     const headBefore = repoHead(repo);
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
 
     assert.equal(result.dryRun, true);
     assert.equal(result.advisories.length, 1);
@@ -99,7 +98,7 @@ describe('pr triage', () => {
     ]);
     const gh = fakeGh();
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
 
     assert.equal(result.advisories.length, 2);
     assert.ok(result.advisories.every(advisory => advisory.disposition === 'created' && advisory.issueUrl));
@@ -120,15 +119,58 @@ describe('pr triage', () => {
     const repo = makeRepo();
     writeLaneEvidence(repo, 'code-quality', [advisoryFinding('cq-1', 'Duplicate parsing of lane evidence files on resume.')]);
     const probe = fakeGh();
-    const planned = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: true, exec: probe.exec });
+    const planned = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: true, exec: probe.exec });
     const dedupeKey = planned.advisories[0].dedupeKey;
     const gh = fakeGh({ existingSearchHits: { [dedupeKey]: { number: 777, url: 'https://github.com/example/repo/issues/777' } } });
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
 
     assert.equal(result.advisories[0].disposition, 'existing');
     assert.equal(result.advisories[0].issueNumber, 777);
     assert.equal(gh.calls.some(args => args[0] === 'issue' && args[1] === 'create'), false);
+    assert.equal(gh.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.equal(result.linkComment, 'skipped');
+  });
+
+  it('refuses to file follow-up issues when the head carries blocking lane verdicts', async () => {
+    const repo = makeRepo();
+    writeLaneEvidence(repo, 'performance', [advisoryFinding('perf-1', 'Sequential dedupe searches scale linearly with advisories.')]);
+    writeLaneEvidence(repo, 'code-quality', [], { status: 'needs-work', recommendation: 'request-changes' });
+    const gh = fakeGh();
+
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+
+    assert.equal(result.approvedHead, false);
+    assert.deepEqual(result.blockingLanes, ['code-quality']);
+    assert.ok(result.advisories.every(advisory => advisory.disposition !== 'created'));
+    assert.equal(gh.calls.some(args => args[0] === 'issue' && args[1] === 'create'), false);
+    assert.equal(gh.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
+    assert.match(result.nextAction, /blocking lane verdicts/);
+  });
+
+  it('continues past a failed issue creation and reports the partial state', async () => {
+    const repo = makeRepo();
+    writeLaneEvidence(repo, 'code-quality', [
+      advisoryFinding('cq-1', 'First advisory that fails to file.'),
+      advisoryFinding('cq-2', 'Second advisory that files cleanly.', { path: 'src/runner.ts', line: 7 }),
+    ]);
+    const gh = fakeGh();
+    let createAttempts = 0;
+    const exec = async args => {
+      if (args[0] === 'issue' && args[1] === 'create') {
+        createAttempts += 1;
+        if (createAttempts === 1) return { args, exitCode: 1, stdout: '', stderr: 'rate limited' };
+      }
+      return gh.exec(args);
+    };
+
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: false, exec });
+
+    assert.equal(result.failures.length, 1);
+    assert.match(result.failures[0], /rate limited|gh issue create/);
+    assert.equal(result.advisories.filter(advisory => advisory.disposition === 'created').length, 1);
+    assert.equal(result.advisories.filter(advisory => advisory.disposition === 'planned').length, 1);
+    assert.match(result.nextAction, /rerun/i);
   });
 
   it('reports an empty plan when no advisories remain', async () => {
@@ -136,7 +178,7 @@ describe('pr triage', () => {
     writeLaneEvidence(repo, 'code-quality', []);
     const gh = fakeGh();
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
 
     assert.equal(result.advisories.length, 0);
     assert.equal(result.linkComment, 'skipped');
@@ -147,7 +189,7 @@ describe('pr triage', () => {
     const repo = makeRepo();
     const gh = fakeGh();
 
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
 
     assert.ok(result.limitation);
     assert.match(result.limitation, /local-only fields/);
@@ -158,7 +200,7 @@ describe('pr triage', () => {
     const repo = makeRepo();
     writeLaneEvidence(repo, 'code-quality', [advisoryFinding('cq-1', 'Duplicate parsing of lane evidence files on resume.')]);
     const gh = fakeGh();
-    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
+    const result = await runPrTriageService({ prNumber: 12, repoRoot: repo, dryRun: true, exec: gh.exec });
 
     const text = formatPrTriage(result);
     assert.match(text, /PR advisory triage for #12 \(dry-run\)/);
