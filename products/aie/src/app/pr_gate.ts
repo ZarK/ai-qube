@@ -816,6 +816,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         prNumber: options.prNumber,
         profile: gateProfile,
         requiredLanes: activeFocuses,
+        issueNumbers: finalSnapshot.closingIssueNumbers,
       })
     : undefined;
   const localReviewRunner = await runLocalReviewRunner(config, {

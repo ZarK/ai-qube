@@ -146,7 +146,31 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true): LocalReviewLaneRun {
+  if (!renderPrompts) {
+    // Trusted-provider reuse spawns nothing and validates no local evidence, so prompt
+    // rendering and hashing would be dead work for the reused lane.
+    return {
+      issueNumber,
+      issueNumbers: [...issueNumbers],
+      lane,
+      runner,
+      command,
+      status,
+      evidencePath,
+      evidencePaths: [...evidencePaths],
+      promptFragmentIds: [],
+      promptStackHash: '',
+      promptText: '',
+      promptOutputContract: '',
+      spawnPrompt: '',
+      spawnContract: null,
+      route,
+      summary,
+      blocker,
+      evidenceSource: status === 'unavailable' || status === 'failed' ? null : 'fresh-run',
+    };
+  }
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments);
@@ -195,7 +219,7 @@ function reuseLaneRun(config: Config, input: LocalReviewRunnerInput, lane: Local
   const providerLane = acceptedProviderLane(input.providerLaneReuse, lane, issueNumber);
   if (providerLane) {
     const summary = `Trusted provider current-head review reused (${providerLane.recommendation}/${providerLane.status}); no reviewer execution required and no local evidence was fabricated.`;
-    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route), evidenceSource: 'trusted-provider' };
+    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, false), evidenceSource: 'trusted-provider' };
   }
   return null;
 }

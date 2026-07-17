@@ -1036,7 +1036,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   const lanesWithPublishStatus = [...localLanesWithPublishStatus, ...providerLanes];
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
-    const missingRejections = (providerReuse?.rejected ?? []).filter(entry => missing.includes(entry.lane)).map(entry => entry.reason);
+    const missingRejections = (providerReuse?.rejected ?? []).filter(entry => missing.includes(entry.lane) && (entry.issueNumber === null || entry.issueNumber === issueNumber)).map(entry => entry.reason);
     return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: [...missing.map(lane => `Missing local review evidence for ${lane}.`), ...missingRejections] };
   }
   const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
@@ -1061,7 +1061,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     status,
     path: redact(directory),
     reviewer: fallbackReviewer(reviewers),
-    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}${providerLanes.length > 0 ? ` Reused trusted provider current-head reviews for: ${providerLanes.map(lane => lane.id).join(', ')}.` : ''}`,
+    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' && localLanes.length > 0 ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}${providerLanes.length > 0 ? ` Reused trusted provider current-head reviews for: ${providerLanes.map(lane => lane.id).join(', ')}.` : ''}`,
     blockers,
     lanes: lanesWithPublishStatus,
     contextReviewed,

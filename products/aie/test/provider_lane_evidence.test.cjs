@@ -24,7 +24,7 @@ function record(overrides = {}) {
   };
 }
 
-const gate = { headSha: 'abc123', prNumber: 12, profile: 'local-standard', requiredLanes: ['issue-compliance', 'code-quality'] };
+const gate = { headSha: 'abc123', prNumber: 12, profile: 'local-standard', requiredLanes: ['issue-compliance', 'code-quality'], issueNumbers: [93] };
 
 describe('readTrustedProviderLanes', () => {
   it('accepts a complete valid current-head record set', () => {
@@ -78,7 +78,7 @@ describe('readTrustedProviderLanes', () => {
   it('rejects records missing required marker fields', () => {
     const reuse = readTrustedProviderLanes([record({ runId: '' })], gate);
     assert.equal(reuse.accepted.length, 0);
-    assert.match(reuse.rejected[0].reason, /missing required marker fields/);
+    assert.match(reuse.rejected[0].reason, /missing required marker fields \(runId, host, or summary\)/);
   });
 
   it('ignores malformed entries and records for inactive lanes without crashing', () => {
@@ -106,6 +106,38 @@ describe('readTrustedProviderLanes', () => {
     assert.equal(reuse.accepted.length, 0);
     assert.equal(reuse.rejected.length, 0);
     assert.match(reuse.summary, /No trusted provider review found for: issue-compliance, code-quality/);
+  });
+});
+
+describe('readTrustedProviderLanes with multiple linked issues', () => {
+  it('accepts per-issue records for the same lane without shadowing', () => {
+    const multiGate = { ...gate, issueNumbers: [93, 94] };
+    const reuse = readTrustedProviderLanes([
+      record({ lane: 'issue-compliance', issueNumber: 93, runId: 'run-93' }),
+      record({ lane: 'issue-compliance', issueNumber: 94, runId: 'run-94' }),
+      record({ lane: 'code-quality', issueNumber: 93, runId: 'run-cq-93' }),
+      record({ lane: 'code-quality', issueNumber: 94, runId: 'run-cq-94' }),
+    ], multiGate);
+    assert.equal(reuse.accepted.length, 4);
+    assert.ok(acceptedProviderLane(reuse, 'issue-compliance', 93));
+    assert.ok(acceptedProviderLane(reuse, 'issue-compliance', 94));
+    assert.ok(acceptedProviderLane(reuse, 'code-quality', 93));
+    assert.ok(acceptedProviderLane(reuse, 'code-quality', 94));
+  });
+
+  it('does not let one issue record cover another linked issue', () => {
+    const multiGate = { ...gate, issueNumbers: [93, 94] };
+    const reuse = readTrustedProviderLanes([
+      record({ lane: 'issue-compliance', issueNumber: 93 }),
+      record({ lane: 'code-quality', issueNumber: 93 }),
+    ], multiGate);
+    assert.equal(acceptedProviderLane(reuse, 'issue-compliance', 94), null);
+    assert.equal(acceptedProviderLane(reuse, 'code-quality', 94), null);
+  });
+
+  it('ignores current-head records without a valid issue number', () => {
+    const reuse = readTrustedProviderLanes([record({ issueNumber: null })], gate);
+    assert.equal(reuse.accepted.length, 0);
   });
 });
 
