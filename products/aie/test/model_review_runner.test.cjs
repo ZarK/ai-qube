@@ -72,6 +72,7 @@ describe('model review runner', () => {
       cwd: repoRoot,
       stdin: 'exact prompt bytes',
       promptPath: null,
+      schemaPath: null,
       timeoutMs: 5_000,
     });
 
@@ -92,6 +93,7 @@ describe('model review runner', () => {
       cwd: repoRoot,
       stdin: null,
       promptPath: null,
+      schemaPath: null,
       timeoutMs: 100,
     });
 
@@ -103,7 +105,8 @@ describe('model review runner', () => {
     const input = reviewInput('C:\\repo with spaces', 'codex');
     const prompt = buildModelReviewPrompt(input);
     const codexScript = 'C:\\npm path\\node_modules\\@openai\\codex\\bin\\codex.js';
-    const invocation = buildModelRouteInvocation(input, { executable: 'node.exe', prefixArgs: [codexScript] }, prompt, null);
+    const schemaPath = 'C:\\repo with spaces\\.git\\qube\\aie\\model-route\\review.schema.json';
+    const invocation = buildModelRouteInvocation(input, { executable: 'node.exe', prefixArgs: [codexScript] }, prompt, null, schemaPath);
 
     assert.equal(invocation.executable, 'node.exe');
     assert.equal(invocation.args[0], codexScript);
@@ -111,7 +114,7 @@ describe('model review runner', () => {
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);
     assert.equal(invocation.args.includes(prompt), false);
-    assert.deepEqual(invocation.args.slice(-3), ['--ephemeral', '--json', '-']);
+    assert.deepEqual(invocation.args.slice(-2), ['--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
     assert.ok(invocation.args.includes('gpt-5.6-luna'));
     assert.ok(invocation.args.includes('model_reasoning_effort="high"'));
@@ -119,6 +122,38 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('multi_agent'));
     assert.ok(invocation.args.includes('mcp_servers={}'));
     assert.ok(invocation.args.includes('web_search="disabled"'));
+    assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], schemaPath);
+  });
+
+  it('routes Codex through a private strict schema file and removes it after execution', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-codex-schema-'));
+    const input = reviewInput(repoRoot, 'codex');
+    let capturedSchemaPath = null;
+
+    const result = await runModelReview({
+      ...input,
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async invocation => {
+        capturedSchemaPath = invocation.schemaPath;
+        assert.equal(invocation.promptPath, null);
+        assert.equal(existsSync(invocation.schemaPath), true);
+        const schema = JSON.parse(readFileSync(invocation.schemaPath, 'utf8'));
+        assert.equal(schema.properties.issueNumber.const, 309);
+        assert.equal(schema.properties.lane.const, 'code-quality');
+        assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], invocation.schemaPath);
+        return {
+          exitCode: 0,
+          stderr: '',
+          timedOut: false,
+          stdinDelivered: true,
+          stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } })}\n`,
+        };
+      },
+    });
+
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.runnerProvenance.sessionId, 'codex-thread');
+    assert.equal(existsSync(capturedSchemaPath), false);
   });
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {
@@ -235,6 +270,13 @@ describe('model review runner', () => {
     });
     assert.equal(nonZero.reasonCode, 'model-route-process-failed');
     assert.match(nonZero.error, /code 17/);
+
+    const untrustedReviewText = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 1, stderr: 'runner stopped', stdout: 'The configured model validation appears unavailable in reviewed code.', timedOut: false, stdinDelivered: true }),
+    });
+    assert.equal(untrustedReviewText.reasonCode, 'model-route-process-failed');
   });
 
   it('rejects checkout drift, incomplete prompt delivery, and permissively malformed evidence', async () => {

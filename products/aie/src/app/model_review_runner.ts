@@ -29,6 +29,7 @@ export interface ModelRouteInvocation {
   cwd: string;
   stdin: string | null;
   promptPath: string | null;
+  schemaPath: string | null;
   timeoutMs: number;
 }
 
@@ -133,6 +134,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Every artifact must identify a real repository source, test, command result, or other inspected surface using {"kind":"...","path":"...","sha256":null}.',
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
+    'The exact lane prompt may describe the complete persisted evidence object. For routed execution, this stricter outer contract is authoritative: return only the fields listed above, and QUBE injects profile, adapter, promptStack, runnerProvenance, and recordedAt.',
     'Do not include runnerProvenance or promptStack; QUBE records those from the trusted invocation.',
     'Do not write files, publish feedback, modify provider state, use subagents, use web tools, or reveal hidden reasoning.',
   ].join('\n');
@@ -150,7 +152,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   ].join('\n');
 }
 
-function grokReviewSchema(input: ModelReviewRunInput): string {
+function reviewResultSchema(input: ModelReviewRunInput): string {
   const stringArray = { type: 'array', items: { type: 'string' } } as const;
   return JSON.stringify({
     type: 'object',
@@ -320,11 +322,12 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
 }
 
-export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null): ModelRouteInvocation {
+export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null, schemaPath: string | null = null): ModelRouteInvocation {
   const executablePath = typeof executable === 'string' ? executable : executable.executable;
   const args: string[] = typeof executable === 'string' ? [] : [...executable.prefixArgs];
   let stdin: string | null = null;
   if (input.plan.host === 'codex') {
+    if (!schemaPath) throw new Error('Codex review routing requires a private output schema file.');
     args.push('exec');
     if (input.plan.model) args.push('--model', input.plan.model);
     if (input.plan.effort) args.push('--config', `model_reasoning_effort="${input.plan.effort}"`);
@@ -332,7 +335,7 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
       '--ignore-user-config', '--strict-config', '--config', 'mcp_servers={}', '--config', 'web_search="disabled"',
       '--disable', 'apps', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use',
       '--disable', 'in_app_browser', '--disable', 'standalone_web_search', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'plugins',
-      '--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--json', '-',
+      '--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--output-schema', schemaPath, '--json', '-',
     );
     stdin = prompt;
   } else {
@@ -352,13 +355,13 @@ export function buildModelRouteInvocation(input: ModelReviewRunInput, executable
       '--disable-web-search',
       '--no-memory',
       '--max-turns', String(input.plan.maxTurns),
-      '--json-schema', grokReviewSchema(input),
+      '--json-schema', reviewResultSchema(input),
     );
     if (input.plan.effort) args.push('--reasoning-effort', input.plan.effort);
     if (input.plan.model) args.push('--model', input.plan.model);
     args.push('--verbatim', '--prompt-file', promptPath);
   }
-  return { executable: executablePath, args, cwd: input.repoRoot, stdin, promptPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
+  return { executable: executablePath, args, cwd: input.repoRoot, stdin, promptPath, schemaPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {
@@ -425,8 +428,8 @@ function parseGrokOutput(stdout: string): { text: string; sessionId: string | nu
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
   const diagnostic = sanitizedDiagnostic(result.stderr);
-  if (/auth|login|credential|unauthor/i.test(`${result.stderr}\n${result.stdout}`)) return { reasonCode: 'model-route-authentication', error: 'Model review route is not authenticated. Authenticate the configured host outside QUBE, then rerun.' };
-  if (/model.*(?:not found|unknown|unavailable|invalid)/i.test(`${result.stderr}\n${result.stdout}`)) return { reasonCode: 'model-route-model-unavailable', error: 'Configured review model is unavailable for this host. Refresh the host model list and update trusted review config.' };
+  if (/auth|login|credential|unauthor/i.test(result.stderr)) return { reasonCode: 'model-route-authentication', error: 'Model review route is not authenticated. Authenticate the configured host outside QUBE, then rerun.' };
+  if (/model.*(?:not found|unknown|unavailable|invalid)/i.test(result.stderr)) return { reasonCode: 'model-route-model-unavailable', error: 'Configured review model is unavailable for this host. Refresh the host model list and update trusted review config.' };
   return { reasonCode: 'model-route-process-failed', error: `Model review route exited with code ${result.exitCode}.${diagnostic ? ` Diagnostic: ${diagnostic}` : ''}` };
 }
 
@@ -439,16 +442,21 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   const invocationId = randomUUID();
   const prompt = buildModelReviewPrompt(input);
   let promptPath: string | null = null;
+  let schemaPath: string | null = null;
   try {
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD does not match the requested pull request head.' };
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
+    const routeDirectory = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route');
+    mkdirSync(routeDirectory, { recursive: true });
     if (input.plan.host === 'grok') {
-      promptPath = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route', `${invocationId}.prompt`);
-      mkdirSync(dirname(promptPath), { recursive: true });
+      promptPath = join(routeDirectory, `${invocationId}.prompt`);
       writeFileSync(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
+    } else {
+      schemaPath = join(routeDirectory, `${invocationId}.schema.json`);
+      writeFileSync(schemaPath, reviewResultSchema(input), { encoding: 'utf8', mode: 0o600 });
     }
-    const invocation = buildModelRouteInvocation(input, executable, prompt, promptPath);
+    const invocation = buildModelRouteInvocation(input, executable, prompt, promptPath, schemaPath);
     const result = await (input.runProcess ?? runModelRouteProcess)(invocation);
     if (result.exitCode !== 0 || result.timedOut) {
       const failure = failureReason(result);
@@ -488,5 +496,6 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     return { evidence: null, reasonCode: 'model-route-unavailable', error: sanitizedDiagnostic(error instanceof Error ? error.message : String(error)) };
   } finally {
     if (promptPath) rmSync(promptPath, { force: true });
+    if (schemaPath) rmSync(schemaPath, { force: true });
   }
 }

@@ -235,7 +235,7 @@
         "host": "grok",
         "tier": "review",
         "timeoutSeconds": 900,
-        "maxTurns": 8
+        "maxTurns": 12
       }
     },
     "gates": {
