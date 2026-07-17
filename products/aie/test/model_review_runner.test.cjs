@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { existsSync, readFileSync } = require('node:fs');
+const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -9,6 +9,7 @@ const {
   buildModelReviewPrompt,
   buildModelRouteInvocation,
   runModelReview,
+  runModelRouteProcess,
 } = require('../dist/app/model_review_runner.js');
 
 function reviewInput(repoRoot, host = 'grok') {
@@ -58,6 +59,43 @@ function laneResult() {
 }
 
 describe('model review runner', () => {
+  it('executes a fake host with literal argument arrays, stdin fidelity, and Windows-safe paths', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie fake host '));
+    const fakeHost = join(repoRoot, 'fake-host.cjs');
+    writeFileSync(fakeHost, `let input = ''; process.stdin.setEncoding('utf8'); process.stdin.on('data', chunk => { input += chunk; }); process.stdin.on('end', () => process.stdout.write(JSON.stringify({ args: process.argv.slice(2), input })));\n`);
+    const args = [fakeHost, 'literal;separator', '$(not-a-command)', 'C:\\review path\\prompt.json'];
+    const result = await runModelRouteProcess({
+      executable: process.execPath,
+      args,
+      cwd: repoRoot,
+      stdin: 'exact prompt bytes',
+      promptPath: null,
+      timeoutMs: 5_000,
+    });
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(result.timedOut, false);
+    assert.deepEqual(JSON.parse(result.stdout), { args: args.slice(1), input: 'exact prompt bytes' });
+  });
+
+  it('terminates a fake host at the configured execution bound', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-fake-timeout-'));
+    const fakeHost = join(repoRoot, 'fake-timeout.cjs');
+    writeFileSync(fakeHost, `setInterval(() => {}, 1_000);\n`);
+
+    const result = await runModelRouteProcess({
+      executable: process.execPath,
+      args: [fakeHost],
+      cwd: repoRoot,
+      stdin: null,
+      promptPath: null,
+      timeoutMs: 100,
+    });
+
+    assert.equal(result.timedOut, true);
+    assert.notEqual(result.exitCode, 0);
+  });
+
   it('keeps Codex prompt content on stdin and uses fixed read-only arguments', () => {
     const input = reviewInput('C:\\repo with spaces', 'codex');
     const prompt = buildModelReviewPrompt(input);
