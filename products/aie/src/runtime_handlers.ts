@@ -7,6 +7,7 @@ import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js'
 import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
+import { formatPrTriage, runPrTriageService } from './app/pr_triage.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
 import { runBranchCommand } from './branch.js';
@@ -531,6 +532,33 @@ async function handlePrBody(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
+async function handlePrTriage(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  if (isHelpToken(pr)) return usageResult(context, 'pr triage', 'aie pr triage <pr> [--dry-run] [--json]', ['Usage: aie pr triage <pr> [--dry-run] [--json]', '', 'Convert residual advisory findings at an approved current head into deduplicated follow-up issues linked on the pull request.', 'Examples:', ...commandExamples('pr triage').map(example => `  ${example}`)]);
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie pr triage 12 --dry-run\` or \`aie pr triage --help\`.`;
+    return commandFailure(context, { ok: false, command: 'pr triage', error: message }, message);
+  }
+  if (prNumber === null) {
+    const message = 'Failed to run `aie pr triage`: missing pull request number. Likely cause: no PR argument was provided. Next action: run `aie pr triage 12 --dry-run` or `aie pr triage --help`.';
+    return commandFailure(context, { ok: false, command: 'pr triage', error: message, usage: 'aie pr triage <pr> [--dry-run] [--json]', examples: commandExamples('pr triage') }, message);
+  }
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr triage', loaded, 'Fix the selected Executor config, then rerun advisory triage.');
+  try {
+    const result = await runPrTriageService(loaded.config ?? getDefaults(), { prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
+    return commandResult(context, result, formatPrTriage(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to triage advisories for pull request #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication and local lane evidence, then rerun \`aie pr triage ${prNumber} --dry-run\`.`;
+    return commandFailure(context, { ok: false, command: 'pr triage', pr: prNumber, error: message }, message);
+  }
+}
+
 async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
   const lane = stringFlag(context, 'lane');
@@ -686,6 +714,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,
+  'pr triage': handlePrTriage,
   'pr thread resolve': handlePrThreadResolve,
   'pr view': context => handleConfigCommand(context, 'pr view'),
   queue: async context => {

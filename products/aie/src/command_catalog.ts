@@ -409,6 +409,18 @@ const COMMAND_DEFINITIONS = [
     examples: ['aie pr gate 12 --dry-run', 'aie pr gate 12 --json', 'aie pr gate 12'],
   },
   {
+    name: 'pr triage',
+    description: 'Convert residual advisory findings at an approved current head into deduplicated follow-up issues linked on the pull request, instead of new commits on the approved head.',
+    args: ['pr'],
+    flags: ['--dry-run', '--json', '--help'],
+    mutationTargets: ['github'],
+    supportsJson: true,
+    supportsDryRun: true,
+    externalServices: ['github'],
+    stableErrorKinds: ['parse-error', 'config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie pr triage 12 --dry-run', 'aie pr triage 12 --json', 'aie pr triage 12'],
+  },
+  {
     name: 'pr review publish',
     description: 'Publish one evidence-backed host-run lane pull request review to the configured review provider for the current PR head.',
     args: ['pr'],
