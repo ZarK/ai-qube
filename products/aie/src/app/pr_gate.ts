@@ -20,6 +20,7 @@ import {
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
@@ -808,6 +809,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const issueChecklists = loadedChecklists.summaries;
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
   const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
+  const gateProfile = localShadow ? 'local-shadow' as const : localRequired && config.reviewProfile === 'remote-compatible' ? 'local-standard' as const : config.reviewProfile;
+  const providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
+    ? readTrustedProviderLanes(finalSnapshot.item.trustedMetadata.trustedLaneReviews, {
+        headSha: finalSnapshot.pr.headRefOid,
+        prNumber: options.prNumber,
+        profile: gateProfile,
+        requiredLanes: activeFocuses,
+        issueNumbers: finalSnapshot.closingIssueNumbers,
+      })
+    : undefined;
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -824,6 +835,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     modelRouteProcess: options.modelRouteProcess,
     resolveModelHost: options.resolveModelHost,
     resolveModelHead: options.resolveModelHead,
+    providerLaneReuse,
   });
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
@@ -843,6 +855,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
     carryForwardScope,
+    providerLaneReuse,
   });
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const publishUnavailable: string[] = [];
@@ -850,8 +863,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   if (deferProviderMutation) {
     const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
     const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
+    // Reused lanes (local current-head evidence or trusted provider records) are already
+    // provider-visible; publishing again would duplicate the audit trail.
+    const freshRoutedLaneKeys = new Set(localReviewRunner.lanes.filter(lane => lane.route !== null && lane.evidenceSource === 'fresh-run' && lane.status === 'completed').map(lane => `${lane.issueNumber} ${lane.lane}`));
     if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status !== 'passed') {
       localReviewPublish = pendingLocalReviewPublish('Routed review publishing was withheld because the complete current-head lane batch did not validate; no provider mutation was performed.');
+    } else if (freshRoutedLaneKeys.size === 0) {
+      localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' };
     } else {
       const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
@@ -867,7 +885,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
           const publishedUrls: string[] = [];
           for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
-            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null)) {
+            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
               try {
                 if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
                 const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
@@ -877,9 +895,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
               }
             }
           }
-          localReviewPublish = publishUnavailable.length === 0
-            ? { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${routedRuns.length} routed current-head lane review(s) from the QUBE orchestrator.` }
-            : { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' };
+          localReviewPublish = publishUnavailable.length > 0
+            ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
+            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${freshRoutedLaneKeys.size} routed current-head lane review(s) from the QUBE orchestrator.` };
           finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
         }
       }
@@ -982,14 +1000,21 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
   for (const lane of result.localReviewRunner.lanes) {
-    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; evidence=${lane.evidencePath}`);
+    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; source=${lane.evidenceSource ?? 'none'}; evidence=${lane.evidencePath}`);
   }
   if (result.selfCheck) {
     lines.push(...formatImplementerSelfCheck(result.selfCheck));
   }
   lines.push(`Local review evidence: ${result.localReview.mode}; profile=${result.localReview.profile}; status=${result.localReview.required || result.localReview.mode === 'shadow' ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
   if (result.localReview.required || result.localReview.mode === 'shadow') {
-    for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+    for (const evidence of result.localReview.evidence) {
+      lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+      for (const lane of evidence.lanes) lines.push(`  - ${lane.id}: ${lane.status}; origin=${lane.origin ?? 'local'}`);
+    }
+  }
+  if (result.localReview.providerReuse && (result.localReview.providerReuse.accepted.length > 0 || result.localReview.providerReuse.rejected.length > 0)) {
+    lines.push(`Trusted provider lane reuse: ${result.localReview.providerReuse.summary}`);
+    for (const rejection of result.localReview.providerReuse.rejected) lines.push(`- rejected ${rejection.lane}: ${rejection.reason}`);
   }
   lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
   if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);

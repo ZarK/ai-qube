@@ -3,7 +3,8 @@ import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy, RoutedReviewHostId } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
-import { type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
+import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
+import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
@@ -38,6 +39,7 @@ export interface LocalReviewLaneRun {
   route: ModelReviewRoutePlan | null;
   summary: string;
   blocker: string | null;
+  evidenceSource: 'fresh-run' | 'local' | 'trusted-provider' | null;
 }
 
 export interface LocalReviewRunResult {
@@ -74,6 +76,7 @@ interface LocalReviewRunnerInput {
   modelRouteProcess?: ModelRouteProcess;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveModelHead?: (repoRoot: string) => Promise<string>;
+  providerLaneReuse?: ProviderLaneReuse;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -143,7 +146,31 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true): LocalReviewLaneRun {
+  if (!renderPrompts) {
+    // Trusted-provider reuse spawns nothing and validates no local evidence, so prompt
+    // rendering and hashing would be dead work for the reused lane.
+    return {
+      issueNumber,
+      issueNumbers: [...issueNumbers],
+      lane,
+      runner,
+      command,
+      status,
+      evidencePath,
+      evidencePaths: [...evidencePaths],
+      promptFragmentIds: [],
+      promptStackHash: '',
+      promptText: '',
+      promptOutputContract: '',
+      spawnPrompt: '',
+      spawnContract: null,
+      route,
+      summary,
+      blocker,
+      evidenceSource: status === 'unavailable' || status === 'failed' ? null : 'fresh-run',
+    };
+  }
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
   const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments);
@@ -171,11 +198,34 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     route,
     summary,
     blocker,
+    evidenceSource: status === 'unavailable' || status === 'failed' ? null : 'fresh-run',
   };
 }
 
 function codexSubagentSummary(lane: LocalReviewLaneId, issueNumber: number, linkedIssueNumbers: readonly number[], prNumber: number, headSha: string, evidencePath: string, publishCommand: string): string {
   return `Create the review session lock, spawn one independent Codex subagent with agent_type qube-review-focus and fork_context false. Paste each lane spawnPrompt from pr gate --dry-run --json --local-review-prompts verbatim as the subagent task prompt; never reference .qube/aie/reviews/.../prompts/ files. Review focus ${lane} for issue #${issueNumber} and PR #${prNumber} at head ${headSha}. Linked issues for PR context: ${linkedIssueNumbers.map(linkedIssueNumber => `#${linkedIssueNumber}`).join(', ')}. Run pending review focuses in parallel when the host supports it. Each subagent must publish its lane review to the pull request with \`${publishCommand}\`. Wait for all subagents, delete the review session lock, rerun pr gate, and treat provider PR reviews/comments as the merge gate; local audit JSON at ${evidencePath} is optional.`;
+}
+
+// Exact-head reuse mirrors the evidence gate's precedence exactly: a present
+// local evidence file always owns the lane (terminal states reuse, non-terminal
+// states re-execute), and trusted provider markers apply only when no local file
+// exists. Any divergence here would let the runner skip a lane the gate then
+// reads differently.
+function reuseLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, linkedIssueNumbers: readonly number[], riskCardFragments: readonly string[], route: ModelReviewRoutePlan | null): LocalReviewLaneRun | null {
+  if (existsSync(path)) {
+    const localLane = readCurrentHeadLaneEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
+    if (localLane && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
+      const summary = `Existing current-head lane evidence (${localLane.status}) reused; no reviewer execution required.`;
+      return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route), evidenceSource: 'local' };
+    }
+    return null;
+  }
+  const providerLane = acceptedProviderLane(input.providerLaneReuse, lane, issueNumber);
+  if (providerLane) {
+    const summary = `Trusted provider current-head review reused (${providerLane.recommendation}/${providerLane.status}); no reviewer execution required and no local evidence was fabricated.`;
+    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, false), evidenceSource: 'trusted-provider' };
+  }
+  return null;
 }
 
 async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], linkedIssueNumbers: readonly number[], written: string[], riskCardFragments: readonly string[] = []): Promise<LocalReviewLaneRun | null> {
@@ -200,12 +250,12 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
   });
   if (!source) return null;
   if (input.dryRun) {
-    return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments);
+    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments), evidenceSource: 'local' };
   }
   const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source);
   if (!writtenPath) return null;
   written.push(writtenPath);
-  return laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments);
+  return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments), evidenceSource: 'local' };
 }
 
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
@@ -262,6 +312,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments));
         continue;
       }
+      const reused = reuseLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, riskCardFragments, null);
+      if (reused) {
+        lanes.push(reused);
+        continue;
+      }
       const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written, riskCardFragments);
       if (carried) {
         lanes.push(carried);
@@ -290,6 +345,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         const blocker = 'review runner command is not trusted for current PR head';
         unavailable.push(`${lane}: ${summary}`);
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+        continue;
+      }
+      const reused = reuseLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, includePrompt, [issueNumber], riskCardFragments, route);
+      if (reused) {
+        lanes.push(reused);
         continue;
       }
       const carried = await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written, riskCardFragments);
@@ -396,11 +456,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     written,
     unavailable,
     summary: status === 'completed'
-      ? `Local review runner wrote ${written.length} lane evidence file(s).`
+      ? `Local review runner wrote ${written.length} lane evidence file(s).${lanes.some(lane => lane.evidenceSource === 'local' && lane.status === 'completed') ? ` Reused existing current-head local evidence for: ${lanes.filter(lane => lane.evidenceSource === 'local' && lane.status === 'completed').map(lane => lane.lane).join(', ')}.` : ''}${lanes.some(lane => lane.evidenceSource === 'trusted-provider') ? ` Reused trusted provider current-head reviews for: ${lanes.filter(lane => lane.evidenceSource === 'trusted-provider').map(lane => lane.lane).join(', ')}.` : ''}`
       : status === 'pending'
         ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
       : status === 'planned'
-        ? `Local review runner planned ${lanes.length} lane execution(s).`
+        ? `Local review runner planned ${lanes.filter(lane => lane.status === 'planned' || lane.status === 'pending').length} lane execution(s); ${lanes.filter(lane => lane.status === 'skipped').length} lane(s) reuse existing current-head evidence.`
         : `Local review runner could not complete all required lanes: ${unavailable.join('; ')}`,
   };
 }

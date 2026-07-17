@@ -1568,6 +1568,241 @@ describe('PR gate service', () => {
     assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
+  it('reuses a complete trusted provider current-head lane set without executing lanes', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    assert.ok(laneIds.length > 0);
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `reuse-${lane}` }));
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments })] });
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+      modelRouteProcess: async () => { throw new Error('routed lane executed although trusted provider evidence covered the head'); },
+    });
+
+    assert.equal(result.localReview.status, 'passed');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'skipped' && lane.evidenceSource === 'trusted-provider'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'trusted-provider'));
+    assert.ok(result.reviewParticipantRollup);
+    assert.equal(result.reviewParticipantRollup.hostLaneReceived, result.reviewParticipantRollup.hostLaneExpected);
+    assert.ok(result.reviewParticipantRollup.hostLaneExpected > 0);
+    assert.equal(result.localReviewPublish.status, 'skipped');
+    assert.match(result.localReviewPublish.nextAction, /reused/i);
+    assert.equal(fixture.calls.some(args => args.join(' ').includes('qube-pr-review:')), false);
+    assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
+  });
+
+  it('reruns only the lane missing from trusted provider current-head reviews', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    assert.ok(laneIds.length > 1);
+    const uncoveredLane = laneIds[0];
+    const comments = laneIds.slice(1).map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `reuse-${lane}` }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    const uncovered = result.localReviewRunner.lanes.filter(lane => lane.lane === uncoveredLane);
+    const covered = result.localReviewRunner.lanes.filter(lane => lane.lane !== uncoveredLane);
+    assert.ok(uncovered.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
+    assert.ok(covered.every(lane => lane.status === 'skipped' && lane.evidenceSource === 'trusted-provider'));
+  });
+
+  it('never reuses lane review markers from untrusted authors', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    const comments = laneIds.map(lane => ({
+      ...laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `forged-${lane}` }),
+      author: { login: 'mallory' },
+    }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
+    assert.equal((result.localReview.providerReuse?.accepted ?? []).length, 0);
+    assert.notEqual(result.localReview.status, 'passed');
+  });
+
+  it('rejects stale-head trusted provider reviews with actionable reasons', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'def456', issueNumber: 93, prNumber: 12, runId: `stale-${lane}` }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
+    assert.ok(result.localReview.providerReuse.accepted.length === 0);
+    assert.ok(result.localReview.providerReuse.rejected.length > 0);
+    assert.ok(result.localReview.providerReuse.rejected.every(entry => /other heads/.test(entry.reason)));
+  });
+
+  it('rejects profile-incompatible and non-approve trusted provider reviews', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    assert.ok(laneIds.length > 2);
+    const wrongProfileLane = laneIds[0];
+    const nonApproveLane = laneIds[1];
+    const comments = laneIds.map(lane => laneReviewComment({
+      lane,
+      profile: lane === wrongProfileLane ? 'local-comprehensive' : profile,
+      recommendation: lane === nonApproveLane ? 'request-changes' : 'approve',
+      status: lane === nonApproveLane ? 'needs-work' : 'passed',
+      head: 'abc123',
+      issueNumber: 93,
+      prNumber: 12,
+      runId: `mixed-${lane}`,
+    }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    const byLane = new Map(result.localReviewRunner.lanes.map(lane => [lane.lane, lane]));
+    assert.equal(byLane.get(wrongProfileLane).status, 'planned');
+    assert.equal(byLane.get(nonApproveLane).status, 'planned');
+    assert.ok(laneIds.slice(2).every(lane => byLane.get(lane).status === 'skipped' && byLane.get(lane).evidenceSource === 'trusted-provider'));
+    const reasons = result.localReview.providerReuse.rejected.map(entry => entry.reason).join(' ');
+    assert.match(reasons, /incompatible with the configured profile/);
+    assert.match(reasons, /only approve\/passed records are reusable/);
+    assert.match(reasons, /local-only fields/);
+  });
+
+  it('reuses existing current-head local lane evidence instead of re-executing routed lanes', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+    const firstRun = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+    assert.equal(firstRun.localReview.status, 'passed');
+    assert.ok(firstRun.localReviewRunner.lanes.every(lane => lane.evidenceSource === 'fresh-run'));
+
+    let secondRunModelCalls = 0;
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+      modelRouteProcess: async () => { secondRunModelCalls += 1; throw new Error('routed lane executed although current-head local evidence exists'); },
+    });
+
+    assert.equal(secondRunModelCalls, 0);
+    assert.equal(result.localReview.status, 'passed');
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed' && lane.evidenceSource === 'local'));
+    assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local'));
+    assert.equal(result.localReviewPublish.status, 'skipped');
+    assert.match(result.localReviewPublish.nextAction, /reused/i);
+  });
+
+  it('re-executes a lane whose local current-head evidence is non-terminal instead of provider-reusing it', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const profile = plan.localReview.profile;
+    const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
+    assert.ok(laneIds.length > 1);
+    const nonTerminalLane = laneIds[0];
+    const laneDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    mkdirSync(laneDirectory, { recursive: true });
+    writeFileSync(join(laneDirectory, `${nonTerminalLane}.json`), `${JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: nonTerminalLane, status: 'unavailable', summary: 'host fault before verdict' })}\n`);
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `mixed-source-${lane}` }));
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
+
+    const byLane = new Map(result.localReviewRunner.lanes.map(lane => [lane.lane, lane]));
+    assert.equal(byLane.get(nonTerminalLane).status, 'planned');
+    assert.equal(byLane.get(nonTerminalLane).evidenceSource, 'fresh-run');
+    assert.ok(laneIds.slice(1).every(lane => byLane.get(lane).status === 'skipped' && byLane.get(lane).evidenceSource === 'trusted-provider'));
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
