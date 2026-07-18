@@ -3,7 +3,7 @@
 ## Verification paths
 
 - `pnpm run test` — the complete required suite (builds dependencies and the package first, then runs every `*.test.cjs` under `test/`). This is the gate CI and pre-merge verification run.
-- `pnpm run test:fast` — the routine edit-loop path. It builds the package and runs every suite except the subprocess-heavy integration files listed in `SLOW_INTEGRATION_TESTS` (`test/run-node-tests.mjs`). Use it while iterating; always finish with the full `pnpm run test` before shipping.
+- `pnpm run test:fast` — the routine edit-loop path. It builds workspace dependencies and the package, then runs every suite except the subprocess-heavy integration files listed in `SLOW_INTEGRATION_TESTS` (`test/run-node-tests.mjs`). Use it while iterating; always finish with the full `pnpm run test` before shipping. When dependencies are already built, `node test/run-node-tests.mjs --fast` alone runs the same fast set without any build step.
 - `node --test test/<file>.test.cjs` — a single suite against the existing `dist/` build (rebuild first when source changed).
 
 ## Runtime expectations
