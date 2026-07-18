@@ -2,6 +2,8 @@ import { execFileSync } from 'child_process';
 import { existsSync, statfsSync } from 'fs';
 import { join, relative } from 'path';
 import type { Config } from '../config/index.js';
+import { plannedReviewRouteTargets } from '../app/local_review_runner.js';
+import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from '../app/model_route_probe.js';
 import type { DoctorReadinessStatus, GateReadinessDiagnostics } from './types.js';
 
 const LOW_DISK_THRESHOLD_BYTES = 2 * 1024 * 1024 * 1024;
@@ -18,6 +20,7 @@ export interface ReviewPreflightOptions {
   statfs?: (path: string) => { bavail?: number | bigint; bfree: number | bigint; bsize: number | bigint };
   gitCountObjects?: (repoRoot: string) => string;
   ghAuthStatus?: (repoRoot: string) => string;
+  probeRoute?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
 }
 
 function localReviewEnabled(config: Config): boolean {
@@ -33,6 +36,7 @@ function disabledPreflight(): ReviewPreflightDiagnostics {
       dist: { readiness: 'disabled', path: 'products/aie/dist/bin/run.js', present: false, nextAction: null },
       gitObjects: { readiness: 'disabled', looseCount: null, threshold: HIGH_LOOSE_OBJECT_THRESHOLD, nextAction: null },
       githubReviewAuth: { readiness: 'disabled', authenticated: false, scopes: null, nextAction: null },
+      routeProbes: { readiness: 'disabled', routes: [], nextAction: null },
     },
     nextActions: [],
   };
@@ -156,10 +160,55 @@ export function buildReviewPreflightDiagnostics(config: Config, options: ReviewP
     githubReviewAuth = { readiness: 'unavailable', authenticated: false, scopes: null, nextAction };
   }
 
+  let routeProbes: ReviewPreflightDiagnostics['checks']['routeProbes'];
+  const routeTargets = plannedReviewRouteTargets(config);
+  if (routeTargets.length === 0) {
+    routeProbes = { readiness: 'disabled', routes: [], nextAction: null };
+  } else {
+    const probeRoute = options.probeRoute ?? probeModelRoute;
+    const routes = routeTargets.map(target => {
+      try {
+        const check = probeRoute(target.host, target.model);
+        return {
+          host: check.host,
+          model: check.model,
+          status: check.status,
+          executable: check.executable,
+          version: check.version,
+          modelListed: check.modelListed,
+          nextAction: check.diagnostic,
+        };
+      } catch (error: unknown) {
+        return {
+          host: target.host,
+          model: target.model,
+          status: 'blocked' as const,
+          executable: null,
+          version: null,
+          modelListed: null,
+          nextAction: `Route probe for ${target.host} failed unexpectedly: ${(error instanceof Error ? error.message : String(error)).split(/\r?\n/)[0]}`,
+        };
+      }
+    });
+    const blocked = routes.filter(route => route.status === 'blocked');
+    const nextAction = blocked.length > 0
+      ? `Fix ${blocked.length} blocked review route(s) before running routed review lanes; each blocked route reports its own action.`
+      : null;
+    if (nextAction) nextActions.push(nextAction);
+    for (const route of blocked) {
+      if (route.nextAction) nextActions.push(route.nextAction);
+    }
+    routeProbes = {
+      readiness: blocked.length > 0 ? 'needs-action' : 'ready',
+      routes,
+      nextAction,
+    };
+  }
+
   return {
     enabled: true,
-    readiness: overallStatus([disk.readiness, dist.readiness, gitObjects.readiness, githubReviewAuth.readiness]),
-    checks: { disk, dist, gitObjects, githubReviewAuth },
+    readiness: overallStatus([disk.readiness, dist.readiness, gitObjects.readiness, githubReviewAuth.readiness, ...(routeProbes.readiness === 'disabled' ? [] : [routeProbes.readiness])]),
+    checks: { disk, dist, gitObjects, githubReviewAuth, routeProbes },
     nextActions,
   };
 }

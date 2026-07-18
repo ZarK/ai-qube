@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, wr
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { execFile } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
 import type { LocalReviewLaneId, LocalReviewProfile, LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
@@ -69,6 +69,7 @@ export interface ModelReviewRunInput {
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
   coverageAreas?: readonly string[];
+  routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
@@ -88,17 +89,21 @@ function sanitizedDiagnostic(value: string): string {
   return redact(value).trim().slice(0, 600);
 }
 
-async function findOnPath(name: string): Promise<string | null> {
+function findOnPathSync(name: string): string | null {
   const locator = process.platform === 'win32' ? 'where.exe' : 'which';
   try {
-    const result = await execFileAsync(locator, [name], { encoding: 'utf8', timeout: 10_000, windowsHide: true });
-    return result.stdout.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null;
+    const result = execFileSync(locator, [name], { encoding: 'utf8', timeout: 10_000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
+    return result.split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? null;
   } catch {
     return null;
   }
 }
 
-export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExecutable | null> {
+async function findOnPath(name: string): Promise<string | null> {
+  return findOnPathSync(name);
+}
+
+export function resolveWindowsNodeShimSync(shim: string): ModelHostExecutable | null {
   let contents: string;
   try {
     contents = readFileSync(shim, 'utf8');
@@ -111,19 +116,26 @@ export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExe
   const scriptRelative = relative(dirname(shim), script);
   if (scriptRelative === '..' || scriptRelative.startsWith(`..${process.platform === 'win32' ? '\\' : '/'}`) || isAbsolute(scriptRelative)) return null;
   const adjacentNode = join(dirname(shim), 'node.exe');
-  const node = existsSync(adjacentNode) ? adjacentNode : await findOnPath(process.platform === 'win32' ? 'node.exe' : 'node');
+  const node = existsSync(adjacentNode) ? adjacentNode : findOnPathSync(process.platform === 'win32' ? 'node.exe' : 'node');
   return node && existsSync(script) ? { executable: node, prefixArgs: [script] } : null;
 }
 
-export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<ModelHostExecutable> {
+export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExecutable | null> {
+  return resolveWindowsNodeShimSync(shim);
+}
+
+// Probe and execution must resolve hosts identically; both paths share this
+// synchronous core so a probe verdict always reflects the executable that
+// routed execution would actually spawn.
+export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelHostExecutable {
   if (process.platform === 'win32') {
-    const shim = await findOnPath(`${host}.cmd`);
+    const shim = findOnPathSync(`${host}.cmd`);
     if (shim) {
-      const resolvedShim = await resolveWindowsNodeShim(shim);
+      const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
       if (host === 'codex') {
         const script = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
-        const node = await findOnPath('node.exe');
+        const node = findOnPathSync('node.exe');
         if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
       }
     }
@@ -132,12 +144,16 @@ export async function resolveModelHostExecutable(host: RoutedReviewHostId): Prom
     ? host === 'codex' ? ['codex.exe'] : ['grok.exe']
     : [host];
   for (const name of names) {
-    const resolved = await findOnPath(name);
+    const resolved = findOnPathSync(name);
     if (resolved) return resolved;
   }
   const fallback = process.platform === 'win32' && host === 'grok' ? join(homedir(), '.grok', 'bin', 'grok.exe') : null;
   if (fallback && existsSync(fallback)) return fallback;
   throw new Error(`${host} review route is unavailable. Expose the authenticated ${host} CLI on PATH; QUBE does not install or authenticate model hosts.`);
+}
+
+export async function resolveModelHostExecutable(host: RoutedReviewHostId): Promise<ModelHostExecutable> {
+  return resolveModelHostExecutableSync(host);
 }
 
 function reviewResultContract(input: ModelReviewRunInput): string {
@@ -663,6 +679,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       effort: input.plan.effort,
       isolation: 'read-only',
       invocationId,
+      routeSource: input.routeSource ?? 'configured',
     };
     if ('priorTexts' in parsedHostOutput) {
       const priorTexts = parsedHostOutput.priorTexts;

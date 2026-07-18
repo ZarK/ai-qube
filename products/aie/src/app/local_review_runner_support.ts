@@ -44,6 +44,70 @@ export function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), `${lane}.json`);
 }
 
+export interface RouteFaultRecord {
+  count: number;
+  routeKey: string;
+  lastReasonCode: string;
+  lastAt: string;
+}
+
+export interface RouteFaultLedger {
+  version: 1;
+  lanes: Record<string, RouteFaultRecord>;
+}
+
+// The ledger influences which provider executes review, so it lives under
+// .git beside the trusted host-provenance store where pull request content
+// can never supply or forge it; working-tree copies are never consumed.
+export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNumber: number): string {
+  return join(repoRoot, '.git', 'qube', 'aie', 'route-faults', String(issueNumber), `${prNumber}.json`);
+}
+
+export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
+  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.lanes)) {
+      const lanes: Record<string, RouteFaultRecord> = {};
+      for (const [lane, record] of Object.entries(parsed.lanes)) {
+        if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
+        lanes[lane] = {
+          count: Number(record.count),
+          routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
+          lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
+          lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
+        };
+      }
+      return { version: 1, lanes };
+    }
+  } catch {
+    // A missing or malformed ledger means no recorded faults.
+  }
+  return { version: 1, lanes: {} };
+}
+
+export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
+  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+  // A tally is only meaningful against one primary route identity; a config
+  // change to the lane's primary route restarts the count so the changed
+  // primary is actually tested before failover engages again.
+  const existing = ledger.lanes[lane];
+  const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
+  ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
+  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  return count;
+}
+
+export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId): void {
+  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+  if (!(lane in ledger.lanes)) return;
+  delete ledger.lanes[lane];
+  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+}
+
 export interface CarryForwardSource {
   fromHeadSha: string;
   priorRunId: string | null;
@@ -472,6 +536,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       effort: typeof value.runnerProvenance.effort === 'string' ? value.runnerProvenance.effort : null,
       isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
       invocationId: typeof value.runnerProvenance.invocationId === 'string' ? value.runnerProvenance.invocationId : null,
+      routeSource: value.runnerProvenance.routeSource === 'configured' || value.runnerProvenance.routeSource === 'fallback' ? value.runnerProvenance.routeSource : null,
     },
   };
 }
@@ -661,6 +726,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     effort: provenance.effort,
     isolation: provenance.isolation,
     invocationId: provenance.invocationId,
+    routeSource: provenance.routeSource,
     recordedAt: new Date().toISOString(),
   }, null, 2)}\n`);
   return path;

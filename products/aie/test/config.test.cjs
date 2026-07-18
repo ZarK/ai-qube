@@ -196,6 +196,42 @@ describe('config validation', () => {
     assert.ok(invalidResult.errors.some(error => error.path === 'policy.reviews.concurrency'));
   });
 
+  it('validates the review failover policy surface', () => {
+    const valid = defaultFile();
+    valid.policy.reviews.failover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const validResult = validateConfig(valid);
+    assert.equal(validResult.ok, true);
+    assert.deepEqual(validResult.config.reviewFailover, { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } });
+
+    const absent = validateConfig(defaultFile());
+    assert.equal(absent.ok, true);
+    assert.equal(absent.config.reviewFailover, null);
+
+    const zeroFaults = defaultFile();
+    zeroFaults.policy.reviews.failover = { faults: 0, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const zeroResult = validateConfig(zeroFaults);
+    assert.equal(zeroResult.ok, false);
+    assert.ok(zeroResult.errors.some(error => error.path === 'policy.reviews.failover.faults'));
+
+    const missingRoute = defaultFile();
+    missingRoute.policy.reviews.failover = { faults: 2 };
+    const missingRouteResult = validateConfig(missingRoute);
+    assert.equal(missingRouteResult.ok, false);
+    assert.ok(missingRouteResult.errors.some(error => error.path === 'policy.reviews.failover.route'));
+
+    const badHost = defaultFile();
+    badHost.policy.reviews.failover = { faults: 2, route: { host: 'mystery-host', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const badHostResult = validateConfig(badHost);
+    assert.equal(badHostResult.ok, false);
+    assert.ok(badHostResult.errors.some(error => error.path === 'policy.reviews.failover.route.host'));
+
+    const unknownKey = defaultFile();
+    unknownKey.policy.reviews.failover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 }, retryDelay: 5 };
+    const unknownKeyResult = validateConfig(unknownKey);
+    assert.equal(unknownKeyResult.ok, false);
+    assert.ok(unknownKeyResult.errors.some(error => error.path.startsWith('policy.reviews.failover')));
+  });
+
   it('rejects turn budgets below the routed inspection floor', () => {
     const input = defaultFile();
     input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };

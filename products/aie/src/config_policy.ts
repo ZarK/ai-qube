@@ -54,7 +54,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
       reviewers: [...config.reviewAgents],
       localReviewers: [...config.localReviewAgents],
       waitMinutes: config.reviewWaitMinutes,
-    concurrency: config.reviewConcurrency,
+      concurrency: config.reviewConcurrency,
       requestText: config.reviewRequestText,
       carryForwardPublish: config.reviewCarryForwardPublish,
       models: {
@@ -63,6 +63,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
         synthesis: { ...config.reviewModels.synthesis },
       },
       route: config.reviewRoute ? { ...config.reviewRoute } : null,
+      failover: config.reviewFailover ? { faults: config.reviewFailover.faults, route: { ...config.reviewFailover.route } } : null,
     },
     gates: { definitions: gates.map(gate => ({ key: gate.name, name: gate.name, command: gate.command, stage: gate.stage, required: gate.required, externalService: gate.externalService, supplyChainSensitive: isSupplyChainSensitive(gate.command) })) },
     audit: { manualUiAudit: config.manualUiAudit, appLaunch: config.uiAuditAppLaunch, target: config.uiAuditTarget },

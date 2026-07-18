@@ -267,6 +267,75 @@ describe('doctor diagnostics', () => {
     assert.match(diagnostics.checks.githubReviewAuth.nextAction, /pull request reviews/);
   });
 
+  it('reports configured route probe results under review preflight', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const probed = [];
+
+    const ready = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      probeRoute: (host, model) => {
+        probed.push(`${host}:${model}`);
+        return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok' ? true : null, diagnostic: null };
+      },
+    });
+
+    assert.equal(ready.readiness, 'ready');
+    assert.equal(ready.checks.routeProbes.readiness, 'ready');
+    assert.deepEqual(probed.sort(), ['codex:gpt-fallback-test', 'grok:grok-4.5']);
+    assert.equal(ready.checks.routeProbes.routes.length, 2);
+    assert.ok(ready.checks.routeProbes.routes.every(route => route.status === 'ready'));
+
+    const blocked = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      probeRoute: (host, model) => (host === 'grok'
+        ? { host, model, status: 'blocked', executable: null, version: null, modelListed: false, diagnostic: `Configured review model "${model}" is not in the grok catalog. Update the trusted review model configuration to a listed model.` }
+        : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null }),
+    });
+
+    assert.equal(blocked.checks.routeProbes.readiness, 'needs-action');
+    assert.equal(blocked.readiness, 'needs-action');
+    const blockedRoute = blocked.checks.routeProbes.routes.find(route => route.host === 'grok');
+    assert.match(blockedRoute.nextAction, /not in the grok catalog/);
+    assert.ok(blocked.nextActions.some(action => /blocked review route/.test(action)));
+    assert.ok(blocked.nextActions.some(action => /not in the grok catalog/.test(action)));
+  });
+
+  it('keeps route probes disabled when no routed review lanes are configured', () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'products', 'aie', 'dist', 'bin', 'run.js'), 'export function run() {}\n');
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    let probeCalls = 0;
+
+    const diagnostics = buildReviewPreflightDiagnostics(config, {
+      repoRoot: repo,
+      statfs: () => ({ bfree: 4, bsize: 1024 * 1024 * 1024 }),
+      gitCountObjects: () => 'count: 2\n',
+      ghAuthStatus: () => 'Logged in to github.com\nToken scopes: repo\n',
+      probeRoute: () => { probeCalls += 1; throw new Error('must not probe'); },
+    });
+
+    assert.equal(probeCalls, 0);
+    assert.equal(diagnostics.checks.routeProbes.readiness, 'disabled');
+    assert.deepEqual(diagnostics.checks.routeProbes.routes, []);
+    assert.equal(diagnostics.readiness, 'ready');
+  });
+
   it('reports malformed loose git object output as unavailable', () => {
     const repo = makeGitRepo();
     mkdirSync(join(repo, 'products', 'aie', 'dist', 'bin'), { recursive: true });
