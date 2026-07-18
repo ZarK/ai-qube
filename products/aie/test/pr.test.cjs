@@ -1809,6 +1809,35 @@ describe('PR gate service', () => {
     assert.ok(laneIds.slice(1).every(lane => byLane.get(lane).status === 'skipped' && byLane.get(lane).evidenceSource === 'trusted-provider'));
   });
 
+  it('renders issue requirement proof statuses in the dry-run self-check', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    mkdirSync(join(repo, 'test'), { recursive: true });
+    writeFileSync(join(repo, 'test', 'probe.test.cjs'), 'assert stale provider metadata rejected with actionable reason\n');
+    const criterion = 'Stale provider metadata is rejected with an actionable reason.';
+    const prBody = [
+      '### Criterion 1: ' + criterion,
+      '- Implemented at: `test/probe.test.cjs`',
+      '- Proven by: `test/probe.test.cjs`',
+    ].join('\n');
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr({ body: prBody })],
+      issueBodies: { 93: `- [ ] ${criterion}\n- [ ] A requirement with no proof entry anywhere.` },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    assert.ok(result.selfCheck);
+    assert.equal(result.selfCheck.requirements.length, 2);
+    const byIndex = new Map(result.selfCheck.requirements.map(requirement => [requirement.index, requirement]));
+    assert.equal(byIndex.get(1).proof.status, 'proven');
+    assert.equal(byIndex.get(2).proof.status, 'unmapped');
+    assert.equal(result.selfCheck.requirements[0].proof.status, 'unmapped');
+    const formattedLines = require('../dist/app/implementer_self_check.js').formatImplementerSelfCheck(result.selfCheck).join('\n');
+    assert.match(formattedLines, /Linked issue requirements \(unproven first\)/);
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
