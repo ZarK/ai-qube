@@ -1866,6 +1866,153 @@ describe('PR gate service', () => {
     assert.ok(batchResult.batch.findings.every(finding => Array.isArray(finding.lanes) && finding.lanes.length > 0));
   });
 
+  it('overlaps routed lanes under the global bound with per-host caps and deterministic order', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewConcurrency = 3;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let active = 0;
+    let maxActive = 0;
+    const laneStarts = [];
+    const laneCompletions = [];
+    const laneWindows = [];
+    const promptPaths = new Set();
+    const modelRouteProcess = async invocation => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      promptPaths.add(invocation.promptPath);
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      laneStarts.push(lane);
+      const startedAt = Date.now();
+      await new Promise(resolve => setTimeout(resolve, laneStarts.length === 1 ? 600 : 100));
+      laneWindows.push({ startedAt, endedAt: Date.now() });
+      laneCompletions.push(lane);
+      active -= 1;
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const plannedOrder = plan.localReviewRunner.lanes.filter(lane => lane.route !== null).map(lane => lane.lane);
+    assert.ok(plannedOrder.length >= 3, `expected at least three routed lanes, saw ${plannedOrder.length}`);
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.ok(maxActive >= 2, `expected overlapping execution, saw maxActive=${maxActive}`);
+    assert.ok(maxActive <= 2, `per-host cap must hold two grok sessions, saw maxActive=${maxActive}`);
+    const batchElapsed = Math.max(...laneWindows.map(window => window.endedAt)) - Math.min(...laneWindows.map(window => window.startedAt));
+    const serialWallClock = laneWindows.reduce((total, window) => total + (window.endedAt - window.startedAt), 0);
+    const slowestLane = Math.max(...laneWindows.map(window => window.endedAt - window.startedAt));
+    assert.ok(batchElapsed < serialWallClock, `overlapped batch must beat serial lane time: elapsed=${batchElapsed}ms serial=${serialWallClock}ms`);
+    assert.ok(batchElapsed <= slowestLane + 250, `batch wall clock must approximate the slowest lane: elapsed=${batchElapsed}ms slowest=${slowestLane}ms`);
+    assert.equal(promptPaths.size, laneStarts.length, 'every concurrent invocation must use a distinct private prompt file');
+    // The slow planning-first lane completes last, so completion order genuinely
+    // scrambles relative to planning order before the determinism assertion runs.
+    assert.notDeepEqual(laneCompletions, plannedOrder);
+    const executedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null).map(lane => lane.lane);
+    assert.deepEqual(executedLanes, plannedOrder);
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed'));
+    for (const lane of executedLanes) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane}.json`), 'utf8'));
+      assert.equal(evidence.lane, lane);
+      assert.equal(evidence.status, 'passed');
+    }
+  });
+
+  it('keeps other lanes and their evidence intact when one routed lane fails', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewConcurrency = 3;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let timedOutLane = null;
+    let failedLane = null;
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (timedOutLane === null) {
+        timedOutLane = lane;
+        return { exitCode: 1, stderr: '', stdout: '', timedOut: true, stdinDelivered: true };
+      }
+      if (failedLane === null) {
+        failedLane = lane;
+        return { exitCode: 1, stderr: 'host process crashed', stdout: '', timedOut: false, stdinDelivered: true };
+      }
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'failed');
+    const failed = result.localReviewRunner.lanes.filter(lane => lane.status === 'failed');
+    const completed = result.localReviewRunner.lanes.filter(lane => lane.status === 'completed' && lane.route !== null);
+    assert.equal(failed.length, 2);
+    assert.equal(failed.find(lane => lane.lane === timedOutLane)?.blocker, 'model-route-timeout');
+    assert.equal(failed.find(lane => lane.lane === failedLane)?.blocker, 'model-route-process-failed');
+    assert.ok(completed.length >= 1);
+    for (const lane of completed) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.status, 'passed');
+      assert.equal(evidence.lane, lane.lane);
+    }
+    assert.match(result.localReviewRunner.summary, /Local review runner failed 2 lane\(s\)/);
+    assert.ok(result.localReviewRunner.summary.includes(timedOutLane) && result.localReviewRunner.summary.includes(failedLane));
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

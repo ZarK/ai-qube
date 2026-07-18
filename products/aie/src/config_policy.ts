@@ -54,6 +54,7 @@ export function configToExecutorPolicy(config: Config): ExecutorPolicy {
       reviewers: [...config.reviewAgents],
       localReviewers: [...config.localReviewAgents],
       waitMinutes: config.reviewWaitMinutes,
+    concurrency: config.reviewConcurrency,
       requestText: config.reviewRequestText,
       carryForwardPublish: config.reviewCarryForwardPublish,
       models: {

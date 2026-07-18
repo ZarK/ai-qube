@@ -116,6 +116,7 @@ export interface ReviewPolicy {
   reviewers: string[];
   localReviewers: string[];
   waitMinutes: number;
+  concurrency: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
   models: ReviewModelsPolicy;
@@ -189,6 +190,13 @@ function nonNegativeNumber(value: number, field: string): number {
   return value;
 }
 
+function boundedInteger(value: number, field: string, minimum: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`normalize executor policy failed: ${field} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
 export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
   const packageAgeDays = nonNegativeNumber(input.supplyChain.packageAgeDays, 'supplyChain.packageAgeDays');
   const highRiskPackageAgeDays = nonNegativeNumber(input.supplyChain.highRiskPackageAgeDays, 'supplyChain.highRiskPackageAgeDays');
@@ -254,6 +262,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
+      concurrency: boundedInteger(input.reviews.concurrency ?? 3, 'reviews.concurrency', 1, 8),
       requestText: input.reviews.requestText,
       carryForwardPublish: input.reviews.carryForwardPublish,
       models: {

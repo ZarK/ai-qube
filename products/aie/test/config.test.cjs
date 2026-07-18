@@ -182,6 +182,20 @@ describe('config validation', () => {
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.lanes[0].carryForwardContext'));
   });
 
+  it('validates review concurrency bounds', () => {
+    const valid = defaultFile();
+    valid.policy.reviews.concurrency = 4;
+    const validResult = validateConfig(valid);
+    assert.equal(validResult.ok, true);
+    assert.equal(validResult.config.reviewConcurrency, 4);
+
+    const invalid = defaultFile();
+    invalid.policy.reviews.concurrency = 0;
+    const invalidResult = validateConfig(invalid);
+    assert.equal(invalidResult.ok, false);
+    assert.ok(invalidResult.errors.some(error => error.path === 'policy.reviews.concurrency'));
+  });
+
   it('rejects turn budgets below the routed inspection floor', () => {
     const input = defaultFile();
     input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };

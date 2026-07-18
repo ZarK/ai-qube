@@ -87,6 +87,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       agents: ['coderabbitai'],
       localAgents: [],
       waitMinutes: 10,
+      concurrency: 3,
       requestText: '',
       carryForwardPublish: 'note',
       models: { review: {}, economy: {}, synthesis: {} },
@@ -344,6 +345,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       reviewers: [...policy.reviews.agents],
       localReviewers: [...policy.reviews.localAgents],
       waitMinutes: policy.reviews.waitMinutes,
+      concurrency: policy.reviews.concurrency,
       requestText: policy.reviews.requestText,
       carryForwardPublish: policy.reviews.carryForwardPublish,
       models: {
@@ -411,6 +413,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     })),
     localReviewAgents: [...policy.reviews.localAgents],
     reviewWaitMinutes: policy.reviews.waitMinutes,
+    reviewConcurrency: policy.reviews.concurrency,
     reviewRequestText: policy.reviews.requestText,
     reviewCarryForwardPublish: policy.reviews.carryForwardPublish,
     reviewModels: {
