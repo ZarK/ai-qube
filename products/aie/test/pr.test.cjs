@@ -2229,6 +2229,123 @@ describe('PR gate service', () => {
     assert.ok(failedLanes.every(lane => result.localReviewRunner.summary.includes(lane.lane)));
   });
 
+  it('retries the configured primary route when the fallback probe is blocked', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    let faultedLane = null;
+    let failFirst = true;
+    const modelRouteProcess = async invocation => {
+      assert.equal(invocation.schemaPath, null, 'the blocked codex fallback must never execute');
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (failFirst && faultedLane === null) faultedLane = lane;
+      if (failFirst && lane === faultedLane) {
+        return { exitCode: 1, stderr: 'host process crashed', stdout: '', timedOut: false, stdinDelivered: true };
+      }
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+    const routeProbe = (host, model) => (host === 'codex'
+      ? { host, model, status: 'blocked', executable: null, version: null, modelListed: null, diagnostic: 'The codex CLI is not resolvable. Install and authenticate the codex CLI on PATH before running routed review lanes.' }
+      : readyRouteProbe(host, model));
+    const gateOptions = { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' };
+
+    const firstRun = await runPrGate(config, gateOptions);
+    assert.equal(firstRun.localReviewRunner.status, 'failed');
+    failFirst = false;
+
+    const secondRun = await runPrGate(config, gateOptions);
+    const recovered = secondRun.localReviewRunner.lanes.find(lane => lane.lane === faultedLane);
+    assert.equal(recovered.status, 'completed');
+    assert.equal(recovered.route.host, 'grok', 'a blocked fallback probe must retry the configured primary route');
+    const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${faultedLane}.json`), 'utf8'));
+    assert.equal(evidence.runnerProvenance.host, 'grok');
+    assert.equal(evidence.runnerProvenance.routeSource, 'configured');
+    const ledger = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json'), 'utf8'));
+    assert.ok(!(faultedLane in ledger.lanes), 'the recovered primary verdict clears the fault tally');
+  });
+
+  it('marks a lane unavailable only when both the fallback and primary probes are blocked', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json'), `${JSON.stringify({ version: 1, lanes: { 'issue-compliance': { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, 'code-quality': { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, performance: { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' } } })}\n`);
+    let modelExecutions = 0;
+    const modelRouteProcess = async () => {
+      modelExecutions += 1;
+      return { exitCode: 0, stderr: '', stdout: '', timedOut: false, stdinDelivered: true };
+    };
+    const routeProbe = (host, model) => ({ host, model, status: 'blocked', executable: null, version: null, modelListed: null, diagnostic: `The ${host} CLI is not resolvable. Install and authenticate the ${host} CLI on PATH before running routed review lanes.` });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(modelExecutions, 0);
+    assert.equal(result.localReviewRunner.status, 'unavailable');
+    const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routedLanes.length >= 3);
+    assert.ok(routedLanes.every(lane => lane.status === 'unavailable' && lane.blocker === 'model-route-probe-blocked'));
+  });
+
+  it('does not count local checkout drift as a host fault', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const modelRouteProcess = async () => {
+      throw new Error('checkout drift is detected before the process runs');
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'drifted-head' });
+
+    assert.equal(result.localReviewRunner.status, 'failed');
+    const failedLanes = result.localReviewRunner.lanes.filter(lane => lane.status === 'failed');
+    assert.ok(failedLanes.length >= 1);
+    assert.ok(failedLanes.every(lane => lane.blocker === 'model-route-checkout-mismatch'));
+    assert.ok(!existsSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json')), 'checkout drift must record zero host faults');
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

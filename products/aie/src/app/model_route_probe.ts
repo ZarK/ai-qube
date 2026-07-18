@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { redact } from '../redact.js';
 
 const PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
@@ -78,7 +79,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable: null,
       version: null,
       modelListed: null,
-      diagnostic: `The ${host} CLI is not resolvable or did not report a version (${resolutionError.split(/\r?\n/)[0] || 'no executable candidate succeeded'}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
+      diagnostic: `The ${host} CLI is not resolvable or did not report a version (${redact(resolutionError.split(/\r?\n/)[0] || 'no executable candidate succeeded')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
     };
   }
   if (host !== 'grok' || !model) {

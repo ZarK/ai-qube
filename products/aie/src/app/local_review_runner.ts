@@ -179,6 +179,19 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
 // (transport, timeout, auth, refusal, envelope, contract) counts toward failover.
 const ROUTE_FAULT_EXEMPT_REASONS = new Set(['model-route-checkout-mismatch']);
 
+interface RoutedLaneJob {
+  laneSlot: number;
+  host: string;
+  lane: LocalReviewLaneId;
+  issueNumber: number;
+  route: ModelReviewRoutePlan;
+  routeSource: 'configured' | 'fallback';
+  primaryRoute: ModelReviewRoutePlan | null;
+  path: string;
+  runner: ReviewLanePolicy['runner'];
+  run: () => Promise<RoutedOutcome>;
+}
+
 function localAieCliPrefix(config: Config, repoRoot: string): string {
   const workspaceRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
   return renderAieCliPrefix(config, workspaceRunner);
@@ -369,7 +382,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const lanes: LocalReviewLaneRun[] = [];
   const written: string[] = [];
   const unavailable: string[] = [];
-  const routedJobs: Array<{ laneSlot: number; host: string; lane: LocalReviewLaneId; issueNumber: number; route: NonNullable<ReturnType<typeof resolveModelReviewPlan>>; path: string; runner: ReviewLanePolicy['runner']; run: () => Promise<RoutedOutcome> }> = [];
+  const routedJobs: RoutedLaneJob[] = [];
   const reviewTierResolution = modelTiers.review;
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
@@ -458,23 +471,23 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand), riskCardFragments);
           // Defer execution to the bounded pool; the placeholder keeps the lane's
           // deterministic position and is replaced in the serial completion phase.
+          // The job reads route and routeSource at execution time so the probe
+          // phase can retry the configured primary when the fallback is blocked.
           const jobLane = lane;
           const jobIssueNumber = issueNumber;
-          const jobRoute = route;
-          const jobRouteSource = routeSource;
-          const jobPath = path;
-          const jobRunner = runner;
           const jobPromptStackHash = plannedRun.promptStackHash;
-          routedJobs.push({
+          const job: RoutedLaneJob = {
             laneSlot: lanes.length,
             host: route.host,
             lane: jobLane,
             issueNumber: jobIssueNumber,
-            route: jobRoute,
-            path: jobPath,
-            runner: jobRunner,
+            route,
+            routeSource,
+            primaryRoute: configuredRoute,
+            path,
+            runner,
             run: () => runModelReview({
-              plan: jobRoute,
+              plan: job.route,
               repoRoot: input.repoRoot,
               lane: jobLane,
               issueNumber: jobIssueNumber,
@@ -485,12 +498,13 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
               coverageAreas: riskCardCoverageAreas,
-              routeSource: jobRouteSource,
+              routeSource: job.routeSource,
               resolveExecutable: input.resolveModelHost,
               resolveHead: input.resolveModelHead,
               runProcess: input.modelRouteProcess,
             }),
-          });
+          };
+          routedJobs.push(job);
           lanes.push(plannedRun);
           continue;
         }
@@ -536,21 +550,42 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   let runnableJobs = routedJobs;
   if (routedJobs.length > 0 && !input.dryRun) {
     // Every distinct route passes a cheap read-only host probe before any model
-    // execution; a failed probe blocks its lanes with the probe diagnostic.
+    // execution; a failed probe blocks its lanes with the probe diagnostic. A
+    // missing probe result fails closed instead of admitting the job.
     const probe = input.routeProbe ?? probeModelRoute;
     const probeChecks = new Map<string, RouteProbeCheck>();
-    for (const job of routedJobs) {
-      const key = `${job.route.host}::${job.route.model ?? ''}`;
-      if (!probeChecks.has(key)) probeChecks.set(key, probe(job.route.host, job.route.model));
-    }
+    const probeFor = (plan: ModelReviewRoutePlan): RouteProbeCheck | undefined => {
+      const key = `${plan.host}::${plan.model ?? ''}`;
+      if (!probeChecks.has(key)) {
+        try {
+          probeChecks.set(key, probe(plan.host, plan.model));
+        } catch {
+          // A probe crash is indistinguishable from an unusable host; the
+          // fail-closed path below blocks the route.
+        }
+      }
+      return probeChecks.get(key);
+    };
     runnableJobs = [];
     for (const job of routedJobs) {
-      const check = probeChecks.get(`${job.route.host}::${job.route.model ?? ''}`);
-      if (!check || check.status === 'ready') {
+      const check = probeFor(job.route);
+      if (check?.status === 'ready') {
         runnableJobs.push(job);
         continue;
       }
-      const summary = check.diagnostic ?? `${job.route.host} route probe blocked this lane before model execution.`;
+      // A blocked fallback route must not strand the lane: retry the configured
+      // primary route when its own probe is ready instead of going unavailable.
+      if (job.routeSource === 'fallback' && job.primaryRoute) {
+        const primaryCheck = probeFor(job.primaryRoute);
+        if (primaryCheck?.status === 'ready') {
+          job.route = job.primaryRoute;
+          job.routeSource = 'configured';
+          job.host = job.primaryRoute.host;
+          runnableJobs.push(job);
+          continue;
+        }
+      }
+      const summary = check?.diagnostic ?? `${job.route.host} route probe returned no result; the route is blocked before model execution.`;
       unavailable.push(`${job.lane}: ${summary}`);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
     }
