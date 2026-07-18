@@ -25,6 +25,7 @@ export interface ReviewLaneReviewPublishInput {
   findings: Array<ReviewFinding | string>;
   completeness: string | null;
   evidencePath: string | null;
+  expectedLanes: readonly string[];
 }
 
 export interface ReviewLaneReviewPublishResult {

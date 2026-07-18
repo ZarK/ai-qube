@@ -210,11 +210,11 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     });
     const publishModulePath = require.resolve('../dist/app/pr_review_publish.js');
 
-    await runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    await runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
     delete require.cache[publishModulePath];
     const freshPublishModule = require(publishModulePath);
-    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo });
-    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo, expectedLanes: ['issue-compliance'] });
+    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
     assert.deepEqual(loadCalls, [12, 13]);
     assert.equal(publishCalls[0].item, snapshots[12].item);
@@ -270,9 +270,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const thirdPublish = freshPublish();
 
     await Promise.all([
-      firstPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo }),
-      secondPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo }),
-      thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo }),
+      firstPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
+      secondPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
+      thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
     ]);
 
     assert.deepEqual(loadCalls, [12]);
@@ -308,10 +308,10 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     };
 
     await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo }),
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] }),
       /temporary provider failure/,
     );
-    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
     assert.deepEqual(loadCalls, [14, 14]);
     assert.equal(result.publish.nextAction, 'planned review:14 code-quality');

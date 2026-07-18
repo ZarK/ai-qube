@@ -316,6 +316,12 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
 }
 
 export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+  // A single-lane default would publish markers whose expected set hides the
+  // other active lanes and corrupts convergence stats, so the resolved active
+  // lane set is mandatory here; the service entry resolves it from config.
+  if (!options.expectedLanes || options.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the lane review.');
+  }
   const repoRoot = options.repoRoot ?? process.cwd();
   const loadedSnapshot = options.headSha && options.issueNumber
     ? null
@@ -357,7 +363,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     prNumber: options.prNumber,
     headSha,
     lane: options.lane,
-    expectedLanes: [...(options.expectedLanes ?? [options.lane])],
+    expectedLanes: [...options.expectedLanes],
     profile: evidence.profile,
     status: evidence.status,
     recommendation: evidence.recommendation,
