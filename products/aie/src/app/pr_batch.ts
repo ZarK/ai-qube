@@ -1,4 +1,6 @@
 import type { Config } from '../config/index.js';
+import { changedReviewPaths } from './pr_gate.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch } from '../local_review_evidence.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { redact } from '../redact.js';
@@ -42,7 +44,16 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
   const repoRoot = options.repoRoot ?? process.cwd();
   const pr = await batchPrContext(options.prNumber, repoRoot, options.exec);
   // Read-only aggregation over whatever current-head lane evidence exists; no lane
-  // execution and no provider mutation ever happens on this path.
+  // execution and no provider mutation ever happens on this path. Lane scoping
+  // mirrors the gate exactly (active focuses from the changed paths plus the
+  // shared carry-forward scope) so the batch matches what the gate would report.
+  const changedPaths = await changedReviewPaths(config, repoRoot);
+  const activeFocuses = activeLocalReviewFocusesForConfig(config, changedPaths);
+  const carryForwardScope = {
+    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
+  };
   const localReview = readLocalReviewGate({
     repoRoot,
     issueNumbers: pr.issueNumbers,
@@ -52,6 +63,8 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
     required: true,
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
+    activeFocuses,
+    carryForwardScope,
   });
   const batch = buildFixBatch(repoRoot, pr.issueNumbers, pr.number, pr.headSha, localReview.evidence);
   const lanesWithEvidence = [...new Set(localReview.evidence.flatMap(entry => entry.lanes.map(lane => lane.id)))];

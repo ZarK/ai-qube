@@ -1233,7 +1233,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFir
     return `Run fresh-context review subagents for each active focus, publish provider-visible feedback on the pull request, then rerun ${rerunCommand}. Inspect PR comments and reviews on GitHub; local audit files are optional.`;
   }
   if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
-  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback on the pull request, rerun affected checks, and rerun the PR gate.';
+  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun the PR gate for one re-review round.';
   if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
   return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;

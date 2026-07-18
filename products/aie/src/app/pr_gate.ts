@@ -439,7 +439,7 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   }
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (participantRollup?.pendingSummary && status !== 'complete') {
-    const feedbackAction = hasActionableFeedback(feedback) ? ' Address provider-visible review feedback on the pull request, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
+    const feedbackAction = hasActionableFeedback(feedback) ? ' Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun `aie pr gate` for one re-review round.' : '';
     return `${participantRollup.pendingSummary}${feedbackAction}`;
   }
   if (status === 'inconclusive') return localReview.nextAction;
@@ -699,7 +699,7 @@ function bounded(value: string, maxCharacters = 600): string {
   return normalized.length > maxCharacters ? `${normalized.slice(0, maxCharacters)}...` : normalized;
 }
 
-async function changedReviewPaths(config: Config, repoRoot: string): Promise<string[]> {
+export async function changedReviewPaths(config: Config, repoRoot: string): Promise<string[]> {
   const baseRef = `${config.baseRemote}/${config.baseBranch}`;
   return uniqueStrings([
     ...(await gitPathLines(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`])),
