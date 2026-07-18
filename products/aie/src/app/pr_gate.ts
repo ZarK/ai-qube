@@ -955,7 +955,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
-  const advisoryCount = localReview.evidence.flatMap(evidence => evidence.lanes).reduce((total, lane) => total + lane.findings.filter(finding => finding.severity === 'advisory').length, 0);
+  // Dedupe by lane + finding identity so multi-issue evidence does not inflate the count.
+  const advisoryCount = new Set(localReview.evidence.flatMap(evidence => evidence.lanes.flatMap(lane => lane.findings.filter(finding => finding.severity === 'advisory').map(finding => `${lane.id} ${finding.id} ${finding.message}`)))).size;
   const shipReadyReasons: string[] = [];
   if (status !== 'complete') shipReadyReasons.push(`PR gate status is ${status}, not complete.`);
   if (hasIncompleteChecks(finalSnapshot.item)) shipReadyReasons.push('One or more required checks are incomplete at the current head.');
@@ -963,15 +964,20 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
   if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);
   if (localReviewPublish.status === 'failed' || localReviewPublish.status === 'pending') shipReadyReasons.push(`Local review publishing is ${localReviewPublish.status}; provider-visible lane state is incomplete.`);
+  // shipReady is the authoritative merge-readiness contract; its nextAction and the
+  // top-level nextAction always agree so automation cannot read two different plans.
+  const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
   const shipReady: PrGateShipReady = {
     ready: shipReadyReasons.length === 0,
     advisoryCount,
     reasons: shipReadyReasons,
     nextAction: shipReadyReasons.length > 0
-      ? 'Resolve the listed ship-readiness conditions, then rerun `aie pr gate`.'
+      ? legacyNextAction
       : advisoryCount > 0
         ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
-        : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
+        : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
+          ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
+          : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
   };
   return {
     ok: true,
@@ -1008,7 +1014,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: shipReady.ready ? shipReady.nextAction : nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup),
+    nextAction: shipReady.nextAction,
   };
 }
 

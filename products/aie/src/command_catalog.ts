@@ -396,7 +396,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'pr gate',
-    description: 'Request configured PR reviewers idempotently, validate local review evidence when configured, wait the configured duration, and inspect review state before merge.',
+    description: 'Request configured PR reviewers idempotently, validate local review evidence when configured, wait the configured duration, and inspect review state before merge. The shipReady field is the authoritative merge-readiness contract; status describes gate execution state, and both surfaces share one nextAction.',
     args: ['pr'],
     flags: PR_GATE_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: PR_GATE_FLAG_DETAILS,

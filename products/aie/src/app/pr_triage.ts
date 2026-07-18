@@ -187,7 +187,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     ? null
     : 'No terminal current-head local lane evidence was found. Full findings, severities, and locations are local-only fields; trusted provider markers carry verdict-level state only, so advisories cannot be enumerated from provider metadata. Run the PR gate on this machine first.';
   const missingRequiredLanes = pr.issueNumbers.flatMap(issueNumber => requiredLaneIds
-    .filter(laneId => !(passedLanesByIssue.get(issueNumber)?.has(laneId) ?? false))
+    .filter(laneId => !(passedLanesByIssue.get(issueNumber)?.has(laneId) ?? false) && !blockingLanes.includes(laneId))
     .map(laneId => pr.issueNumbers.length > 1 ? `${laneId} (issue #${issueNumber})` : laneId));
   // The gate's evidence evaluation is the authority on whether the head is approved:
   // it enforces required-lane coverage plus the same provenance, prompt-stack, and
@@ -208,7 +208,9 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     for (const advisory of advisories) advisory.disposition = 'blocked';
   }
 
-  for (const advisory of advisories) {
+  // A non-approved head files nothing, so it also spends no provider search calls
+  // and keeps every advisory disposition at blocked.
+  for (const advisory of approvedHead ? advisories : []) {
     const existing = await findExistingAdvisoryIssue(advisory.dedupeKey, repoRoot, options.exec);
     if (existing) {
       advisory.disposition = 'existing';
@@ -236,7 +238,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   const createdAdvisories = advisories.filter(advisory => advisory.disposition === 'created');
   const existingAdvisories = advisories.filter(advisory => advisory.disposition === 'existing');
   const plannedAdvisories = advisories.filter(advisory => advisory.disposition === 'planned');
-  if (dryRun && approvedHead && advisories.length > 0) {
+  if (dryRun && approvedHead && plannedAdvisories.length > 0) {
     linkComment = 'planned';
   } else if (createdAdvisories.length > 0) {
     // Only newly filed advisories warrant a link comment; existing-only reruns stay
@@ -299,7 +301,9 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
       : !approvedHead
         ? blockingLanes.length > 0
           ? 'The current head carries blocking lane verdicts; resolve them through the PR gate before triaging advisories.'
-          : 'Required lane coverage is incomplete at the current head; run `aie pr gate <pr>` to completion before triaging advisories.'
+          : missingRequiredLanes.length > 0
+            ? 'Required lane coverage is incomplete at the current head; run `aie pr gate <pr>` to completion before triaging advisories.'
+            : `Local review evidence did not validate (gate status ${localReview.status}); rerun `+'`aie pr gate <pr>`'+` to restore trusted current-head evidence before triaging advisories.`
         : advisories.length === 0
           ? 'No residual advisories; merge when the PR gate reports ship-ready.'
           : failures.length > 0
