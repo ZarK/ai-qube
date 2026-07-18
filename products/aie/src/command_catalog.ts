@@ -364,7 +364,7 @@ const COMMAND_DEFINITIONS = [
     mutationTargets: [],
     supportsJson: false,
     supportsDryRun: false,
-    examples: ['aie pr', 'aie pr view 12 --json', 'aie pr body 93', 'aie pr gate 12 --dry-run', 'aie pr thread resolve 12 --all --dry-run'],
+    examples: ['aie pr', 'aie pr view 12 --json', 'aie pr body 93', 'aie pr gate 12 --dry-run', 'aie pr triage 12 --dry-run', 'aie pr thread resolve 12 --all --dry-run'],
   },
   {
     name: 'pr view',

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readCurrentHeadLaneEvidence, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
+import type { Config } from '../config/index.js';
+import { readCurrentHeadLaneEvidence, requiredLocalReviewLanes, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { redact } from '../redact.js';
@@ -19,13 +20,14 @@ export interface PrTriageAdvisory {
 }
 
 export interface PrTriageResult {
-  ok: true;
+  ok: boolean;
   command: 'pr triage';
   pr: number;
   headSha: string;
   dryRun: boolean;
   approvedHead: boolean;
   blockingLanes: string[];
+  missingRequiredLanes: string[];
   advisories: PrTriageAdvisory[];
   lanesInspected: string[];
   limitation: string | null;
@@ -127,10 +129,16 @@ function terminalLane(lane: LocalReviewLane | null): lane is LocalReviewLane {
   return lane !== null && (lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work');
 }
 
-export async function runPrTriageService(options: PrTriageOptions): Promise<PrTriageResult> {
+export async function runPrTriageService(config: Config, options: PrTriageOptions): Promise<PrTriageResult> {
   const dryRun = options.dryRun ?? false;
   const repoRoot = options.repoRoot ?? process.cwd();
   const pr = await triagePrContext(options.prNumber, repoRoot, options.exec);
+  // Approved-head verification requires the configured profile's full required
+  // lane set to hold passed evidence per linked issue; a single passed lane file
+  // must never authorize provider mutation while other required lanes are absent.
+  const effectiveProfile = config.reviewProfile === 'remote-compatible' ? 'local-standard' : config.reviewProfile;
+  const requiredLaneIds = requiredLocalReviewLanes(effectiveProfile);
+  const passedLanesByIssue = new Map<number, Set<LocalReviewLaneId>>();
   // Enumerate every known lane id: triage reads whatever terminal current-head
   // evidence exists, and configured lane subsets simply have no files to read.
   const laneIds = Object.keys(LANE_HEURISTIC_DIGESTS) as LocalReviewLaneId[];
@@ -149,6 +157,9 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
         if (!blockingLanes.includes(laneId)) blockingLanes.push(laneId);
         continue;
       }
+      const passedLanes = passedLanesByIssue.get(issueNumber) ?? new Set<LocalReviewLaneId>();
+      passedLanes.add(laneId);
+      passedLanesByIssue.set(issueNumber, passedLanes);
       for (const finding of lane.findings.filter(entry => entry.severity === 'advisory')) {
         const location = finding.location && typeof finding.location.path === 'string'
           ? { path: finding.location.path, line: typeof finding.location.line === 'number' ? finding.location.line : null }
@@ -175,7 +186,10 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
   const limitation = anyEvidence
     ? null
     : 'No terminal current-head local lane evidence was found. Full findings, severities, and locations are local-only fields; trusted provider markers carry verdict-level state only, so advisories cannot be enumerated from provider metadata. Run the PR gate on this machine first.';
-  const approvedHead = anyEvidence && blockingLanes.length === 0;
+  const missingRequiredLanes = pr.issueNumbers.flatMap(issueNumber => requiredLaneIds
+    .filter(laneId => !(passedLanesByIssue.get(issueNumber)?.has(laneId) ?? false))
+    .map(laneId => pr.issueNumbers.length > 1 ? `${laneId} (issue #${issueNumber})` : laneId));
+  const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0;
   const failures: string[] = [];
 
   for (const advisory of advisories) {
@@ -203,13 +217,28 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
 
   let linkComment: PrTriageResult['linkComment'] = 'skipped';
   const createdAdvisories = advisories.filter(advisory => advisory.disposition === 'created');
+  const existingAdvisories = advisories.filter(advisory => advisory.disposition === 'existing');
+  const plannedAdvisories = advisories.filter(advisory => advisory.disposition === 'planned');
   if (dryRun && approvedHead && advisories.length > 0) {
     linkComment = 'planned';
   } else if (createdAdvisories.length > 0) {
-    // Only newly filed advisories warrant a link comment; existing-only reruns stay silent.
+    // Only newly filed advisories warrant a link comment; existing-only reruns stay
+    // silent, and the comment reports exactly what happened per disposition.
+    const headerParts = [
+      `filed ${createdAdvisories.length} follow-up issue(s)`,
+      ...(existingAdvisories.length > 0 ? [`${existingAdvisories.length} already tracked`] : []),
+      ...(plannedAdvisories.length > 0 ? [`${plannedAdvisories.length} still pending after failed provider calls`] : []),
+    ];
     const lines = [
-      `Advisory triage for head ${pr.headSha}: ${advisories.length} residual advisory finding(s) moved to follow-up issues instead of new commits on the approved head.`,
-      ...advisories.map(advisory => `- ${advisory.lane}: ${advisory.disposition === 'created' ? 'filed' : 'already tracked as'} ${advisory.issueUrl || `#${advisory.issueNumber ?? '?'}`} — ${advisory.message.slice(0, 120)}`),
+      `Advisory triage for head ${pr.headSha}: ${headerParts.join(', ')}; advisory-only work moves to follow-up issues instead of new commits on the approved head.`,
+      ...advisories.map(advisory => {
+        const state = advisory.disposition === 'created'
+          ? `filed ${advisory.issueUrl || `#${advisory.issueNumber ?? '?'}`}`
+          : advisory.disposition === 'existing'
+            ? `already tracked as ${advisory.issueUrl || `#${advisory.issueNumber ?? '?'}`}`
+            : 'pending (provider call failed)';
+        return `- ${advisory.lane}: ${state} — ${advisory.message.slice(0, 120)}`;
+      }),
     ];
     const comment = await runGh(['pr', 'comment', String(pr.number), '--body', lines.join('\n')], { cwd: repoRoot, exec: options.exec });
     if (comment.exitCode !== 0) {
@@ -220,11 +249,12 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
   }
 
   const created = createdAdvisories.length;
-  const existing = advisories.filter(advisory => advisory.disposition === 'existing').length;
-  const planned = advisories.filter(advisory => advisory.disposition === 'planned').length;
+  const existing = existingAdvisories.length;
+  const planned = plannedAdvisories.length;
   const summaryParts = [
     `${advisories.length} advisory finding(s) at head ${pr.headSha.slice(0, 12)} across ${lanesInspected.length} lane(s).`,
     ...(blockingLanes.length > 0 ? [`Head is not approved: ${blockingLanes.join(', ')} recorded blocking verdicts, so no follow-up issues were filed.`] : []),
+    ...(blockingLanes.length === 0 && anyEvidence && missingRequiredLanes.length > 0 ? [`Head is not approved: required lane coverage is incomplete (${missingRequiredLanes.join(', ')}), so no follow-up issues were filed.`] : []),
     ...(created > 0 ? [`Filed ${created} follow-up issue(s).`] : []),
     ...(existing > 0 ? [`${existing} already tracked.`] : []),
     ...(dryRun && approvedHead && planned > 0 ? [`${planned} would be filed.`] : []),
@@ -232,13 +262,14 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
     ...(limitation ? [limitation] : []),
   ];
   return {
-    ok: true,
+    ok: failures.length === 0,
     command: 'pr triage',
     pr: pr.number,
     headSha: redact(pr.headSha),
     dryRun,
     approvedHead,
     blockingLanes,
+    missingRequiredLanes,
     advisories,
     lanesInspected,
     limitation,
@@ -248,7 +279,9 @@ export async function runPrTriageService(options: PrTriageOptions): Promise<PrTr
     nextAction: limitation
       ? 'Run `aie pr gate <pr>` on this machine to record local lane evidence, then rerun `aie pr triage <pr>`.'
       : !approvedHead
-        ? 'The current head carries blocking lane verdicts; resolve them through the PR gate before triaging advisories.'
+        ? blockingLanes.length > 0
+          ? 'The current head carries blocking lane verdicts; resolve them through the PR gate before triaging advisories.'
+          : 'Required lane coverage is incomplete at the current head; run `aie pr gate <pr>` to completion before triaging advisories.'
         : advisories.length === 0
           ? 'No residual advisories; merge when the PR gate reports ship-ready.'
           : failures.length > 0

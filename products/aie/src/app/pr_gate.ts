@@ -970,8 +970,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     nextAction: shipReadyReasons.length > 0
       ? 'Resolve the listed ship-readiness conditions, then rerun `aie pr gate`.'
       : advisoryCount > 0
-        ? `Ship-ready at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
-        : 'Ship-ready at the current head with no residual advisories; merge when repository policy allows.',
+        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
+        : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
   };
   return {
     ok: true,

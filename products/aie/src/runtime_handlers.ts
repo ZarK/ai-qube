@@ -550,8 +550,8 @@ async function handlePrTriage(context: Parameters<RuntimeCommandHandler>[0]) {
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr triage', loaded, 'Fix the selected Executor config, then rerun advisory triage.');
   try {
-    const result = await runPrTriageService({ prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
-    return commandResult(context, result, formatPrTriage(result));
+    const result = await runPrTriageService(loaded.config ?? getDefaults(), { prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
+    return commandResult(context, result, formatPrTriage(result), result.ok ? 0 : 1);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
     const message = `Failed to triage advisories for pull request #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication and local lane evidence, then rerun \`aie pr triage ${prNumber} --dry-run\`.`;
