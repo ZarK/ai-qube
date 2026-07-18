@@ -22,6 +22,13 @@ export interface RouteProbeCheck {
 export type RouteProbeCommandRunner = (executable: string, args: readonly string[]) => string;
 export type RouteProbeExecutableResolver = (host: RoutedProbeHost) => ModelHostExecutable;
 
+// Host CLI output is untrusted: strip terminal control sequences and
+// non-printable bytes, redact secrets, and bound the length before any of it
+// reaches diagnostics, doctor output, or lane summaries.
+export function sanitizeProbeText(value: string): string {
+  return redact(value.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/[^ -~]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
+}
+
 function defaultProbeCommandRunner(executable: string, args: readonly string[]): string {
   return execFileSync(executable, [...args], {
     encoding: 'utf8',
@@ -64,14 +71,14 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version: null,
       modelListed: null,
       resolved: null,
-      diagnostic: `The ${host} CLI is not resolvable (${redact(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
+      diagnostic: `The ${host} CLI is not resolvable (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
     };
   }
   const executable = typeof resolved === 'string' ? resolved : resolved.executable;
   const prefixArgs = typeof resolved === 'string' ? [] : [...resolved.prefixArgs];
   let version: string;
   try {
-    version = runCommand(executable, [...prefixArgs, '--version']).trim().split(/\r?\n/)[0] ?? '';
+    version = sanitizeProbeText(runCommand(executable, [...prefixArgs, '--version']).split(/\r?\n/).map(line => line.trim()).find(line => line !== '') ?? '');
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     return {
@@ -82,7 +89,19 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version: null,
       modelListed: null,
       resolved: null,
-      diagnostic: `The ${host} CLI resolved but did not report a version (${redact(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${host} CLI installation before running routed review lanes.`,
+      diagnostic: `The ${host} CLI resolved but did not report a version (${sanitizeProbeText(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${host} CLI installation before running routed review lanes.`,
+    };
+  }
+  if (version === '') {
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable,
+      version: null,
+      modelListed: null,
+      resolved: null,
+      diagnostic: `The ${host} CLI resolved but reported an empty version. Fix the ${host} CLI installation before running routed review lanes.`,
     };
   }
   if (host !== 'grok' || !model) {
@@ -127,7 +146,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       version,
       modelListed: false,
       resolved: null,
-      diagnostic: `Configured review model "${model}" is not in the ${host} catalog (${catalog.join(', ')}). Update the trusted review model configuration to a listed model.`,
+      diagnostic: `Configured review model "${model}" is not in the ${host} catalog (${sanitizeProbeText(catalog.join(', '))}). Update the trusted review model configuration to a listed model.`,
     };
   }
   return { host, model, status: 'ready', executable, version, modelListed: true, diagnostic: null, resolved };

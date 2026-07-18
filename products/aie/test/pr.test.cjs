@@ -2417,6 +2417,73 @@ describe('PR gate service', () => {
     assert.deepEqual([...executablesUsed], ['probe-resolved-grok'], 'execution must spawn exactly the probe-resolved executable');
   });
 
+  it('accumulates faults from repeatedly blocked primary probes and engages the fallback', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 2, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const codexLanes = [];
+    const modelRouteProcess = async invocation => {
+      assert.notEqual(invocation.schemaPath, null, 'only the codex fallback may execute while the grok primary probe is blocked');
+      const prompt = invocation.stdin ?? '';
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      codexLanes.push(lane);
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      const events = [
+        JSON.stringify({ type: 'thread.started', thread_id: `codex-thread-${lane}` }),
+        JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(body) } }),
+      ];
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: events.join('\n') };
+    };
+    const routeProbe = (host, model) => (host === 'grok'
+      ? { host, model, status: 'blocked', executable: null, version: null, modelListed: null, resolved: null, diagnostic: 'The grok CLI is not resolvable. Install and authenticate the grok CLI on PATH before running routed review lanes.' }
+      : { host, model, status: 'ready', executable: 'codex-probe', version: 'probe-test', modelListed: null, diagnostic: null, resolved: 'codex-probe' });
+    const gateOptions = { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHead: async () => 'abc123' };
+
+    const firstRun = await runPrGate(config, gateOptions);
+    assert.equal(codexLanes.length, 0, 'the first blocked probe stays under the threshold and must not execute any route');
+    assert.ok(firstRun.localReviewRunner.lanes.filter(lane => lane.route !== null).every(lane => lane.status === 'unavailable'));
+    const ledger = JSON.parse(readFileSync(join(repo, '.git', 'qube', 'aie', 'route-faults', '93', '12.json'), 'utf8'));
+    assert.ok(Object.values(ledger.lanes).every(record => record.count === 1 && record.lastReasonCode === 'model-route-probe-blocked'));
+
+    const secondRun = await runPrGate(config, gateOptions);
+    const routedLanes = secondRun.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routedLanes.length >= 3);
+    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'codex'), 'the threshold-reaching blocked probe must engage the fallback in the same run');
+    assert.ok(codexLanes.length >= 3);
+    for (const lane of routedLanes) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.runnerProvenance.routeSource, 'fallback');
+      assert.equal(evidence.runnerProvenance.host, 'codex');
+    }
+  });
+
   it('never consumes a working-tree route-fault ledger that pull request content could supply', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

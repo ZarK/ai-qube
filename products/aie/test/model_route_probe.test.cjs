@@ -2,7 +2,7 @@
 
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
-const { parseGrokModelCatalog, probeModelRoute } = require('../dist/app/model_route_probe.js');
+const { parseGrokModelCatalog, probeModelRoute, sanitizeProbeText } = require('../dist/app/model_route_probe.js');
 
 const GROK_MODELS_OUTPUT = [
   'You are logged in with grok.com.',
@@ -85,6 +85,20 @@ describe('model route probe', () => {
     assert.equal(check.status, 'blocked');
     assert.equal(check.executable, 'grok-cli');
     assert.match(check.diagnostic, /did not report a version/);
+  });
+
+  it('sanitizes untrusted host CLI output before it reaches diagnostics', () => {
+    assert.equal(sanitizeProbeText('\u001b[31mgrok 1.0\u001b[0m'), 'grok 1.0');
+    assert.equal(sanitizeProbeText('line with\u0007\u0000 controls'), 'line with controls');
+    assert.ok(sanitizeProbeText('x'.repeat(500)).length <= 200);
+    const version = probeModelRoute('grok', null, () => '\u001b[32mgrok 9.9\u001b[0m\n', () => 'grok-cli').version;
+    assert.equal(version, 'grok 9.9');
+  });
+
+  it('blocks when the resolved CLI reports an empty version', () => {
+    const check = probeModelRoute('grok', 'grok-4.5', () => '\n\n', () => 'grok-cli');
+    assert.equal(check.status, 'blocked');
+    assert.match(check.diagnostic, /empty version/);
   });
 
   it('probes codex through the shared shim-aware resolution with version only', () => {

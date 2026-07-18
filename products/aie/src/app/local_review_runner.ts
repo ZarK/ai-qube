@@ -605,6 +605,26 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           continue;
         }
       }
+      // A blocked primary probe is itself a host fault: persistent breakage
+      // (dead auth, broken CLI, missing catalog) must accumulate toward the
+      // failover threshold and engage the fallback in the same run once met.
+      if (job.routeSource === 'configured') {
+        const faultCount = recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, 'model-route-probe-blocked', reviewRouteKey(job.primaryRoute ?? job.route));
+        if (config.reviewFailover && faultCount >= config.reviewFailover.faults) {
+          const fallbackPlan = resolveFailoverReviewPlan(config);
+          if (fallbackPlan) {
+            const fallbackCheck = probeFor(fallbackPlan);
+            if (fallbackCheck?.status === 'ready') {
+              job.route = fallbackPlan;
+              job.routeSource = 'fallback';
+              job.host = fallbackPlan.host;
+              job.probedExecutable = fallbackCheck.resolved ?? null;
+              runnableJobs.push(job);
+              continue;
+            }
+          }
+        }
+      }
       const summary = check?.diagnostic ?? `${job.route.host} route probe returned no result; the route is blocked before model execution.`;
       unavailable.push(`${job.lane}: ${summary}`);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
