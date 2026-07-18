@@ -364,7 +364,7 @@ const COMMAND_DEFINITIONS = [
     mutationTargets: [],
     supportsJson: false,
     supportsDryRun: false,
-    examples: ['aie pr', 'aie pr view 12 --json', 'aie pr body 93', 'aie pr gate 12 --dry-run', 'aie pr thread resolve 12 --all --dry-run'],
+    examples: ['aie pr', 'aie pr view 12 --json', 'aie pr body 93', 'aie pr gate 12 --dry-run', 'aie pr triage 12 --dry-run', 'aie pr thread resolve 12 --all --dry-run'],
   },
   {
     name: 'pr view',
@@ -396,7 +396,7 @@ const COMMAND_DEFINITIONS = [
   },
   {
     name: 'pr gate',
-    description: 'Request configured PR reviewers idempotently, validate local review evidence when configured, wait the configured duration, and inspect review state before merge.',
+    description: 'Request configured PR reviewers idempotently, validate local review evidence when configured, wait the configured duration, and inspect review state before merge. The shipReady field is the authoritative merge-readiness contract; status describes gate execution state, and both surfaces share one nextAction.',
     args: ['pr'],
     flags: PR_GATE_FLAG_DETAILS.map(flag => flag.name),
     flagDetails: PR_GATE_FLAG_DETAILS,
@@ -407,6 +407,18 @@ const COMMAND_DEFINITIONS = [
     stableErrorKinds: ['parse-error', 'config-error', 'github-error', 'review-state-unavailable', ...CONFIG_ERROR_KINDS],
     reviewAgentValues: PR_REVIEW_AGENT_VALUES,
     examples: ['aie pr gate 12 --dry-run', 'aie pr gate 12 --json', 'aie pr gate 12'],
+  },
+  {
+    name: 'pr triage',
+    description: 'Convert residual advisory findings at an approved current head into deduplicated follow-up issues linked on the pull request, instead of new commits on the approved head.',
+    args: ['pr'],
+    flags: ['--dry-run', '--json', '--help'],
+    mutationTargets: ['github'],
+    supportsJson: true,
+    supportsDryRun: true,
+    externalServices: ['github'],
+    stableErrorKinds: ['parse-error', 'config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie pr triage 12 --dry-run', 'aie pr triage 12 --json', 'aie pr triage 12'],
   },
   {
     name: 'pr review publish',

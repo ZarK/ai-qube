@@ -1094,7 +1094,7 @@ describe('PR gate service', () => {
     const result = await runPrGate(config, { prNumber: 12, exec });
 
     assert.equal(result.status, 'complete');
-    assert.match(result.nextAction, /no detected blockers/);
+    assert.match(result.nextAction, /Ship-ready at the current head/);
   });
 
   it('completes local-only PR gates when provider-visible local review is approved', async () => {
@@ -1562,6 +1562,8 @@ describe('PR gate service', () => {
 
     assert.ok(modelCalls > 0);
     assert.equal(result.localReviewRunner.status, 'failed');
+    assert.equal(result.shipReady.ready, false);
+    assert.ok(result.shipReady.reasons.length > 0);
     assert.equal(result.localReviewPublish.status, 'pending');
     assert.match(result.localReviewPublish.nextAction, /no provider mutation/i);
     assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
@@ -1583,7 +1585,7 @@ describe('PR gate service', () => {
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
     assert.ok(laneIds.length > 0);
     const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `reuse-${lane}` }));
-    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments })] });
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments, reviewDecision: 'APPROVED' })] });
 
     const result = await runPrGate(config, {
       prNumber: 12,
@@ -1600,6 +1602,9 @@ describe('PR gate service', () => {
     assert.ok(result.reviewParticipantRollup);
     assert.equal(result.reviewParticipantRollup.hostLaneReceived, result.reviewParticipantRollup.hostLaneExpected);
     assert.ok(result.reviewParticipantRollup.hostLaneExpected > 0);
+    assert.equal(result.shipReady.ready, true);
+    assert.equal(result.shipReady.advisoryCount, 0);
+    assert.match(result.nextAction, /Ship-ready/);
     assert.equal(result.localReviewPublish.status, 'skipped');
     assert.match(result.localReviewPublish.nextAction, /reused/i);
     assert.equal(fixture.calls.some(args => args.join(' ').includes('qube-pr-review:')), false);
@@ -1677,6 +1682,7 @@ describe('PR gate service', () => {
     assert.ok(result.localReview.providerReuse.accepted.length === 0);
     assert.ok(result.localReview.providerReuse.rejected.length > 0);
     assert.ok(result.localReview.providerReuse.rejected.every(entry => /other heads/.test(entry.reason)));
+    assert.equal(result.shipReady.ready, false);
   });
 
   it('rejects profile-incompatible and non-approve trusted provider reviews', async () => {
@@ -4603,7 +4609,7 @@ describe('PR gate service', () => {
     assert.equal(result.status, 'complete');
     assert.equal(result.reviewers[0].requestedForHead, true);
     assert.equal(result.reviewers[0].pending, false);
-    assert.match(result.nextAction, /no detected blockers/);
+    assert.match(result.nextAction, /Ship-ready at the current head/);
   });
 
   it('does not trust spoofed marker comments as reviewer requests', async () => {
