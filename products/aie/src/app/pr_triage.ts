@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/index.js';
-import { readCurrentHeadLaneEvidence, requiredLocalReviewLanes, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { readCurrentHeadLaneEvidence, readLocalReviewGate, requiredLocalReviewLanes, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { redact } from '../redact.js';
@@ -14,7 +14,7 @@ export interface PrTriageAdvisory {
   location: { path: string; line: number | null } | null;
   suggestion: string | null;
   dedupeKey: string;
-  disposition: 'planned' | 'created' | 'existing';
+  disposition: 'planned' | 'created' | 'existing' | 'blocked';
   issueNumber: number | null;
   issueUrl: string | null;
 }
@@ -189,8 +189,24 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
   const missingRequiredLanes = pr.issueNumbers.flatMap(issueNumber => requiredLaneIds
     .filter(laneId => !(passedLanesByIssue.get(issueNumber)?.has(laneId) ?? false))
     .map(laneId => pr.issueNumbers.length > 1 ? `${laneId} (issue #${issueNumber})` : laneId));
-  const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0;
+  // The gate's evidence evaluation is the authority on whether the head is approved:
+  // it enforces required-lane coverage plus the same provenance, prompt-stack, and
+  // severity validation that guards the merge itself.
+  const localReview = readLocalReviewGate({
+    repoRoot,
+    issueNumbers: pr.issueNumbers,
+    prNumber: pr.number,
+    headSha: pr.headSha,
+    reviewers: config.localReviewAgents,
+    required: true,
+    profile: config.reviewProfile,
+    severityThreshold: config.reviewSeverityThreshold,
+  });
+  const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0 && localReview.status === 'passed';
   const failures: string[] = [];
+  if (!approvedHead) {
+    for (const advisory of advisories) advisory.disposition = 'blocked';
+  }
 
   for (const advisory of advisories) {
     const existing = await findExistingAdvisoryIssue(advisory.dedupeKey, repoRoot, options.exec);
@@ -202,17 +218,18 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     }
     if (dryRun || !approvedHead) continue;
     const created = await runGh(['issue', 'create', '--title', advisoryIssueTitle(advisory.message), '--body', advisoryIssueBody(pr, advisory)], { cwd: repoRoot, exec: options.exec });
-    if (created.exitCode !== 0) {
+    const url = created.exitCode === 0 ? created.stdout.trim().split('\n').pop() ?? '' : '';
+    const numberMatch = url.match(/\/issues\/(\d+)/);
+    if (created.exitCode !== 0 || !numberMatch) {
       // Keep the remaining advisories moving and report the partial state instead of
       // abandoning the run after earlier issues were already filed.
-      failures.push(`${advisory.lane} (${advisory.dedupeKey}): ${ghFailureMessage('gh issue create', created.exitCode, created.stderr || created.stdout)}`);
+      advisory.disposition = 'blocked';
+      failures.push(`${advisory.lane} (${advisory.dedupeKey}): ${created.exitCode !== 0 ? ghFailureMessage('gh issue create', created.exitCode, created.stderr || created.stdout) : `gh issue create returned no parsable issue URL (${url || 'empty output'}).`}`);
       continue;
     }
-    const url = created.stdout.trim().split('\n').pop() ?? '';
-    const numberMatch = url.match(/\/issues\/(\d+)/);
     advisory.disposition = 'created';
     advisory.issueUrl = url;
-    advisory.issueNumber = numberMatch ? Number(numberMatch[1]) : null;
+    advisory.issueNumber = Number(numberMatch[1]);
   }
 
   let linkComment: PrTriageResult['linkComment'] = 'skipped';
@@ -227,7 +244,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     const headerParts = [
       `filed ${createdAdvisories.length} follow-up issue(s)`,
       ...(existingAdvisories.length > 0 ? [`${existingAdvisories.length} already tracked`] : []),
-      ...(plannedAdvisories.length > 0 ? [`${plannedAdvisories.length} still pending after failed provider calls`] : []),
+      ...(advisories.some(advisory => advisory.disposition === 'blocked') ? [`${advisories.filter(advisory => advisory.disposition === 'blocked').length} still pending after failed provider calls`] : []),
     ];
     const lines = [
       `Advisory triage for head ${pr.headSha}: ${headerParts.join(', ')}; advisory-only work moves to follow-up issues instead of new commits on the approved head.`,
@@ -255,6 +272,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     `${advisories.length} advisory finding(s) at head ${pr.headSha.slice(0, 12)} across ${lanesInspected.length} lane(s).`,
     ...(blockingLanes.length > 0 ? [`Head is not approved: ${blockingLanes.join(', ')} recorded blocking verdicts, so no follow-up issues were filed.`] : []),
     ...(blockingLanes.length === 0 && anyEvidence && missingRequiredLanes.length > 0 ? [`Head is not approved: required lane coverage is incomplete (${missingRequiredLanes.join(', ')}), so no follow-up issues were filed.`] : []),
+    ...(blockingLanes.length === 0 && missingRequiredLanes.length === 0 && anyEvidence && localReview.status !== 'passed' ? [`Head is not approved: local review evidence did not validate (gate status ${localReview.status}), so no follow-up issues were filed.`] : []),
     ...(created > 0 ? [`Filed ${created} follow-up issue(s).`] : []),
     ...(existing > 0 ? [`${existing} already tracked.`] : []),
     ...(dryRun && approvedHead && planned > 0 ? [`${planned} would be filed.`] : []),

@@ -7,7 +7,7 @@ const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { runPrTriageService, formatPrTriage } = require('../dist/app/pr_triage.js');
-const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
+const { writeApprovedHead: writeApprovedHeadSupport, writeValidLaneEvidence } = require('./support/triage_evidence.cjs');
 const { getDefaults } = require('../dist/config/index.js');
 
 const HEAD = 'abc123';
@@ -70,11 +70,8 @@ function fakeGh({ existingSearchHits = {}, createdUrls = [] } = {}) {
   return { exec, calls };
 }
 
-function writeApprovedHead(repo, codeQualityFindings, { except = [] } = {}) {
-  for (const lane of requiredLocalReviewLanes('local-standard')) {
-    if (except.includes(lane)) continue;
-    writeLaneEvidence(repo, lane, lane === 'code-quality' ? codeQualityFindings : []);
-  }
+function writeApprovedHead(repo, codeQualityFindings, options = {}) {
+  writeApprovedHeadSupport(repo, codeQualityFindings, options);
 }
 
 function repoHead(repo) {
@@ -143,7 +140,7 @@ describe('pr triage', () => {
 
   it('refuses to file follow-up issues when required lane coverage is incomplete', async () => {
     const repo = makeRepo();
-    writeLaneEvidence(repo, 'code-quality', [advisoryFinding('cq-1', 'A single passed lane must not authorize filings.')]);
+    writeValidLaneEvidence(repo, 'code-quality', [advisoryFinding('cq-1', 'A single passed lane must not authorize filings.')]);
     const gh = fakeGh();
 
     const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
@@ -158,15 +155,15 @@ describe('pr triage', () => {
   it('refuses to file follow-up issues when the head carries blocking lane verdicts', async () => {
     const repo = makeRepo();
     writeApprovedHead(repo, [], { except: ['code-quality'] });
-    writeLaneEvidence(repo, 'performance', [advisoryFinding('perf-1', 'Sequential dedupe searches scale linearly with advisories.')]);
-    writeLaneEvidence(repo, 'code-quality', [], { status: 'needs-work', recommendation: 'request-changes' });
+    writeValidLaneEvidence(repo, 'performance', [advisoryFinding('perf-1', 'Sequential dedupe searches scale linearly with advisories.')]);
+    writeValidLaneEvidence(repo, 'code-quality', [], { status: 'needs-work', recommendation: 'request-changes' });
     const gh = fakeGh();
 
     const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
 
     assert.equal(result.approvedHead, false);
     assert.deepEqual(result.blockingLanes, ['code-quality']);
-    assert.ok(result.advisories.every(advisory => advisory.disposition !== 'created'));
+    assert.ok(result.advisories.every(advisory => advisory.disposition === 'blocked'));
     assert.equal(gh.calls.some(args => args[0] === 'issue' && args[1] === 'create'), false);
     assert.equal(gh.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
     assert.match(result.nextAction, /blocking lane verdicts/);
@@ -193,7 +190,7 @@ describe('pr triage', () => {
     assert.equal(result.failures.length, 1);
     assert.match(result.failures[0], /rate limited|gh issue create/);
     assert.equal(result.advisories.filter(advisory => advisory.disposition === 'created').length, 1);
-    assert.equal(result.advisories.filter(advisory => advisory.disposition === 'planned').length, 1);
+    assert.equal(result.advisories.filter(advisory => advisory.disposition === 'blocked').length, 1);
     assert.match(result.nextAction, /rerun/i);
   });
 
