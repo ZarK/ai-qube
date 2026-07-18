@@ -1,8 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { homedir } from 'node:os';
-import { join } from 'node:path';
 import { redact } from '../redact.js';
+import { resolveModelHostExecutableSync, type ModelHostExecutable } from './model_review_runner.js';
 
 const PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
@@ -20,6 +18,7 @@ export interface RouteProbeCheck {
 }
 
 export type RouteProbeCommandRunner = (executable: string, args: readonly string[]) => string;
+export type RouteProbeExecutableResolver = (host: RoutedProbeHost) => ModelHostExecutable;
 
 function defaultProbeCommandRunner(executable: string, args: readonly string[]): string {
   return execFileSync(executable, [...args], {
@@ -29,17 +28,6 @@ function defaultProbeCommandRunner(executable: string, args: readonly string[]):
     windowsHide: true,
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-}
-
-function candidateExecutables(host: RoutedProbeHost): string[] {
-  const names = process.platform === 'win32'
-    ? host === 'codex' ? ['codex.exe', 'codex.cmd', 'codex'] : ['grok.exe', 'grok.cmd', 'grok']
-    : [host];
-  if (process.platform === 'win32' && host === 'grok') {
-    const fallback = join(homedir(), '.grok', 'bin', 'grok.exe');
-    if (existsSync(fallback)) names.push(fallback);
-  }
-  return names;
 }
 
 export function parseGrokModelCatalog(output: string): string[] | null {
@@ -58,20 +46,14 @@ export function parseGrokModelCatalog(output: string): string[] | null {
   return models.length > 0 ? models : null;
 }
 
-export function probeModelRoute(host: RoutedProbeHost, model: string | null, runCommand: RouteProbeCommandRunner = defaultProbeCommandRunner): RouteProbeCheck {
-  let executable: string | null = null;
-  let version: string | null = null;
-  let resolutionError = '';
-  for (const candidate of candidateExecutables(host)) {
-    try {
-      version = runCommand(candidate, ['--version']).trim().split(/\r?\n/)[0] ?? '';
-      executable = candidate;
-      break;
-    } catch (error: unknown) {
-      resolutionError = error instanceof Error ? error.message : String(error);
-    }
-  }
-  if (!executable || !version) {
+export function probeModelRoute(host: RoutedProbeHost, model: string | null, runCommand: RouteProbeCommandRunner = defaultProbeCommandRunner, resolveExecutable: RouteProbeExecutableResolver = resolveModelHostExecutableSync): RouteProbeCheck {
+  // Probe and execution share one resolver so a ready verdict always refers to
+  // the executable routed execution would actually spawn.
+  let resolved: ModelHostExecutable;
+  try {
+    resolved = resolveExecutable(host);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
     return {
       host,
       model,
@@ -79,7 +61,24 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable: null,
       version: null,
       modelListed: null,
-      diagnostic: `The ${host} CLI is not resolvable or did not report a version (${redact(resolutionError.split(/\r?\n/)[0] || 'no executable candidate succeeded')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
+      diagnostic: `The ${host} CLI is not resolvable (${redact(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
+    };
+  }
+  const executable = typeof resolved === 'string' ? resolved : resolved.executable;
+  const prefixArgs = typeof resolved === 'string' ? [] : [...resolved.prefixArgs];
+  let version: string;
+  try {
+    version = runCommand(executable, [...prefixArgs, '--version']).trim().split(/\r?\n/)[0] ?? '';
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable,
+      version: null,
+      modelListed: null,
+      diagnostic: `The ${host} CLI resolved but did not report a version (${redact(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${host} CLI installation before running routed review lanes.`,
     };
   }
   if (host !== 'grok' || !model) {
@@ -89,7 +88,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
   }
   let catalogOutput: string;
   try {
-    catalogOutput = runCommand(executable, ['models']);
+    catalogOutput = runCommand(executable, [...prefixArgs, 'models']);
   } catch {
     return {
       host,

@@ -231,6 +231,15 @@
         "tier": "review",
         "timeoutSeconds": 900,
         "maxTurns": 16
+      },
+      "failover": {
+        "faults": 2,
+        "route": {
+          "host": "codex",
+          "tier": "review",
+          "timeoutSeconds": 900,
+          "maxTurns": 8
+        }
       }
     },
     "gates": {
