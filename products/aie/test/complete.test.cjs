@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
 const { describe, it } = require('node:test');
+require('./support/compile_cache.cjs');
 const { getDefaults } = require('../dist/config/index.js');
 const { completeIssue } = require('../dist/complete/index.js');
 

@@ -65,6 +65,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "pnpm run typecheck",
     "test": "pnpm run build:deps && pnpm run build && node test/run-node-tests.mjs",
+    "test:fast": "pnpm run build && node test/run-node-tests.mjs --fast",
     "prepack": "node ../../scripts/resolve-publish-dependencies.mjs && node ../../scripts/check-publish-manifest.mjs && pnpm run build",
     "postpack": "node ../../scripts/restore-publish-dependencies.mjs",
     "pack:check": "pnpm run build:deps && pnpm run build && pnpm pack --dry-run --json && node ../../scripts/restore-publish-dependencies.mjs",

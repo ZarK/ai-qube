@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+require('./support/compile_cache.cjs');
 const { spawnSync } = require('node:child_process');
 const { join } = require('node:path');
 const packageJson = require('../package.json');

@@ -4,6 +4,7 @@ const { mkdtempSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
+require('./support/compile_cache.cjs');
 
 const { getDefaults } = require('../dist/config/index.js');
 const {

@@ -4,6 +4,7 @@ const { mkdtempSync, realpathSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { getDefaults } = require('../dist/config/index.js');
 
 function portable(path) {
@@ -11,16 +12,7 @@ function portable(path) {
 }
 
 function makeGitRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'aie-branch-'));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'executor@example.invalid'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'Executor Test'], { cwd: repo, stdio: 'ignore' });
-  writeFileSync(join(repo, 'README.md'), 'fixture\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
-  return repo;
+  return cloneGitRepo('committed', 'aie-branch-');
 }
 
 function issue(number, title = 'Add branch command') {
