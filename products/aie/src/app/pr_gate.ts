@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
-import { getIssue } from '../providers/github_adapter_exports.js';
+import { getIssue, loadPullRequestBody, type GhExec } from '../providers/github_adapter_exports.js';
 import { configToExecutorPolicy, prThreadContextMode } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import {
@@ -759,6 +759,10 @@ function localReviewContextCacheKey(snapshot: Pick<ReviewForgeSnapshot, 'pr'>): 
   return `${snapshot.pr.number}:${snapshot.pr.headRefOid}`;
 }
 
+async function loadPrBodyText(prNumber: number, exec: PrGateExec | undefined): Promise<string | undefined> {
+  return loadPullRequestBody(prNumber, { exec: exec as GhExec | undefined });
+}
+
 async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const key = localReviewContextCacheKey(snapshot);
   const cached = cache.get(key);
@@ -955,6 +959,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  const selfCheck = dryRun
+    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: await loadPrBodyText(options.prNumber, options.exec), repoRoot })
+    : null;
   // Dedupe by lane + finding identity so multi-issue evidence does not inflate the count.
   const advisoryCount = new Set(localReview.evidence.flatMap(evidence => evidence.lanes.flatMap(lane => lane.findings.filter(finding => finding.severity === 'advisory').map(finding => `${lane.id} ${finding.id} ${finding.message}`)))).size;
   const shipReadyReasons: string[] = [];
@@ -994,7 +1001,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     mergeBlockers,
     conversations,
     checkDiagnostics,
-    selfCheck: dryRun ? buildImplementerSelfCheck({ config, changedPaths }) : null,
+    selfCheck,
     localReviewRunner,
     localReview,
     fixBatch,

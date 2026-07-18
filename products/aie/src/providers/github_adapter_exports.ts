@@ -36,6 +36,19 @@ export async function runGh(args: string[], options: {
   return adapter.runGh(args, options);
 }
 
+export async function loadPullRequestBody(prNumber: number, options: { cwd?: string; exec?: GhExec } = {}): Promise<string | undefined> {
+  // Best-effort read used by dry-run self-checks; a missing body downgrades
+  // requirement entries to unmapped guidance instead of failing the command.
+  try {
+    const result = await runGh(['pr', 'view', String(prNumber), '--json', 'body'], options);
+    if (result.exitCode !== 0) return undefined;
+    const parsed: unknown = JSON.parse(result.stdout);
+    return parsed !== null && typeof parsed === 'object' && typeof (parsed as { body?: unknown }).body === 'string' ? (parsed as { body: string }).body : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function getIssue(issueNumber: number, options: { cwd?: string; exec?: GhExec; includeAssignees?: boolean } = {}): Promise<GitHubIssue> {
   const adapter = await loadGitHubAdapter();
   return adapter.getIssue(issueNumber, options);

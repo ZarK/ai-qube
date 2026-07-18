@@ -24,6 +24,7 @@ describe('implementer self-check', () => {
     });
     assert.deepEqual(selfCheck, {
       instruction: SELF_CHECK_INSTRUCTION,
+      requirements: [],
       lanes: [{
         lane: 'code-quality',
         digest: 'Correct, maintainable code with no dead, duplicated, or speculative logic.',
@@ -55,6 +56,7 @@ describe('implementer self-check', () => {
     });
     assert.deepEqual(selfCheck, {
       instruction: SELF_CHECK_INSTRUCTION,
+      requirements: [],
       lanes: [
         { lane: 'code-quality', digest: 'Correct, maintainable code with no dead, duplicated, or speculative logic.', activated: true, reason: 'required for every head' },
         { lane: 'security', digest: 'Untrusted input handling, path traversal, injection, and trust-boundary violations.', activated: true, reason: 'changed paths matched its patterns' },
@@ -170,5 +172,108 @@ describe('implementer self-check', () => {
     const second = buildImplementerSelfCheck(input);
     assert.deepEqual(first, second);
     assert.equal(formatImplementerSelfCheck(first).join('\n'), formatImplementerSelfCheck(second).join('\n'));
+  });
+});
+
+const { mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
+const { tmpdir } = require('node:os');
+const { join } = require('node:path');
+const { buildRequirementSelfCheck } = require('../dist/app/implementer_self_check.js');
+
+function checklistSummary(items) {
+  return {
+    issue: { number: 93, title: 'Issue 93', state: 'OPEN', url: 'https://github.com/example/repo/issues/93' },
+    checklist: { total: items.length, checked: items.filter(item => item.checked).length, unchecked: items.filter(item => !item.checked).length, items },
+  };
+}
+
+function prBodyWith(criterionText, provenBy) {
+  return [
+    '## Criterion-to-proof map',
+    '',
+    `### Criterion 1: ${criterionText}`,
+    '- Implemented at: `src/app/widget.ts`',
+    `- Proven by: ${provenBy}`,
+    '- Negative case: covered.',
+  ].join('\n');
+}
+
+describe('requirement self-check', () => {
+  const criterion = 'Stale provider metadata is rejected with an actionable reason.';
+
+  function makeProofRepo({ testContent = 'assert stale metadata rejected with actionable reason', testName = 'test/widget.test.cjs' } = {}) {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-selfcheck-'));
+    mkdirSync(join(repo, 'src', 'app'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app', 'widget.ts'), 'export const widget = 1;\n');
+    mkdirSync(join(repo, 'test'), { recursive: true });
+    writeFileSync(join(repo, testName), `${testContent}\n`);
+    return repo;
+  }
+
+  it('marks a requirement proven when cited files exist and the test matches behavior terms', () => {
+    const repo = makeProofRepo();
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      prBody: prBodyWith(criterion, '`test/widget.test.cjs`'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements.length, 1);
+    assert.equal(requirements[0].proof.status, 'proven');
+  });
+
+  it('flags a nonexistent cited proof file as unproven', () => {
+    const repo = makeProofRepo();
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      prBody: prBodyWith(criterion, '`test/missing.test.cjs`'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unproven');
+    assert.match(requirements[0].proof.reason, /do not exist/);
+  });
+
+  it('flags a cited test without matching behavior terms as unproven', () => {
+    const repo = makeProofRepo({ testContent: 'assert something entirely unrelated' });
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      prBody: prBodyWith(criterion, '`test/widget.test.cjs`'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unproven');
+    assert.match(requirements[0].proof.reason, /key behavior terms/);
+  });
+
+  it('marks requirements without a criterion map entry as unmapped and sorts unproven first', () => {
+    const repo = makeProofRepo();
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([
+        { index: 1, text: criterion, checked: false },
+        { index: 2, text: 'Another requirement with no map entry at all.', checked: false },
+      ])],
+      prBody: prBodyWith(criterion, '`test/widget.test.cjs`'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unmapped');
+    assert.equal(requirements[1].proof.status, 'proven');
+  });
+
+  it('reports unmapped guidance when no pull request body exists', () => {
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      repoRoot: makeProofRepo(),
+    });
+    assert.equal(requirements[0].proof.status, 'unmapped');
+    assert.match(requirements[0].proof.reason, /No pull request body/);
+  });
+
+  it('requires a cited test file, not only source citations', () => {
+    const repo = makeProofRepo();
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      prBody: prBodyWith(criterion, '`src/app/widget.ts`'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unproven');
+    assert.match(requirements[0].proof.reason, /cites no test file/);
   });
 });
