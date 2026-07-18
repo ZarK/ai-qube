@@ -187,9 +187,16 @@ interface RoutedLaneJob {
   route: ModelReviewRoutePlan;
   routeSource: 'configured' | 'fallback';
   primaryRoute: ModelReviewRoutePlan | null;
+  /** Probe-time resolution reused at spawn so the executed CLI is the probed one. */
+  probedExecutable: ModelHostExecutable | null;
   path: string;
   runner: ReviewLanePolicy['runner'];
   run: () => Promise<RoutedOutcome>;
+}
+
+export function reviewRouteKey(plan: ModelReviewRoutePlan | null): string {
+  if (!plan) return '';
+  return hash([plan.host, plan.model ?? '', plan.tier, String(plan.timeoutSeconds), String(plan.maxTurns)].join('|')).slice(0, 16);
 }
 
 function localAieCliPrefix(config: Config, repoRoot: string): string {
@@ -433,7 +440,11 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       let route = configuredRoute;
       let routeSource: 'configured' | 'fallback' = 'configured';
       if (configuredRoute && config.reviewFailover) {
-        const laneFaults = readRouteFaults(input.repoRoot, issueNumber, input.prNumber).lanes[lane]?.count ?? 0;
+        // A tally only applies while the lane's primary route identity is
+        // unchanged; a route config change restarts the count and retests the
+        // current primary before failover engages again.
+        const faultRecord = readRouteFaults(input.repoRoot, issueNumber, input.prNumber).lanes[lane];
+        const laneFaults = faultRecord && faultRecord.routeKey === reviewRouteKey(configuredRoute) ? faultRecord.count : 0;
         const fallbackPlan = laneFaults >= config.reviewFailover.faults ? resolveFailoverReviewPlan(config) : null;
         if (fallbackPlan) {
           route = fallbackPlan;
@@ -484,6 +495,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             route,
             routeSource,
             primaryRoute: configuredRoute,
+            probedExecutable: null,
             path,
             runner,
             run: () => runModelReview({
@@ -499,7 +511,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
               coverageAreas: riskCardCoverageAreas,
               routeSource: job.routeSource,
-              resolveExecutable: input.resolveModelHost,
+              // The probed resolution is reused at spawn time so the executed
+              // CLI is exactly the one the probe verified (no re-resolution gap).
+              resolveExecutable: input.resolveModelHost ?? (job.probedExecutable !== null ? async () => job.probedExecutable! : undefined),
               resolveHead: input.resolveModelHead,
               runProcess: input.modelRouteProcess,
             }),
@@ -570,6 +584,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     for (const job of routedJobs) {
       const check = probeFor(job.route);
       if (check?.status === 'ready') {
+        job.probedExecutable = check.resolved;
         runnableJobs.push(job);
         continue;
       }
@@ -581,6 +596,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           job.route = job.primaryRoute;
           job.routeSource = 'configured';
           job.host = job.primaryRoute.host;
+          job.probedExecutable = primaryCheck.resolved;
           runnableJobs.push(job);
           continue;
         }
@@ -601,7 +617,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         const reasonCode = routed?.reasonCode ?? 'invalid model route output';
         const summary = (routed?.error ?? '').trim() || `Routed model review failed (${reasonCode}).`;
         if (!ROUTE_FAULT_EXEMPT_REASONS.has(reasonCode)) {
-          recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode);
+          // Faults tally against the lane's configured primary route identity,
+          // so fallback-run faults keep the failover engaged until a verdict.
+          recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode, reviewRouteKey(job.primaryRoute ?? job.route));
         }
         lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
         return;

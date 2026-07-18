@@ -25,7 +25,7 @@ try {
 const { parsePrNumber, runPrGate, runPrViewService } = require('../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../dist/app/pr_body.js');
 const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../dist/app/pr_review_publish.js');
-const { resolveModelReviewPlan } = require('../dist/app/local_review_runner.js');
+const { resolveModelReviewPlan, reviewRouteKey } = require('../dist/app/local_review_runner.js');
 const { runPrThreadResolveService } = require('../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../dist/runtime_result.js');
 
@@ -2305,8 +2305,9 @@ describe('PR gate service', () => {
     config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
     config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
     config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    const primaryRouteKey = reviewRouteKey({ host: 'grok', tier: 'review', model: 'grok-4.5', effort: null, isolation: 'read-only', timeoutSeconds: 600, maxTurns: 8, substitution: null });
     mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
-    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json'), `${JSON.stringify({ version: 1, lanes: { 'issue-compliance': { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, 'code-quality': { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, performance: { count: 3, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' } } })}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json'), `${JSON.stringify({ version: 1, lanes: { 'issue-compliance': { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, 'code-quality': { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, performance: { count: 3, routeKey: primaryRouteKey, lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' } } })}\n`);
     let modelExecutions = 0;
     const modelRouteProcess = async () => {
       modelExecutions += 1;
@@ -2321,6 +2322,99 @@ describe('PR gate service', () => {
     const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
     assert.ok(routedLanes.length >= 3);
     assert.ok(routedLanes.every(lane => lane.status === 'unavailable' && lane.blocker === 'model-route-probe-blocked'));
+  });
+
+  it('restarts the fault tally when the primary route configuration changes', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    config.reviewModels.review.codex = { model: 'gpt-fallback-test', effort: 'low' };
+    config.reviewFailover = { faults: 1, route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 } };
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'route-faults.json'), `${JSON.stringify({ version: 1, lanes: { 'issue-compliance': { count: 5, routeKey: 'stale-route-identity', lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, 'code-quality': { count: 5, routeKey: 'stale-route-identity', lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' }, performance: { count: 5, routeKey: 'stale-route-identity', lastReasonCode: 'model-route-process-failed', lastAt: '2026-01-01T00:00:00Z' } } })}\n`);
+    const modelRouteProcess = async invocation => {
+      assert.equal(invocation.schemaPath, null, 'a changed primary route must be retested before failover engages');
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    const routedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null);
+    assert.ok(routedLanes.length >= 3);
+    assert.ok(routedLanes.every(lane => lane.status === 'completed' && lane.route.host === 'grok'));
+  });
+
+  it('executes the routed lane with the probe-resolved executable', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const executablesUsed = new Set();
+    const modelRouteProcess = async invocation => {
+      executablesUsed.add(invocation.executable);
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+    const routeProbe = (host, model) => ({ host, model, status: 'ready', executable: 'probe-resolved-grok', version: 'probe-test', modelListed: true, diagnostic: null, resolved: 'probe-resolved-grok' });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec, modelRouteProcess, routeProbe, resolveModelHead: async () => 'abc123' });
+
+    assert.ok(result.localReviewRunner.lanes.filter(lane => lane.route !== null).every(lane => lane.status === 'completed'));
+    assert.deepEqual([...executablesUsed], ['probe-resolved-grok'], 'execution must spawn exactly the probe-resolved executable');
   });
 
   it('does not count local checkout drift as a host fault', async () => {

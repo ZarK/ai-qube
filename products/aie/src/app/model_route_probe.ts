@@ -15,6 +15,8 @@ export interface RouteProbeCheck {
   version: string | null;
   modelListed: boolean | null;
   diagnostic: string | null;
+  /** The probe-time resolution, reused by execution so the spawned process is the probed one. */
+  resolved: ModelHostExecutable | null;
 }
 
 export type RouteProbeCommandRunner = (executable: string, args: readonly string[]) => string;
@@ -61,6 +63,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable: null,
       version: null,
       modelListed: null,
+      resolved: null,
       diagnostic: `The ${host} CLI is not resolvable (${redact(message.split(/\r?\n/)[0] || 'no executable found')}). Install and authenticate the ${host} CLI on PATH before running routed review lanes.`,
     };
   }
@@ -78,13 +81,14 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable,
       version: null,
       modelListed: null,
+      resolved: null,
       diagnostic: `The ${host} CLI resolved but did not report a version (${redact(message.split(/\r?\n/)[0] || 'version command failed')}). Fix the ${host} CLI installation before running routed review lanes.`,
     };
   }
   if (host !== 'grok' || !model) {
     // Codex exposes no model-catalog command, so model presence is verified at
     // execution time; hosts without a configured model use the host default.
-    return { host, model, status: 'ready', executable, version, modelListed: null, diagnostic: null };
+    return { host, model, status: 'ready', executable, version, modelListed: null, diagnostic: null, resolved };
   }
   let catalogOutput: string;
   try {
@@ -97,6 +101,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable,
       version,
       modelListed: null,
+      resolved: null,
       diagnostic: `The ${host} CLI resolved (${version}) but its model catalog could not be read. Run \`${host} models\` manually and fix authentication or CLI state before running routed review lanes.`,
     };
   }
@@ -109,6 +114,7 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable,
       version,
       modelListed: null,
+      resolved: null,
       diagnostic: `The ${host} CLI resolved (${version}) but its model catalog output was unrecognized. Run \`${host} models\` manually and update the trusted review route configuration.`,
     };
   }
@@ -120,8 +126,9 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       executable,
       version,
       modelListed: false,
+      resolved: null,
       diagnostic: `Configured review model "${model}" is not in the ${host} catalog (${catalog.join(', ')}). Update the trusted review model configuration to a listed model.`,
     };
   }
-  return { host, model, status: 'ready', executable, version, modelListed: true, diagnostic: null };
+  return { host, model, status: 'ready', executable, version, modelListed: true, diagnostic: null, resolved };
 }

@@ -46,6 +46,7 @@ export function laneEvidencePath(repoRoot: string, issueNumber: number, prNumber
 
 export interface RouteFaultRecord {
   count: number;
+  routeKey: string;
   lastReasonCode: string;
   lastAt: string;
 }
@@ -69,6 +70,7 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
         if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
         lanes[lane] = {
           count: Number(record.count),
+          routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
           lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
           lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
         };
@@ -81,10 +83,14 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   return { version: 1, lanes: {} };
 }
 
-export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string): number {
+export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
   const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
-  const count = (ledger.lanes[lane]?.count ?? 0) + 1;
-  ledger.lanes[lane] = { count, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
+  // A tally is only meaningful against one primary route identity; a config
+  // change to the lane's primary route restarts the count so the changed
+  // primary is actually tested before failover engages again.
+  const existing = ledger.lanes[lane];
+  const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
+  ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
