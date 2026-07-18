@@ -259,6 +259,45 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
   return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments), evidenceSource: 'local' };
 }
 
+// Two concurrent sessions per host keep host-level caches and rate limits safe
+// while still overlapping slow model calls; the global bound is the tuning surface.
+const PER_HOST_ROUTE_LIMIT = 2;
+
+type RoutedOutcome = Awaited<ReturnType<typeof runModelReview>>;
+
+async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => Promise<RoutedOutcome> }>, globalLimit: number): Promise<Array<RoutedOutcome | null>> {
+  const results: Array<RoutedOutcome | null> = new Array(jobs.length).fill(null);
+  const queue = jobs.map((job, index) => ({ job, index }));
+  const hostActive = new Map<string, number>();
+  let active = 0;
+  await new Promise<void>(resolveAll => {
+    const maybeStart = (): void => {
+      for (let position = 0; position < queue.length;) {
+        const { job, index } = queue[position];
+        const hostCount = hostActive.get(job.host) ?? 0;
+        if (active >= Math.max(1, globalLimit) || hostCount >= PER_HOST_ROUTE_LIMIT) {
+          position += 1;
+          continue;
+        }
+        queue.splice(position, 1);
+        active += 1;
+        hostActive.set(job.host, hostCount + 1);
+        void job.run()
+          .then(outcome => { results[index] = outcome; })
+          .catch((error: unknown) => { results[index] = { evidence: null, reasonCode: 'model-route-unavailable', error: error instanceof Error ? error.message : String(error) } as RoutedOutcome; })
+          .finally(() => {
+            active -= 1;
+            hostActive.set(job.host, (hostActive.get(job.host) ?? 1) - 1);
+            maybeStart();
+          });
+      }
+      if (queue.length === 0 && active === 0) resolveAll();
+    };
+    maybeStart();
+  });
+  return results;
+}
+
 export async function runLocalReviewRunner(config: Config, input: LocalReviewRunnerInput): Promise<LocalReviewRunResult> {
   const codex = await probeCodexReviewCapability(codexCommand(config), config.localReviewAgents.includes('codex'));
   const opencode = await probeOpenCodeReviewCapability();
@@ -292,6 +331,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const lanes: LocalReviewLaneRun[] = [];
   const written: string[] = [];
   const unavailable: string[] = [];
+  const routedJobs: Array<{ laneSlot: number; host: string; lane: LocalReviewLaneId; issueNumber: number; route: NonNullable<ReturnType<typeof resolveModelReviewPlan>>; path: string; runner: ReviewLanePolicy['runner']; run: () => Promise<RoutedOutcome> }> = [];
   const reviewTierResolution = modelTiers.review;
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
@@ -368,33 +408,40 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           }
           const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
           const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand), riskCardFragments);
-          const routed = await runModelReview({
-            plan: route,
-            repoRoot: input.repoRoot,
-            lane,
-            issueNumber,
-            prNumber: input.prNumber,
-            headSha: input.headSha,
-            profile,
-            promptStackHash: plannedRun.promptStackHash,
-            promptText: rendered.text,
-            promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
-            coverageAreas: riskCardCoverageAreas,
-            resolveExecutable: input.resolveModelHost,
-            resolveHead: input.resolveModelHead,
-            runProcess: input.modelRouteProcess,
+          // Defer execution to the bounded pool; the placeholder keeps the lane's
+          // deterministic position and is replaced in the serial completion phase.
+          const jobLane = lane;
+          const jobIssueNumber = issueNumber;
+          const jobRoute = route;
+          const jobPath = path;
+          const jobRunner = runner;
+          const jobPromptStackHash = plannedRun.promptStackHash;
+          routedJobs.push({
+            laneSlot: lanes.length,
+            host: route.host,
+            lane: jobLane,
+            issueNumber: jobIssueNumber,
+            route: jobRoute,
+            path: jobPath,
+            runner: jobRunner,
+            run: () => runModelReview({
+              plan: jobRoute,
+              repoRoot: input.repoRoot,
+              lane: jobLane,
+              issueNumber: jobIssueNumber,
+              prNumber: input.prNumber,
+              headSha: input.headSha,
+              profile,
+              promptStackHash: jobPromptStackHash,
+              promptText: rendered.text,
+              promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
+              coverageAreas: riskCardCoverageAreas,
+              resolveExecutable: input.resolveModelHost,
+              resolveHead: input.resolveModelHead,
+              runProcess: input.modelRouteProcess,
+            }),
           });
-          if (!routed.evidence) {
-            failed = true;
-            const summary = routed.error ?? 'Routed model review failed.';
-            lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, null, 'failed', path, summary, routed.reasonCode ?? 'invalid model route output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route));
-            continue;
-          }
-          const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, routed.evidence, 'local-host');
-          const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, issueNumber, input.prNumber, input.headSha, routed.evidence);
-          written.push(writtenPath);
-          if (provenancePath) written.push(provenancePath);
-          lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, null, 'completed', path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route));
+          lanes.push(plannedRun);
           continue;
         }
         if (!command) continue;
@@ -434,6 +481,26 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       written.push(writtenPath);
       lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
     }
+  }
+
+  if (routedJobs.length > 0) {
+    const outcomes = await executeRoutedJobs(routedJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3);
+    // Serial completion phase: evidence and provenance writes happen one at a
+    // time in planning order, regardless of concurrent completion order.
+    routedJobs.forEach((job, jobIndex) => {
+      const routed = outcomes[jobIndex];
+      if (!routed || !routed.evidence) {
+        failed = true;
+        const summary = routed?.error ?? 'Routed model review failed.';
+        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, routed?.reasonCode ?? 'invalid model route output', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+        return;
+      }
+      const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, routed.evidence, 'local-host');
+      const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, routed.evidence);
+      written.push(writtenPath);
+      if (provenancePath) written.push(provenancePath);
+      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+    });
   }
 
   const status: LocalReviewRunStatus = failed

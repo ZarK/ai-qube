@@ -116,6 +116,7 @@ export interface ReviewPolicy {
   reviewers: string[];
   localReviewers: string[];
   waitMinutes: number;
+  concurrency: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
   models: ReviewModelsPolicy;
@@ -254,6 +255,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
+      concurrency: nonNegativeNumber(input.reviews.concurrency ?? 3, 'reviews.concurrency'),
       requestText: input.reviews.requestText,
       carryForwardPublish: input.reviews.carryForwardPublish,
       models: {

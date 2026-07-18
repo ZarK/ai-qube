@@ -152,6 +152,7 @@ export interface ReviewConfig {
   agents: string[];
   localAgents: string[];
   waitMinutes: number;
+  concurrency: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
   models: ReviewModelsPolicy;
@@ -237,6 +238,7 @@ export interface Config extends ConfigFileShape {
   reviewLanes: ReviewLanePolicy[];
   localReviewAgents: string[];
   reviewWaitMinutes: number;
+  reviewConcurrency: number;
   reviewRequestText: string;
   reviewCarryForwardPublish: 'note' | 'none';
   reviewModels: ReviewModelsPolicy;

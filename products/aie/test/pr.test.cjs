@@ -1866,6 +1866,120 @@ describe('PR gate service', () => {
     assert.ok(batchResult.batch.findings.every(finding => Array.isArray(finding.lanes) && finding.lanes.length > 0));
   });
 
+  it('overlaps routed lanes under the global bound with per-host caps and deterministic order', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewConcurrency = 3;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let active = 0;
+    let maxActive = 0;
+    const laneStarts = [];
+    const modelRouteProcess = async invocation => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      laneStarts.push(lane);
+      await new Promise(resolve => setTimeout(resolve, laneStarts.length === 1 ? 300 : 80));
+      active -= 1;
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.ok(maxActive >= 2, `expected overlapping execution, saw maxActive=${maxActive}`);
+    assert.ok(maxActive <= 2, `per-host cap must hold two grok sessions, saw maxActive=${maxActive}`);
+    const executedLanes = result.localReviewRunner.lanes.filter(lane => lane.route !== null).map(lane => lane.lane);
+    const planned = [...executedLanes].sort((a, b) => executedLanes.indexOf(a) - executedLanes.indexOf(b));
+    assert.deepEqual(executedLanes, planned);
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed'));
+  });
+
+  it('keeps other lanes and their evidence intact when one routed lane fails', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    commitRoutedReviewHead(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewConcurrency = 3;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let failedLane = null;
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (failedLane === null) {
+        failedLane = lane;
+        return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false, stdinDelivered: true };
+      }
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec: fixture.exec, modelRouteProcess, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'failed');
+    const failed = result.localReviewRunner.lanes.filter(lane => lane.status === 'failed');
+    const completed = result.localReviewRunner.lanes.filter(lane => lane.status === 'completed' && lane.route !== null);
+    assert.equal(failed.length, 1);
+    assert.ok(completed.length >= 1);
+    for (const lane of completed) {
+      const evidence = JSON.parse(readFileSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${lane.lane}.json`), 'utf8'));
+      assert.equal(evidence.status, 'passed');
+      assert.equal(evidence.lane, lane.lane);
+    }
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
