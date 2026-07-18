@@ -194,9 +194,12 @@ interface RoutedLaneJob {
   run: () => Promise<RoutedOutcome>;
 }
 
+// The identity covers every configured route parameter that changes execution
+// meaning. A host-default model (model null) has no observable config identity;
+// its runtime changes are caught by the catalog probe and verdict clearing.
 export function reviewRouteKey(plan: ModelReviewRoutePlan | null): string {
   if (!plan) return '';
-  return hash([plan.host, plan.model ?? '', plan.tier, String(plan.timeoutSeconds), String(plan.maxTurns)].join('|')).slice(0, 16);
+  return hash([plan.host, plan.model ?? '', plan.tier, plan.effort ?? '', String(plan.timeoutSeconds), String(plan.maxTurns)].join('|')).slice(0, 16);
 }
 
 function localAieCliPrefix(config: Config, repoRoot: string): string {
@@ -512,8 +515,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               coverageAreas: riskCardCoverageAreas,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed
-              // CLI is exactly the one the probe verified (no re-resolution gap).
-              resolveExecutable: input.resolveModelHost ?? (job.probedExecutable !== null ? async () => job.probedExecutable! : undefined),
+              // CLI is exactly the one the probe verified; an injected resolver
+              // never overrides a probe-bound executable.
+              resolveExecutable: job.probedExecutable !== null ? async () => job.probedExecutable! : input.resolveModelHost,
               resolveHead: input.resolveModelHead,
               runProcess: input.modelRouteProcess,
             }),
@@ -584,7 +588,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     for (const job of routedJobs) {
       const check = probeFor(job.route);
       if (check?.status === 'ready') {
-        job.probedExecutable = check.resolved;
+        job.probedExecutable = check.resolved ?? null;
         runnableJobs.push(job);
         continue;
       }
@@ -596,7 +600,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           job.route = job.primaryRoute;
           job.routeSource = 'configured';
           job.host = job.primaryRoute.host;
-          job.probedExecutable = primaryCheck.resolved;
+          job.probedExecutable = primaryCheck.resolved ?? null;
           runnableJobs.push(job);
           continue;
         }

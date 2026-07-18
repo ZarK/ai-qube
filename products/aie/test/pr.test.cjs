@@ -393,7 +393,7 @@ function localHostConfig(command = 'review-fixture') {
 }
 
 function readyRouteProbe(host, model) {
-  return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok' ? true : null, diagnostic: null };
+  return { host, model, status: 'ready', executable: `${host}-probe`, version: 'probe-test', modelListed: host === 'grok' ? true : null, diagnostic: null, resolved: null };
 }
 
 function requiredTaskContext() {
