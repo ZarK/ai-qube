@@ -597,3 +597,16 @@ describe('interim snapshot coverage relaxation', () => {
     assert.equal(result.evidence, null);
   });
 });
+
+describe('interim snapshot freeform coverage tolerance', () => {
+  it('ignores freeform coverage areas in interim snapshots', async () => {
+    const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.', coverage: [{ area: 'made-up-area', status: 'clear' }] };
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim2-')), 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+  });
+});

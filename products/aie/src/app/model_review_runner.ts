@@ -321,7 +321,10 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   const areas = expectedCoverageAreas(input);
   let anyNotInspected = false;
   let allClear = false;
-  if (mode === 'final' || value.coverage !== undefined) {
+  // Interim snapshots are free-form model emissions: coverage is neither required
+  // nor validated there, so partial or freeform interim attestations cannot fail
+  // the run. Only the schema-constrained final result is bound to the contract.
+  if (mode === 'final') {
     if (!Array.isArray(value.coverage)) return null;
     const coverage = value.coverage;
     if (!coverage.every(entry => isRecord(entry)
