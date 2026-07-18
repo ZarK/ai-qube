@@ -1841,6 +1841,31 @@ describe('PR gate service', () => {
     assert.match(formattedLines, /Linked issue requirements \(unproven first\)/);
   });
 
+  it('returns the same ranked fix batch from pr batch as the full gate over partial evidence', async () => {
+    const { runPrBatchService } = require('../dist/app/pr_batch.js');
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewAdapter = 'mixed';
+    const evidence = localEvidence({ laneStatus: 'needs-work', blockers: ['Blocking defect recorded.'] });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      severity: 'high',
+      findings: [
+        { id: 'cq-1', severity: 'blocking', message: 'False success on empty verdicts.', location: { path: 'src/review.ts', line: 4 } },
+        { id: 'cq-2', severity: 'advisory', message: 'Duplicate parsing of evidence files.', location: { path: 'src/review.ts', line: 9 } },
+      ],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const gateResult = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+    const batchResult = await runPrBatchService(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.deepEqual(batchResult.batch, gateResult.fixBatch);
+    assert.equal(batchResult.batch.findings[0].severity, 'blocking');
+    assert.ok(batchResult.batch.findings.every(finding => Array.isArray(finding.lanes) && finding.lanes.length > 0));
+  });
+
   it('surfaces provider feedback when local review evidence is still missing', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
