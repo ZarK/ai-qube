@@ -16,7 +16,7 @@ Measured after build (the timings exclude one-time `build:deps`/`build`), Node 2
 | Windows 11, 32 hardware threads, NVMe | full suite | 785 | ≈ 4.6 minutes |
 | Windows 11, 32 hardware threads, NVMe | `--fast` | 335 | ≈ 21 seconds |
 
-The Linux and Windows gap is process-spawn cost: the suite intentionally exercises real git and real CLI subprocesses, and on the reference Windows machine a bare `git --version` measures ≈ 200 ms per spawn, so a suite with over a thousand real subprocess calls has an arithmetic floor of minutes there regardless of test structure. Use `test:fast` for the Windows edit loop and the full suite as the gate.
+The Linux and Windows gap is process-spawn cost, not suite structure: on the reference Windows machine an empty `cmd /c exit` process measures ≈ 130 ms and `git --version` ≈ 140 ms (unchanged by `GIT_CONFIG_NOSYSTEM`/`GIT_CONFIG_GLOBAL`), so any suite that executes over a thousand real subprocesses — which this one intentionally does, because mocking them would weaken the integration surface — has an arithmetic wall-time floor of minutes on that machine class regardless of test design. The identical suite completes in ≈ 16 seconds where process creation is cheap. Use `test:fast` for the Windows edit loop and the full suite as the gate.
 
 Before the fixture and concurrency work the suite summed to ≈ 17.5 minutes serially on the Windows machine, the former single `pr.test.cjs` alone took 5–8 minutes, and full runs frequently exceeded a 10-minute window. The dominant costs were per-test git repository creation (7 subprocess spawns per repository), full node boots for each spawned CLI invocation, and single-file serialization.
 
