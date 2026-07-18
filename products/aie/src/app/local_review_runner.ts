@@ -532,6 +532,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         ? `Local review runner is waiting for ${lanes.filter(lane => lane.status === 'pending').length} independent Codex subagent review lane(s). Run them in parallel when the host supports it.`
       : status === 'planned'
         ? `Local review runner planned ${lanes.filter(lane => lane.status === 'planned' || lane.status === 'pending').length} lane execution(s); ${lanes.filter(lane => lane.status === 'skipped').length} lane(s) reuse existing current-head evidence.`
+      : status === 'failed'
+        ? `Local review runner failed ${lanes.filter(lane => lane.status === 'failed').length} lane(s): ${lanes.filter(lane => lane.status === 'failed').map(lane => `${lane.lane}: ${lane.summary}`).join('; ')}`
         : `Local review runner could not complete all required lanes: ${unavailable.join('; ')}`,
   };
 }
