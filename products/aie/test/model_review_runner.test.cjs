@@ -569,3 +569,31 @@ describe('coverage attestation contract', () => {
     assert.equal(result.evidence.findings.length, 2);
   });
 });
+
+describe('interim snapshot coverage relaxation', () => {
+  it('accepts interim pending snapshots without coverage before an attested final result', async () => {
+    const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
+    delete pending.coverage;
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(laneResult())}`, sessionId: 'grok-session' }) }),
+    });
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+  });
+
+  it('still rejects a final result without coverage even when interim snapshots omit it', async () => {
+    const pending = { ...laneResult(), status: 'pending', recommendation: 'pending', summary: 'Inspection in progress.' };
+    delete pending.coverage;
+    const final = laneResult();
+    delete final.coverage;
+    const result = await runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-interim-')), 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: `${JSON.stringify(pending)}\n${JSON.stringify(final)}`, sessionId: 'grok-session' }) }),
+    });
+    assert.notEqual(result.error, null);
+    assert.equal(result.evidence, null);
+  });
+});

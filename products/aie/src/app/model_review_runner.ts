@@ -310,23 +310,31 @@ function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): b
   }
 }
 
-function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
-  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'];
-  if (!isRecord(value) || !hasExactKeys(value, required)) return null;
+function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance, mode: 'final' | 'interim' = 'final'): LaneEvidence | null {
+  // Coverage attestation is a final-result contract: schema-constrained hosts must
+  // attest the final object, while free-form interim progress snapshots may omit it.
+  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions', ...(mode === 'final' ? ['coverage'] : [])];
+  if (!isRecord(value) || !hasExactKeys(value, required, mode === 'interim' ? ['coverage'] : undefined)) return null;
   if (value.issueNumber !== input.issueNumber || value.prNumber !== input.prNumber || value.headSha !== input.headSha || value.lane !== input.lane) return null;
   // Coverage attestation: exactly one entry per expected inspection area, and the
   // attested states must be consistent with the reported findings.
   const areas = expectedCoverageAreas(input);
-  if (!Array.isArray(value.coverage)) return null;
-  const coverage = value.coverage;
-  if (!coverage.every(entry => isRecord(entry)
-    && hasExactKeys(entry, ['area', 'status'])
-    && typeof entry.area === 'string' && areas.includes(entry.area)
-    && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
-  const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
-  if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
-  const anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
-  const allClear = coverage.every(entry => (entry as { status: string }).status === 'clear');
+  let anyNotInspected = false;
+  let allClear = false;
+  if (mode === 'final' || value.coverage !== undefined) {
+    if (!Array.isArray(value.coverage)) return null;
+    const coverage = value.coverage;
+    if (!coverage.every(entry => isRecord(entry)
+      && hasExactKeys(entry, ['area', 'status'])
+      && typeof entry.area === 'string' && areas.includes(entry.area)
+      && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
+    if (mode === 'final') {
+      const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
+      if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
+    }
+    anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
+    allClear = coverage.length > 0 && coverage.every(entry => (entry as { status: string }).status === 'clear');
+  }
   if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status) || typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity) || typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return null;
   const expectedRecommendation = value.status === 'passed'
     ? 'approve'
@@ -373,7 +381,7 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     && typeof item.source === 'string' && item.source.trim() !== ''
     && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
     && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
-  if (Array.isArray(value.findings) && value.findings.length > 0 && allClear) return null;
+  if (mode === 'final' && Array.isArray(value.findings) && value.findings.length > 0 && allClear) return null;
   const candidate: Record<string, unknown> = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
   delete candidate.coverage;
   if (anyNotInspected && candidate.status === 'passed') {
@@ -666,7 +674,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         try { priorResult = JSON.parse(priorText); } catch {
           return { evidence: null, reasonCode: 'model-route-malformed-json', error: 'Grok review route returned a malformed structured progress snapshot.' };
         }
-        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance);
+        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'interim');
         if (!priorEvidence
           || priorEvidence.status !== 'pending'
           || priorEvidence.recommendation !== 'pending'
