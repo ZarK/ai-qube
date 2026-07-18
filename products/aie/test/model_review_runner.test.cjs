@@ -57,6 +57,7 @@ function laneResult() {
     contextReviewed: [{ kind: 'diff', source: 'git diff', trust: 'local-evidence', freshness: 'current' }],
     toolsUsed: ['git'],
     completeness: 'Inspected the routed runner and its focused tests; no broad suite was run.',
+    coverage: [{ area: 'code-quality', status: 'clear' }],
     preconditions: [],
   };
 }
@@ -278,6 +279,7 @@ describe('model review runner', () => {
     body.surfaces = [`surface ${tokens[7]}`];
     body.contextReviewed = [{ kind: 'diff', source: `source ${tokens[8]}`, trust: 'local-evidence', freshness: 'current' }];
     body.toolsUsed = ['tool password="lowercase-secret-value"'];
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
     body.completeness = 'Complete -----BEGIN PRIVATE KEY-----\nprivate-key-material\n-----END PRIVATE KEY-----';
     body.preconditions = ['Precondition auth_token=lowercase-secret-value'];
 
@@ -505,5 +507,65 @@ describe('model review runner', () => {
     const resolved = await resolveWindowsNodeShim(shim);
     assert.ok(resolved && typeof resolved === 'object');
     assert.equal(resolved.prefixArgs[0], script);
+  });
+});
+
+describe('coverage attestation contract', () => {
+  function grokRun(body, coverageAreas) {
+    return runModelReview({
+      ...reviewInput(mkdtempSync(join(tmpdir(), 'aie-coverage-')), 'grok'),
+      ...(coverageAreas ? { coverageAreas } : {}),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'coverage' }) }),
+    });
+  }
+
+  it('rejects a result without the coverage attestation', async () => {
+    const body = laneResult();
+    delete body.coverage;
+    const result = await grokRun(body);
+    assert.notEqual(result.error, null);
+    assert.equal(result.evidence, null);
+  });
+
+  it('rejects a result missing an expected coverage area', async () => {
+    const body = laneResult();
+    const result = await grokRun(body, ['truthful-state-transitions']);
+    assert.notEqual(result.error, null);
+    assert.equal(result.evidence, null);
+  });
+
+  it('normalizes a passed result with a not-inspected area to inconclusive', async () => {
+    const body = laneResult();
+    body.coverage = [{ area: 'code-quality', status: 'not-inspected' }];
+    const result = await grokRun(body);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'inconclusive');
+    assert.notEqual(result.evidence.status, 'passed');
+  });
+
+  it('rejects findings reported against an all-clear attestation', async () => {
+    const body = laneResult();
+    body.findings = [{ severity: 'advisory', message: 'Residual advisory.', suggestion: null, location: null }];
+    body.coverage = [{ area: 'code-quality', status: 'clear' }];
+    const result = await grokRun(body);
+    assert.notEqual(result.error, null);
+    assert.equal(result.evidence, null);
+  });
+
+  it('accepts a complete attestation alongside several findings', async () => {
+    const body = laneResult();
+    body.findings = [
+      { severity: 'advisory', message: 'First residual advisory.', suggestion: null, location: null },
+      { severity: 'advisory', message: 'Second residual advisory.', suggestion: null, location: null },
+    ];
+    body.coverage = [
+      { area: 'code-quality', status: 'finding' },
+      { area: 'truthful-state-transitions', status: 'clear' },
+    ];
+    const result = await grokRun(body, ['truthful-state-transitions']);
+    assert.equal(result.error, null);
+    assert.equal(result.evidence.status, 'passed');
+    assert.equal(result.evidence.findings.length, 2);
   });
 });

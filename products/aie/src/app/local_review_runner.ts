@@ -269,10 +269,12 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings)];
   // Activate from issue text + changed paths only so hashes stay deterministic and do not
   // flip on every generated review-context line that happens to mention common keywords.
-  const riskCardFragments = selectRiskCards({
+  const activatedRiskCards = selectRiskCards({
     issueText: input.riskCardIssueText ?? '',
     paths: input.changedPaths ?? [],
-  }).map(card => formatRiskCardReviewerFragment(card));
+  });
+  const riskCardFragments = activatedRiskCards.map(card => formatRiskCardReviewerFragment(card));
+  const riskCardCoverageAreas = activatedRiskCards.map(card => card.id);
   const includePrompt = input.includePrompts === true;
   const cliPrefix = localAieCliPrefix(config, input.repoRoot);
   const modelTiers = {
@@ -377,6 +379,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             promptStackHash: plannedRun.promptStackHash,
             promptText: rendered.text,
             promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
+            coverageAreas: riskCardCoverageAreas,
             resolveExecutable: input.resolveModelHost,
             resolveHead: input.resolveModelHead,
             runProcess: input.modelRouteProcess,

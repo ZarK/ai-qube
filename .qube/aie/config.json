@@ -201,7 +201,7 @@
             "host": "codex",
             "tier": "review",
             "timeoutSeconds": 900,
-            "maxTurns": 1
+            "maxTurns": 8
           }
         }
       ],
