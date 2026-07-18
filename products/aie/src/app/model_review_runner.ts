@@ -69,6 +69,7 @@ export interface ModelReviewRunInput {
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
   coverageAreas?: readonly string[];
+  routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
@@ -663,6 +664,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       effort: input.plan.effort,
       isolation: 'read-only',
       invocationId,
+      routeSource: input.routeSource ?? 'configured',
     };
     if ('priorTexts' in parsedHostOutput) {
       const priorTexts = parsedHostOutput.priorTexts;

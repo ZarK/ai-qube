@@ -1,7 +1,7 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import { defaultCarryForwardContext } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
-import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -325,6 +325,22 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
   // multi-area inspection with the final turn reserved for the JSON result.
   const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 4, 20, path, errors);
   return host && tier ? { host, tier, timeoutSeconds, maxTurns } : null;
+}
+
+function readReviewFailover(value: unknown, path: string, errors: ValidationError[]): ReviewFailoverPolicy | null {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be null or an object with faults and route` });
+    return null;
+  }
+  rejectUnknownKeys(value, ['faults', 'route'], path, errors);
+  const faults = readBoundedInteger(value, 'faults', 2, 1, 5, path, errors);
+  const route = readReviewRoute(value.route, `${path}.route`, errors);
+  if (!route) {
+    errors.push({ kind: 'invalid', path: `${path}.route`, message: `${path}.route must name a fallback host route` });
+    return null;
+  }
+  return { faults, route };
 }
 
 function readCarryForwardContext(value: unknown, defaultValue: ReviewLanePolicy['carryForwardContext'], path: string, errors: ValidationError[]): ReviewLanePolicy['carryForwardContext'] {
@@ -870,7 +886,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'models', 'route'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'models', 'route', 'failover'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -886,6 +902,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
     models: readReviewModels(value.models, 'policy.reviews.models', errors),
     route: readReviewRoute(value.route, 'policy.reviews.route', errors),
+    failover: readReviewFailover(value.failover, 'policy.reviews.failover', errors),
   };
 }
 

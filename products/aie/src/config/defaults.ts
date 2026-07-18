@@ -92,6 +92,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       carryForwardPublish: 'note',
       models: { review: {}, economy: {}, synthesis: {} },
       route: null,
+      failover: null,
     },
     gates: {
       definitions: [],
@@ -256,6 +257,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           },
         } : {}),
         route: input.policy.reviews.route ? { ...input.policy.reviews.route } : null,
+        failover: input.policy.reviews.failover ? { faults: input.policy.reviews.failover.faults, route: { ...input.policy.reviews.failover.route } } : null,
       },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),
@@ -354,6 +356,7 @@ export function configFromFile(input: ConfigFileShape): Config {
         synthesis: { ...policy.reviews.models.synthesis },
       },
       route: policy.reviews.route ? { ...policy.reviews.route } : null,
+      failover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
     },
     gates: { definitions: policyGateDefinitions(policy.gates) },
     audit: {
@@ -422,6 +425,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       synthesis: { ...policy.reviews.models.synthesis },
     },
     reviewRoute: policy.reviews.route ? { ...policy.reviews.route } : null,
+    reviewFailover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,

@@ -58,6 +58,11 @@ export interface ReviewRoutePolicy {
   maxTurns: number;
 }
 
+export interface ReviewFailoverPolicy {
+  faults: number;
+  route: ReviewRoutePolicy;
+}
+
 export interface ReviewModelBinding {
   model: string;
   effort: ReviewModelEffort | null;
@@ -121,6 +126,7 @@ export interface ReviewPolicy {
   carryForwardPublish: 'note' | 'none';
   models: ReviewModelsPolicy;
   route: ReviewRoutePolicy | null;
+  failover: ReviewFailoverPolicy | null;
 }
 
 export interface GatePolicy {
@@ -271,6 +277,9 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
         synthesis: { ...(input.reviews.models?.synthesis ?? {}) },
       },
       route: input.reviews.route ? { ...input.reviews.route } : null,
+      failover: input.reviews.failover
+        ? { faults: boundedInteger(input.reviews.failover.faults, 'reviews.failover.faults', 1, 5), route: { ...input.reviews.failover.route } }
+        : null,
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { ...input.audit },

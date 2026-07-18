@@ -8,8 +8,9 @@ import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_e
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
+import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 
@@ -76,6 +77,7 @@ interface LocalReviewRunnerInput {
   modelRouteProcess?: ModelRouteProcess;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveModelHead?: (repoRoot: string) => Promise<string>;
+  routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
   providerLaneReuse?: ProviderLaneReuse;
 }
 
@@ -140,6 +142,42 @@ export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId):
     substitution: binding.substitution,
   };
 }
+
+export function resolveFailoverReviewPlan(config: Config): ModelReviewRoutePlan | null {
+  const failover = config.reviewFailover;
+  if (!failover) return null;
+  const binding = resolveReviewModelTier(config.reviewModels, failover.route.tier, failover.route.host);
+  return {
+    host: failover.route.host,
+    tier: failover.route.tier,
+    model: binding.model,
+    effort: binding.effort as ModelReviewRoutePlan['effort'],
+    isolation: 'read-only',
+    timeoutSeconds: failover.route.timeoutSeconds,
+    maxTurns: failover.route.maxTurns,
+    substitution: binding.substitution,
+  };
+}
+
+export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedProbeHost; model: string | null }> {
+  const targets = new Map<string, { host: RoutedProbeHost; model: string | null }>();
+  const addRoute = (plan: ModelReviewRoutePlan | null): void => {
+    if (!plan) return;
+    const key = `${plan.host}::${plan.model ?? ''}`;
+    if (!targets.has(key)) targets.set(key, { host: plan.host, model: plan.model });
+  };
+  for (const lane of config.reviewLanes) addRoute(resolveModelReviewPlan(config, lane.id as LocalReviewLaneId));
+  if (config.reviewRoute) {
+    const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host);
+    addRoute({ host: config.reviewRoute.host, tier: config.reviewRoute.tier, model: binding.model, effort: binding.effort as ModelReviewRoutePlan['effort'], isolation: 'read-only', timeoutSeconds: config.reviewRoute.timeoutSeconds, maxTurns: config.reviewRoute.maxTurns, substitution: binding.substitution });
+  }
+  addRoute(resolveFailoverReviewPlan(config));
+  return [...targets.values()];
+}
+
+// Local checkout drift is not a host fault; every other route failure class
+// (transport, timeout, auth, refusal, envelope, contract) counts toward failover.
+const ROUTE_FAULT_EXEMPT_REASONS = new Set(['model-route-checkout-mismatch']);
 
 function localAieCliPrefix(config: Config, repoRoot: string): string {
   const workspaceRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
@@ -378,9 +416,19 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const path = laneEvidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
       const runner = laneRunner(config, lane);
       const command = laneCommand(config, lane);
-      const route = resolveModelReviewPlan(config, lane);
+      const configuredRoute = resolveModelReviewPlan(config, lane);
+      let route = configuredRoute;
+      let routeSource: 'configured' | 'fallback' = 'configured';
+      if (configuredRoute && config.reviewFailover) {
+        const laneFaults = readRouteFaults(input.repoRoot, issueNumber, input.prNumber).lanes[lane]?.count ?? 0;
+        const fallbackPlan = laneFaults >= config.reviewFailover.faults ? resolveFailoverReviewPlan(config) : null;
+        if (fallbackPlan) {
+          route = fallbackPlan;
+          routeSource = 'fallback';
+        }
+      }
       const plannedSummary = route
-        ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.`
+        ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ' This lane reached the configured host-fault threshold and executes through the fallback route.' : ''}`
         : runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.';
       const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], route ? { model: route.model, effort: route.effort, substitution: route.substitution } : reviewTierResolution, riskCardFragments, route);
       if (!input.dryRun && command && !commandTrust) {
@@ -413,6 +461,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           const jobLane = lane;
           const jobIssueNumber = issueNumber;
           const jobRoute = route;
+          const jobRouteSource = routeSource;
           const jobPath = path;
           const jobRunner = runner;
           const jobPromptStackHash = plannedRun.promptStackHash;
@@ -436,6 +485,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
               coverageAreas: riskCardCoverageAreas,
+              routeSource: jobRouteSource,
               resolveExecutable: input.resolveModelHost,
               resolveHead: input.resolveModelHead,
               runProcess: input.modelRouteProcess,
@@ -483,18 +533,47 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     }
   }
 
-  if (routedJobs.length > 0) {
-    const outcomes = await executeRoutedJobs(routedJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3);
+  let runnableJobs = routedJobs;
+  if (routedJobs.length > 0 && !input.dryRun) {
+    // Every distinct route passes a cheap read-only host probe before any model
+    // execution; a failed probe blocks its lanes with the probe diagnostic.
+    const probe = input.routeProbe ?? probeModelRoute;
+    const probeChecks = new Map<string, RouteProbeCheck>();
+    for (const job of routedJobs) {
+      const key = `${job.route.host}::${job.route.model ?? ''}`;
+      if (!probeChecks.has(key)) probeChecks.set(key, probe(job.route.host, job.route.model));
+    }
+    runnableJobs = [];
+    for (const job of routedJobs) {
+      const check = probeChecks.get(`${job.route.host}::${job.route.model ?? ''}`);
+      if (!check || check.status === 'ready') {
+        runnableJobs.push(job);
+        continue;
+      }
+      const summary = check.diagnostic ?? `${job.route.host} route probe blocked this lane before model execution.`;
+      unavailable.push(`${job.lane}: ${summary}`);
+      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+    }
+  }
+  if (runnableJobs.length > 0) {
+    const outcomes = await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3);
     // Serial completion phase: evidence and provenance writes happen one at a
     // time in planning order, regardless of concurrent completion order.
-    routedJobs.forEach((job, jobIndex) => {
+    runnableJobs.forEach((job, jobIndex) => {
       const routed = outcomes[jobIndex];
       if (!routed || !routed.evidence) {
         failed = true;
-        const summary = routed?.error ?? 'Routed model review failed.';
-        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, routed?.reasonCode ?? 'invalid model route output', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+        const reasonCode = routed?.reasonCode ?? 'invalid model route output';
+        const summary = (routed?.error ?? '').trim() || `Routed model review failed (${reasonCode}).`;
+        if (!ROUTE_FAULT_EXEMPT_REASONS.has(reasonCode)) {
+          recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode);
+        }
+        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
         return;
       }
+      // Any valid completed verdict clears the lane's host-fault tally; review
+      // verdicts are evidence, never faults, and never advance failover.
+      clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
       const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, routed.evidence, 'local-host');
       const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, routed.evidence);
       written.push(writtenPath);

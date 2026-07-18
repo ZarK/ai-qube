@@ -24,6 +24,7 @@ import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_la
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
+import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
@@ -191,6 +192,7 @@ export interface PrGateOptions {
   modelRouteProcess?: ModelRouteProcess;
   resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveModelHead?: (repoRoot: string) => Promise<string>;
+  routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
 }
 
 function getString(action: Action, key: string): string | null {
@@ -847,6 +849,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     modelRouteProcess: options.modelRouteProcess,
     resolveModelHost: options.resolveModelHost,
     resolveModelHead: options.resolveModelHead,
+    routeProbe: options.routeProbe,
     providerLaneReuse,
   });
   const carryForwardScope = {

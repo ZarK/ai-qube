@@ -64,6 +64,7 @@ export interface LocalReviewRunnerProvenance {
   effort: string | null;
   isolation: 'read-only' | null;
   invocationId: string | null;
+  routeSource: 'configured' | 'fallback' | null;
 }
 
 export interface LocalReviewLane {
@@ -155,6 +156,7 @@ interface TrustedLocalHostProvenance {
   effort: string | null;
   isolation: 'read-only' | null;
   invocationId: string | null;
+  routeSource: 'configured' | 'fallback' | null;
 }
 
 interface LocalReviewPublishEvidence {
@@ -439,6 +441,7 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     effort: readNullableString(value.effort),
     isolation: value.isolation === 'read-only' ? 'read-only' : null,
     invocationId: readNullableString(value.invocationId),
+    routeSource: value.routeSource === 'configured' || value.routeSource === 'fallback' ? value.routeSource : null,
   };
 }
 
@@ -694,6 +697,7 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
       effort: readNullableString(parsed.effort),
       isolation: parsed.isolation === 'read-only' ? 'read-only' : null,
       invocationId: readNullableString(parsed.invocationId),
+      routeSource: parsed.routeSource === 'configured' || parsed.routeSource === 'fallback' ? parsed.routeSource : null,
     };
   } catch {
     return null;
