@@ -41,6 +41,16 @@ export interface BranchBaseRefStatus {
   error?: string;
 }
 
+export interface BranchRemoteStatus {
+  remote: string;
+  exists: boolean | null;
+  revision: string | null;
+  trackingRefPresent: boolean;
+  relation: 'local-only' | 'remote-only' | 'none' | 'same' | 'local-ahead' | 'local-behind' | 'diverged' | 'unknown';
+  localRevision: string | null;
+  unavailableReason: string | null;
+}
+
 export interface BranchStatus {
   suggested: string;
   current: string | null;
@@ -52,6 +62,7 @@ export interface BranchStatus {
   worktree: BranchWorktreeStatus;
   dirty: BranchDirtyStatus;
   baseRef: BranchBaseRefStatus;
+  remoteBranch: BranchRemoteStatus;
   repoState: RepoState;
 }
 
@@ -97,6 +108,7 @@ function branchStatus(input: {
   exists: boolean;
   validName: boolean;
   validationError: string | null;
+  remoteBranch: BranchRemoteStatus;
   repoState: RepoState;
   policy: ExecutorPolicy;
 }): BranchStatus {
@@ -120,6 +132,7 @@ function branchStatus(input: {
       upToDate: input.repoState.baseRef.upToDate ?? false,
       error: input.repoState.baseRef.error ?? undefined,
     },
+    remoteBranch: { ...input.remoteBranch },
     repoState: input.repoState,
   };
 }

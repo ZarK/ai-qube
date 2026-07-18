@@ -7,7 +7,7 @@ import { evaluateBranchPlanStatus, planBranchCheck, planBranchCreate, planBranch
 import type { ExecutorPolicy } from '../../core/policy.js';
 import { normalizeRepoState, type CiSignal, type PackageManagerSignal, type RepoRef, type RepoState } from '../../core/repo_state.js';
 import type { WorkItem } from '../../core/work_item.js';
-import type { BranchInspection, RepositoryProvider, RepositoryProviderCapabilities } from '../repository_provider.js';
+import type { BranchInspection, BranchRemoteState, RepositoryProvider, RepositoryProviderCapabilities } from '../repository_provider.js';
 
 export interface GitRunResult {
   args: string[];
@@ -203,7 +203,45 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
     const nameError = patternError ?? await this.validateBranchName(branchName, root ?? this.options.cwd ?? process.cwd());
     const exists = root ? (await runGit(['show-ref', '--verify', '--quiet', `refs/heads/${branchName}`], root, this.options.git)).exitCode === 0 : false;
     const currentBranch = repoState.activeRef?.kind === 'branch' ? repoState.activeRef.name : null;
-    return { branchName, currentBranch, matches: currentBranch === branchName, exists, validName: nameError === null, validationError: nameError, repoState };
+    const remoteBranch = root
+      ? await this.inspectRemoteBranch(root, branchName, policy.branch.baseRemote, exists)
+      : { remote: policy.branch.baseRemote, exists: null, revision: null, trackingRefPresent: false, relation: 'unknown' as const, localRevision: null, unavailableReason: 'Not inside a git repository.' };
+    return { branchName, currentBranch, matches: currentBranch === branchName, exists, validName: nameError === null, validationError: nameError, itemStatus: item.status, remoteBranch, repoState };
+  }
+
+  private async inspectRemoteBranch(root: string, branchName: string, remote: string, localExists: boolean): Promise<BranchRemoteState> {
+    const localRevision = localExists
+      ? trimOutput(await runGit(['rev-parse', '--verify', `refs/heads/${branchName}`], root, this.options.git)) || null
+      : null;
+    const trackingRef = `refs/remotes/${remote}/${branchName}`;
+    const trackingResult = await runGit(['rev-parse', '--verify', '--quiet', trackingRef], root, this.options.git);
+    let revision: string | null = trackingResult.exitCode === 0 ? trimOutput(trackingResult) || null : null;
+    let trackingRefPresent = revision !== null;
+    let unavailableReason: string | null = null;
+    if (!trackingRefPresent) {
+      // Bounded read-only lookup so a missing tracking ref never masks an
+      // existing remote implementation branch.
+      const lookup = await runGit(['ls-remote', '--heads', remote, branchName], root, this.options.git);
+      if (lookup.exitCode !== 0) {
+        unavailableReason = lookup.stderr.trim() || `Remote ${remote} could not be queried for ${branchName}.`;
+        return { remote, exists: null, revision: null, trackingRefPresent, relation: 'unknown', localRevision, unavailableReason };
+      }
+      const line = trimOutput(lookup).split(/\r?\n/).find(entry => entry.endsWith(`refs/heads/${branchName}`));
+      revision = line ? line.split(/\s+/)[0] ?? null : null;
+    }
+    if (!revision) {
+      return { remote, exists: false, revision: null, trackingRefPresent, relation: localExists ? 'local-only' : 'none', localRevision, unavailableReason };
+    }
+    if (!localExists || !localRevision) {
+      return { remote, exists: true, revision, trackingRefPresent, relation: 'remote-only', localRevision, unavailableReason };
+    }
+    if (localRevision === revision) {
+      return { remote, exists: true, revision, trackingRefPresent, relation: 'same', localRevision, unavailableReason };
+    }
+    const localBehind = (await runGit(['merge-base', '--is-ancestor', localRevision, revision], root, this.options.git)).exitCode === 0;
+    const localAhead = (await runGit(['merge-base', '--is-ancestor', revision, localRevision], root, this.options.git)).exitCode === 0;
+    const relation = localBehind ? 'local-behind' : localAhead ? 'local-ahead' : 'diverged';
+    return { remote, exists: true, revision, trackingRefPresent, relation, localRevision, unavailableReason };
   }
 
   async planBranchSuggestion(item: WorkItem, policy: ExecutorPolicy): Promise<ActionPlan> {
@@ -252,6 +290,18 @@ export class LocalGitRepositoryProvider implements RepositoryProvider {
     if (!branchName) throw new Error('Branch action is missing the target branch name.');
     const exists = action.details.exists === true;
     const baseBranch = getString(action.details, 'baseBranch') ?? 'main';
+    if (!exists && getString(action.details, 'createFrom') === 'remote-tracking') {
+      const remoteName = getString(action.details, 'remoteName') ?? 'origin';
+      if (action.details.remoteTrackingRefPresent !== true) {
+        // The branch was discovered by a live lookup; fetch that one branch so
+        // the remote-tracking ref exists before the tracking branch is created.
+        const fetch = await runGit(['fetch', remoteName, branchName], root, this.options.git);
+        if (fetch.exitCode !== 0) throw new Error(fetch.stderr.trim() || fetch.stdout.trim() || `git fetch ${remoteName} ${branchName} failed`);
+      }
+      const track = await runGit(['switch', '-c', branchName, '--track', `${remoteName}/${branchName}`], root, this.options.git);
+      if (track.exitCode !== 0) throw new Error(track.stderr.trim() || track.stdout.trim() || `git switch -c ${branchName} --track ${remoteName}/${branchName} failed`);
+      return;
+    }
     const args = exists ? ['switch', branchName] : ['switch', '-c', branchName, baseBranch];
     const result = await runGit(args, root, this.options.git);
     if (result.exitCode !== 0) throw new Error(result.stderr.trim() || result.stdout.trim() || `git ${args.join(' ')} failed`);

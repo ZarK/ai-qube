@@ -10,6 +10,16 @@ export interface BranchNameResult {
   patternError: string | null;
 }
 
+export interface BranchPlanRemoteState {
+  remote: string;
+  exists: boolean | null;
+  revision: string | null;
+  trackingRefPresent: boolean;
+  relation: 'local-only' | 'remote-only' | 'none' | 'same' | 'local-ahead' | 'local-behind' | 'diverged' | 'unknown';
+  localRevision: string | null;
+  unavailableReason: string | null;
+}
+
 export interface BranchPlanStatus {
   branchName: string;
   currentBranch: string | null;
@@ -17,6 +27,9 @@ export interface BranchPlanStatus {
   exists: boolean;
   validName: boolean;
   validationError: string | null;
+  itemStatus: 'in-progress' | 'ready' | 'blocked' | 'unknown';
+  remoteBranch: BranchPlanRemoteState;
+  warnings: string[];
   blockers: string[];
 }
 
@@ -27,6 +40,8 @@ export interface BranchPlanInspection {
   exists: boolean;
   validName: boolean;
   validationError: string | null;
+  itemStatus: 'in-progress' | 'ready' | 'blocked' | 'unknown';
+  remoteBranch: BranchPlanRemoteState;
   repoState: RepoState;
 }
 
@@ -72,7 +87,10 @@ export function suggestBranchName(item: WorkItem, policy: BranchPolicy): BranchN
 
 export function evaluateBranchPlanStatus(inspection: BranchPlanInspection, policy: BranchPolicy): BranchPlanStatus {
   const blockers: string[] = [];
-  const creatingNewBranch = !inspection.exists && !inspection.matches;
+  const warnings: string[] = [];
+  const remote = inspection.remoteBranch;
+  const recoveringRemoteBranch = !inspection.exists && remote.exists === true;
+  const creatingNewBranch = !inspection.exists && !inspection.matches && !recoveringRemoteBranch;
   if (!inspection.repoState.root) blockers.push('Not inside a git repository. Run branch creation from the repository checkout.');
   if (!inspection.validName) blockers.push(inspection.validationError ?? 'Configured branch name is invalid.');
   if (policy.requirePrimaryCheckout && inspection.repoState.worktree.linked) blockers.push('Linked git worktree detected. Use the primary checkout before creating an issue branch.');
@@ -81,6 +99,16 @@ export function evaluateBranchPlanStatus(inspection: BranchPlanInspection, polic
   if (creatingNewBranch && policy.requireFreshBase && (!inspection.repoState.baseRef.revision || !inspection.repoState.baseRef.upToDate)) {
     blockers.push(`Base branch ${policy.baseRemote}/${policy.baseBranch} is ${inspection.repoState.baseRef.revision ? 'not current locally' : 'not resolved'}.`);
   }
+  if (inspection.exists && remote.relation === 'diverged') {
+    blockers.push(`Local branch ${inspection.branchName} (${remote.localRevision}) and ${remote.remote}/${inspection.branchName} (${remote.revision}) have diverged. Fetch the remote and reconcile with a merge or rebase onto ${remote.revision}; do not recreate the branch or force-push.`);
+  }
+  if (!inspection.exists && remote.exists === null) {
+    if (inspection.itemStatus === 'in-progress') {
+      blockers.push(`Remote ${remote.remote} could not be queried for ${inspection.branchName} while the issue is in progress (${remote.unavailableReason ?? 'remote lookup failed'}). An existing implementation branch may exist; restore remote connectivity and rerun instead of creating a parallel branch from ${policy.baseBranch}.`);
+    } else {
+      warnings.push(`Remote ${remote.remote} could not be queried for ${inspection.branchName} (${remote.unavailableReason ?? 'remote lookup failed'}); creating from ${policy.baseBranch} without remote verification.`);
+    }
+  }
   return {
     branchName: inspection.branchName,
     currentBranch: inspection.currentBranch,
@@ -88,16 +116,22 @@ export function evaluateBranchPlanStatus(inspection: BranchPlanInspection, polic
     exists: inspection.exists,
     validName: inspection.validName,
     validationError: inspection.validationError,
+    itemStatus: inspection.itemStatus,
+    remoteBranch: remote,
+    warnings,
     blockers,
   };
 }
 
 function createBranchAction(status: BranchPlanStatus, repoState: RepoState, policy: BranchPolicy): Action {
+  const recoveringRemoteBranch = !status.exists && status.remoteBranch.exists === true;
   const description = status.matches
     ? `Already on branch ${status.branchName}`
     : status.exists
       ? `Check out existing branch ${status.branchName}`
-      : `Create branch ${status.branchName} from ${policy.baseBranch}`;
+      : recoveringRemoteBranch
+        ? `Create tracking branch ${status.branchName} from ${status.remoteBranch.remote}/${status.branchName} at ${status.remoteBranch.revision}`
+        : `Create branch ${status.branchName} from ${policy.baseBranch}`;
   const failure = status.blockers.length === 0 ? null : {
     operation: 'create issue branch',
     cause: status.blockers.join(' '),
@@ -116,9 +150,17 @@ function createBranchAction(status: BranchPlanStatus, repoState: RepoState, poli
       suggested: status.branchName,
       current: status.currentBranch,
       exists: status.exists,
+      createFrom: status.matches || status.exists ? 'local' : recoveringRemoteBranch ? 'remote-tracking' : 'base',
+      remoteName: status.remoteBranch.remote,
+      remoteExists: status.remoteBranch.exists,
+      remoteRevision: status.remoteBranch.revision,
+      remoteTrackingRefPresent: status.remoteBranch.trackingRefPresent,
+      remoteRelation: status.remoteBranch.relation,
+      localRevision: status.remoteBranch.localRevision,
       baseBranch: policy.baseBranch,
       baseRemote: policy.baseRemote,
       repoRoot: repoState.root,
+      warnings: status.warnings,
       blockers: status.blockers,
     },
   });
