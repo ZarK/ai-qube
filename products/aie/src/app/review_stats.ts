@@ -159,9 +159,15 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
     if (!isRecord(candidate)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was malformed.` };
     }
+    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt)) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, recommendation, status, or publication time.` };
+    }
     const expectedLanes = laneNames(candidate.expectedLanes);
-    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt) || !expectedLanes) {
-      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, expected lane set, recommendation, status, or publication time.` };
+    if (!expectedLanes) {
+      // Older lane markers predate the expected-lane-set and severity-aware
+      // counts; without them exact convergence values cannot be computed, so
+      // the pull request degrades with a reason instead of fabricated zeros.
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} predates the expected-lane-set metadata; convergence stats cover reviews published after severity-aware lane markers.` };
     }
     if (!expectedLanes.includes(candidate.lane)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} declared lane ${candidate.lane} outside its expected lane set.` };

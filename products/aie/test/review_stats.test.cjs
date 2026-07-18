@@ -138,9 +138,21 @@ describe('review convergence stats', () => {
 
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
     assert.equal(result.pullRequests[0].reviewedHeads, null);
-    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, expected lane set, recommendation, status, or publication time/);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head, lane, recommendation, status, or publication time/);
     assert.equal(result.summary.reviewedPullRequests, 0);
     assert.equal(result.summary.firstReviewCleanRate, null);
+  });
+
+  it('degrades markers that predate the expected-lane-set metadata with a distinct reason', () => {
+    const result = computeReviewStats([{
+      number: 105,
+      title: 'Legacy marker',
+      trustedLaneReviews: [{ head: 'abc', lane: 'code-quality', recommendation: 'approve', status: 'passed', publishedAt: '2026-07-01T00:00:00Z' }],
+    }]);
+
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /predates the expected-lane-set metadata/);
+    assert.equal(result.summary.reviewedPullRequests, 0);
   });
 
   it('uses one bounded listing request and degrades an individual load failure', async () => {
