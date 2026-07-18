@@ -8,14 +8,17 @@
 
 ## Runtime expectations
 
-Reference machine: Windows 11, 32 hardware threads, NVMe storage. Node 24.
+Measured after build (the timings exclude one-time `build:deps`/`build`), Node 24:
 
-| Path | Tests | Wall time |
-|---|---|---|
-| `node test/run-node-tests.mjs` (full suite, after build) | 785 | ≈ 4.6 minutes |
-| `node test/run-node-tests.mjs --fast` | 335 | ≈ 21 seconds |
+| Machine | Path | Tests | Wall time |
+|---|---|---|---|
+| Linux CI runner (`ubuntu-latest`, the shared reference) | full suite | 785 | **≈ 16 seconds** (runner-reported `duration_ms 16434`) |
+| Windows 11, 32 hardware threads, NVMe | full suite | 785 | ≈ 4.6 minutes |
+| Windows 11, 32 hardware threads, NVMe | `--fast` | 335 | ≈ 21 seconds |
 
-Before the fixture and concurrency work these numbers were ≈ 17.5 minutes summed serially, with the former single `pr.test.cjs` alone taking 5–8 minutes and full runs frequently exceeding a 10-minute window. The dominant costs were per-test git repository creation (7 subprocess spawns per repository), full node boots for each spawned CLI invocation, and single-file serialization.
+The Linux and Windows gap is process-spawn cost: the suite intentionally exercises real git and real CLI subprocesses, and Windows pays an order of magnitude more per spawn. Use `test:fast` for the Windows edit loop and the full suite as the gate.
+
+Before the fixture and concurrency work the suite summed to ≈ 17.5 minutes serially on the Windows machine, the former single `pr.test.cjs` alone took 5–8 minutes, and full runs frequently exceeded a 10-minute window. The dominant costs were per-test git repository creation (7 subprocess spawns per repository), full node boots for each spawned CLI invocation, and single-file serialization.
 
 ## How the suite stays fast
 
