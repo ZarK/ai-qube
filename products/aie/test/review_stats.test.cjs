@@ -143,6 +143,17 @@ describe('review convergence stats', () => {
     assert.equal(result.summary.firstReviewCleanRate, null);
   });
 
+  it('rejects untrimmed head identifiers instead of splitting head identity', () => {
+    const result = computeReviewStats([{
+      number: 106,
+      title: 'Untrimmed head',
+      trustedLaneReviews: [{ head: ' abc ', lane: 'code-quality', expectedLanes: ['code-quality'], recommendation: 'approve', status: 'passed', publishedAt: '2026-07-01T00:00:00Z' }],
+    }]);
+
+    assert.equal(result.pullRequests[0].noLaneEvidence, true);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing a valid head/);
+  });
+
   it('degrades markers that predate the expected-lane-set metadata with a distinct reason', () => {
     const result = computeReviewStats([{
       number: 105,

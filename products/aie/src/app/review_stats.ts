@@ -159,7 +159,7 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
     if (!isRecord(candidate)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was malformed.` };
     }
-    if (!nonEmptyString(candidate.head) || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt)) {
+    if (!nonEmptyString(candidate.head) || candidate.head !== candidate.head.trim() || !nonEmptyString(candidate.lane) || candidate.lane !== candidate.lane.trim() || !isLaneRecommendation(candidate.recommendation) || !nonEmptyString(candidate.status) || !validTimestamp(candidate.publishedAt)) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} was missing a valid head, lane, recommendation, status, or publication time.` };
     }
     if (candidate.expectedLanes === undefined || candidate.expectedLanes === null) {
