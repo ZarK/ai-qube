@@ -910,7 +910,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
             for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
               try {
                 if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
-                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+                // The expected set names every lane carrying validated evidence at
+                // this head, so all markers on the head agree and stats can prove
+                // completeness; publishing only runs once the whole batch validates.
+                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
                 if (published.publish.url) publishedUrls.push(published.publish.url);
               } catch (error: unknown) {
                 publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
@@ -933,7 +936,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
       for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
         try {
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
           if (published.publish.status === 'published' || published.publish.status === 'skipped') publishedCarriedLanes.push(lane.id);
         } catch (error: unknown) {
           publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);

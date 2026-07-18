@@ -210,11 +210,11 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     });
     const publishModulePath = require.resolve('../dist/app/pr_review_publish.js');
 
-    await runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    await runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
     delete require.cache[publishModulePath];
     const freshPublishModule = require(publishModulePath);
-    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo });
-    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo, expectedLanes: ['issue-compliance'] });
+    await freshPublishModule.runPrReviewPublishWithProvider(provider(), { prNumber: 13, issueNumber: 94, headSha: 'def456', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
     assert.deepEqual(loadCalls, [12, 13]);
     assert.equal(publishCalls[0].item, snapshots[12].item);
@@ -270,9 +270,9 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const thirdPublish = freshPublish();
 
     await Promise.all([
-      firstPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo }),
-      secondPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo }),
-      thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo }),
+      firstPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
+      secondPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'issue-compliance', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
+      thirdPublish(provider(), { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'performance', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality', 'issue-compliance', 'performance'] }),
     ]);
 
     assert.deepEqual(loadCalls, [12]);
@@ -308,10 +308,10 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     };
 
     await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo }),
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] }),
       /temporary provider failure/,
     );
-    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo });
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 14, issueNumber: 95, headSha: 'ghi789', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] });
 
     assert.deepEqual(loadCalls, [14, 14]);
     assert.equal(result.publish.nextAction, 'planned review:14 code-quality');
@@ -461,6 +461,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
       profile: 'local-standard',
       status: 'passed',
       recommendation: 'approve',
@@ -504,6 +505,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['code-quality'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',
@@ -623,6 +625,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['code-quality'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',
@@ -659,6 +662,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['code-quality'],
       profile: 'local-standard',
       status: 'passed',
       recommendation: 'approve',
@@ -702,6 +706,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',
@@ -723,6 +728,8 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(result.status, 'published');
     assert.equal(result.inlineCommentCount, 1);
     assert.equal(result.bodyFindingCount, 0);
+    assert.match(fixture.reviewPayloads[0].body, /"blockingFindingCount":1/);
+    assert.match(fixture.reviewPayloads[0].body, /"expectedLanes":\["code-quality","issue-compliance","performance"\]/);
     assert.equal(fixture.reviewPayloads[0].comments[0].path, 'src/review.ts');
     assert.equal(fixture.reviewPayloads[0].comments[0].line, 1);
     assert.equal(fixture.reviewPayloads[0].comments[0].side, 'LEFT');
@@ -734,6 +741,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'code-quality',
+      expectedLanes: ['code-quality'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',
@@ -766,6 +774,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       prNumber: 12,
       headSha: 'abc123',
       lane: 'security',
+      expectedLanes: ['security'],
       profile: 'local-standard',
       status: 'failed',
       recommendation: 'request-changes',

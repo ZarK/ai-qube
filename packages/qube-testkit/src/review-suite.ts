@@ -152,6 +152,7 @@ export async function verifyReviewRoleSuite(adapter: QubeAdapterContract, harnes
       prNumber,
       headSha: "conformance-head",
       lane: "code-quality",
+      expectedLanes: ["code-quality"],
       profile: "local",
       status: "needs-work",
       recommendation: "request-changes",

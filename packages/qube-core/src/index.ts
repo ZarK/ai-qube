@@ -155,12 +155,17 @@ export type {
   ReviewForgePlanOptions,
   ReviewForgePolicy,
   ReviewForgeProvider,
+  ReviewForgePullRequest,
+  ReviewForgeRecentPullRequestOptions,
+  ReviewForgeLaneReviewHistory,
   ReviewForgeSnapshot,
+  ReviewForgeStatsCapability,
+  ReviewForgeStatsProvider,
   ReviewLaneReviewPublishInput,
   ReviewLaneReviewPublishResult,
   ReviewRequestTrigger,
 } from "./review_forge.js";
-export { normalizeReviewFinding, partitionReviewFindings } from "./review_forge.js";
+export { normalizeReviewFinding, partitionReviewFindings, supportsReviewStats } from "./review_forge.js";
 export type {
   ReviewParticipant,
   ReviewParticipantAgentAdapter,
@@ -417,6 +422,7 @@ export const githubAdapterContract = defineQubeAdapter({
     adapterCapability("sync-issue-status", "supported", "@tjalve/qube-adapter-github", "Synchronize GitHub status labels with Executor work lifecycle state."),
     adapterCapability("render-work-items", "supported", "@tjalve/aib", "Render provider-neutral work-item drafts into GitHub issue text without mutating GitHub."),
     adapterCapability("load-pull-request", "supported", "@tjalve/qube-adapter-github", "Read pull request review, mergeability, linked issue, and check state through the GitHub review-forge adapter."),
+    adapterCapability("review-stats", "supported", "@tjalve/qube-adapter-github", "List a bounded recent pull request window and read trusted QUBE lane review history for convergence statistics."),
     adapterCapability("request-review-gate", "supported", "@tjalve/qube-adapter-github", "Request configured GitHub review agents and record trusted review-gate markers for the current PR head."),
     adapterCapability("read-merge-blockers", "supported", "@tjalve/qube-adapter-github", "Read GitHub mergeability, merge-state status, provider merge UI reasons, branch protection blockers, unresolved conversation blockers, and check blockers."),
     adapterCapability("read-ci-status", "supported", "@tjalve/qube-adapter-github", "Normalize GitHub status checks and check runs into trusted provider gate evidence."),

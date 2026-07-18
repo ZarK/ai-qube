@@ -29,7 +29,7 @@ import {
   type ReviewForgePlanOptions,
   type ReviewForgePolicy,
   type ReviewMergeBlock,
-  type ReviewForgeProvider,
+  type ReviewForgeStatsProvider,
   type ReviewItem,
   type ReviewItemKey,
 } from '@tjalve/qube-core';
@@ -47,7 +47,7 @@ import {
   sanitizeFeedbackText,
   triggerFor,
 } from './github_review_agents.js';
-import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawMergeUiState, RawMergeUiStateResponse, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
+import type { CurrentGitHubReview, GitHubCiDiagnostic, GitHubCiDiagnosticReasonCode, GitHubCiDiagnosticStatus, GitHubReviewProviderOptions, GitHubReviewPullRequest, GitHubReviewRequestTrigger, GitHubReviewSnapshot, LoginResponse, RawAuthor, RawComment, RawIssueComment, RawLaneHistoryResponse, RawMergeUiState, RawMergeUiStateResponse, RawPrView, RawReview, RawReviewComment, RawReviewRequest, RawStatusCheck, RawThreadNode, RawThreadResponse } from './github_review_types.js';
 import { GhExecutionError, parseGhJson, redact, runGh, type GhRunResult } from './gh.js';
 import {
   emptyPublisherIdentity,
@@ -62,6 +62,10 @@ export { MARKER_PREFIX, QUBE_REVIEW_SERVICE_NAME, listGitHubReviewAgents, resolv
 
 const PR_VIEW_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,reviewRequests,reviews,latestReviews,statusCheckRollup,closingIssuesReferences';
 const CURRENT_PR_FIELDS = 'number,title,state,url,reviewDecision,mergeStateStatus,mergeable,isDraft';
+const RECENT_PR_FIELDS = 'number,title,state,url,headRefOid,author,reviewDecision,mergeStateStatus,mergeable,isDraft,closedAt,mergedAt,updatedAt';
+const MAX_RECENT_PR_LIMIT = 50;
+const MAX_RECENT_PR_CANDIDATES = MAX_RECENT_PR_LIMIT * 2;
+const MAX_LANE_HISTORY_RECORDS = 100;
 const LOCAL_REVIEW_MARKER_PREFIX = 'qube-local-review';
 const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 
@@ -128,6 +132,7 @@ interface LaneReviewMetadata {
   version: number;
   head: string;
   lane: string;
+  expectedLanes?: string[];
   profile: string;
   runId: string;
   issueNumber: number;
@@ -140,6 +145,7 @@ interface LaneReviewMetadata {
   reviewId?: string | null;
   inlineCommentCount?: number;
   bodyFindingCount?: number;
+  blockingFindingCount?: number;
   findingDigest?: string;
 }
 
@@ -149,6 +155,7 @@ interface LaneReviewComment {
   body: string;
   url: string | null;
   stale: boolean;
+  publishedAt: string | null;
 }
 
 export interface GitHubLaneReviewPublishInput {
@@ -156,6 +163,7 @@ export interface GitHubLaneReviewPublishInput {
   prNumber: number;
   headSha: string;
   lane: string;
+  expectedLanes: readonly string[];
   profile: string;
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
@@ -198,6 +206,10 @@ function isRawPrView(value: unknown): value is RawPrView {
   return typeof value.number === 'number' && typeof value.title === 'string' && typeof value.state === 'string' && typeof value.url === 'string';
 }
 
+function isRawPrList(value: unknown): value is RawPrView[] {
+  return Array.isArray(value) && value.every(isRawPrView);
+}
+
 function isRawReviewCommentArray(value: unknown): value is RawReviewComment[] | RawReviewComment[][] { return Array.isArray(value) && value.every(item => isRecord(item) || (Array.isArray(item) && item.every(isRecord))); }
 
 function isRawIssueCommentArray(value: unknown): value is RawIssueComment[] | RawIssueComment[][] { return Array.isArray(value) && value.every(item => isRecord(item) || (Array.isArray(item) && item.every(isRecord))); }
@@ -205,6 +217,8 @@ function isRawIssueCommentArray(value: unknown): value is RawIssueComment[] | Ra
 function isRawPrCommentsView(value: unknown): value is { comments?: RawComment[] } { return isRecord(value) && (value.comments === undefined || Array.isArray(value.comments)); }
 
 function isRawThreadResponse(value: unknown): value is RawThreadResponse { return isRecord(value); }
+
+function isRawLaneHistoryResponse(value: unknown): value is RawLaneHistoryResponse { return isRecord(value); }
 
 function isRawMergeUiStateResponse(value: unknown): value is RawMergeUiStateResponse { return isRecord(value); }
 
@@ -391,6 +405,11 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
     if (parsed.version !== 1) return null;
     if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
     if (typeof parsed.lane !== 'string' || parsed.lane.trim() === '') return null;
+    const expectedLanes = Array.isArray(parsed.expectedLanes)
+      && parsed.expectedLanes.length > 0
+      && parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')
+      ? [...new Set(parsed.expectedLanes.map(lane => redact(String(lane).trim())))].sort()
+      : undefined;
     if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
     if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
     const issueNumber = parsed.issueNumber;
@@ -406,6 +425,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       version: 1,
       head: redact(parsed.head),
       lane: redact(parsed.lane),
+      expectedLanes,
       profile: redact(parsed.profile),
       runId: redact(parsed.runId),
       issueNumber,
@@ -418,6 +438,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       reviewId: typeof parsed.reviewId === 'number' || typeof parsed.reviewId === 'string' ? redact(String(parsed.reviewId)) : null,
       inlineCommentCount: typeof parsed.inlineCommentCount === 'number' && Number.isSafeInteger(parsed.inlineCommentCount) && parsed.inlineCommentCount >= 0 ? parsed.inlineCommentCount : undefined,
       bodyFindingCount: typeof parsed.bodyFindingCount === 'number' && Number.isSafeInteger(parsed.bodyFindingCount) && parsed.bodyFindingCount >= 0 ? parsed.bodyFindingCount : undefined,
+      blockingFindingCount: typeof parsed.blockingFindingCount === 'number' && Number.isSafeInteger(parsed.blockingFindingCount) && parsed.blockingFindingCount >= 0 ? parsed.blockingFindingCount : undefined,
       findingDigest: typeof parsed.findingDigest === 'string' && parsed.findingDigest.trim() !== '' ? redact(parsed.findingDigest) : undefined,
     };
   } catch {
@@ -446,25 +467,25 @@ function trustedLaneReviewComment(comment: RawComment, trustedAuthor: TrustedAut
 }
 
 function laneReviewComments(comments: RawComment[], trustedAuthor: TrustedAuthorInput, headSha: string): LaneReviewComment[] {
-  const latest = new Map<string, LaneReviewComment>();
+  const records: LaneReviewComment[] = [];
   for (const comment of comments) {
     const metadata = trustedLaneReviewComment(comment, trustedAuthor);
     if (!metadata) continue;
-    latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha });
+    records.push({ metadata, author: comment.author, body: comment.body ?? '', url: comment.url ? redact(comment.url) : null, stale: metadata.head !== headSha, publishedAt: comment.createdAt ?? null });
   }
-  return [...latest.values()];
+  return records;
 }
 
 function laneReviewReviews(reviews: RawReview[], trustedAuthor: TrustedAuthorInput, headSha: string): LaneReviewComment[] {
-  const latest = new Map<string, LaneReviewComment>();
+  const records: LaneReviewComment[] = [];
   if (trustedAuthor !== 'any-valid-marker' && trustedAuthorsList(trustedAuthor).length === 0) return [];
   for (const review of reviews) {
     if (!authorIsTrusted(review.author?.login, trustedAuthor)) continue;
     const metadata = parseLaneReviewMetadata(review.body);
     if (!metadata) continue;
-    latest.set(`${metadata.head}\0${metadata.lane}`, { metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha });
+    records.push({ metadata, author: review.author, body: review.body ?? '', url: review.url ? redact(review.url) : null, stale: metadata.head !== headSha, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
   }
-  return [...latest.values()];
+  return records;
 }
 
 function isQubeLaneReviewDraft(review: RawReview, headSha: string): boolean {
@@ -485,19 +506,38 @@ function isEmptyStaleDraftReview(review: RawReview, headSha: string, reviewComme
   return !hasReviewComments(reviewComments, review.id);
 }
 
-function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string }): LaneReviewComment[] {
+function chronologicalLaneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
+  return [
+    ...laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha),
+    ...laneReviewReviews(input.latestReviews, input.trustedMarkerAuthor, input.headSha),
+  ]
+    .filter(record => record.metadata.prNumber === input.prNumber)
+    .sort((left, right) => (Date.parse(left.publishedAt ?? '') - Date.parse(right.publishedAt ?? '')) || left.metadata.lane.localeCompare(right.metadata.lane));
+}
+
+function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
-  for (const comment of laneReviewComments(input.comments, input.trustedMarkerAuthor, input.headSha)) {
-    latest.set(`${comment.metadata.head}\0${comment.metadata.lane}`, comment);
+  const records = chronologicalLaneReviewRecords(input);
+  for (const record of records) {
+    const key = `${record.metadata.head}\0${record.metadata.lane}`;
+    const existing = latest.get(key);
+    if (!existing || (Date.parse(record.publishedAt ?? '') || 0) >= (Date.parse(existing.publishedAt ?? '') || 0)) latest.set(key, record);
   }
-  for (const review of laneReviewReviews(input.latestReviews, input.trustedMarkerAuthor, input.headSha)) {
-    latest.set(`${review.metadata.head}\0${review.metadata.lane}`, review);
-  }
-  return [...latest.values()];
+  return [...latest.values()].sort((left, right) => (Date.parse(left.publishedAt ?? '') - Date.parse(right.publishedAt ?? '')) || left.metadata.lane.localeCompare(right.metadata.lane));
 }
 
 function laneReviewSummary(comment: LaneReviewComment): string {
   return `QUBE review (${comment.metadata.lane}): ${comment.metadata.recommendation} — ${summarize(comment.body)}`;
+}
+
+function expectedLaneNames(input: GitHubLaneReviewPublishInput): string[] {
+  // A single-lane default would publish a marker whose expected set hides the
+  // other active lanes and corrupts convergence stats; callers must always
+  // declare the complete expected lane set for the head.
+  if (!input.expectedLanes || input.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: pass the complete expected lane set for this head when publishing lane feedback.');
+  }
+  return [...new Set(input.expectedLanes)].sort();
 }
 
 function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
@@ -505,6 +545,7 @@ function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
     .update(JSON.stringify({
       head: input.headSha,
       lane: input.lane,
+      expectedLanes: expectedLaneNames(input),
       issueNumber: input.issueNumber,
       prNumber: input.prNumber,
     }))
@@ -539,7 +580,7 @@ function laneReviewBody(
   bodyFindingsInput?: readonly ReviewFinding[],
   inlineCount = 0,
   publishKind: 'pull-request-review' | 'issue-comment' = 'pull-request-review',
-): { body: string; marker: string; runId: string; bodyFindingCount: number; inlineCommentCount: number } {
+): { body: string; marker: string; runId: string; bodyFindingCount: number; inlineCommentCount: number; blockingFindingCount: number } {
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
@@ -550,6 +591,7 @@ function laneReviewBody(
     version: 1,
     head: input.headSha,
     lane: input.lane,
+    expectedLanes: expectedLaneNames(input),
     profile: input.profile,
     runId,
     issueNumber: input.issueNumber,
@@ -561,6 +603,7 @@ function laneReviewBody(
     inline,
     inlineCommentCount: inlineCount,
     bodyFindingCount: bodyFindings.length,
+    blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length,
     findingDigest: digest,
   };
   const marker = laneReviewMarker(metadata);
@@ -591,7 +634,7 @@ function laneReviewBody(
     `- inline comments: ${inlineCount}`,
     input.evidencePath ? `- evidence: ${redact(input.evidencePath)}` : '- evidence: optional local audit only',
   ].join('\n');
-  return { body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount };
+  return { body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount, blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length };
 }
 
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
@@ -604,6 +647,8 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
     if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
     return review.head === input.headSha
       && review.lane === input.lane
+      && Array.isArray(review.expectedLanes)
+      && JSON.stringify([...review.expectedLanes].sort()) === JSON.stringify(expectedLaneNames(input))
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
@@ -612,12 +657,16 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   });
 }
 
-function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: TrustedAuthorInput, headSha: string): JsonObject[] {
-  return laneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha }).map(comment => {
+function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], trustedMarkerAuthor: TrustedAuthorInput, headSha: string, prNumber: number, preserveHistory = false): JsonObject[] {
+  const records = preserveHistory
+    ? chronologicalLaneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha, prNumber })
+    : laneReviewRecords({ comments, latestReviews, trustedMarkerAuthor, headSha, prNumber });
+  return records.map(comment => {
     const metadata = comment.metadata;
     return {
       head: metadata.head,
       lane: metadata.lane,
+      expectedLanes: metadata.expectedLanes ?? null,
       profile: metadata.profile,
       runId: metadata.runId,
       issueNumber: metadata.issueNumber,
@@ -630,12 +679,22 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       reviewId: metadata.reviewId ?? null,
       inlineCommentCount: metadata.inlineCommentCount ?? 0,
       bodyFindingCount: metadata.bodyFindingCount ?? null,
+      blockingFindingCount: metadata.blockingFindingCount ?? null,
+      publishedAt: comment.publishedAt,
       findingDigest: metadata.findingDigest ?? null,
       stale: metadata.head !== headSha,
       author: comment.author?.login ?? null,
       url: comment.url ? redact(comment.url) : null,
     };
   });
+}
+
+function malformedTrustedLaneMarkerCount(comments: RawComment[], reviews: RawReview[], trustedMarkerAuthor: TrustedAuthorInput): number {
+  const bodies = [
+    ...comments.filter(comment => authorIsTrusted(comment.author?.login, trustedMarkerAuthor)).map(comment => comment.body),
+    ...reviews.filter(review => authorIsTrusted(review.author?.login ?? review.user?.login, trustedMarkerAuthor)).map(review => review.body),
+  ];
+  return bodies.filter(body => /<!--\s*qube-pr-review:/.test(body ?? '') && parseLaneReviewMetadata(body) === null).length;
 }
 
 function laneMarkerReviews(rawPr: RawPrView): RawReview[] {
@@ -920,6 +979,7 @@ function normalizePr(raw: RawPrView, mergeUiState: RawMergeUiState | null = null
     mergeStateStatus: raw.mergeStateStatus ?? 'UNKNOWN',
     mergeable: raw.mergeable ?? 'UNKNOWN',
     isDraft: raw.isDraft ?? false,
+    closedAt: raw.mergedAt ?? raw.closedAt ?? null,
     mergeUiHeadline: normalizeProviderText(mergeUiState?.viewerMergeHeadlineText),
     mergeUiBody: normalizeProviderText(mergeUiState?.viewerMergeBodyText),
     viewerCannotUpdateReasons: (mergeUiState?.viewerCannotUpdateReasons ?? []).map(reason => normalizeProviderText(reason)).filter((reason): reason is string => reason !== null),
@@ -1132,7 +1192,7 @@ function latestThreadComment(thread: RawThreadNode) {
   return threadComments(thread).at(-1) ?? null;
 }
 
-function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: TrustedAuthorInput; headRefOid: string; reviewAgents?: readonly string[] }): ReviewFeedback[] {
+function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; reviewComments: RawReviewComment[]; unresolvedThreads: RawThreadNode[]; trustedMarkerAuthor: TrustedAuthorInput; headRefOid: string; prNumber: number; reviewAgents?: readonly string[] }): ReviewFeedback[] {
   const items: ReviewFeedback[] = [];
   for (const localReview of localReviewComments(raw.comments, raw.trustedMarkerAuthor, raw.headRefOid)) {
     if (localReview.stale) continue;
@@ -1145,7 +1205,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
       trust: 'untrusted',
     });
   }
-  for (const laneReview of laneReviewRecords({ comments: raw.comments, latestReviews: raw.latestReviews, trustedMarkerAuthor: raw.trustedMarkerAuthor, headSha: raw.headRefOid })) {
+  for (const laneReview of laneReviewRecords({ comments: raw.comments, latestReviews: raw.latestReviews, trustedMarkerAuthor: raw.trustedMarkerAuthor, headSha: raw.headRefOid, prNumber: raw.prNumber })) {
     if (laneReview.stale) continue;
     items.push({
       source: laneReview.metadata.inline === 'review-api' ? 'review' : 'comment',
@@ -1292,7 +1352,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
       url: comment.url ? redact(comment.url) : null,
     }];
   });
-  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid);
+  const trustedLaneReviews = laneReviewMetadata(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.headRefOid, raw.pr.number);
   const conversations = reviewConversations(raw.unresolvedThreads);
   const blockers = mergeBlockers({ pr: raw.pr, unresolvedThreads: raw.unresolvedThreads, checks: raw.checks });
   return {
@@ -1420,14 +1480,16 @@ function makeRequestAction(input: { item: ReviewItem; name: string; requestedFor
   });
 }
 
-export class GitHubReviewForgeProvider implements ReviewForgeProvider {
+export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   readonly id = 'github' as const;
   /** Process-local cache of distinct publisher login for trust matching; never stores tokens. */
   private cachedPublisherLogin: string | null | undefined = undefined;
+  private currentLoginPromise: Promise<string> | null = null;
+  private repositoryIdentityPromise: Promise<{ nameWithOwner: string; url: string }> | null = null;
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewForgeCapabilities { return { loadReview: true, loadReviewSnapshot: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -1463,6 +1525,75 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     if (key.providerId !== this.id) throw new Error(`load GitHub review snapshot failed: providerId ${key.providerId} is unsupported.`);
     if (!/^[1-9]\d*$/.test(key.id)) throw new Error(`load GitHub review snapshot failed: key id ${redactReviewKeyId(key.id)} is not a positive pull request number.`);
     return this.loadPullRequestReview(Number(key.id));
+  }
+
+  async listRecentPullRequests(options: { limit: number }): Promise<GitHubReviewPullRequest[]> {
+    if (!Number.isSafeInteger(options.limit) || options.limit < 1 || options.limit > MAX_RECENT_PR_LIMIT) {
+      throw new Error(`list recent GitHub pull requests failed: limit must be an integer from 1 to ${MAX_RECENT_PR_LIMIT}. Use a bounded review stats window.`);
+    }
+    const candidateLimit = Math.min(MAX_RECENT_PR_CANDIDATES, Math.max(options.limit + 1, options.limit * 2));
+    const result = await runGh([
+      'pr',
+      'list',
+      '--state',
+      'all',
+      '--search',
+      'is:closed sort:updated-desc',
+      '--limit',
+      String(candidateLimit),
+      '--json',
+      RECENT_PR_FIELDS,
+    ], this.options);
+    ensureGhSuccess('gh pr list recent merged or closed pull requests', result);
+    const listed = parseGhJson<RawPrView[]>(result.stdout, 'gh pr list recent merged or closed pull requests', isRawPrList);
+    const ordered = listed
+      .filter(pr => pr.state === 'MERGED' || pr.state === 'CLOSED')
+      .sort((left, right) => (Date.parse(right.mergedAt ?? right.closedAt ?? '') || 0) - (Date.parse(left.mergedAt ?? left.closedAt ?? '') || 0) || right.number - left.number);
+    const exhausted = listed.length < candidateLimit;
+    const cutoff = ordered.length >= options.limit ? Date.parse(ordered[options.limit - 1].mergedAt ?? ordered[options.limit - 1].closedAt ?? '') : Number.NaN;
+    const lastUpdatedAt = Date.parse(listed.at(-1)?.updatedAt ?? '');
+    if (!exhausted && !(Number.isFinite(cutoff) && Number.isFinite(lastUpdatedAt) && lastUpdatedAt <= cutoff)) {
+      throw new Error(`list recent GitHub pull requests failed: one bounded listing pass over ${candidateLimit} candidates cannot prove the latest closure-time window. Use a smaller window or a provider with native closure-time ordering.`);
+    }
+    return ordered.slice(0, options.limit).map(pr => normalizePr(pr));
+  }
+
+  async loadLaneReviewHistory(prNumber: number): Promise<{ trustedLaneReviews: JsonObject[]; unavailableReason: string | null }> {
+    if (this.configuredPublisherLoginMissing()) {
+      return { trustedLaneReviews: [], unavailableReason: 'Configured distinct QUBE review publisher login was unavailable; trusted lane marker authors could not be identified safely.' };
+    }
+    const repository = await this.getRepositoryIdentity();
+    const [owner, repo] = repository.nameWithOwner.split('/');
+    if (!owner || !repo) {
+      return { trustedLaneReviews: [], unavailableReason: 'GitHub repository identity was malformed; bounded lane review history could not be loaded.' };
+    }
+    const query = `query($owner: String!, $repo: String!, $pr: Int!) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { headRefOid comments(first: ${MAX_LANE_HISTORY_RECORDS}) { nodes { author { login } body url createdAt } pageInfo { hasNextPage endCursor } } reviews(first: ${MAX_LANE_HISTORY_RECORDS}) { nodes { id author { login } body state submittedAt url commit { oid } } pageInfo { hasNextPage endCursor } } } } }`;
+    const result = await runGh(['api', 'graphql', '-F', `owner=${owner}`, '-F', `repo=${repo}`, '-F', `pr=${prNumber}`, '-f', `query=${query}`], this.options);
+    ensureGhSuccess(`gh api graphql bounded review stats metadata for PR ${prNumber}`, result);
+    const rawPr = parseGhJson<RawLaneHistoryResponse>(result.stdout, `gh api graphql bounded review stats metadata for PR ${prNumber}`, isRawLaneHistoryResponse).data?.repository?.pullRequest;
+    if (!rawPr) {
+      return { trustedLaneReviews: [], unavailableReason: 'GitHub pull request lane review history was unavailable.' };
+    }
+    if (rawPr.comments?.pageInfo?.hasNextPage || rawPr.reviews?.pageInfo?.hasNextPage) {
+      return { trustedLaneReviews: [], unavailableReason: `Trusted QUBE lane review history exceeded the bounded ${MAX_LANE_HISTORY_RECORDS}-comment or ${MAX_LANE_HISTORY_RECORDS}-review read and was not counted partially.` };
+    }
+    const trustedAuthors = await this.trustedAuthorsForLoad();
+    if (trustedAuthors.length === 0) {
+      return { trustedLaneReviews: [], unavailableReason: 'Trusted QUBE lane review author identity was unavailable from GitHub.' };
+    }
+    const comments = rawPr.comments?.nodes ?? [];
+    const reviews = rawPr.reviews?.nodes ?? [];
+    const malformedCount = malformedTrustedLaneMarkerCount(comments, reviews, trustedAuthors);
+    if (malformedCount > 0) {
+      return {
+        trustedLaneReviews: [],
+        unavailableReason: `Trusted QUBE lane review metadata contained ${malformedCount} malformed marker${malformedCount === 1 ? '' : 's'}.`,
+      };
+    }
+    return {
+      trustedLaneReviews: laneReviewMetadata(comments, reviews, trustedAuthors, rawPr.headRefOid ?? 'UNKNOWN', prNumber, true),
+      unavailableReason: null,
+    };
   }
 
   async loadPullRequestReviewTarget(prNumber: number): Promise<{ pr: GitHubReviewPullRequest; closingIssueNumbers: number[] }> {
@@ -1620,7 +1751,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       mergeability: 'unknown',
       feedback: [],
       checks: [],
-      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, laneReviews, trustedMarkerAuthor, input.headSha) },
+      trustedMetadata: { trustedLaneReviews: laneReviewMetadata(comments, laneReviews, trustedMarkerAuthor, input.headSha, input.prNumber) },
     });
     if (matchingCurrentLaneReview(trustedItem, input, plannedBody.runId)) {
       return localReviewPublishResult({ status: 'skipped', runId: plannedBody.runId, marker: plannedBody.marker, body: null, publisher: publisher.identity, nextAction: `Provider-visible lane review for ${input.lane} is already published for this PR head and run id.` });
@@ -1702,7 +1833,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
     const inlineComments = inlineFindings
       .map(finding => inlineReviewComment(finding, input.evidencePath))
       .filter((comment): comment is JsonObject => comment !== null);
-    const { body, marker, runId, bodyFindingCount, inlineCommentCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
+    const { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
     const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
       const args = ['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST'];
       const payloadPath = reviewPayloadPath(payload);
@@ -1826,7 +1957,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
         nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.`,
       });
     }
-    return publishReviewResult(result, { body, marker, runId, bodyFindingCount, inlineCommentCount }, `Provider-visible pull request review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`);
+    return publishReviewResult(result, { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount }, `Provider-visible pull request review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`);
   }
 
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {
@@ -2071,27 +2202,50 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
    * non-secret configured login fields when present.
    */
   private async trustedAuthorsForLoad(): Promise<string[]> {
-    const authors: string[] = [];
+    const publisher = this.options.publisher;
+    if (publisher && publisher.mode !== 'user') {
+      // Marker trust must anchor on a credential-verified identity; a login
+      // string from configuration alone could nominate any account's markers
+      // as trusted and forge review history. Minting exercises the configured
+      // credential to derive its real identity (cached for later loads), and
+      // an unverifiable credential fails closed to an empty author list.
+      if (this.cachedPublisherLogin) return [this.cachedPublisherLogin];
+      try {
+        const resolved = await resolveGitHubReviewPublisher(publisher, { cwd: this.options.cwd, exec: this.options.exec, prAuthorLogin: null, mint: true });
+        if (resolved.identity.credentialVerified === true && resolved.identity.login) {
+          this.cachedPublisherLogin = resolved.identity.login;
+          return [resolved.identity.login];
+        }
+      } catch {
+        // fall through to the fail-closed empty author list
+      }
+      return [];
+    }
     try {
       const login = await this.currentLogin();
-      if (login) authors.push(login);
+      if (login) return [login];
     } catch {
       // optional on load
     }
-    const configuredLogin = this.options.publisher?.githubApp?.login ?? this.options.publisher?.token?.login;
-    if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '' && !authors.some(author => authorMatches(author, configuredLogin))) {
-      authors.push(configuredLogin.trim());
-    }
-    if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) {
-      authors.push(this.cachedPublisherLogin);
-    }
-    return authors;
+    return [];
+  }
+
+  private configuredPublisherLoginMissing(): boolean {
+    const publisher = this.options.publisher;
+    if (!publisher || publisher.mode === 'user') return false;
+    const login = publisher.mode === 'github-app' ? publisher.githubApp?.login : publisher.token?.login;
+    return this.cachedPublisherLogin === undefined && (typeof login !== 'string' || login.trim() === '');
   }
 
   private async currentLogin(): Promise<string> {
-    const result = await runGh(['api', 'user'], this.options);
-    ensureGhSuccess('gh api user', result);
-    return parseGhJson<LoginResponse>(result.stdout, 'gh api user', isLoginResponse).login;
+    if (!this.currentLoginPromise) {
+      this.currentLoginPromise = (async () => {
+        const result = await runGh(['api', 'user'], this.options);
+        ensureGhSuccess('gh api user', result);
+        return parseGhJson<LoginResponse>(result.stdout, 'gh api user', isLoginResponse).login;
+      })();
+    }
+    return this.currentLoginPromise;
   }
 
   private async loadCiDiagnostics(repoName: string, rawPr: RawPrView): Promise<GitHubCiDiagnostic[]> {
@@ -2179,7 +2333,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
       state: mapReviewState(rawPr),
       reviewDecision: mapReviewDecision(rawPr.reviewDecision),
       mergeability: mapMergeability(rawPr),
-      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid, reviewAgents: this.options.reviewAgents }),
+      feedback: feedback({ comments, latestReviews, reviewComments, unresolvedThreads, trustedMarkerAuthor, headRefOid: pr.headRefOid, prNumber: pr.number, reviewAgents: this.options.reviewAgents }),
       mergeBlockers: blockers,
       conversations,
       checks: normalizedChecks,
@@ -2200,9 +2354,19 @@ export class GitHubReviewForgeProvider implements ReviewForgeProvider {
   }
 
   private async getRepositoryIdentity(): Promise<{ nameWithOwner: string; url: string }> {
-    const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], this.options);
-    ensureGhSuccess('gh repo view', result);
-    return parseGhJson<{ nameWithOwner: string; url: string }>(result.stdout, 'gh repo view', (value): value is { nameWithOwner: string; url: string } => isRecord(value) && typeof value.nameWithOwner === 'string' && typeof value.url === 'string');
+    if (!this.repositoryIdentityPromise) {
+      this.repositoryIdentityPromise = (async () => {
+        const result = await runGh(['repo', 'view', '--json', 'nameWithOwner,url'], this.options);
+        ensureGhSuccess('gh repo view', result);
+        return parseGhJson<{ nameWithOwner: string; url: string }>(result.stdout, 'gh repo view', (value): value is { nameWithOwner: string; url: string } => isRecord(value) && typeof value.nameWithOwner === 'string' && typeof value.url === 'string');
+      })();
+    }
+    try {
+      return await this.repositoryIdentityPromise;
+    } catch (error) {
+      this.repositoryIdentityPromise = null;
+      throw error;
+    }
   }
 }
 

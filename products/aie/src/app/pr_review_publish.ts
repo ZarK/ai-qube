@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { gitDeltaPathsSync, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
-import { carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -18,6 +18,7 @@ export interface PrReviewPublishOptions {
   exec?: PrGateExec;
   carryForwardPublish?: 'note' | 'none';
   carryForwardScope?: CarryForwardScope;
+  expectedLanes?: readonly LocalReviewLaneId[];
 }
 
 export interface PrReviewPublishResult {
@@ -315,6 +316,12 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
 }
 
 export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvider, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
+  // A single-lane default would publish markers whose expected set hides the
+  // other active lanes and corrupts convergence stats, so the resolved active
+  // lane set is mandatory here; the service entry resolves it from config.
+  if (!options.expectedLanes || options.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the lane review.');
+  }
   const repoRoot = options.repoRoot ?? process.cwd();
   const loadedSnapshot = options.headSha && options.issueNumber
     ? null
@@ -356,6 +363,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     prNumber: options.prNumber,
     headSha,
     lane: options.lane,
+    expectedLanes: [...options.expectedLanes],
     profile: evidence.profile,
     status: evidence.status,
     recommendation: evidence.recommendation,
@@ -375,7 +383,9 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
-  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
+  const changedPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
+  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
+  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, expectedLanes, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {

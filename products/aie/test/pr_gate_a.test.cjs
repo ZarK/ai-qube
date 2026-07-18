@@ -864,6 +864,16 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
     assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
+    // Every gate-published marker must declare the complete active lane set, or
+    // convergence stats degrade multi-lane heads as inconsistent expected sets.
+    const publishedMarkers = [...fixture.calls.flatMap(call => call.map(String)), ...fixture.reviewPayloads.map(payload => String(payload.body ?? ''))]
+      .filter(text => text.includes('qube-pr-review:'))
+      .map(text => JSON.parse(text.match(/qube-pr-review:(\{[\s\S]*?\})\s*-->/)[1]));
+    assert.ok(publishedMarkers.length >= 3, 'the routed batch must publish one marker per lane');
+    const evidenceLanes = [...result.localReview.evidence[0].lanes.map(lane => lane.id)].sort();
+    for (const marker of publishedMarkers) {
+      assert.deepEqual(marker.expectedLanes, evidenceLanes, 'every marker must declare the complete validated lane set for the head');
+    }
   });
 
   it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {

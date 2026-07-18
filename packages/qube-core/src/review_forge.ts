@@ -40,6 +40,7 @@ export interface ReviewForgePlanOptions {
 export interface ReviewForgeCapabilities {
   readonly loadReview: boolean;
   readonly loadReviewSnapshot: boolean;
+  readonly reviewStats?: boolean;
   readonly findCurrentBranchReview: boolean;
   readonly planReviewRequests: boolean;
   readonly applyReviewRequests: boolean;
@@ -48,6 +49,29 @@ export interface ReviewForgeCapabilities {
   readonly publishLocalReview?: boolean;
   readonly resolveReviewThreads?: boolean;
   readonly ciDiagnostics?: boolean;
+}
+
+export interface ReviewForgePullRequest {
+  readonly number: number;
+  readonly title: string;
+  readonly state: string;
+  readonly url: string;
+  readonly headRefOid: string;
+  readonly authorLogin?: string | null;
+  readonly reviewDecision: string;
+  readonly mergeStateStatus: string;
+  readonly mergeable: string;
+  readonly isDraft: boolean;
+  readonly closedAt?: string | null;
+}
+
+export interface ReviewForgeRecentPullRequestOptions {
+  readonly limit: number;
+}
+
+export interface ReviewForgeLaneReviewHistory {
+  readonly trustedLaneReviews: unknown;
+  readonly unavailableReason: string | null;
 }
 
 export type ReviewFindingSeverity = "blocking" | "advisory";
@@ -144,6 +168,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly prNumber: number;
   readonly headSha: string;
   readonly lane: string;
+  readonly expectedLanes: readonly string[];
   readonly profile: string;
   readonly status: string;
   readonly recommendation: "approve" | "request-changes" | "pending" | "inconclusive";
@@ -176,8 +201,32 @@ export interface ReviewForgeProvider {
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   loadReviewSnapshot(key: ReviewItemKey): Promise<ReviewForgeSnapshot>;
+  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
+  loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
   planReviewRequest(item: ReviewItem, policy: ReviewForgePolicy, options?: ReviewForgePlanOptions): ActionPlan;
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLaneReviewFeedback?(item: ReviewItem, input: ReviewLaneReviewPublishInput): Promise<ReviewLaneReviewPublishResult>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
+}
+
+export interface ReviewForgeStatsCapability {
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true };
+  listRecentPullRequests(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
+  loadLaneReviewHistory(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
+}
+
+export interface ReviewForgeStatsProvider extends ReviewForgeProvider {
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true };
+  listRecentPullRequests(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
+  loadLaneReviewHistory(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
+}
+
+export function supportsReviewStats<T extends {
+  capabilities(): { readonly reviewStats?: boolean };
+  readonly listRecentPullRequests?: unknown;
+  readonly loadLaneReviewHistory?: unknown;
+}>(provider: T): provider is T & ReviewForgeStatsCapability {
+  return provider.capabilities().reviewStats === true
+    && typeof provider.listRecentPullRequests === "function"
+    && typeof provider.loadLaneReviewHistory === "function";
 }

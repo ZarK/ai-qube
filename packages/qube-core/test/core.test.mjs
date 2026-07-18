@@ -71,6 +71,17 @@ describe("qube core contracts", () => {
     assert.ok(contracts.every(contract => contract.connection.scopes.length > 0));
   });
 
+  it("requires the complete shared review stats capability shape", () => {
+    const complete = {
+      capabilities: () => ({ reviewStats: true }),
+      listRecentPullRequests: async () => [],
+      loadLaneReviewHistory: async () => ({ trustedLaneReviews: [], unavailableReason: null }),
+    };
+    assert.equal(core.supportsReviewStats(complete), true);
+    assert.equal(core.supportsReviewStats({ ...complete, loadLaneReviewHistory: undefined }), false);
+    assert.ok(core.githubAdapterContract.capabilities.some(capability => capability.id === "review-stats" && capability.support === "supported"));
+  });
+
   it("keeps skipped and unavailable probes explicit instead of silently passing", async () => {
     const offline = await core.runConnectionProbe(core.linearConnectionContract, { mode: "offline" });
     const missingFixture = await core.runConnectionProbe(core.linearConnectionContract, { mode: "fixture" });

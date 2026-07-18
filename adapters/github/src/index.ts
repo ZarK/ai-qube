@@ -8,6 +8,7 @@ export type GitHubOperation =
   | "sync-issue-status"
   | "render-work-items"
   | "load-pull-request"
+  | "review-stats"
   | "request-review-gate"
   | "read-merge-blockers"
   | "read-ci-status"
@@ -90,6 +91,10 @@ const GITHUB_OPERATION_EXTRAS: readonly GitHubOperationExtra[] = Object.freeze([
   {
     id: "load-pull-request",
     nextAction: "Use qube aie pr view <pr> --json for current PR state.",
+  },
+  {
+    id: "review-stats",
+    nextAction: "Use qube aie review stats --window 20 --json for a bounded convergence report.",
   },
   {
     id: "request-review-gate",

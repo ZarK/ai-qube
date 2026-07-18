@@ -45,6 +45,8 @@ export interface GitHubReviewPublisherIdentity {
   readonly fallbackReason: string | null;
   readonly publishTransport: GitHubReviewPublisherTransport;
   readonly authSource: 'gh-user' | 'github-app-installation' | 'token-env' | 'none';
+  /** True only when the login was derived by exercising the configured credential. */
+  readonly credentialVerified: boolean;
 }
 
 export interface ResolvedGitHubReviewPublisher {
@@ -346,6 +348,7 @@ function unconfiguredIdentity(fallbackReason: string | null = null): GitHubRevie
     fallbackReason: fallbackReason ?? 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
     publishTransport: 'pull-request-review',
     authSource: 'gh-user',
+    credentialVerified: false,
   };
 }
 
@@ -358,6 +361,7 @@ function finalizeIdentity(input: {
   fallbackReason: string | null;
   publishTransport: GitHubReviewPublisherTransport;
   authSource: GitHubReviewPublisherIdentity['authSource'];
+  credentialVerified?: boolean;
   prAuthorLogin?: string | null;
 }): GitHubReviewPublisherIdentity {
   let permissionStatus = input.permissionStatus;
@@ -385,6 +389,7 @@ function finalizeIdentity(input: {
     fallbackReason,
     publishTransport,
     authSource: input.authSource,
+    credentialVerified: input.credentialVerified === true,
   };
 }
 
@@ -417,6 +422,7 @@ export async function resolveGitHubReviewPublisher(
         login,
         permissionStatus: mint ? (login ? 'ok' : 'unknown') : 'unknown',
         formalEventCapability: true,
+        credentialVerified: Boolean(mint && login),
         fallbackReason: 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
         publishTransport: 'pull-request-review',
         authSource: 'gh-user',
@@ -520,6 +526,7 @@ export async function resolveGitHubReviewPublisher(
           login,
           permissionStatus: hasPermission ? 'ok' : 'missing',
           formalEventCapability: hasPermission,
+          credentialVerified: Boolean(login),
           fallbackReason: hasPermission
             ? null
             : 'GitHub App installation lacks pull_requests write permission; formal review events are unavailable.',
@@ -618,6 +625,7 @@ export async function resolveGitHubReviewPublisher(
         login,
         permissionStatus: login ? 'ok' : 'unknown',
         formalEventCapability: true,
+        credentialVerified: Boolean(login),
         fallbackReason: null,
         publishTransport: 'pull-request-review',
         authSource: 'token-env',
@@ -652,6 +660,7 @@ export function publicPublisherIdentity(identity: GitHubReviewPublisherIdentity)
     fallbackReason: identity.fallbackReason,
     publishTransport: identity.publishTransport,
     authSource: identity.authSource,
+    credentialVerified: identity.credentialVerified,
   };
 }
 

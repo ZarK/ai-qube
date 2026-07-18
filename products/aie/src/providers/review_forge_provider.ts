@@ -1,5 +1,10 @@
 import type { GhExec } from '@tjalve/qube-adapter-github';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import type {
+  ReviewFinding,
+  ReviewForgeLaneReviewHistory as CoreReviewForgeLaneReviewHistory,
+  ReviewForgePullRequest as CoreReviewForgePullRequest,
+  ReviewForgeRecentPullRequestOptions as CoreReviewForgeRecentPullRequestOptions,
+} from '@tjalve/qube-core';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
 import type { ResolveReviewThreadInput, ResolveReviewThreadResult, ReviewItem, ReviewItemKey } from '../core/review_item.js';
@@ -16,18 +21,8 @@ export interface ReviewForgeProviderOptions {
   readonly cwd?: string;
 }
 
-export interface ReviewForgePullRequest {
-  number: number;
-  title: string;
-  state: string;
-  url: string;
-  headRefOid: string;
-  authorLogin?: string | null;
-  reviewDecision: string;
-  mergeStateStatus: string;
-  mergeable: string;
-  isDraft: boolean;
-}
+export type ReviewForgePullRequest = CoreReviewForgePullRequest;
+export type ReviewForgeLaneReviewHistory = CoreReviewForgeLaneReviewHistory;
 
 export interface ReviewForgeCiDiagnostic {
   checkName: string;
@@ -62,6 +57,8 @@ export interface ReviewForgeReviewTarget {
   pr: ReviewForgePullRequest;
   closingIssueNumbers: number[];
 }
+
+export type ReviewForgeRecentPullRequestOptions = CoreReviewForgeRecentPullRequestOptions;
 
 export interface CurrentReviewForge {
   item: ReviewItem | null;
@@ -118,6 +115,7 @@ export interface ReviewForgePublisherIdentity {
 
 export interface ReviewForgeProviderCapabilities {
   loadReview: boolean;
+  reviewStats: boolean;
   findCurrentBranchReview: boolean;
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
@@ -133,6 +131,8 @@ export interface ReviewForgeProvider {
   getReviewItem(key: ReviewItemKey): Promise<ReviewItem>;
   findReviewForCurrentBranch(): Promise<ReviewItem | null>;
   findCurrentReview(): Promise<CurrentReviewForge>;
+  listRecentPullRequests?(options: ReviewForgeRecentPullRequestOptions): Promise<readonly ReviewForgePullRequest[]>;
+  loadLaneReviewHistory?(prNumber: number): Promise<ReviewForgeLaneReviewHistory>;
   loadPullRequestReview(prNumber: number): Promise<ReviewForgeSnapshot>;
   loadPullRequestReviewTarget?(prNumber: number): Promise<ReviewForgeReviewTarget>;
   planReviewRequest(item: ReviewItem, policy: ExecutorPolicy, options?: ReviewProviderPlanOptions): ActionPlan;
@@ -146,6 +146,7 @@ export interface ReviewForgeProvider {
 
 export interface ReviewForgeCapabilities {
   loadReview: boolean;
+  reviewStats: boolean;
   findCurrentBranchReview: boolean;
   planReviewRequests: boolean;
   applyReviewRequests: boolean;
@@ -158,6 +159,7 @@ export interface ReviewForgeCapabilities {
 
 export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   loadReview: false,
+  reviewStats: false,
   findCurrentBranchReview: false,
   planReviewRequests: false,
   applyReviewRequests: false,

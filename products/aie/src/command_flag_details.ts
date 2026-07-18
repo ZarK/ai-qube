@@ -147,6 +147,12 @@ export const REVIEW_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const REVIEW_STATS_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable review convergence stats', default: false },
+  { name: '--window', type: 'integer', description: 'Recent merged or closed pull requests to inspect; maximum 50', default: 20 },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const PR_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable PR review gate output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show reviewer request, comment, and wait plans without mutating GitHub or sleeping', default: false },

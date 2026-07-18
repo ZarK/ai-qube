@@ -7,6 +7,7 @@ import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js'
 import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
+import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
 import { formatPrTriage, runPrTriageService } from './app/pr_triage.js';
 import { formatPrBatch, runPrBatchService } from './app/pr_batch.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
@@ -330,12 +331,23 @@ async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
-async function handleConfigCommand(context: Parameters<RuntimeCommandHandler>[0], command: 'audit ui' | 'review gate' | 'pr view' | 'pr body' | 'pr gate') {
+async function handleConfigCommand(context: Parameters<RuntimeCommandHandler>[0], command: 'audit ui' | 'review gate' | 'review stats' | 'pr view' | 'pr body' | 'pr gate') {
   if (command === 'audit ui') return handleAuditUi(context);
   if (command === 'review gate') return handleReviewGate(context);
+  if (command === 'review stats') return handleReviewStats(context);
   if (command === 'pr view') return handlePrView(context);
   if (command === 'pr body') return handlePrBody(context);
   return handlePrGate(context);
+}
+
+async function handleReviewStats(context: Parameters<RuntimeCommandHandler>[0]) {
+  try {
+    const result = await runReviewStats({ window: numberFlag(context, 'window') });
+    return commandResult(context, result, formatReviewStats(result));
+  } catch (error: unknown) {
+    const failure = reviewStatsFailure(error);
+    return commandFailure(context, failure.result, failure.human, failure.exitCode);
+  }
 }
 
 async function handleReviewSetup(context: Parameters<RuntimeCommandHandler>[0], mode: ReviewSetupMode) {
@@ -802,6 +814,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     '  aie review setup github-app  Preferred distinct GitHub App publisher identity.',
     '  aie review setup token       Separate-user fine-grained token fallback.',
     '  aie review doctor            Validate publisher readiness and permissions.',
+    '  aie review stats             Compute bounded review convergence metrics.',
     '  aie review gate <issue>      Render host-run review prompts and evidence requirements.',
     'When using QUBE, `qube review ...` is the equivalent short surface.',
     'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.',
@@ -815,6 +828,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'review setup github-app': context => handleReviewSetup(context, 'github-app'),
   'review setup token': context => handleReviewSetup(context, 'token'),
   'review doctor': handleReviewDoctor,
+  'review stats': context => handleConfigCommand(context, 'review stats'),
   'review gate': context => handleConfigCommand(context, 'review gate'),
   schema: handleSchema,
   start: handleStart,

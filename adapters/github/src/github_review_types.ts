@@ -15,6 +15,7 @@ export interface GitHubReviewPullRequest {
   mergeStateStatus: string;
   mergeable: string;
   isDraft: boolean;
+  closedAt?: string | null;
   mergeUiHeadline: string | null;
   mergeUiBody: string | null;
   viewerCannotUpdateReasons: string[];
@@ -104,12 +105,12 @@ export interface CurrentGitHubReview {
 }
 
 export interface RawAuthor { login?: string }
-export interface RawComment { author?: RawAuthor | null; body?: string; url?: string }
-export interface RawReview { id?: string | number; author?: RawAuthor | null; user?: RawAuthor | null; body?: string; state?: string; submittedAt?: string; url?: string; html_url?: string; commit_id?: string; commit?: { oid?: string } | null }
+export interface RawComment { author?: RawAuthor | null; body?: string; url?: string; createdAt?: string }
+export interface RawReview { id?: string | number; author?: RawAuthor | null; user?: RawAuthor | null; body?: string; state?: string; submittedAt?: string; submitted_at?: string; url?: string; html_url?: string; commit_id?: string; commit?: { oid?: string } | null }
 export interface RawReviewRequest { login?: string; name?: string; slug?: string }
 export interface RawClosingIssueReference { number?: number }
 export interface RawStatusCheck { conclusion?: string; status?: string; state?: string; name?: string; context?: string; workflowName?: string; startedAt?: string; createdAt?: string; completedAt?: string; detailsUrl?: string; targetUrl?: string }
-export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; author?: RawAuthor | null; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
+export interface RawPrView { number: number; title: string; state: string; url: string; headRefOid?: string; author?: RawAuthor | null; reviewDecision?: string | null; mergeStateStatus?: string | null; mergeable?: string | null; isDraft?: boolean; closedAt?: string | null; mergedAt?: string | null; updatedAt?: string | null; reviewRequests?: RawReviewRequest[]; reviews?: RawReview[]; latestReviews?: RawReview[]; comments?: RawComment[]; statusCheckRollup?: RawStatusCheck[]; closingIssuesReferences?: RawClosingIssueReference[] }
 export interface RawIssueComment { body?: string; html_url?: string; user?: RawAuthor | null }
 export interface RawReviewComment { body?: string; html_url?: string; path?: string; user?: { login?: string } | null; pull_request_review_id?: number | string | null }
 export interface RawThreadComment {
@@ -135,6 +136,18 @@ export interface RawThreadNode {
 }
 export interface RawThreadPage { nodes?: RawThreadNode[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
 export interface RawThreadResponse { data?: { repository?: { pullRequest?: { reviewThreads?: RawThreadPage } | null } | null } }
+export interface RawLaneHistoryPage<T> { nodes?: T[]; pageInfo?: { hasNextPage?: boolean; endCursor?: string | null } }
+export interface RawLaneHistoryResponse {
+  data?: {
+    repository?: {
+      pullRequest?: {
+        headRefOid?: string;
+        comments?: RawLaneHistoryPage<RawComment>;
+        reviews?: RawLaneHistoryPage<RawReview>;
+      } | null;
+    } | null;
+  };
+}
 export interface RawMergeUiState {
   viewerMergeHeadlineText?: string | null;
   viewerMergeBodyText?: string | null;
