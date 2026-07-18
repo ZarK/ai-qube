@@ -78,14 +78,14 @@ const {
   makePrExec,
   fixtureLocalCommand,
   alignLocalEvidencePromptHashes,
+  applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
 
 describe('PR gate service: provider reuse and publication', { concurrency: 4 }, () => {
   it('executes the routed lane with the probe-resolved executable', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -129,8 +129,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   it('accumulates faults from repeatedly blocked primary probes and engages the fallback', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -196,8 +195,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   it('never consumes a working-tree route-fault ledger that pull request content could supply', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -247,8 +245,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
   it('does not count local checkout drift as a host fault', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;

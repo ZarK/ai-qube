@@ -78,6 +78,7 @@ const {
   makePrExec,
   fixtureLocalCommand,
   alignLocalEvidencePromptHashes,
+  applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
 
 describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
@@ -811,8 +812,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -869,8 +869,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('rechecks local HEAD after disclosure and withholds all provider mutation on drift', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = ['@coderabbitai'];
     config.reviewWaitMinutes = 0;
@@ -961,8 +960,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('reuses a complete trusted provider current-head lane set without executing lanes', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1003,8 +1001,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('reruns only the lane missing from trusted provider current-head reviews', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1028,8 +1025,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('never reuses lane review markers from untrusted authors', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1053,8 +1049,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('rejects stale-head trusted provider reviews with actionable reasons', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1077,8 +1072,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('rejects profile-incompatible and non-approve trusted provider reviews', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1116,8 +1110,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('reuses existing current-head local lane evidence instead of re-executing routed lanes', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1175,8 +1168,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('re-executes a lane whose local current-head evidence is non-terminal instead of provider-reusing it', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1259,8 +1251,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('keeps other lanes and their evidence intact when one routed lane fails', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1325,8 +1316,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('blocks the routed batch with probe diagnostics before any model execution', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1363,8 +1353,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('fails over a repeatedly faulting lane to the configured fallback route with distinct provenance', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1451,8 +1440,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('never triggers failover from a review verdict', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1506,8 +1494,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('publishes a non-empty actionable summary when a routed lane fails without a diagnostic', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1533,8 +1520,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('retries the configured primary route when the fallback probe is blocked', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1597,8 +1583,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('marks a lane unavailable only when both the fallback and primary probes are blocked', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;
@@ -1628,8 +1613,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
   it('restarts the fault tally when the primary route configuration changes', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;

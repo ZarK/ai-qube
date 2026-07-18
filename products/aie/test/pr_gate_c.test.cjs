@@ -78,6 +78,7 @@ const {
   makePrExec,
   fixtureLocalCommand,
   alignLocalEvidencePromptHashes,
+  applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
 
 describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () => {

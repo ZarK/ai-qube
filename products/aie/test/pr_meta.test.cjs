@@ -78,6 +78,7 @@ const {
   makePrExec,
   fixtureLocalCommand,
   alignLocalEvidencePromptHashes,
+  applyRoutedReviewFixture,
 } = require('./support/pr_gate_fixture.cjs');
 
 describe('PR body service', { concurrency: 4 }, () => {
@@ -827,8 +828,7 @@ describe('PR gate routed concurrency timing', () => {
   it('overlaps routed lanes under the global bound with per-host caps and deterministic order', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
-    trustReviewCommands(repo);
-    commitRoutedReviewHead(repo);
+    applyRoutedReviewFixture(repo);
     config.reviewAdapter = 'mixed';
     config.reviewAgents = [];
     config.reviewWaitMinutes = 0;

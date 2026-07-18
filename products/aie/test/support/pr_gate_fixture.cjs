@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { basename, join } = require('node:path');
 
@@ -69,6 +69,20 @@ function commitRoutedReviewHead(repo) {
   });
   execFileSync('git', ['add', '.qube/aie/config.json'], { cwd: repo, stdio: 'ignore' });
   execFileSync('git', ['commit', '-m', 'configure routed review'], { cwd: repo, stdio: 'ignore' });
+}
+
+let routedReviewTemplate = null;
+// Every routed gate test applies the identical trusted-base and routed-config
+// commits to a pristine repository, so they are built once on a template and
+// cloned by filesystem copy instead of re-running the git ceremony per test.
+function applyRoutedReviewFixture(repo) {
+  if (!routedReviewTemplate) {
+    routedReviewTemplate = mkdtempSync(join(tmpdir(), 'aie-pr-routed-template-'));
+    cpSync(repo, routedReviewTemplate, { recursive: true, force: true });
+    trustReviewCommands(routedReviewTemplate);
+    commitRoutedReviewHead(routedReviewTemplate);
+  }
+  cpSync(routedReviewTemplate, repo, { recursive: true, force: true });
 }
 
 function writeWorkflow(repo, body) {
@@ -699,6 +713,7 @@ function fixtureLocalCommand(args) {
 
 
 module.exports = {
+  applyRoutedReviewFixture,
   alignLocalEvidencePromptHashes,
   createHash,
   cloneGitRepo,
