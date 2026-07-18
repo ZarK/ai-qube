@@ -281,6 +281,19 @@ export interface GateReadinessDiagnostics {
         scopes: string[] | null;
         nextAction: string | null;
       };
+      routeProbes: {
+        readiness: DoctorReadinessStatus;
+        routes: Array<{
+          host: string;
+          model: string | null;
+          status: 'ready' | 'blocked';
+          executable: string | null;
+          version: string | null;
+          modelListed: boolean | null;
+          nextAction: string | null;
+        }>;
+        nextAction: string | null;
+      };
     };
     nextActions: string[];
   };

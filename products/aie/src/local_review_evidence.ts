@@ -3,7 +3,9 @@ import { createHash } from 'node:crypto';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { carryForwardDeltaTouched } from './review_focus.js';
+import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
+import { acceptedProviderLane } from './provider_lane_evidence.js';
+import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evidence.js';
 import { redact } from './redact.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
@@ -58,6 +60,11 @@ export interface LocalReviewRunnerProvenance {
   promptStackHash: string | null;
   headSha: string;
   providerPublishStatus: string | null;
+  model: string | null;
+  effort: string | null;
+  isolation: 'read-only' | null;
+  invocationId: string | null;
+  routeSource: 'configured' | 'fallback' | null;
 }
 
 export interface LocalReviewLane {
@@ -78,6 +85,7 @@ export interface LocalReviewLane {
   preconditions: string[] | null;
   carriedForward: LocalReviewCarriedForward | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
+  origin?: 'local' | 'trusted-provider';
 }
 
 export interface LocalReviewCarriedForward {
@@ -89,6 +97,7 @@ export interface LocalReviewCarriedForward {
 export interface CarryForwardScope {
   laneMatchPatterns: Readonly<Record<string, readonly string[]>>;
   contextPatterns: readonly string[];
+  laneContextModes?: Readonly<Record<string, CarryForwardContextMode>>;
 }
 
 export interface LocalReviewEvidence {
@@ -96,7 +105,7 @@ export interface LocalReviewEvidence {
   prNumber: number;
   headSha: string;
   profile: LocalReviewProfile;
-  adapter: 'local-command' | 'local-host' | 'manual-evidence';
+  adapter: 'local-command' | 'local-host' | 'manual-evidence' | 'trusted-provider';
   status: LocalReviewStatus;
   path: string | null;
   reviewer: {
@@ -124,6 +133,7 @@ export interface LocalReviewGate {
   status: LocalReviewStatus;
   summary: string;
   nextAction: string;
+  providerReuse?: ProviderLaneReuse;
 }
 
 interface TrustedLocalHostProvenance {
@@ -142,6 +152,11 @@ interface TrustedLocalHostProvenance {
   threadId: string | null;
   promptStackHash: string;
   recordedAt: string;
+  model: string | null;
+  effort: string | null;
+  isolation: 'read-only' | null;
+  invocationId: string | null;
+  routeSource: 'configured' | 'fallback' | null;
 }
 
 interface LocalReviewPublishEvidence {
@@ -422,6 +437,11 @@ function readRunnerProvenance(value: unknown): LocalReviewRunnerProvenance | nul
     promptStackHash: readNullableString(value.promptStackHash),
     headSha: stringValue(value.headSha, 'unknown-head'),
     providerPublishStatus: readNullableString(value.providerPublishStatus),
+    model: readNullableString(value.model),
+    effort: readNullableString(value.effort),
+    isolation: value.isolation === 'read-only' ? 'read-only' : null,
+    invocationId: readNullableString(value.invocationId),
+    routeSource: value.routeSource === 'configured' || value.routeSource === 'fallback' ? value.routeSource : null,
   };
 }
 
@@ -592,6 +612,7 @@ function severityRank(severity: LocalReviewSeverity): number {
 }
 
 function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSeverity): boolean {
+  if (lane.findings.some(finding => finding.severity === 'blocking')) return true;
   if (lane.severity === 'none') return false;
   if (severityRank(lane.severity) < severityRank(threshold)) return false;
   return lane.recommendation === 'request-changes' || lane.blockers.length > 0;
@@ -600,7 +621,9 @@ function laneExceedsThreshold(lane: LocalReviewLane, threshold: LocalReviewSever
 function thresholdBlockers(lanes: readonly LocalReviewLane[], threshold: LocalReviewSeverity): string[] {
   return lanes
     .filter(lane => laneExceedsThreshold(lane, threshold))
-    .map(lane => `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
+    .map(lane => lane.findings.some(finding => finding.severity === 'blocking')
+      ? `${lane.id} recorded blocking structured findings.`
+      : `${lane.id} recorded ${lane.severity} severity at or above the ${threshold} threshold.`);
 }
 
 function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: LocalReviewProfile, promptStack: readonly LocalReviewPromptStackItem[], requiredLanes: readonly LocalReviewLaneId[] = requiredLocalReviewLanes(profile)): string[] {
@@ -612,6 +635,10 @@ function evidenceContractBlockers(lanes: readonly LocalReviewLane[], profile: Lo
   for (const lane of lanes) {
     if (!validRecommendationStatus(lane.recommendation, lane.status)) {
       blockers.push(`${lane.id} recommendation ${lane.recommendation} is not valid with status ${lane.status}; ${recommendationStatusRule()}.`);
+    }
+    if (lane.findings.some(finding => finding.severity === 'blocking')
+      && (lane.status === 'passed' || lane.recommendation !== 'request-changes')) {
+      blockers.push(`${lane.id} recorded blocking structured findings but claimed status ${lane.status} with recommendation ${lane.recommendation}.`);
     }
   }
   for (const laneId of requiredLanes) {
@@ -666,6 +693,11 @@ function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, p
       threadId: readNullableString(parsed.threadId),
       promptStackHash: parsed.promptStackHash,
       recordedAt: typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '',
+      model: readNullableString(parsed.model),
+      effort: readNullableString(parsed.effort),
+      isolation: parsed.isolation === 'read-only' ? 'read-only' : null,
+      invocationId: readNullableString(parsed.invocationId),
+      routeSource: parsed.routeSource === 'configured' || parsed.routeSource === 'fallback' ? parsed.routeSource : null,
     };
   } catch {
     return null;
@@ -690,6 +722,7 @@ function trustedLocalHostBlockers(input: {
   if (trusted.host !== input.provenance.host) blockers.push(`${input.laneId} local-host provenance host does not match the host record.`);
   if (trusted.promptStackHash !== input.provenance.promptStackHash) blockers.push(`${input.laneId} local-host provenance prompt stack hash does not match the host record.`);
   if (trusted.taskId !== input.provenance.taskId || trusted.sessionId !== input.provenance.sessionId || trusted.threadId !== input.provenance.threadId) blockers.push(`${input.laneId} local-host provenance task, session, or thread id does not match the host record.`);
+  if (trusted.model !== input.provenance.model || trusted.effort !== input.provenance.effort || trusted.isolation !== input.provenance.isolation || trusted.invocationId !== input.provenance.invocationId) blockers.push(`${input.laneId} routed model provenance does not match the trusted host record.`);
   if (!trusted.taskId && !trusted.sessionId && !trusted.threadId) blockers.push(`${input.laneId} host provenance did not record a separate task, session, or thread id.`);
   return blockers;
 }
@@ -746,7 +779,7 @@ function provenanceBlockers(lanes: readonly LocalReviewLane[], profile: LocalRev
       const deltaPaths = gitDeltaPathsSync(repoRoot, lane.carriedForward.fromHeadSha, headSha);
       if (deltaPaths === null) {
         blockers.push(`${laneId} carried-forward delta from ${lane.carriedForward.fromHeadSha} could not be verified with git.`);
-      } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [])) {
+      } else if (carryForwardDeltaTouched(deltaPaths, carryForwardScope?.laneMatchPatterns[laneId] ?? [], carryForwardScope?.contextPatterns ?? [], carryForwardScope?.laneContextModes?.[laneId] ?? defaultCarryForwardContext(laneId))) {
         blockers.push(`${laneId} carried-forward evidence is invalid because the head delta touches the lane scope or review context.`);
       }
     } else {
@@ -923,6 +956,18 @@ function readLocalReviewPublishEvidence(directory: string, issueNumber: number, 
   }
 }
 
+export function readCurrentHeadLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): LocalReviewLane | null {
+  const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+    if (!parsed || parsed.lane.id !== lane) return null;
+    return parsed.lane;
+  } catch {
+    return null;
+  }
+}
+
 function withProviderPublishStatus(lane: LocalReviewLane, status: string | null): LocalReviewLane {
   if (!status || !lane.runnerProvenance) return lane;
   return {
@@ -934,11 +979,36 @@ function withProviderPublishStatus(lane: LocalReviewLane, status: string | null)
   };
 }
 
-function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[], carryForwardScope?: CarryForwardScope): LocalReviewEvidence | null {
+function providerReuseLane(record: TrustedProviderLane): LocalReviewLane {
+  return {
+    id: record.lane,
+    status: 'passed',
+    severity: 'none',
+    recommendation: 'approve',
+    summary: `Trusted provider current-head review reused: ${record.summary}`,
+    blockers: [],
+    findings: [],
+    artifacts: [],
+    commands: [],
+    surfaces: [],
+    contextReviewed: [],
+    promptStack: [],
+    toolsUsed: [],
+    completeness: 'Reused the trusted provider-visible lane review for the exact current head; full findings, severities, prompt stack, and runner provenance remain provider-side.',
+    preconditions: null,
+    carriedForward: null,
+    runnerProvenance: null,
+    origin: 'trusted-provider',
+  };
+}
+
+function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>, requiredLanesInput?: readonly LocalReviewLaneId[], carryForwardScope?: CarryForwardScope, providerReuse?: ProviderLaneReuse): LocalReviewEvidence | null {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
-  if (!existsSync(directory)) return null;
+  const directoryExists = existsSync(directory);
+  if (!directoryExists && (providerReuse?.accepted.length ?? 0) === 0) return null;
   const requiredLanes = requiredLanesInput ?? requiredLocalReviewLanes(profile);
-  const lanes: LocalReviewLane[] = [];
+  const localLanes: LocalReviewLane[] = [];
+  const providerLanes: LocalReviewLane[] = [];
   const missing: string[] = [];
   const adapters: LocalReviewEvidence['adapter'][] = [];
   const laneAdapters = new Map<LocalReviewLaneId, LocalReviewEvidence['adapter']>();
@@ -946,35 +1016,44 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
   try {
     for (const laneId of requiredLanes) {
       const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
-      if (!existsSync(path)) {
-        missing.push(laneId);
+      if (directoryExists && existsSync(path)) {
+        const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+        if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
+        localLanes.push({ ...parsed.lane, origin: 'local' });
+        adapters.push(parsed.adapter);
+        laneAdapters.set(laneId, parsed.adapter);
+        evidenceHashes.set(laneId, parsed.evidenceSha256);
         continue;
       }
-      const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
-      if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
-      lanes.push(parsed.lane);
-      adapters.push(parsed.adapter);
-      laneAdapters.set(laneId, parsed.adapter);
-      evidenceHashes.set(laneId, parsed.evidenceSha256);
+      const providerRecord = acceptedProviderLane(providerReuse, laneId, issueNumber);
+      if (providerRecord) {
+        providerLanes.push(providerReuseLane(providerRecord));
+        continue;
+      }
+      missing.push(laneId);
     }
   } catch {
     return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
   }
-  if (lanes.length === 0) return null;
-  const publishStatus = readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null;
-  const lanesWithPublishStatus = lanes.map(lane => withProviderPublishStatus(lane, publishStatus));
+  if (localLanes.length === 0 && providerLanes.length === 0) return null;
+  const publishStatus = directoryExists ? readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null : null;
+  const localLanesWithPublishStatus = localLanes.map(lane => withProviderPublishStatus(lane, publishStatus));
+  const lanesWithPublishStatus = [...localLanesWithPublishStatus, ...providerLanes];
   if (missing.length > 0) {
     const evidence = missingEvidence(issueNumber, prNumber, headSha, directory, reviewers, profile);
-    return { ...evidence, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.`, blockers: missing.map(lane => `Missing local review evidence for ${lane}.`) };
+    const missingRejections = (providerReuse?.rejected ?? []).filter(entry => missing.includes(entry.lane) && (entry.issueNumber === null || entry.issueNumber === issueNumber)).map(entry => entry.reason);
+    const coveredNote = lanesWithPublishStatus.length > 0 ? ` Covered lanes remain valid: ${lanesWithPublishStatus.map(lane => `${lane.id} (${lane.origin ?? 'local'})`).join(', ')}.` : '';
+    return { ...evidence, lanes: lanesWithPublishStatus, summary: `Local review evidence is missing required lane files: ${missing.join(', ')}.${coveredNote}`, blockers: [...missing.map(lane => `Missing local review evidence for ${lane}.`), ...missingRejections] };
   }
   const finalGate = lanesWithPublishStatus.find(lane => lane.id === 'final-gate');
   const contextReviewed = lanesWithPublishStatus.flatMap(lane => lane.contextReviewed);
   const promptStack = lanesWithPublishStatus.flatMap(lane => lane.promptStack);
   const missingContext = missingRequiredContext(lanesWithPublishStatus, profile);
   const contextBlockers = missingContext.map(kind => `Local review evidence did not record current ${kind} context for the ${profile} profile.`);
-  const contractBlockers = evidenceContractBlockers(lanesWithPublishStatus, profile, promptStack, requiredLanes);
-  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : 'local-host';
-  const runnerBlockers = provenanceBlockers(lanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, requiredLanes, carryForwardScope);
+  const locallyCoveredLanes = requiredLanes.filter(laneId => laneAdapters.has(laneId));
+  const contractBlockers = localLanesWithPublishStatus.length > 0 ? evidenceContractBlockers(localLanesWithPublishStatus, profile, promptStack, locallyCoveredLanes) : [];
+  const adapter = adapters.includes('manual-evidence') ? 'manual-evidence' : adapters.includes('local-command') ? 'local-command' : localLanes.length === 0 && providerLanes.length > 0 ? 'trusted-provider' : 'local-host';
+  const runnerBlockers = localLanesWithPublishStatus.length > 0 ? provenanceBlockers(localLanesWithPublishStatus, profile, laneAdapters, shadow, headSha, issueNumber, prNumber, repoRoot, expectedPromptStackHashes, evidenceHashes, locallyCoveredLanes, carryForwardScope) : [];
   const computedLaneStatus = laneStatus(lanesWithPublishStatus, profile, severityThreshold, requiredLanes);
   const rawStatus = computedLaneStatus === 'passed' && contractBlockers.length > 0 ? 'failed' : computedLaneStatus === 'passed' && runnerBlockers.length > 0 ? 'inconclusive' : computedLaneStatus;
   const status = statusWithAdapter(rawStatus, adapter, shadow);
@@ -988,7 +1067,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     status,
     path: redact(directory),
     reviewer: fallbackReviewer(reviewers),
-    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}`,
+    summary: `${finalGate?.summary ?? 'Local review lane evidence was loaded.'}${adapter === 'local-host' && localLanes.length > 0 ? ' Local-host provenance is same-user host evidence, not a cryptographic attestation against same-user repo code.' : ''}${providerLanes.length > 0 ? ` Reused trusted provider current-head reviews for: ${providerLanes.map(lane => lane.id).join(', ')}.` : ''}`,
     blockers,
     lanes: lanesWithPublishStatus,
     contextReviewed,
@@ -1158,7 +1237,7 @@ function gateNextAction(status: LocalReviewStatus, prNumber: number, providerFir
     return `Run fresh-context review subagents for each active focus, publish provider-visible feedback on the pull request, then rerun ${rerunCommand}. Inspect PR comments and reviews on GitHub; local audit files are optional.`;
   }
   if (status === 'stale') return `Rerun local review focuses for the current PR head, publish updated provider-visible feedback, then rerun ${rerunCommand}.`;
-  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback on the pull request, rerun affected checks, and rerun the PR gate.';
+  if (status === 'failed' || status === 'needs-work') return 'Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun the PR gate for one re-review round.';
   if (status === 'inconclusive') return 'Refresh provider-visible local review feedback with required issue, PR, diff, checks, and instruction context before merge.';
   if (status === 'unavailable' || status === 'malformed') return 'Fix local review runner availability or provider publishing, then rerun the PR gate.';
   return `Complete local review focuses and publish provider-visible feedback on the pull request, then rerun ${rerunCommand}.`;
@@ -1178,6 +1257,7 @@ export function readLocalReviewGate(input: {
   activeFocuses?: readonly LocalReviewLaneId[];
   providerFirst?: boolean;
   carryForwardScope?: CarryForwardScope;
+  providerLaneReuse?: ProviderLaneReuse;
 }): LocalReviewGate {
   const reviewers = input.reviewers.map(redact);
   const profile = effectiveProfile(input.profile ?? 'remote-compatible', input.required, input.shadow ?? false);
@@ -1192,7 +1272,7 @@ export function readLocalReviewGate(input: {
   const evidence = input.issueNumbers.map(issueNumber => {
     const currentPath = laneEvidenceDirectory(input.repoRoot, issueNumber, input.prNumber, input.headSha);
     const legacyPath = evidencePath(input.repoRoot, issueNumber, input.prNumber, input.headSha);
-    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes, input.carryForwardScope);
+    const laneEvidence = parseLaneEvidenceSet(input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes, requiredLanes, input.carryForwardScope, input.providerLaneReuse);
     if (laneEvidence) return laneEvidence;
     if (existsSync(legacyPath)) return parseEvidence(legacyPath, input.repoRoot, issueNumber, input.prNumber, input.headSha, input.reviewers, profile, severityThreshold, input.shadow ?? false, input.expectedPromptStackHashes);
     const stalePath = findStaleEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha);
@@ -1210,11 +1290,13 @@ export function readLocalReviewGate(input: {
     status,
     summary: `${mode === 'shadow' ? 'Shadow local review evidence' : 'Local review evidence'} for ${profile}: ${evidence.map(item => `#${item.issueNumber ?? 'unknown'}: ${item.status} - ${item.summary}`).join(' ')}`,
     nextAction: gateNextAction(status, input.prNumber, input.providerFirst ?? false),
+    providerReuse: input.providerLaneReuse,
   };
 }
 
 export interface FixBatchFinding {
   laneId: LocalReviewLaneId;
+  lanes: LocalReviewLaneId[];
   findingId: string;
   contentHash: string;
   severity: 'blocking' | 'advisory';
@@ -1304,6 +1386,7 @@ function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], pr
 function toFixBatchFinding(laneId: LocalReviewLaneId, finding: ReviewFinding, contentHash: string, classification: 'new' | 'persisting'): FixBatchFinding {
   return {
     laneId,
+    lanes: [laneId],
     findingId: finding.id,
     contentHash,
     severity: finding.severity,
@@ -1360,6 +1443,21 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     }
     return { ...finding, classification: 'new' as const };
   }).sort(rankFixBatchFindings);
+  // Cross-lane merge: identical defects reported by several lanes collapse to one
+  // batch entry carrying every reporting lane, so the implementer fixes each defect
+  // once. Per-lane content hashes stay the classification and resolution keys.
+  const mergedByIdentity = new Map<string, FixBatchFinding>();
+  for (const finding of findings) {
+    const identity = JSON.stringify({ severity: finding.severity, message: finding.message, location: finding.location, suggestion: finding.suggestion });
+    const existing = mergedByIdentity.get(identity);
+    if (!existing) {
+      mergedByIdentity.set(identity, finding);
+      continue;
+    }
+    if (!existing.lanes.includes(finding.laneId)) existing.lanes = [...existing.lanes, finding.laneId].sort();
+    if (finding.classification === 'persisting') existing.classification = 'persisting';
+  }
+  const mergedFindings = [...mergedByIdentity.values()].sort(rankFixBatchFindings);
   const resolved = currentEvidenceLoaded
     ? priorFindings
       .filter(entry => {
@@ -1380,19 +1478,19 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
         return left.message.localeCompare(right.message);
       })
     : [];
-  const blockingCount = findings.filter(finding => finding.severity === 'blocking').length;
-  const advisoryCount = findings.filter(finding => finding.severity === 'advisory').length;
-  const newCount = findings.filter(finding => finding.classification === 'new').length;
-  const persistingCount = findings.filter(finding => finding.classification === 'persisting').length;
+  const blockingCount = mergedFindings.filter(finding => finding.severity === 'blocking').length;
+  const advisoryCount = mergedFindings.filter(finding => finding.severity === 'advisory').length;
+  const newCount = mergedFindings.filter(finding => finding.classification === 'new').length;
+  const persistingCount = mergedFindings.filter(finding => finding.classification === 'persisting').length;
   const priorLabel = priorHeadSha ?? 'no prior head';
   const resolvedLabel = currentEvidenceLoaded
     ? `${resolved.length} resolved since ${priorLabel}.`
     : 'resolved state is indeterminate because current-head lane evidence is missing or stale.';
-  const summary = `${findings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
+  const summary = `${mergedFindings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
   return {
     headSha,
     priorHeadSha,
-    findings,
+    findings: mergedFindings,
     resolved,
     summary,
   };

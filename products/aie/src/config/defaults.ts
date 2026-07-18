@@ -87,9 +87,12 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       agents: ['coderabbitai'],
       localAgents: [],
       waitMinutes: 10,
+      concurrency: 3,
       requestText: '',
       carryForwardPublish: 'note',
       models: { review: {}, economy: {}, synthesis: {} },
+      route: null,
+      failover: null,
     },
     gates: {
       definitions: [],
@@ -163,7 +166,7 @@ function cloneWorkProviderSelection(input: WorkProviderSelection): WorkProviderS
 
 function cloneReviewModelTierMap(tierMap: ReviewModelsPolicy['review'] | undefined): ReviewModelsPolicy['review'] {
   const cloned: ReviewModelsPolicy['review'] = {};
-  for (const host of ['codex', 'claude-code', 'opencode'] as const) {
+  for (const host of ['codex', 'claude-code', 'opencode', 'grok'] as const) {
     const binding = tierMap?.[host];
     if (binding) cloned[host] = { ...binding };
   }
@@ -242,6 +245,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
           match: [...lane.match],
           prompt: [...lane.prompt],
           tools: [...lane.tools],
+          route: lane.route ? { ...lane.route } : null,
         })),
         agents: [...input.policy.reviews.agents],
         localAgents: [...input.policy.reviews.localAgents],
@@ -252,6 +256,8 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
             synthesis: cloneReviewModelTierMap(input.policy.reviews.models.synthesis),
           },
         } : {}),
+        route: input.policy.reviews.route ? { ...input.policy.reviews.route } : null,
+        failover: input.policy.reviews.failover ? { faults: input.policy.reviews.failover.faults, route: { ...input.policy.reviews.failover.route } } : null,
       },
       gates: {
         definitions: input.policy.gates.definitions.map(cloneGate),
@@ -336,10 +342,12 @@ export function configFromFile(input: ConfigFileShape): Config {
         match: [...lane.match],
         prompt: [...lane.prompt],
         tools: [...lane.tools],
+        route: lane.route ? { ...lane.route } : null,
       })),
       reviewers: [...policy.reviews.agents],
       localReviewers: [...policy.reviews.localAgents],
       waitMinutes: policy.reviews.waitMinutes,
+      concurrency: policy.reviews.concurrency,
       requestText: policy.reviews.requestText,
       carryForwardPublish: policy.reviews.carryForwardPublish,
       models: {
@@ -347,6 +355,8 @@ export function configFromFile(input: ConfigFileShape): Config {
         economy: { ...policy.reviews.models.economy },
         synthesis: { ...policy.reviews.models.synthesis },
       },
+      route: policy.reviews.route ? { ...policy.reviews.route } : null,
+      failover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
     },
     gates: { definitions: policyGateDefinitions(policy.gates) },
     audit: {
@@ -406,6 +416,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     })),
     localReviewAgents: [...policy.reviews.localAgents],
     reviewWaitMinutes: policy.reviews.waitMinutes,
+    reviewConcurrency: policy.reviews.concurrency,
     reviewRequestText: policy.reviews.requestText,
     reviewCarryForwardPublish: policy.reviews.carryForwardPublish,
     reviewModels: {
@@ -413,6 +424,8 @@ export function configFromFile(input: ConfigFileShape): Config {
       economy: { ...policy.reviews.models.economy },
       synthesis: { ...policy.reviews.models.synthesis },
     },
+    reviewRoute: policy.reviews.route ? { ...policy.reviews.route } : null,
+    reviewFailover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,
     manualUiAudit: policy.audit.manualUiAudit,
     uiAuditAppLaunch: policy.audit.appLaunch,

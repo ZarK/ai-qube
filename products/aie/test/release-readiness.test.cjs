@@ -4,22 +4,14 @@ const { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = requ
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
 const { runInit } = require('../dist/init/index.js');
 const { buildMigrationPlan, runMigration } = require('../dist/migrate/index.js');
 const { buildMigrationReadinessDiagnostics } = require('../dist/migration_diagnostics.js');
 
 function makeGitRepo(prefix) {
-  const repo = mkdtempSync(join(tmpdir(), prefix));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'executor@example.invalid'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'Executor Test'], { cwd: repo, stdio: 'ignore' });
-  writeFileSync(join(repo, 'README.md'), 'fixture\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
-  return repo;
+  return cloneGitRepo('committed', prefix);
 }
 
 function writeLegacyFixture(repo) {

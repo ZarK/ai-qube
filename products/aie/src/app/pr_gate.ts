@@ -5,7 +5,7 @@ import { promisify } from 'node:util';
 import type { Config } from '../config/index.js';
 import { buildImplementerSelfCheck, formatImplementerSelfCheck, type ImplementerSelfCheck } from './implementer_self_check.js';
 import { riskCardIssueTextFromIssue, summarizeIssueChecklist, type IssueChecklistSummary } from './issue_checklist.js';
-import { getIssue } from '../providers/github_adapter_exports.js';
+import { getIssue, loadPullRequestBody, type GhExec } from '../providers/github_adapter_exports.js';
 import { configToExecutorPolicy, prThreadContextMode } from '../config_policy.js';
 import type { Action, ActionPlan, ActionResult } from '../core/action_plan.js';
 import {
@@ -20,8 +20,12 @@ import {
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
-import { runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
+import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
+import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
+import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
+import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
+import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
@@ -132,6 +136,13 @@ export interface PrGateCheckDiagnostic {
   nextAction: string;
 }
 
+export interface PrGateShipReady {
+  ready: boolean;
+  advisoryCount: number;
+  reasons: string[];
+  nextAction: string;
+}
+
 export interface PrGateResult {
   ok: true;
   command: 'pr gate';
@@ -140,6 +151,7 @@ export interface PrGateResult {
   waitMinutes: number;
   waited: boolean;
   status: PrGateStatus;
+  shipReady: PrGateShipReady;
   reviewers: PrGateReviewer[];
   actions: PrGateAction[];
   feedback: PrGateFeedback[];
@@ -177,6 +189,10 @@ export interface PrGateOptions {
   exec?: PrGateExec;
   sleep?: (milliseconds: number) => Promise<void>;
   onBeforeMutate?: (message: string) => void | Promise<void>;
+  modelRouteProcess?: ModelRouteProcess;
+  resolveModelHost?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
+  resolveModelHead?: (repoRoot: string) => Promise<string>;
+  routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
 }
 
 function getString(action: Action, key: string): string | null {
@@ -425,7 +441,7 @@ function nextAction(status: PrGateStatus, reviewers: PrGateReviewer[], dryRun: b
   }
   if (status === 'rerun-required') return 'PR head changed after a review request. Rerun `aie pr gate` for the current head, then address new feedback.';
   if (participantRollup?.pendingSummary && status !== 'complete') {
-    const feedbackAction = hasActionableFeedback(feedback) ? ' Address provider-visible review feedback on the pull request, rerun affected gates, push follow-up commits, and rerun `aie pr gate` after material changes.' : '';
+    const feedbackAction = hasActionableFeedback(feedback) ? ' Address provider-visible review feedback: read the aggregated cross-lane batch with `aie pr batch <pr>`, apply all blocking fixes in one commit, push, and rerun `aie pr gate` for one re-review round.' : '';
     return `${participantRollup.pendingSummary}${feedbackAction}`;
   }
   if (status === 'inconclusive') return localReview.nextAction;
@@ -685,7 +701,7 @@ function bounded(value: string, maxCharacters = 600): string {
   return normalized.length > maxCharacters ? `${normalized.slice(0, maxCharacters)}...` : normalized;
 }
 
-async function changedReviewPaths(config: Config, repoRoot: string): Promise<string[]> {
+export async function changedReviewPaths(config: Config, repoRoot: string): Promise<string[]> {
   const baseRef = `${config.baseRemote}/${config.baseBranch}`;
   return uniqueStrings([
     ...(await gitPathLines(repoRoot, ['diff', '--name-only', `${baseRef}...HEAD`])),
@@ -745,6 +761,10 @@ function localReviewContextCacheKey(snapshot: Pick<ReviewForgeSnapshot, 'pr'>): 
   return `${snapshot.pr.number}:${snapshot.pr.headRefOid}`;
 }
 
+async function loadPrBodyText(prNumber: number, repoRoot: string, exec: PrGateExec | undefined): Promise<string | undefined> {
+  return loadPullRequestBody(prNumber, { cwd: repoRoot, exec: exec as GhExec | undefined });
+}
+
 async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
   const key = localReviewContextCacheKey(snapshot);
   const cached = cache.get(key);
@@ -764,6 +784,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const localRequired = localReviewRequired(config);
   const localShadow = localReviewShadow(config);
   const activeFocuses = activeLocalReviewFocusesForConfig(config, changedPaths);
+  const routedFocuses = activeFocuses.filter(lane => resolveModelReviewPlan(config, lane) !== null);
+  const deferProviderMutation = !dryRun && routedFocuses.length > 0;
   const hostReviewLanes = localRequired ? activeFocuses : [];
   const remoteReviewAgentAdapters = await listReviewAgentAdapters(config.providers.review.kind, config.reviewAgents);
   const firstSnapshot = await provider.loadPullRequestReview(options.prNumber);
@@ -775,7 +797,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   let finalSnapshot = firstSnapshot;
   let waited = false;
 
-  if (!dryRun) {
+  if (!dryRun && !deferProviderMutation) {
     await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
     actions = await applyReviewPlan(provider, firstPlan);
     const waitStatus = policy.reviews.waitMinutes > 0 && hasReviewerRequest(actions, 'completed') ? 'planned' : 'skipped';
@@ -788,8 +810,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       actions.push(plannedWait);
     }
     finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
-  } else {
+  } else if (dryRun) {
     actions.push(waitAction(policy.reviews.waitMinutes, policy.reviews.waitMinutes > 0 && hasReviewerRequest(actions, 'planned') ? 'planned' : 'skipped'));
+  } else {
+    actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
   }
 
   const initialFeedback = prFeedback(finalSnapshot.item);
@@ -799,6 +823,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const issueChecklists = loadedChecklists.summaries;
   const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
   const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
+  const gateProfile = localShadow ? 'local-shadow' as const : localRequired && config.reviewProfile === 'remote-compatible' ? 'local-standard' as const : config.reviewProfile;
+  const providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
+    ? readTrustedProviderLanes(finalSnapshot.item.trustedMetadata.trustedLaneReviews, {
+        headSha: finalSnapshot.pr.headRefOid,
+        prNumber: options.prNumber,
+        profile: gateProfile,
+        requiredLanes: activeFocuses,
+        issueNumbers: finalSnapshot.closingIssueNumbers,
+      })
+    : undefined;
   const localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -812,10 +846,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     includePrompts: options.includeLocalReviewPrompts === true,
     changedPaths,
     riskCardIssueText,
+    modelRouteProcess: options.modelRouteProcess,
+    resolveModelHost: options.resolveModelHost,
+    resolveModelHead: options.resolveModelHead,
+    routeProbe: options.routeProbe,
+    providerLaneReuse,
   });
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
     contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
   };
   const localReview = readLocalReviewGate({
     repoRoot,
@@ -831,13 +871,63 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     activeFocuses,
     providerFirst: config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed',
     carryForwardScope,
+    providerLaneReuse,
   });
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
-  const localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
+  const publishUnavailable: string[] = [];
+  let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
+  if (deferProviderMutation) {
+    const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
+    const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
+    // Reused lanes (local current-head evidence or trusted provider records) are already
+    // provider-visible; publishing again would duplicate the audit trail.
+    const freshRoutedLaneKeys = new Set(localReviewRunner.lanes.filter(lane => lane.route !== null && lane.evidenceSource === 'fresh-run' && lane.status === 'completed').map(lane => `${lane.issueNumber} ${lane.lane}`));
+    if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status !== 'passed') {
+      localReviewPublish = pendingLocalReviewPublish('Routed review publishing was withheld because the complete current-head lane batch did not validate; no provider mutation was performed.');
+    } else if (freshRoutedLaneKeys.size === 0) {
+      // Lane reviews are already provider-visible; only the idempotent review-request
+      // marker may still be missing, so apply the plan without republishing lanes.
+      await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
+      actions = await applyReviewPlan(provider, firstPlan);
+      actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
+      localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' };
+      finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+    } else {
+      const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
+      if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
+        publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the complete routed lane batch.`);
+        localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no provider mutation was performed.');
+      } else {
+        await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
+        if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
+          publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
+          localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no provider mutation was performed.');
+        } else {
+          actions = await applyReviewPlan(provider, firstPlan);
+          actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
+          const publishedUrls: string[] = [];
+          for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
+            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
+              try {
+                if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
+                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
+                if (published.publish.url) publishedUrls.push(published.publish.url);
+              } catch (error: unknown) {
+                publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+              }
+            }
+          }
+          localReviewPublish = publishUnavailable.length > 0
+            ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
+            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${freshRoutedLaneKeys.size} routed current-head lane review(s) from the QUBE orchestrator.` };
+          finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+        }
+      }
+    }
+  }
   const reviewPublisher = provider.describeReviewPublisher
     ? await provider.describeReviewPublisher(finalSnapshot.pr.authorLogin ?? null, { mint: false })
     : null;
-  const publishUnavailable: string[] = [];
   const publishedCarriedLanes: string[] = [];
   if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
@@ -872,6 +962,33 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  const selfCheck = dryRun
+    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: await loadPrBodyText(options.prNumber, repoRoot, options.exec), repoRoot })
+    : null;
+  // Dedupe by lane + finding identity so multi-issue evidence does not inflate the count.
+  const advisoryCount = new Set(localReview.evidence.flatMap(evidence => evidence.lanes.flatMap(lane => lane.findings.filter(finding => finding.severity === 'advisory').map(finding => `${lane.id} ${finding.id} ${finding.message}`)))).size;
+  const shipReadyReasons: string[] = [];
+  if (status !== 'complete') shipReadyReasons.push(`PR gate status is ${status}, not complete.`);
+  if (hasIncompleteChecks(finalSnapshot.item)) shipReadyReasons.push('One or more required checks are incomplete at the current head.');
+  if ((localRequired || localShadow) && localReview.status !== 'passed') shipReadyReasons.push(`Local review gate is ${localReview.status}, not passed, at the current head.`);
+  for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
+  if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);
+  if (localReviewPublish.status === 'failed' || localReviewPublish.status === 'pending') shipReadyReasons.push(`Local review publishing is ${localReviewPublish.status}; provider-visible lane state is incomplete.`);
+  // shipReady is the authoritative merge-readiness contract; its nextAction and the
+  // top-level nextAction always agree so automation cannot read two different plans.
+  const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
+  const shipReady: PrGateShipReady = {
+    ready: shipReadyReasons.length === 0,
+    advisoryCount,
+    reasons: shipReadyReasons,
+    nextAction: shipReadyReasons.length > 0
+      ? legacyNextAction
+      : advisoryCount > 0
+        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
+        : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
+          ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
+          : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
+  };
   return {
     ok: true,
     command: 'pr gate',
@@ -880,13 +997,14 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     waitMinutes: policy.reviews.waitMinutes,
     waited,
     status,
+    shipReady,
     reviewers,
     actions,
     feedback,
     mergeBlockers,
     conversations,
     checkDiagnostics,
-    selfCheck: dryRun ? buildImplementerSelfCheck({ config, changedPaths }) : null,
+    selfCheck,
     localReviewRunner,
     localReview,
     fixBatch,
@@ -906,7 +1024,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       unresolvedThreads: finalSnapshot.unresolvedThreadsCount,
     },
     warnings: warnings(finalSnapshot.item, reviewers),
-    nextAction: nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup),
+    nextAction: shipReady.nextAction,
   };
 }
 
@@ -914,6 +1032,8 @@ export function formatPrGate(result: PrGateResult): string {
   const lines = [`PR review gate for #${result.pr.number}: ${result.status}.`];
   lines.push(`Pull request: ${result.pr.title} (${result.pr.url})`);
   lines.push(`Head: ${result.pr.headSha}`);
+  lines.push(`Ship readiness: ${result.shipReady.ready ? 'ready' : 'not ready'}; residual advisories=${result.shipReady.advisoryCount}.`);
+  for (const reason of result.shipReady.reasons) lines.push(`- not ready: ${reason}`);
   lines.push(`Review decision: ${result.pr.reviewDecision}; merge state: ${result.pr.mergeState}; mergeability: ${result.pr.mergeability}.`);
   lines.push(`Wait: ${result.waitMinutes} minute${result.waitMinutes === 1 ? '' : 's'}${result.dryRun ? ' planned only' : result.waited ? ' completed' : ' not run'}.`);
   lines.push('Reviewers:');
@@ -932,14 +1052,21 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
   for (const lane of result.localReviewRunner.lanes) {
-    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; evidence=${lane.evidencePath}`);
+    lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; source=${lane.evidenceSource ?? 'none'}; evidence=${lane.evidencePath}`);
   }
   if (result.selfCheck) {
     lines.push(...formatImplementerSelfCheck(result.selfCheck));
   }
   lines.push(`Local review evidence: ${result.localReview.mode}; profile=${result.localReview.profile}; status=${result.localReview.required || result.localReview.mode === 'shadow' ? result.localReview.status : 'not required'}; lanes=${result.localReview.requiredLanes.join(', ')}.`);
   if (result.localReview.required || result.localReview.mode === 'shadow') {
-    for (const evidence of result.localReview.evidence) lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+    for (const evidence of result.localReview.evidence) {
+      lines.push(`- issue #${evidence.issueNumber ?? 'unknown'}: ${evidence.status}; ${evidence.summary}${evidence.path ? ` (${evidence.path})` : ''}`);
+      for (const lane of evidence.lanes) lines.push(`  - ${lane.id}: ${lane.status}; origin=${lane.origin ?? 'local'}`);
+    }
+  }
+  if (result.localReview.providerReuse && (result.localReview.providerReuse.accepted.length > 0 || result.localReview.providerReuse.rejected.length > 0)) {
+    lines.push(`Trusted provider lane reuse: ${result.localReview.providerReuse.summary}`);
+    for (const rejection of result.localReview.providerReuse.rejected) lines.push(`- rejected ${rejection.lane}: ${rejection.reason}`);
   }
   lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
   if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);

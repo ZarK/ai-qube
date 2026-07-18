@@ -47,8 +47,21 @@ export type ReviewSeverityThreshold = 'low' | 'medium' | 'high' | 'critical';
 export type ReviewLaneRequiredMode = 'always' | 'when-matched' | 'optional' | 'shadow';
 export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
 export type ReviewModelTierId = 'review' | 'economy' | 'synthesis';
-export type ReviewModelHostId = 'codex' | 'claude-code' | 'opencode';
+export type ReviewModelHostId = 'codex' | 'claude-code' | 'opencode' | 'grok';
 export type ReviewModelEffort = 'low' | 'medium' | 'high';
+export type RoutedReviewHostId = 'codex' | 'grok';
+
+export interface ReviewRoutePolicy {
+  host: RoutedReviewHostId;
+  tier: ReviewModelTierId;
+  timeoutSeconds: number;
+  maxTurns: number;
+}
+
+export interface ReviewFailoverPolicy {
+  faults: number;
+  route: ReviewRoutePolicy;
+}
 
 export interface ReviewModelBinding {
   model: string;
@@ -94,6 +107,8 @@ export interface ReviewLanePolicy {
   runner: 'github-comment' | 'github-reviewer' | 'local-command' | 'local-host' | 'manual-evidence';
   command?: string;
   rereview: ReviewLaneRereviewMode;
+  route: ReviewRoutePolicy | null;
+  carryForwardContext: 'all' | 'config' | 'scope';
 }
 
 export interface ReviewPolicy {
@@ -106,9 +121,12 @@ export interface ReviewPolicy {
   reviewers: string[];
   localReviewers: string[];
   waitMinutes: number;
+  concurrency: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
   models: ReviewModelsPolicy;
+  route: ReviewRoutePolicy | null;
+  failover: ReviewFailoverPolicy | null;
 }
 
 export interface GatePolicy {
@@ -178,6 +196,13 @@ function nonNegativeNumber(value: number, field: string): number {
   return value;
 }
 
+function boundedInteger(value: number, field: string, minimum: number, maximum: number): number {
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new Error(`normalize executor policy failed: ${field} must be an integer between ${minimum} and ${maximum}.`);
+  }
+  return value;
+}
+
 export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
   const packageAgeDays = nonNegativeNumber(input.supplyChain.packageAgeDays, 'supplyChain.packageAgeDays');
   const highRiskPackageAgeDays = nonNegativeNumber(input.supplyChain.highRiskPackageAgeDays, 'supplyChain.highRiskPackageAgeDays');
@@ -238,10 +263,12 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
         prompt: uniqueStrings(lane.prompt, 'reviews.lanes.prompt'),
         tools: uniqueStrings(lane.tools, 'reviews.lanes.tools'),
         command: lane.command?.trim() ? lane.command.trim() : undefined,
+        route: lane.route ? { ...lane.route } : null,
       })),
       reviewers: uniqueStrings(input.reviews.reviewers, 'reviews.reviewers'),
       localReviewers: uniqueStrings(input.reviews.localReviewers, 'reviews.localReviewers'),
       waitMinutes: nonNegativeNumber(input.reviews.waitMinutes, 'reviews.waitMinutes'),
+      concurrency: boundedInteger(input.reviews.concurrency ?? 3, 'reviews.concurrency', 1, 8),
       requestText: input.reviews.requestText,
       carryForwardPublish: input.reviews.carryForwardPublish,
       models: {
@@ -249,6 +276,10 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
         economy: { ...(input.reviews.models?.economy ?? {}) },
         synthesis: { ...(input.reviews.models?.synthesis ?? {}) },
       },
+      route: input.reviews.route ? { ...input.reviews.route } : null,
+      failover: input.reviews.failover
+        ? { faults: boundedInteger(input.reviews.failover.faults, 'reviews.failover.faults', 1, 5), route: { ...input.reviews.failover.route } }
+        : null,
     },
     gates: { definitions: input.gates.definitions.map((definition) => ({ ...definition, key: nonEmpty(definition.key, 'gate.key'), name: nonEmpty(definition.name, 'gate.name') })) },
     audit: { ...input.audit },

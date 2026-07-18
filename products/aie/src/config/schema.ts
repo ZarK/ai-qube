@@ -1,6 +1,7 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
+import { defaultCarryForwardContext } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
-import type { MigrationPolicy, ReviewContextSources, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -280,12 +281,17 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
       return;
     }
+    const runner = readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors);
+    const command = readOptionalNonEmptyString(entry, 'command', `${lanePath}.command`, errors);
+    const route = readReviewRoute(entry.route, `${lanePath}.route`, errors);
+    if (route && runner !== 'local-host') errors.push({ kind: 'invalid', path: `${lanePath}.route`, message: `${lanePath}.route requires runner "local-host"` });
+    if (route && command) errors.push({ kind: 'invalid', path: `${lanePath}.route`, message: `${lanePath}.route cannot be combined with command; routed hosts use fixed QUBE invocation adapters` });
     lanes.push({
       id,
       required: readReviewRequiredMode(entry.required, 'when-matched', `${lanePath}.required`, errors),
@@ -293,12 +299,55 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       severityThreshold: readReviewSeverity(entry.severityThreshold, 'high', `${lanePath}.severityThreshold`, errors),
       prompt: readStringArray(entry, 'prompt', [], lanePath, errors),
       tools: readStringArray(entry, 'tools', [], lanePath, errors),
-      runner: readReviewRunner(entry.runner, 'manual-evidence', `${lanePath}.runner`, errors),
-      command: readOptionalNonEmptyString(entry, 'command', `${lanePath}.command`, errors),
+      runner,
+      command,
       rereview: readReviewRereviewMode(entry.rereview, defaultRereviewMode(id), `${lanePath}.rereview`, errors),
+      route,
+      carryForwardContext: readCarryForwardContext(entry.carryForwardContext, defaultCarryForwardContext(id), `${lanePath}.carryForwardContext`, errors),
     });
   });
   return lanes;
+}
+
+function readReviewRoute(value: unknown, path: string, errors: ValidationError[]): ReviewRoutePolicy | null {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be null or an object with host, tier, timeoutSeconds, and maxTurns` });
+    return null;
+  }
+  rejectUnknownKeys(value, ['host', 'tier', 'timeoutSeconds', 'maxTurns'], path, errors);
+  const host = value.host === 'codex' || value.host === 'grok' ? value.host : null;
+  if (!host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be "codex" or "grok"` });
+  const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
+  if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
+  const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
+  // Fewer than four turns cannot satisfy the routed prompt contract of batched
+  // multi-area inspection with the final turn reserved for the JSON result.
+  const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 4, 20, path, errors);
+  return host && tier ? { host, tier, timeoutSeconds, maxTurns } : null;
+}
+
+function readReviewFailover(value: unknown, path: string, errors: ValidationError[]): ReviewFailoverPolicy | null {
+  if (value === undefined || value === null) return null;
+  if (!isPlainObject(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be null or an object with faults and route` });
+    return null;
+  }
+  rejectUnknownKeys(value, ['faults', 'route'], path, errors);
+  const faults = readBoundedInteger(value, 'faults', 2, 1, 5, path, errors);
+  const route = readReviewRoute(value.route, `${path}.route`, errors);
+  if (!route) {
+    errors.push({ kind: 'invalid', path: `${path}.route`, message: `${path}.route must name a fallback host route` });
+    return null;
+  }
+  return { faults, route };
+}
+
+function readCarryForwardContext(value: unknown, defaultValue: ReviewLanePolicy['carryForwardContext'], path: string, errors: ValidationError[]): ReviewLanePolicy['carryForwardContext'] {
+  if (value === undefined) return defaultValue;
+  if (value === 'all' || value === 'config' || value === 'scope') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "all", "config", or "scope"` });
+  return defaultValue;
 }
 
 export function defaultRereviewMode(laneId: string): ReviewLaneRereviewMode {
@@ -837,7 +886,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'requestText', 'carryForwardPublish', 'models'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'models', 'route', 'failover'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -848,9 +897,12 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     agents: readStringArray(value, 'agents', defaultValue.agents, 'policy.reviews', errors),
     localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),
+    concurrency: readBoundedInteger(value, 'concurrency', defaultValue.concurrency, 1, 8, 'policy.reviews', errors),
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
     carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
     models: readReviewModels(value.models, 'policy.reviews.models', errors),
+    route: readReviewRoute(value.route, 'policy.reviews.route', errors),
+    failover: readReviewFailover(value.failover, 'policy.reviews.failover', errors),
   };
 }
 
@@ -867,9 +919,9 @@ function readReviewModelTierMap(value: unknown, path: string, errors: Validation
     errors.push({ kind: 'invalid', path, message: `${path} must be an object mapping hosts to model bindings` });
     return {};
   }
-  rejectUnknownKeys(value, ['codex', 'claude-code', 'opencode'], path, errors);
+  rejectUnknownKeys(value, ['codex', 'claude-code', 'opencode', 'grok'], path, errors);
   const tierMap: ReviewModelsPolicy['review'] = {};
-  for (const host of ['codex', 'claude-code', 'opencode'] as const) {
+  for (const host of ['codex', 'claude-code', 'opencode', 'grok'] as const) {
     const binding = value[host];
     if (binding === undefined) continue;
     if (!isPlainObject(binding)) {

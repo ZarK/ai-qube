@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -10,16 +11,8 @@ const { buildInitPlan, runInit } = require('../dist/init/index.js');
 const { configToFileShape, getDefaults } = require('../dist/config/index.js');
 
 function makeGitRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'aie-init-'));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.email', 'executor@example.invalid'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['config', 'user.name', 'Executor Test'], { cwd: repo, stdio: 'ignore' });
+  const repo = cloneGitRepo('committed', 'aie-init-');
   mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
-  writeFileSync(join(repo, 'README.md'), 'fixture\n');
-  execFileSync('git', ['add', 'README.md'], { cwd: repo, stdio: 'ignore' });
-  execFileSync('git', ['commit', '-m', 'fixture'], { cwd: repo, stdio: 'ignore' });
-  const head = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
-  execFileSync('git', ['update-ref', 'refs/remotes/origin/main', head], { cwd: repo, stdio: 'ignore' });
   return repo;
 }
 
@@ -303,6 +296,36 @@ describe('init service', () => {
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /model = "gpt-5\.5-codex"/);
     assert.match(agent, /model_reasoning_effort = "high"/);
+  });
+
+  it('renders routed review workflow instructions instead of native subagent steps', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const reviewAgent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
+    assert.match(agents, /Configured routed local review executes through/);
+    assert.match(agents, /complete lane batch in fresh read-only model sessions/);
+    assert.match(agents, /Do not spawn native review subagents for routed lanes/);
+    assert.match(agents, /convert residual advisory findings to follow-up issues with .*pr triage <pr>/);
+    assert.match(agents, /read the aggregated batch with .*pr batch <pr>/);
+    assert.match(agents, /apply all blocking fixes in one commit, then run one re-review round/);
+    assert.match(agents, /instead of committing advisory-only fixes to the approved head/);
+    assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
+    assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
+    assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
+    assert.doesNotMatch(agents, /paste each lane `spawnPrompt`/i);
+    assert.doesNotMatch(reviewAgent, /model = /);
   });
 
   it('renders review-focus agents with tier models and effort for Claude Code and OpenCode hosts', async () => {

@@ -314,6 +314,8 @@ describe('core policy model', () => {
     };
 
     assert.throws(() => normalizeExecutorPolicy(policy), /reviews.waitMinutes must be a finite non-negative number/);
+    assert.throws(() => normalizeExecutorPolicy({ ...policy, reviews: { ...policy.reviews, waitMinutes: 0, concurrency: 0 } }), /reviews.concurrency must be an integer between 1 and 8/);
+    assert.throws(() => normalizeExecutorPolicy({ ...policy, reviews: { ...policy.reviews, waitMinutes: 0, concurrency: 9 } }), /reviews.concurrency must be an integer between 1 and 8/);
     assert.throws(() => normalizeExecutorPolicy({ ...policy, reviews: { ...policy.reviews, waitMinutes: 0 }, supplyChain: { ...policy.supplyChain, packageAgeDays: Number.POSITIVE_INFINITY } }), /supplyChain.packageAgeDays must be a finite non-negative number/);
     assert.throws(
       () => normalizeExecutorPolicy({ ...policy, reviews: { ...policy.reviews, waitMinutes: 0 }, supplyChain: { ...policy.supplyChain, packageAgeDays: 14, highRiskPackageAgeDays: 7 } }),
