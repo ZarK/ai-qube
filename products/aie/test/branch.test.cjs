@@ -31,14 +31,38 @@ function success(args, stdout = '') {
   return { args, exitCode: 0, stdout, stderr: '' };
 }
 
-function makeExec(number, title = 'Add branch command') {
+function makeExec(number, title = 'Add branch command', labels = [{ name: 'S-Ready' }]) {
   return async args => {
     const key = args.join(' ');
     if (key === `issue view ${number} --json number,title,state,labels,body,milestone,url`) {
-      return success(args, JSON.stringify(issue(number, title)));
+      return success(args, JSON.stringify({ ...issue(number, title), labels }));
     }
     return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${key}` };
   };
+}
+
+function headRevision(repo, ref = 'HEAD') {
+  return execFileSync('git', ['rev-parse', ref], { cwd: repo, encoding: 'utf8' }).trim();
+}
+
+function addBareOriginRemote(repo) {
+  const bare = mkdtempSync(join(tmpdir(), 'aie-branch-remote-'));
+  execFileSync('git', ['init', '--bare', '-b', 'main'], { cwd: bare, stdio: 'ignore' });
+  execFileSync('git', ['remote', 'add', 'origin', bare], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['push', 'origin', 'main'], { cwd: repo, stdio: 'ignore' });
+  return bare;
+}
+
+function pushRemoteIssueBranch(repo, branchName, fileName, content) {
+  execFileSync('git', ['switch', '-c', branchName], { cwd: repo, stdio: 'ignore' });
+  writeFileSync(join(repo, fileName), content);
+  execFileSync('git', ['add', fileName], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['commit', '-m', `remote fixture ${fileName}`], { cwd: repo, stdio: 'ignore' });
+  const revision = headRevision(repo);
+  execFileSync('git', ['push', 'origin', branchName], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['switch', 'main'], { cwd: repo, stdio: 'ignore' });
+  execFileSync('git', ['branch', '-D', branchName], { cwd: repo, stdio: 'ignore' });
+  return revision;
 }
 
 function makeGit(calls = []) {
@@ -242,6 +266,117 @@ describe('branch service', () => {
     assert.equal(current, 'issue/93-add-branch-command');
     assert.deepEqual(calls.find(args => args[0] === 'switch'), ['switch', '-c', 'issue/93-add-branch-command', 'main']);
     assert.equal(calls.some(args => args.includes('reset') || args.includes('clean') || args.includes('-D') || args.includes('--force')), false);
+  });
+
+  it('recovers a remote-only issue branch as a local tracking branch at the remote head', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+    const baseRevision = headRevision(repo);
+    addBareOriginRemote(repo);
+    const remoteRevision = pushRemoteIssueBranch(repo, 'issue/93-add-branch-command', 'remote-work.md', 'existing implementation\n');
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.branch.remoteBranch.exists, true);
+    assert.equal(result.branch.remoteBranch.revision, remoteRevision);
+    assert.equal(current, 'issue/93-add-branch-command');
+    // The branch lands on the remote implementation head, never on the base.
+    assert.equal(headRevision(repo), remoteRevision);
+    assert.notEqual(headRevision(repo), baseRevision);
+    const upstream = execFileSync('git', ['rev-parse', '--abbrev-ref', 'issue/93-add-branch-command@{upstream}'], { cwd: repo, encoding: 'utf8' }).trim();
+    assert.equal(upstream, 'origin/issue/93-add-branch-command');
+    assert.ok(calls.some(args => args[0] === 'switch' && args.includes('--track')));
+    assert.equal(calls.some(args => args[0] === 'switch' && args.includes('main')), false);
+  });
+
+  it('recovers a remote branch found by live lookup when the tracking ref is absent', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+    addBareOriginRemote(repo);
+    const remoteRevision = pushRemoteIssueBranch(repo, 'issue/93-add-branch-command', 'remote-work.md', 'existing implementation\n');
+    // A clean-machine continuation has no remote-tracking ref yet.
+    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/issue/93-add-branch-command'], { cwd: repo, stdio: 'ignore' });
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.branch.remoteBranch.trackingRefPresent, false);
+    assert.equal(result.branch.remoteBranch.revision, remoteRevision);
+    assert.equal(current, 'issue/93-add-branch-command');
+    assert.equal(headRevision(repo), remoteRevision);
+    assert.ok(calls.some(args => args[0] === 'ls-remote'));
+    assert.ok(calls.some(args => args[0] === 'fetch' && args.includes('issue/93-add-branch-command')));
+  });
+
+  it('stops with both revisions when local and remote issue branches diverge', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+    addBareOriginRemote(repo);
+    const remoteRevision = pushRemoteIssueBranch(repo, 'issue/93-add-branch-command', 'remote-work.md', 'remote divergence\n');
+    execFileSync('git', ['switch', '-c', 'issue/93-add-branch-command', 'main'], { cwd: repo, stdio: 'ignore' });
+    writeFileSync(join(repo, 'local-work.md'), 'local divergence\n');
+    execFileSync('git', ['add', 'local-work.md'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'local divergence'], { cwd: repo, stdio: 'ignore' });
+    const localRevision = headRevision(repo);
+    execFileSync('git', ['switch', 'main'], { cwd: repo, stdio: 'ignore' });
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, false);
+    assert.equal(result.branch.remoteBranch.relation, 'diverged');
+    assert.ok(result.errors.some(error => error.includes(localRevision) && error.includes(remoteRevision)));
+    assert.ok(result.errors.some(error => /merge or rebase/.test(error) && /do not recreate the branch or force-push/.test(error)));
+    assert.equal(current, 'main', 'a diverged branch pair must not mutate the checkout');
+    assert.equal(calls.some(args => args[0] === 'switch' || args[0] === 'fetch'), false);
+  });
+
+  it('fails closed when the remote lookup is unavailable for an in-progress issue', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93, 'Add branch command', [{ name: 'S-InProgress' }]), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, false);
+    assert.equal(result.branch.remoteBranch.exists, null);
+    assert.ok(result.errors.some(error => /in progress/.test(error) && /parallel branch/.test(error)));
+    assert.equal(current, 'main');
+    assert.equal(calls.some(args => args[0] === 'switch'), false);
+  });
+
+  it('creates from base with a warning when the remote lookup is unavailable for a ready issue', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.branch.remoteBranch.exists, null);
+    assert.equal(current, 'issue/93-add-branch-command');
+    const warnings = result.plan.actions.flatMap(action => Array.isArray(action.details.warnings) ? action.details.warnings : []);
+    assert.ok(warnings.some(warning => /could not be queried/.test(warning)));
+    assert.deepEqual(calls.find(args => args[0] === 'switch'), ['switch', '-c', 'issue/93-add-branch-command', 'main']);
+  });
+
+  it('follows the safe create-from-base path when the remote branch is genuinely absent', async () => {
+    const repo = makeGitRepo();
+    const calls = [];
+    addBareOriginRemote(repo);
+
+    const result = await runBranchCommand({ command: 'branch create', issueNumber: 93, dryRun: false, exec: makeExec(93), git: makeGit(calls), cwd: repo });
+    const current = execFileSync('git', ['branch', '--show-current'], { cwd: repo, encoding: 'utf8' }).trim();
+
+    assert.equal(result.ok, true);
+    assert.equal(result.branch.remoteBranch.exists, false);
+    assert.equal(current, 'issue/93-add-branch-command');
+    const warnings = result.plan.actions.flatMap(action => Array.isArray(action.details.warnings) ? action.details.warnings : []);
+    assert.equal(warnings.length, 0);
+    assert.deepEqual(calls.find(args => args[0] === 'switch'), ['switch', '-c', 'issue/93-add-branch-command', 'main']);
   });
 
   it('switches to an existing issue branch without recreating it', async () => {

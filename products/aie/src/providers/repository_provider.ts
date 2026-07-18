@@ -10,6 +10,16 @@ export interface RepositoryProviderCapabilities {
   applyBranchActions: boolean;
 }
 
+export interface BranchRemoteState {
+  remote: string;
+  exists: boolean | null;
+  revision: string | null;
+  trackingRefPresent: boolean;
+  relation: 'local-only' | 'remote-only' | 'none' | 'same' | 'local-ahead' | 'local-behind' | 'diverged' | 'unknown';
+  localRevision: string | null;
+  unavailableReason: string | null;
+}
+
 export interface BranchInspection {
   branchName: string;
   currentBranch: string | null;
@@ -17,6 +27,8 @@ export interface BranchInspection {
   exists: boolean;
   validName: boolean;
   validationError: string | null;
+  itemStatus: 'in-progress' | 'ready' | 'blocked' | 'unknown';
+  remoteBranch: BranchRemoteState;
   repoState: RepoState;
 }
 
