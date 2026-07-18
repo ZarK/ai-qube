@@ -708,7 +708,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
-    if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || evidence.artifacts.length === 0) {
+    // Non-terminal results (inconclusive, pending) may honestly lack artifacts
+    // per the shared lane artifact contract; terminal verdicts must cite one.
+    const terminalResult = evidence.status === 'passed' || evidence.status === 'failed' || evidence.status === 'needs-work';
+    if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || (terminalResult && evidence.artifacts.length === 0)) {
       return { evidence: null, reasonCode: 'model-route-incomplete-evidence', error: 'Model review result omitted required completeness, contextReviewed, or artifacts evidence.' };
     }
     return { evidence, reasonCode: null, error: null };

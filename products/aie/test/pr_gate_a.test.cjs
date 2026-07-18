@@ -638,7 +638,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
         ...baseLane,
         id: 'security',
         summary: 'security reviewed',
-        artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/security.txt', sha256: 'test-hash' }],
+        artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/security.json', sha256: null }],
         promptStack: promptStackForLane('security'),
         runnerProvenance: null,
       },

@@ -186,7 +186,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       ...codeQualityLane,
       id: 'performance',
       summary: 'performance reviewed',
-      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/performance.json', sha256: null }],
       promptStack: promptStackForLane('performance'),
       runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
     });
@@ -241,7 +241,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       ...codeQualityLane,
       id: 'performance',
       summary: 'performance reviewed',
-      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/performance.json', sha256: null }],
       promptStack: promptStackForLane('performance'),
       runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
     });
@@ -380,6 +380,17 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.match(laneArtifactViolation('code-quality', 'failed', []), /empty artifacts array/);
     assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: '', path: 'x' }]), /non-empty kind and path/);
     assert.ok(LANE_ARTIFACT_REQUIREMENT.includes('at least one artifact reference'));
+    // Every documented shape rule is enforced, not just stated.
+    writeFileSync(join(repo, 'README.md'), 'fixture readme\n');
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: '../outside.ts', sha256: null }], repo), /traversal/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'C:/absolute.ts', sha256: null }], repo), /non-repository-relative/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'does-not-exist.ts', sha256: null }], repo), /does not exist/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: 'NOT-A-DIGEST' }], repo), /invalid sha256/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: 'a'.repeat(64) }], repo), /does not match the current content/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'command:git diff', sha256: null }], repo), /must use kind "command"/);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff --check', sha256: null }], repo), null);
+    const readmeDigest = createHash('sha256').update(readFileSync(join(repo, 'README.md'))).digest('hex');
+    assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: readmeDigest }], repo), null);
   });
 
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
@@ -962,7 +973,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
             severity: 'none',
             recommendation: 'approve',
             summary: `${lane} passed without runner provenance`,
-            artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${lane}.json`, sha256: 'test-hash' }],
+            artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${lane}.json`, sha256: null }],
             contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
             promptStack: [{ id: `builtin:${lane}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
           }),

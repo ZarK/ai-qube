@@ -490,11 +490,38 @@ function canonicalJson(value: unknown): string {
 // validator so the required artifact forms can never drift between them.
 export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null.';
 
-export function laneArtifactViolation(lane: string, status: string, artifacts: unknown): string | null {
+export function laneArtifactViolation(lane: string, status: string, artifacts: unknown, repoRoot?: string): string | null {
   if (!Array.isArray(artifacts)) return `${lane} artifacts must be an array.`;
   for (const entry of artifacts) {
     if (!isRecord(entry) || typeof entry.kind !== 'string' || entry.kind.trim() === '' || typeof entry.path !== 'string' || entry.path.trim() === '') {
       return `${lane} artifacts contains an entry without a non-empty kind and path.`;
+    }
+    const path = entry.path;
+    if (entry.kind === 'command') {
+      if (!path.startsWith('command:')) return `${lane} artifacts contains a command entry whose path does not begin with "command:".`;
+    } else if (path.startsWith('command:')) {
+      return `${lane} artifacts contains a "command:" path under kind ${entry.kind}; command observations must use kind "command".`;
+    } else {
+      const segments = path.replace(/\\/g, '/').split('/');
+      if (/^([a-zA-Z]:|\/|\\)/.test(path) || segments.includes('..')) {
+        return `${lane} artifacts contains a non-repository-relative or traversal path: ${path}.`;
+      }
+      if (repoRoot && !existsSync(join(repoRoot, path))) {
+        return `${lane} artifacts references a file that does not exist in the repository: ${path}.`;
+      }
+      if (entry.sha256 !== null && entry.sha256 !== undefined) {
+        if (typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+          return `${lane} artifacts contains an invalid sha256 for ${path}; use the lowercase SHA-256 digest of the file or null.`;
+        }
+        if (repoRoot) {
+          try {
+            const digest = createHash('sha256').update(readFileSync(join(repoRoot, path))).digest('hex');
+            if (digest !== entry.sha256) return `${lane} artifacts sha256 does not match the current content of ${path}.`;
+          } catch {
+            return `${lane} artifacts references a file that could not be read for digest verification: ${path}.`;
+          }
+        }
+      }
     }
   }
   const terminal = status === 'passed' || status === 'failed' || status === 'needs-work';

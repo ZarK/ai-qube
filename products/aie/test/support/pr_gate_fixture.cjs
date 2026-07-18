@@ -312,12 +312,12 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
     promptStack: [{ id: 'builtin:review-profile:local-standard', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
     recordedAt: '2026-06-22T00:00:00.000Z',
     lanes: [
-      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/task-record-compliance.json', sha256: 'test-hash' }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: promptStackForLane('task-record-compliance'), runnerProvenance: laneProvenance('task-record-compliance') },
-      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue compliance reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/issue-compliance.json', sha256: 'test-hash' }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: promptStackForLane('issue-compliance'), runnerProvenance: laneProvenance('issue-compliance') },
-      { id: 'code-quality', status: laneStatus, severity: 'none', recommendation: laneStatus === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers, artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/code-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: [], promptStack: promptStackForLane('code-quality'), runnerProvenance: laneProvenance('code-quality') },
-      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
-      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
-      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
+      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/task-record-compliance.json`, sha256: null }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: promptStackForLane('task-record-compliance'), runnerProvenance: laneProvenance('task-record-compliance') },
+      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue compliance reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/issue-compliance.json`, sha256: null }], commands: ['qube aie view 93'], surfaces: ['GitHub issue'], promptStack: promptStackForLane('issue-compliance'), runnerProvenance: laneProvenance('issue-compliance') },
+      { id: 'code-quality', status: laneStatus, severity: 'none', recommendation: laneStatus === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers, artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/code-quality.json`, sha256: null }], commands: ['pnpm test'], surfaces: [], promptStack: promptStackForLane('code-quality'), runnerProvenance: laneProvenance('code-quality') },
+      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/tests-quality.json`, sha256: null }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
+      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/manual-qa.json`, sha256: null }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
+      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/final-gate.json`, sha256: null }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
     ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, preconditions: [], ...lane })),
   };
 }
@@ -474,7 +474,7 @@ function comprehensiveEvidence({ includeContext = true } = {}) {
       recommendation: 'approve',
       summary: `${id} reviewed`,
       blockers: [],
-      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${id}.json`, sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${id}.json`, sha256: null }],
       commands: ['qube aie pr gate 12 --dry-run'],
       surfaces: ['PR'],
       contextReviewed: id === 'task-record-compliance' ? contextReviewed : [],
@@ -681,7 +681,7 @@ function fixtureLocalCommand(args) {
       recommendation: status === 'failed' ? 'request-changes' : 'approve',
       summary: status === 'failed' ? 'Fixture local review found code-quality blockers.' : `Fixture local review passed ${lane}.`,
       blockers: status === 'failed' ? ['Fix fixture code-quality finding.'] : [],
-      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/${lane}.json`, sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/${lane}.json`, sha256: null }],
       commands: ['review-fixture'],
       surfaces: ['PR'],
       contextReviewed: [

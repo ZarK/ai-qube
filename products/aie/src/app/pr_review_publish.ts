@@ -253,7 +253,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   const profile = stringField(raw, 'profile');
   if (profile === '') throw laneEvidenceFailure(path, 'profile must be a non-empty string.');
   {
-    const artifactViolation = laneArtifactViolation(lane, String(raw.status), raw.artifacts);
+    const artifactViolation = laneArtifactViolation(lane, String(raw.status), raw.artifacts, repoRoot);
     if (artifactViolation) throw laneEvidenceFailure(path, `${artifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
   }
   assertArrayField(raw, 'contextReviewed', path);
@@ -282,7 +282,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
       if (prior.raw.status !== 'passed' || readRecommendation(prior.raw.recommendation ?? prior.raw.status) !== 'approve') {
         throw laneEvidenceFailure(path, 'carried-forward evidence must reference an approved prior-head lane record.');
       }
-      const priorArtifactViolation = laneArtifactViolation(lane, String(prior.raw.status), prior.raw.artifacts);
+      const priorArtifactViolation = laneArtifactViolation(lane, String(prior.raw.status), prior.raw.artifacts, repoRoot);
       if (priorArtifactViolation) throw laneEvidenceFailure(path, `carried-forward prior-head record is incomplete: ${priorArtifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
       validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, carriedForwardHead, lane, prior.raw, path, provenance);
     } else {
