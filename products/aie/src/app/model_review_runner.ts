@@ -68,9 +68,14 @@ export interface ModelReviewRunInput {
   promptStackHash: string;
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
+  coverageAreas?: readonly string[];
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
   runProcess?: ModelRouteProcess;
+}
+
+export function expectedCoverageAreas(input: Pick<ModelReviewRunInput, 'lane' | 'coverageAreas'>): string[] {
+  return [...new Set([input.lane as string, ...(input.coverageAreas ?? [])])];
 }
 
 export interface ModelReviewRunResult {
@@ -136,9 +141,11 @@ export async function resolveModelHostExecutable(host: RoutedReviewHostId): Prom
 }
 
 function reviewResultContract(input: ModelReviewRunInput): string {
+  const areas = expectedCoverageAreas(input);
   return [
     'Return exactly one JSON object and no Markdown or commentary.',
-    `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, and preconditions.`,
+    `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, coverage, and preconditions.`,
+    `Attest coverage for exactly these areas: ${areas.join(', ')}. Each coverage entry is {"area":"...","status":"clear"|"finding"|"not-inspected"} with one entry per area. Use "finding" for every area where you report findings, "clear" only after genuinely inspecting the area's complete scope at this head, and "not-inspected" whenever you ran out of capacity — a "not-inspected" attestation makes the lane inconclusive instead of approved, and a false "clear" is a contract violation. Enumerate the complete finding set before attesting.`,
     'Every artifact must identify a real repository source, test, command result, or other inspected surface using {"kind":"...","path":"...","sha256":null}.',
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
@@ -165,8 +172,21 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
   return JSON.stringify({
     type: 'object',
     additionalProperties: false,
-    required: ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions'],
+    required: ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'coverage', 'preconditions'],
     properties: {
+      coverage: {
+        type: 'array',
+        minItems: expectedCoverageAreas(input).length,
+        items: {
+          type: 'object',
+          additionalProperties: false,
+          required: ['area', 'status'],
+          properties: {
+            area: { type: 'string', enum: expectedCoverageAreas(input) },
+            status: { type: 'string', enum: ['clear', 'finding', 'not-inspected'] },
+          },
+        },
+      },
       issueNumber: { type: 'integer', const: input.issueNumber },
       prNumber: { type: 'integer', const: input.prNumber },
       headSha: { type: 'string', const: input.headSha },
@@ -290,10 +310,31 @@ function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): b
   }
 }
 
-function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance): LaneEvidence | null {
-  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions'];
-  if (!isRecord(value) || !hasExactKeys(value, required)) return null;
+function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance: LocalReviewRunnerProvenance, mode: 'final' | 'interim' = 'final'): LaneEvidence | null {
+  // Coverage attestation is a final-result contract: schema-constrained hosts must
+  // attest the final object, while free-form interim progress snapshots may omit it.
+  const required = ['issueNumber', 'prNumber', 'headSha', 'lane', 'status', 'severity', 'recommendation', 'summary', 'blockers', 'findings', 'artifacts', 'commands', 'surfaces', 'contextReviewed', 'toolsUsed', 'completeness', 'preconditions', ...(mode === 'final' ? ['coverage'] : [])];
+  if (!isRecord(value) || !hasExactKeys(value, required, mode === 'interim' ? ['coverage'] : undefined)) return null;
   if (value.issueNumber !== input.issueNumber || value.prNumber !== input.prNumber || value.headSha !== input.headSha || value.lane !== input.lane) return null;
+  // Coverage attestation: exactly one entry per expected inspection area, and the
+  // attested states must be consistent with the reported findings.
+  const areas = expectedCoverageAreas(input);
+  let anyNotInspected = false;
+  let allClear = false;
+  if (mode === 'final' || value.coverage !== undefined) {
+    if (!Array.isArray(value.coverage)) return null;
+    const coverage = value.coverage;
+    if (!coverage.every(entry => isRecord(entry)
+      && hasExactKeys(entry, ['area', 'status'])
+      && typeof entry.area === 'string' && areas.includes(entry.area)
+      && (entry.status === 'clear' || entry.status === 'finding' || entry.status === 'not-inspected'))) return null;
+    if (mode === 'final') {
+      const attestedAreas = coverage.map(entry => (entry as { area: string }).area);
+      if (attestedAreas.length !== areas.length || new Set(attestedAreas).size !== areas.length || !areas.every(area => attestedAreas.includes(area))) return null;
+    }
+    anyNotInspected = coverage.some(entry => (entry as { status: string }).status === 'not-inspected');
+    allClear = coverage.length > 0 && coverage.every(entry => (entry as { status: string }).status === 'clear');
+  }
   if (typeof value.status !== 'string' || !STATUS_VALUES.has(value.status) || typeof value.severity !== 'string' || !SEVERITY_VALUES.has(value.severity) || typeof value.recommendation !== 'string' || !RECOMMENDATION_VALUES.has(value.recommendation)) return null;
   const expectedRecommendation = value.status === 'passed'
     ? 'approve'
@@ -340,7 +381,15 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
     && typeof item.source === 'string' && item.source.trim() !== ''
     && typeof item.trust === 'string' && CONTEXT_TRUST_VALUES.has(item.trust)
     && typeof item.freshness === 'string' && CONTEXT_FRESHNESS_VALUES.has(item.freshness))) return null;
-  const candidate = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
+  if (mode === 'final' && Array.isArray(value.findings) && value.findings.length > 0 && allClear) return null;
+  const candidate: Record<string, unknown> = { ...value, promptStack: input.promptStack, runnerProvenance: provenance };
+  delete candidate.coverage;
+  if (anyNotInspected && candidate.status === 'passed') {
+    // An unfinished inspection can never approve; fail closed to inconclusive so
+    // the gate reruns the lane instead of accepting a partial pass.
+    candidate.status = 'inconclusive';
+    candidate.recommendation = 'inconclusive';
+  }
   return normalizeExternalLane(candidate, input.lane, input.issueNumber, input.prNumber, input.headSha);
 }
 
@@ -625,7 +674,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
         try { priorResult = JSON.parse(priorText); } catch {
           return { evidence: null, reasonCode: 'model-route-malformed-json', error: 'Grok review route returned a malformed structured progress snapshot.' };
         }
-        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance);
+        const priorEvidence = strictRoutedLane(normalizeSchemaOptionals(priorResult), input, provenance, 'interim');
         if (!priorEvidence
           || priorEvidence.status !== 'pending'
           || priorEvidence.recommendation !== 'pending'

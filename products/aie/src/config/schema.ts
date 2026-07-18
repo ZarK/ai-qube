@@ -321,7 +321,9 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
   const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
   if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
   const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);
-  const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 1, 20, path, errors);
+  // Fewer than four turns cannot satisfy the routed prompt contract of batched
+  // multi-area inspection with the final turn reserved for the JSON result.
+  const maxTurns = readBoundedInteger(value, 'maxTurns', 8, 4, 20, path, errors);
   return host && tier ? { host, tier, timeoutSeconds, maxTurns } : null;
 }
 

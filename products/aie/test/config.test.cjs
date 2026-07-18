@@ -138,7 +138,7 @@ describe('config validation', () => {
       tools: [],
       runner: 'local-host',
       rereview: 'delta',
-      route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 1 },
+      route: { host: 'codex', tier: 'review', timeoutSeconds: 900, maxTurns: 8 },
     }];
 
     const result = validateConfig(input);
@@ -180,6 +180,16 @@ describe('config validation', () => {
 
     assert.equal(result.ok, false);
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.lanes[0].carryForwardContext'));
+  });
+
+  it('rejects turn budgets below the routed inspection floor', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 2 };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.maxTurns'));
   });
 
   it('rejects unsupported review route hosts and unsafe execution bounds', () => {
