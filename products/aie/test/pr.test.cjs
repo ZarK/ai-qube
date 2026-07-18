@@ -1559,6 +1559,7 @@ describe('PR gate service', () => {
       prNumber: 12,
       repoRoot: repo,
       exec: fixture.exec,
+      routeProbe: readyRouteProbe,
       resolveModelHost: async () => 'grok.exe',
       resolveModelHead: async () => 'abc123',
       modelRouteProcess: async () => {
@@ -1600,6 +1601,7 @@ describe('PR gate service', () => {
       exec: fixture.exec,
       resolveModelHost: async () => 'grok.exe',
       resolveModelHead: async () => 'abc123',
+      routeProbe: readyRouteProbe,
       modelRouteProcess: async () => { throw new Error('routed lane executed although trusted provider evidence covered the head'); },
     });
 
@@ -1778,6 +1780,7 @@ describe('PR gate service', () => {
       exec: fixture.exec,
       resolveModelHost: async () => 'grok.exe',
       resolveModelHead: async () => 'abc123',
+      routeProbe: readyRouteProbe,
       modelRouteProcess: async () => { secondRunModelCalls += 1; throw new Error('routed lane executed although current-head local evidence exists'); },
     });
 
