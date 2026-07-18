@@ -361,14 +361,39 @@ describe("github adapter contract", () => {
       body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
     });
     const exec = async args => {
-      if (args.join(" ") === "api user") return { args, exitCode: 0, stdout: JSON.stringify({ login: "actor-user" }), stderr: "" };
+      if (args.join(" ").startsWith("api user")) return { args, exitCode: 0, stdout: JSON.stringify({ login: "review-bot", type: "User" }), stderr: "" };
       if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };
       return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "head", comments: { nodes: [marker("actor-user"), marker("review-bot")], pageInfo: { hasNextPage: false } }, reviews: { nodes: [], pageInfo: { hasNextPage: false } } } } } }), stderr: "" };
     };
-    const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN", login: "review-bot" } } });
+    process.env.QUBE_REVIEW_TOKEN = "test-token-value";
+    try {
+      const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN", login: "review-bot" } } });
+
+      const history = await provider.loadLaneReviewHistory(12);
+
+      assert.deepEqual(history.trustedLaneReviews.map(record => record.author), ["review-bot"]);
+    } finally {
+      delete process.env.QUBE_REVIEW_TOKEN;
+    }
+  });
+
+  it("fails closed when the distinct publisher credential cannot verify its login", async () => {
+    const marker = login => ({
+      author: { login },
+      createdAt: "2026-01-01T00:00:00Z",
+      body: `<!-- qube-pr-review:${JSON.stringify({ version: 1, head: "head", lane: "code-quality", expectedLanes: ["code-quality"], profile: "local-focused", runId: `${login}-run`, issueNumber: 290, prNumber: 12, host: "codex", recommendation: "approve", status: "passed", summary: "review summary", inline: "review-api", bodyFindingCount: 0, blockingFindingCount: 0 })} -->`,
+    });
+    const exec = async args => {
+      if (args.join(" ") === "repo view --json nameWithOwner,url") return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: "example/qube", url: "https://example.invalid/qube" }), stderr: "" };
+      return { args, exitCode: 0, stdout: JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "head", comments: { nodes: [marker("review-bot")], pageInfo: { hasNextPage: false } }, reviews: { nodes: [], pageInfo: { hasNextPage: false } } } } } }), stderr: "" };
+    };
+    // The configured login string alone must never anchor trust: the token env
+    // is absent, so the credential cannot be exercised and no author is trusted.
+    const provider = createGitHubReviewForgeProvider({ exec, publisher: { mode: "token", token: { env: "QUBE_REVIEW_TOKEN_ABSENT", login: "review-bot" } } });
 
     const history = await provider.loadLaneReviewHistory(12);
 
-    assert.deepEqual(history.trustedLaneReviews.map(record => record.author), ["review-bot"]);
+    assert.deepEqual(history.trustedLaneReviews, []);
+    assert.match(history.unavailableReason ?? "", /identity was unavailable/);
   });
 });

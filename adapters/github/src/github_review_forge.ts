@@ -2206,12 +2206,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     if (publisher && publisher.mode !== 'user') {
       // Marker trust must anchor on a credential-verified identity; a login
       // string from configuration alone could nominate any account's markers
-      // as trusted and forge review history. Resolve the identity from the
-      // configured credential and fail closed when it cannot be verified.
+      // as trusted and forge review history. Minting exercises the configured
+      // credential to derive its real identity (cached for later loads), and
+      // an unverifiable credential fails closed to an empty author list.
       if (this.cachedPublisherLogin) return [this.cachedPublisherLogin];
       try {
-        const resolved = await resolveGitHubReviewPublisher(publisher, { cwd: this.options.cwd, exec: this.options.exec, prAuthorLogin: null, mint: false });
-        if (resolved.identity.login) {
+        const resolved = await resolveGitHubReviewPublisher(publisher, { cwd: this.options.cwd, exec: this.options.exec, prAuthorLogin: null, mint: true });
+        if (resolved.identity.credentialVerified === true && resolved.identity.login) {
           this.cachedPublisherLogin = resolved.identity.login;
           return [resolved.identity.login];
         }

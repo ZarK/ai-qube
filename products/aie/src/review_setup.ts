@@ -177,6 +177,7 @@ function unavailableIdentity(mode: GitHubReviewPublisherMode, reason: string): G
     fallbackReason: reason,
     publishTransport: 'issue-comment',
     authSource: 'none',
+    credentialVerified: false,
   };
 }
 
@@ -435,6 +436,7 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
         login: null,
         permissionStatus: 'unconfigured',
         formalEventCapability: false,
+        credentialVerified: false,
         fallbackReason: 'No distinct reviewer identity is configured; publishing uses the authenticated gh user.',
         publishTransport: 'pull-request-review',
         authSource: 'gh-user',
