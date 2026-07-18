@@ -163,7 +163,7 @@ export interface GitHubLaneReviewPublishInput {
   prNumber: number;
   headSha: string;
   lane: string;
-  expectedLanes?: readonly string[];
+  expectedLanes: readonly string[];
   profile: string;
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
@@ -531,8 +531,13 @@ function laneReviewSummary(comment: LaneReviewComment): string {
 }
 
 function expectedLaneNames(input: GitHubLaneReviewPublishInput): string[] {
-  const lanes = input.expectedLanes && input.expectedLanes.length > 0 ? input.expectedLanes : [input.lane];
-  return [...new Set(lanes)].sort();
+  // A single-lane default would publish a marker whose expected set hides the
+  // other active lanes and corrupts convergence stats; callers must always
+  // declare the complete expected lane set for the head.
+  if (!input.expectedLanes || input.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: pass the complete expected lane set for this head when publishing lane feedback.');
+  }
+  return [...new Set(input.expectedLanes)].sort();
 }
 
 function stableLaneRunId(input: GitHubLaneReviewPublishInput): string {
@@ -2197,21 +2202,31 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
    * non-secret configured login fields when present.
    */
   private async trustedAuthorsForLoad(): Promise<string[]> {
-    const authors: string[] = [];
     const publisher = this.options.publisher;
     if (publisher && publisher.mode !== 'user') {
-      const configuredLogin = publisher.mode === 'github-app' ? publisher.githubApp?.login : publisher.token?.login;
-      if (typeof configuredLogin === 'string' && configuredLogin.trim() !== '') authors.push(configuredLogin.trim());
-      if (this.cachedPublisherLogin && !authors.some(author => authorMatches(author, this.cachedPublisherLogin!))) authors.push(this.cachedPublisherLogin);
-      return authors;
+      // Marker trust must anchor on a credential-verified identity; a login
+      // string from configuration alone could nominate any account's markers
+      // as trusted and forge review history. Resolve the identity from the
+      // configured credential and fail closed when it cannot be verified.
+      if (this.cachedPublisherLogin) return [this.cachedPublisherLogin];
+      try {
+        const resolved = await resolveGitHubReviewPublisher(publisher, { cwd: this.options.cwd, exec: this.options.exec, prAuthorLogin: null, mint: false });
+        if (resolved.identity.login) {
+          this.cachedPublisherLogin = resolved.identity.login;
+          return [resolved.identity.login];
+        }
+      } catch {
+        // fall through to the fail-closed empty author list
+      }
+      return [];
     }
     try {
       const login = await this.currentLogin();
-      if (login) authors.push(login);
+      if (login) return [login];
     } catch {
       // optional on load
     }
-    return authors;
+    return [];
   }
 
   private configuredPublisherLoginMissing(): boolean {

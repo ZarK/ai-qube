@@ -168,7 +168,7 @@ export interface ReviewLaneReviewPublishInput {
   readonly prNumber: number;
   readonly headSha: string;
   readonly lane: string;
-  readonly expectedLanes?: readonly string[];
+  readonly expectedLanes: readonly string[];
   readonly profile: string;
   readonly status: string;
   readonly recommendation: "approve" | "request-changes" | "pending" | "inconclusive";
