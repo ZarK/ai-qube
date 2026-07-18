@@ -56,8 +56,11 @@ export interface RouteFaultLedger {
   lanes: Record<string, RouteFaultRecord>;
 }
 
+// The ledger influences which provider executes review, so it lives under
+// .git beside the trusted host-provenance store where pull request content
+// can never supply or forge it; working-tree copies are never consumed.
 export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNumber: number): string {
-  return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), 'route-faults.json');
+  return join(repoRoot, '.git', 'qube', 'aie', 'route-faults', String(issueNumber), `${prNumber}.json`);
 }
 
 export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
