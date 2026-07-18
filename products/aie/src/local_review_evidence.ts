@@ -1292,6 +1292,7 @@ export function readLocalReviewGate(input: {
 
 export interface FixBatchFinding {
   laneId: LocalReviewLaneId;
+  lanes: LocalReviewLaneId[];
   findingId: string;
   contentHash: string;
   severity: 'blocking' | 'advisory';
@@ -1381,6 +1382,7 @@ function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], pr
 function toFixBatchFinding(laneId: LocalReviewLaneId, finding: ReviewFinding, contentHash: string, classification: 'new' | 'persisting'): FixBatchFinding {
   return {
     laneId,
+    lanes: [laneId],
     findingId: finding.id,
     contentHash,
     severity: finding.severity,
@@ -1437,6 +1439,21 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     }
     return { ...finding, classification: 'new' as const };
   }).sort(rankFixBatchFindings);
+  // Cross-lane merge: identical defects reported by several lanes collapse to one
+  // batch entry carrying every reporting lane, so the implementer fixes each defect
+  // once. Per-lane content hashes stay the classification and resolution keys.
+  const mergedByIdentity = new Map<string, FixBatchFinding>();
+  for (const finding of findings) {
+    const identity = JSON.stringify({ severity: finding.severity, message: finding.message, location: finding.location, suggestion: finding.suggestion });
+    const existing = mergedByIdentity.get(identity);
+    if (!existing) {
+      mergedByIdentity.set(identity, finding);
+      continue;
+    }
+    if (!existing.lanes.includes(finding.laneId)) existing.lanes = [...existing.lanes, finding.laneId].sort();
+    if (finding.classification === 'persisting') existing.classification = 'persisting';
+  }
+  const mergedFindings = [...mergedByIdentity.values()].sort(rankFixBatchFindings);
   const resolved = currentEvidenceLoaded
     ? priorFindings
       .filter(entry => {
@@ -1457,19 +1474,19 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
         return left.message.localeCompare(right.message);
       })
     : [];
-  const blockingCount = findings.filter(finding => finding.severity === 'blocking').length;
-  const advisoryCount = findings.filter(finding => finding.severity === 'advisory').length;
-  const newCount = findings.filter(finding => finding.classification === 'new').length;
-  const persistingCount = findings.filter(finding => finding.classification === 'persisting').length;
+  const blockingCount = mergedFindings.filter(finding => finding.severity === 'blocking').length;
+  const advisoryCount = mergedFindings.filter(finding => finding.severity === 'advisory').length;
+  const newCount = mergedFindings.filter(finding => finding.classification === 'new').length;
+  const persistingCount = mergedFindings.filter(finding => finding.classification === 'persisting').length;
   const priorLabel = priorHeadSha ?? 'no prior head';
   const resolvedLabel = currentEvidenceLoaded
     ? `${resolved.length} resolved since ${priorLabel}.`
     : 'resolved state is indeterminate because current-head lane evidence is missing or stale.';
-  const summary = `${findings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
+  const summary = `${mergedFindings.length} open finding(s): ${blockingCount} blocking, ${advisoryCount} advisory (${newCount} new, ${persistingCount} persisting); ${resolvedLabel}`;
   return {
     headSha,
     priorHeadSha,
-    findings,
+    findings: mergedFindings,
     resolved,
     summary,
   };

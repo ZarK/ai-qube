@@ -106,6 +106,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'pr view': { pr: 'Pull request number for concise PR state, for example 12 or #12' },
     'pr body': { issue: 'Issue number the pull request closes, for example 93 or #93' },
     'pr gate': { pr: 'Pull request number for the PR review gate, for example 12 or #12' },
+    'pr batch': { pr: 'Pull request number for the cross-lane fix batch, for example 12 or #12' },
     'pr triage': { pr: 'Pull request number for advisory triage, for example 12 or #12' },
     'pr review publish': { pr: 'Pull request number for the lane review publish target, for example 12 or #12' },
     'run start': {
@@ -125,6 +126,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'pr view',
     'pr body',
     'pr gate',
+    'pr batch',
     'pr triage',
     'pr review publish',
     'branch suggest',

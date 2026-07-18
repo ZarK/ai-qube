@@ -30,6 +30,13 @@ export {
 } from '../app/pr_gate.js';
 
 export {
+  formatPrBatch,
+  runPrBatchService,
+  type PrBatchOptions,
+  type PrBatchResult,
+} from '../app/pr_batch.js';
+
+export {
   formatPrTriage,
   runPrTriageService,
   type PrTriageAdvisory,

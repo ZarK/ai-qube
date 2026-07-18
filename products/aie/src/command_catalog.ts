@@ -409,6 +409,18 @@ const COMMAND_DEFINITIONS = [
     examples: ['aie pr gate 12 --dry-run', 'aie pr gate 12 --json', 'aie pr gate 12'],
   },
   {
+    name: 'pr batch',
+    description: 'Aggregate current-head lane findings into one ranked cross-lane fix batch without executing lanes or mutating the provider. Read-only.',
+    args: ['pr'],
+    flags: ['--json', '--help'],
+    mutationTargets: [],
+    supportsJson: true,
+    supportsDryRun: false,
+    externalServices: ['github'],
+    stableErrorKinds: ['parse-error', 'config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie pr batch 12', 'aie pr batch 12 --json'],
+  },
+  {
     name: 'pr triage',
     description: 'Convert residual advisory findings at an approved current head into deduplicated follow-up issues linked on the pull request, instead of new commits on the approved head.',
     args: ['pr'],
