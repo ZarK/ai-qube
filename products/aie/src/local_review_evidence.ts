@@ -486,6 +486,24 @@ function canonicalJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+// One contract statement feeds both the lane spawn prompts and the publish
+// validator so the required artifact forms can never drift between them.
+export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null.';
+
+export function laneArtifactViolation(lane: string, status: string, artifacts: unknown): string | null {
+  if (!Array.isArray(artifacts)) return `${lane} artifacts must be an array.`;
+  for (const entry of artifacts) {
+    if (!isRecord(entry) || typeof entry.kind !== 'string' || entry.kind.trim() === '' || typeof entry.path !== 'string' || entry.path.trim() === '') {
+      return `${lane} artifacts contains an entry without a non-empty kind and path.`;
+    }
+  }
+  const terminal = status === 'passed' || status === 'failed' || status === 'needs-work';
+  if (terminal && artifacts.length === 0) {
+    return `${lane} ${status} evidence has an empty artifacts array; a ${status} lane must cite at least one inspected artifact.`;
+  }
+  return null;
+}
+
 export function localReviewEvidenceSha256(value: unknown): string {
   return hash(canonicalJson(value));
 }

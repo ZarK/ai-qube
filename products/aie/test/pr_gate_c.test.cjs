@@ -340,6 +340,54 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('rejects a passing lane with empty artifacts before any provider mutation', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality' ? { ...lane, artifacts: [] } : lane);
+    writeLocalEvidence(repo, evidence);
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec }),
+      error => {
+        assert.match(error.message, /code-quality passed evidence has an empty artifacts array/);
+        assert.match(error.message, /Accepted artifact shapes/);
+        return true;
+      },
+    );
+    assert.equal(fixture.calls.some(args => (args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST')), false, 'incomplete evidence must never reach the provider');
+  });
+
+  it('rejects request-changes evidence with empty artifacts and allows non-terminal artifact gaps', async () => {
+    const { laneArtifactViolation, LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence({ laneStatus: 'needs-work', blockers: ['Fix the parser.'] });
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, severity: 'high', findings: [{ id: 'cq-1', severity: 'blocking', message: 'Fix the parser.', location: { path: 'src/review.ts', line: 2 } }], artifacts: [] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /code-quality needs-work evidence has an empty artifacts array/,
+    );
+    // Non-terminal evidence may legitimately lack artifacts; terminal may not.
+    assert.equal(laneArtifactViolation('code-quality', 'inconclusive', []), null);
+    assert.equal(laneArtifactViolation('code-quality', 'pending', []), null);
+    assert.match(laneArtifactViolation('code-quality', 'failed', []), /empty artifacts array/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: '', path: 'x' }]), /non-empty kind and path/);
+    assert.ok(LANE_ARTIFACT_REQUIREMENT.includes('at least one artifact reference'));
+  });
+
+  it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
+    const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
+    const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
+  });
+
   it('partitions structured lane findings into inline review comments and review body findings', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
