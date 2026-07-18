@@ -277,3 +277,42 @@ describe('requirement self-check', () => {
     assert.match(requirements[0].proof.reason, /cites no test file/);
   });
 });
+
+describe('requirement self-check hardening', () => {
+  const criterion = 'Stale provider metadata is rejected with an actionable reason.';
+
+  it('rejects absolute and parent-escaping cited paths as non-repository-relative', () => {
+    const { mkdtempSync: tempDir } = require('node:fs');
+    const repo = tempDir(join(tmpdir(), 'aie-selfcheck-'));
+    const body = [
+      `### Criterion 1: ${criterion}`,
+      '- Proven by: `C:/somewhere/else.test.cjs` and `../outside/escape.test.cjs`',
+    ].join('\n');
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: criterion, checked: false }])],
+      prBody: body.replace('C:/somewhere/else.test.cjs', '/somewhere/else.test.cjs'),
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unproven');
+    assert.match(requirements[0].proof.reason, /not repository-relative/);
+  });
+
+  it('never proves a requirement without distinctive behavior terms', () => {
+    const { mkdirSync: makeDir, writeFileSync: writeFile, mkdtempSync: tempDir } = require('node:fs');
+    const repo = tempDir(join(tmpdir(), 'aie-selfcheck-'));
+    makeDir(join(repo, 'test'), { recursive: true });
+    writeFile(join(repo, 'test', 'probe.test.cjs'), 'anything at all\n');
+    const shortCriterion = 'Do it all now.';
+    const body = [
+      `### Criterion 1: ${shortCriterion}`,
+      '- Proven by: `test/probe.test.cjs`',
+    ].join('\n');
+    const requirements = buildRequirementSelfCheck({
+      issueChecklists: [checklistSummary([{ index: 1, text: shortCriterion, checked: false }])],
+      prBody: body,
+      repoRoot: repo,
+    });
+    assert.equal(requirements[0].proof.status, 'unproven');
+    assert.match(requirements[0].proof.reason, /no distinctive behavior terms/);
+  });
+});

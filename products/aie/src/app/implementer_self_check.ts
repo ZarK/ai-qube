@@ -57,12 +57,16 @@ function citedPathsFromSection(section: string): string[] {
 
 function criterionSection(prBody: string, requirementText: string): string | null {
   const normalized = requirementText.replace(/\s+/g, ' ').trim();
-  const sections = prBody.split(/^###\s+/m).slice(1);
-  for (const section of sections) {
-    const heading = section.split('\n', 1)[0]?.replace(/\s+/g, ' ').trim() ?? '';
-    if (heading.includes(normalized.slice(0, Math.min(60, normalized.length)))) return section;
-  }
-  return null;
+  const sections = prBody.split(/^###\s+/m).slice(1).map(section => ({
+    section,
+    heading: (section.split('\n', 1)[0] ?? '').replace(/^Criterion\s+\d+:\s*/i, '').replace(/\s+/g, ' ').trim(),
+  }));
+  // Prefer an exact heading match; fall back to full-text containment so minor
+  // punctuation drift does not orphan a requirement, never a truncated prefix.
+  const exact = sections.find(entry => entry.heading === normalized);
+  if (exact) return exact.section;
+  const containing = sections.find(entry => entry.heading.includes(normalized) || normalized.includes(entry.heading) && entry.heading.length > 20);
+  return containing?.section ?? null;
 }
 
 function proveRequirement(requirementText: string, prBody: string | undefined, repoRoot: string | undefined): SelfCheckRequirementProof {
@@ -80,7 +84,13 @@ function proveRequirement(requirementText: string, prBody: string | undefined, r
   if (!repoRoot) {
     return { status: 'unproven', reason: 'Cited paths could not be verified without a repository root.', citedPaths };
   }
-  const missing = citedPaths.filter(path => !isAbsolute(path) && !existsSync(join(repoRoot, path)));
+  // Citations must stay repository-relative; absolute or parent-escaping paths can
+  // never count as proof of in-repository behavior.
+  const escaping = citedPaths.filter(path => isAbsolute(path) || path.split('/').includes('..'));
+  if (escaping.length > 0) {
+    return { status: 'unproven', reason: `Cited path(s) are not repository-relative: ${escaping.join(', ')}.`, citedPaths };
+  }
+  const missing = citedPaths.filter(path => !existsSync(join(repoRoot, path)));
   if (missing.length > 0) {
     return { status: 'unproven', reason: `Cited proof path(s) do not exist: ${missing.join(', ')}.`, citedPaths };
   }
@@ -89,18 +99,21 @@ function proveRequirement(requirementText: string, prBody: string | undefined, r
     return { status: 'unproven', reason: 'The criterion-to-proof entry cites no test file; name the test whose assertions fail if this requirement regresses.', citedPaths };
   }
   const keywords = requirementKeywords(requirementText);
-  if (keywords.length > 0) {
-    const matched = testPaths.some(path => {
-      try {
-        const content = readFileSync(join(repoRoot, path), 'utf8').toLowerCase();
-        return keywords.some(keyword => content.includes(keyword));
-      } catch {
-        return false;
-      }
-    });
-    if (!matched) {
-      return { status: 'unproven', reason: `Cited test file(s) do not reference this requirement's key behavior terms (${keywords.slice(0, 5).join(', ')}); the citation looks unrelated.`, citedPaths };
+  if (keywords.length === 0) {
+    return { status: 'unproven', reason: 'The requirement carries no distinctive behavior terms to verify mechanically; confirm the cited test covers it before spawning reviewers.', citedPaths };
+  }
+  const requiredMatches = Math.min(2, keywords.length);
+  const matched = testPaths.some(path => {
+    try {
+      // Cap the read so a pathological citation cannot stall the dry-run.
+      const content = readFileSync(join(repoRoot, path), 'utf8').slice(0, 512 * 1024).toLowerCase();
+      return keywords.filter(keyword => content.includes(keyword)).length >= requiredMatches;
+    } catch {
+      return false;
     }
+  });
+  if (!matched) {
+    return { status: 'unproven', reason: `Cited test file(s) do not reference this requirement's key behavior terms (${keywords.slice(0, 5).join(', ')}); the citation looks unrelated.`, citedPaths };
   }
   // Heuristic proof: the citation exists and plausibly covers the requirement's
   // behavior terms; semantic correctness remains the review lanes' job.

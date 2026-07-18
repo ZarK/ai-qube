@@ -759,8 +759,8 @@ function localReviewContextCacheKey(snapshot: Pick<ReviewForgeSnapshot, 'pr'>): 
   return `${snapshot.pr.number}:${snapshot.pr.headRefOid}`;
 }
 
-async function loadPrBodyText(prNumber: number, exec: PrGateExec | undefined): Promise<string | undefined> {
-  return loadPullRequestBody(prNumber, { exec: exec as GhExec | undefined });
+async function loadPrBodyText(prNumber: number, repoRoot: string, exec: PrGateExec | undefined): Promise<string | undefined> {
+  return loadPullRequestBody(prNumber, { cwd: repoRoot, exec: exec as GhExec | undefined });
 }
 
 async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
@@ -960,7 +960,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
   const selfCheck = dryRun
-    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: await loadPrBodyText(options.prNumber, options.exec), repoRoot })
+    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: await loadPrBodyText(options.prNumber, repoRoot, options.exec), repoRoot })
     : null;
   // Dedupe by lane + finding identity so multi-issue evidence does not inflate the count.
   const advisoryCount = new Set(localReview.evidence.flatMap(evidence => evidence.lanes.flatMap(lane => lane.findings.filter(finding => finding.severity === 'advisory').map(finding => `${lane.id} ${finding.id} ${finding.message}`)))).size;
