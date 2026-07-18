@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -9,9 +10,7 @@ const { configToFileShape, getDefaults, validateConfig } = require('../dist/conf
 const { runUiAudit } = require('../dist/audit.js');
 
 function makeGitRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'aie-audit-repo-'));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  return repo;
+  return cloneGitRepo('bare', 'aie-audit-repo-');
 }
 
 function binRun(args, cwd = process.cwd(), env = {}) {

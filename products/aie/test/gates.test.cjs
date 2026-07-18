@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -10,9 +11,7 @@ const { isSupplyChainSensitive } = require('../dist/gate_sensitivity.js');
 const { buildGatePlan, buildGateStatus } = require('../dist/gates/index.js');
 
 function makeGitRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'aie-gates-'));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  return repo;
+  return cloneGitRepo('bare', 'aie-gates-');
 }
 
 function binRun(args, cwd = process.cwd()) {

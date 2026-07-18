@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
 const { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -11,9 +12,7 @@ const { buildMigrationMap, buildMigrationPlan, runMigration } = require('../dist
 const { renderManagedSection } = require('../dist/managed_file.js');
 
 function makeGitRepo() {
-  const repo = mkdtempSync(join(tmpdir(), 'aie-migrate-'));
-  execFileSync('git', ['init', '-b', 'main'], { cwd: repo, stdio: 'ignore' });
-  return repo;
+  return cloneGitRepo('bare', 'aie-migrate-');
 }
 
 function binRun(args, cwd = process.cwd()) {

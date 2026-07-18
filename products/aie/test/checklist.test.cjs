@@ -4,6 +4,7 @@ const { mkdtempSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
+require('./support/compile_cache.cjs');
 
 const { planChecklistUpdate } = require('../dist/checklist.js');
 const { updateIssueChecklist } = require('../dist/app/issue_checklist.js');
