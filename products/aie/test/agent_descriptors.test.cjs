@@ -110,6 +110,18 @@ describe('agent descriptors and prompt registry', () => {
     assert.match(rendered.text, /release, CI, and supply-chain/);
   });
 
+  it('includes a read-only low-effort librarian descriptor for economy delegation', async () => {
+    const { getAgentDescriptor } = await import('../dist/agent_descriptors.js');
+
+    const librarian = getAgentDescriptor('librarian');
+
+    assert.equal(librarian.readOnly, true);
+    assert.equal(librarian.modelPreferences.effort, 'low');
+    assert.equal(librarian.modelPreferences.supportsLargeContext, true);
+    assert.equal(librarian.roleKind, 'researcher');
+    assert.deepEqual(librarian.categoryIds, ['research']);
+  });
+
   it('detects missing prompt assets without claiming runner availability', async () => {
     const { buildDescriptorSummary, validatePromptAssets } = await import('../dist/agent_descriptors.js');
     const root = mkdtempSync(join(tmpdir(), 'aie-prompts-'));

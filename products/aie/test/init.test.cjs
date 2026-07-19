@@ -265,6 +265,9 @@ describe('init service', () => {
       join('.qube', 'aie', 'config.json'),
       'AGENTS.md',
       pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
+      pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'),
+      pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'),
+      pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml'),
     ]);
 
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -382,6 +385,9 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-focus.md')), true);
     assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
     assert.equal(existsSync(join(repo, '.opencode', 'agent', 'qube-review-focus.md')), false);
+    assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-explorer.md')), true);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml')), false);
+    assert.equal(existsSync(join(repo, '.opencode', 'agent', 'qube-review-explorer.md')), false);
 
     const opencodeRepo = makeGitRepo();
     config.policy.reviews.localAgents = ['opencode'];
@@ -391,6 +397,152 @@ describe('init service', () => {
     assert.equal(opencodeOnly.ok, true);
     assert.equal(existsSync(join(opencodeRepo, '.opencode', 'agent', 'qube-review-focus.md')), true);
     assert.equal(existsSync(join(opencodeRepo, '.codex', 'agents', 'qube-review-focus.toml')), false);
+    assert.equal(existsSync(join(opencodeRepo, '.opencode', 'agent', 'qube-review-digest.md')), true);
+    assert.equal(existsSync(join(opencodeRepo, '.codex', 'agents', 'qube-review-digest.toml')), false);
+  });
+
+  it('renders economy catalog agents for codex, claude-code, and opencode hosts', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex', 'claude-code', 'opencode'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+
+    const codexExplorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(codexExplorer, /name = "qube-review-explorer"/);
+    assert.match(codexExplorer, /^# BEGIN EXECUTOR MANAGED SECTION/);
+    assert.match(codexExplorer, /read-only economy delegation helper/);
+    assert.match(codexExplorer, /Do not publish provider-visible feedback/);
+    assert.match(codexExplorer, /untrusted task input/);
+
+    const codexDigest = readFileSync(join(repo, '.codex', 'agents', 'qube-review-digest.toml'), 'utf8');
+    assert.match(codexDigest, /name = "qube-review-digest"/);
+    assert.match(codexDigest, /Condense diffs, test output, and evidence files/);
+
+    const codexLibrarian = readFileSync(join(repo, '.codex', 'agents', 'qube-review-librarian.toml'), 'utf8');
+    assert.match(codexLibrarian, /name = "qube-review-librarian"/);
+    assert.match(codexLibrarian, /Locate files, symbols, and prior review evidence/);
+
+    const claudeExplorer = readFileSync(join(repo, '.claude', 'agents', 'qube-review-explorer.md'), 'utf8');
+    assert.match(claudeExplorer, /name: qube-review-explorer/);
+    assert.match(claudeExplorer, /read-only economy delegation helper/);
+    assert.match(claudeExplorer, /^<!-- BEGIN EXECUTOR MANAGED SECTION -->/);
+
+    const opencodeDigest = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-digest.md'), 'utf8');
+    assert.match(opencodeDigest, /mode: subagent/);
+    assert.match(opencodeDigest, /read-only economy delegation helper/);
+
+    const opencodeLibrarian = readFileSync(join(repo, '.opencode', 'agent', 'qube-review-librarian.md'), 'utf8');
+    assert.match(opencodeLibrarian, /mode: subagent/);
+    assert.match(opencodeLibrarian, /Locate files, symbols, and prior review evidence/);
+  });
+
+  it('resolves the economy tier model and effort into the Codex review catalog agents', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } }, economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } } };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(explorer, /model = "gpt-5\.5-mini"/);
+    assert.match(explorer, /model_reasoning_effort = "low"/);
+  });
+
+  it('substitutes the review tier binding into the economy catalog when economy is unconfigured', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { codex: { model: 'gpt-5.5-codex', effort: 'high' } } };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(explorer, /model = "gpt-5\.5-codex"/);
+    assert.match(explorer, /model_reasoning_effort = "high"/);
+  });
+
+  it('falls back to each catalog agent descriptor effort when the economy binding has no effort', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: {}, economy: { codex: { model: 'gpt-5.5-mini', effort: null } } };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(explorer, /model = "gpt-5\.5-mini"/);
+    assert.match(explorer, /model_reasoning_effort = "medium"/);
+    const librarian = readFileSync(join(repo, '.codex', 'agents', 'qube-review-librarian.toml'), 'utf8');
+    assert.match(librarian, /model = "gpt-5\.5-mini"/);
+    assert.match(librarian, /model_reasoning_effort = "low"/);
+  });
+
+  it('omits model lines from the economy catalog when routed local review is configured', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+
+    assert.equal(result.ok, true);
+    const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.doesNotMatch(explorer, /model = /);
+  });
+
+  it('mentions the economy catalog in host instructions only for hosts with rendered catalog assets', async () => {
+    const repo = makeGitRepo();
+    const config = cleanConfig();
+    config.policy.reviews.adapter = 'local';
+    config.policy.reviews.profile = 'local-focused';
+    config.policy.reviews.agents = [];
+    config.policy.reviews.localAgents = ['codex'];
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const result = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
+    assert.match(agents, /Codex: .*Economy review catalog agents available to this host: qube-review-explorer, qube-review-digest, qube-review-librarian/);
+    assert.doesNotMatch(agents, /OpenCode: .*Economy review catalog agents available/);
+    assert.doesNotMatch(claude, /Economy review catalog agents available/);
+
+    const routedRepo = makeGitRepo();
+    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: {}, synthesis: {} };
+    config.policy.reviews.route = { host: 'grok', tier: 'review', timeoutSeconds: 900, maxTurns: 8 };
+    writeFileSync(join(routedRepo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+
+    const routedResult = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: routedRepo });
+    assert.equal(routedResult.ok, true);
+    const routedAgents = readFileSync(join(routedRepo, 'AGENTS.md'), 'utf8');
+    assert.doesNotMatch(routedAgents, /Economy review catalog agents available/);
   });
 
   it('projects Codex CLI review lane wording into hosts without Codex task APIs', async () => {
@@ -812,9 +964,9 @@ describe('init service', () => {
     assert.ok(codex);
     assert.ok(claude);
     assert.equal(opencode.supportsProjectCommands, true);
-    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md')]);
+    assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
     assert.equal(codex.supportsProjectCommands, true);
-    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml')]);
+    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'), pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'), pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'), pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml')]);
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
     const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');

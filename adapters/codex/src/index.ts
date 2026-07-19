@@ -39,7 +39,7 @@ export interface InstructionTarget {
   readonly description: string;
 }
 
-export type CommandRenderer = "make-it-so" | "codex-review-focus-agent";
+export type CommandRenderer = "make-it-so" | "codex-review-focus-agent" | "codex-review-explorer-agent" | "codex-review-digest-agent" | "codex-review-librarian-agent";
 
 export interface CommandTarget {
   readonly id: string;
@@ -97,11 +97,38 @@ const CODEX_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   renderer: "codex-review-focus-agent",
 });
 
+const CODEX_REVIEW_EXPLORER_AGENT: CommandTarget = Object.freeze({
+  id: "codex-review-explorer-agent",
+  path: pathPosix.join(".codex", "agents", "qube-review-explorer.toml"),
+  description: "Codex read-only economy subagent that reads and summarizes large texts for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "codex-review-explorer-agent",
+});
+
+const CODEX_REVIEW_DIGEST_AGENT: CommandTarget = Object.freeze({
+  id: "codex-review-digest-agent",
+  path: pathPosix.join(".codex", "agents", "qube-review-digest.toml"),
+  description: "Codex read-only economy subagent that condenses diffs and test output for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "codex-review-digest-agent",
+});
+
+const CODEX_REVIEW_LIBRARIAN_AGENT: CommandTarget = Object.freeze({
+  id: "codex-review-librarian-agent",
+  path: pathPosix.join(".codex", "agents", "qube-review-librarian.toml"),
+  description: "Codex read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "codex-review-librarian-agent",
+});
+
 export const codexHostProfile: AgentHostProfile = Object.freeze({
   id: "codex",
   displayName: "Codex",
   instructionTargets: Object.freeze([AGENTS_INSTRUCTIONS]),
-  commandTargets: Object.freeze([CODEX_REVIEW_FOCUS_AGENT]),
+  commandTargets: Object.freeze([CODEX_REVIEW_FOCUS_AGENT, CODEX_REVIEW_EXPLORER_AGENT, CODEX_REVIEW_DIGEST_AGENT, CODEX_REVIEW_LIBRARIAN_AGENT]),
   todo: Object.freeze({
     tools: Object.freeze(["update_plan"]),
     fallback: "If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state.",

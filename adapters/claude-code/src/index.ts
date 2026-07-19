@@ -55,7 +55,20 @@ export interface InstructionTarget {
   readonly description: string;
 }
 
-export type CommandRenderer = "make-it-so" | "codex-review-focus-agent" | "claude-review-focus-agent" | "opencode-review-focus-agent";
+export type CommandRenderer =
+  | "make-it-so"
+  | "codex-review-focus-agent"
+  | "claude-review-focus-agent"
+  | "opencode-review-focus-agent"
+  | "codex-review-explorer-agent"
+  | "codex-review-digest-agent"
+  | "codex-review-librarian-agent"
+  | "claude-review-explorer-agent"
+  | "claude-review-digest-agent"
+  | "claude-review-librarian-agent"
+  | "opencode-review-explorer-agent"
+  | "opencode-review-digest-agent"
+  | "opencode-review-librarian-agent";
 
 export interface CommandTarget {
   readonly id: string;
@@ -121,11 +134,38 @@ const CLAUDE_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   renderer: "claude-review-focus-agent",
 });
 
+const CLAUDE_REVIEW_EXPLORER_AGENT: CommandTarget = Object.freeze({
+  id: "claude-review-explorer-agent",
+  path: ".claude/agents/qube-review-explorer.md",
+  description: "Claude Code read-only economy subagent that reads and summarizes large texts for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "claude-review-explorer-agent",
+});
+
+const CLAUDE_REVIEW_DIGEST_AGENT: CommandTarget = Object.freeze({
+  id: "claude-review-digest-agent",
+  path: ".claude/agents/qube-review-digest.md",
+  description: "Claude Code read-only economy subagent that condenses diffs and test output for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "claude-review-digest-agent",
+});
+
+const CLAUDE_REVIEW_LIBRARIAN_AGENT: CommandTarget = Object.freeze({
+  id: "claude-review-librarian-agent",
+  path: ".claude/agents/qube-review-librarian.md",
+  description: "Claude Code read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.",
+  optional: false,
+  enabledBy: "hostLocalReview",
+  renderer: "claude-review-librarian-agent",
+});
+
 export const claudeCodeHostProfile: AgentHostProfile = Object.freeze({
   id: "claude-code",
   displayName: "Claude Code",
   instructionTargets: Object.freeze([CLAUDE_INSTRUCTIONS]),
-  commandTargets: Object.freeze([CLAUDE_REVIEW_FOCUS_AGENT]),
+  commandTargets: Object.freeze([CLAUDE_REVIEW_FOCUS_AGENT, CLAUDE_REVIEW_EXPLORER_AGENT, CLAUDE_REVIEW_DIGEST_AGENT, CLAUDE_REVIEW_LIBRARIAN_AGENT]),
   todo: Object.freeze({
     tools: CLAUDE_CODE_TODO_TOOLS,
     fallback: "Use an explicit visible checklist if the host todo tools are unavailable.",
