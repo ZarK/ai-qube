@@ -1227,6 +1227,9 @@ async function collectWorkflowReadiness(offline: boolean, environment: CliEnviro
     return { status: "unavailable", error: planned.stderr.trim() || "Executor doctor is unavailable." };
   }
   const captured = await dispatchCommandCaptured(planned.dispatch);
+  if (captured.exitCode !== 0) {
+    return { status: "unavailable", error: captured.stderr.trim() || `Executor doctor exited with code ${captured.exitCode}.` };
+  }
   try {
     const parsed = JSON.parse(captured.stdout) as { workflowReadiness?: unknown };
     if (parsed && typeof parsed === "object" && parsed.workflowReadiness) {

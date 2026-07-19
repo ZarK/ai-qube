@@ -172,7 +172,9 @@ function buildQualityGateStage(input: WorkflowReadinessInput): WorkflowStage {
 
 export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowReviewReadiness {
   const reviewAgent = input.gateReadiness.reviewAgent;
-  const providerReviewers = reviewAgent.defaultOracle ? [] : reviewAgent.reviewers.filter(name => name.trim() !== '');
+  // Provider reviewer names only count when the selected adapter actually runs provider reviewers.
+  const providerAdapterActive = reviewAgent.adapter !== 'local' && reviewAgent.adapter !== 'shadow';
+  const providerReviewers = !providerAdapterActive || reviewAgent.defaultOracle ? [] : reviewAgent.reviewers.filter(name => name.trim() !== '');
   const lanesConfigured = reviewAgent.configuredLanes.length > 0 || reviewAgent.localRunner.configured;
   const lanesRunnable = lanesConfigured && reviewAgent.localRunner.readiness === 'ready';
   // Only known lane ids count as evidence; lock files, raw-output captures, or unrelated JSON never do.

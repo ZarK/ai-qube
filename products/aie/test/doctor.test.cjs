@@ -921,3 +921,102 @@ describe('staged workflow readiness', () => {
     assert.ok(human.includes(`Review state: ${parsed.workflowReadiness.review.state};`));
   });
 });
+
+describe('workflow evidence identity', () => {
+  it('counts provider reviewers only for adapters that run them', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewAgents = ['coderabbitai'];
+    config.reviewLanes = [];
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const workflow = buildWorkflowReadiness({
+      config,
+      configValid: true,
+      labelsOk: true,
+      queueDriftCount: 0,
+      queueMultipleInProgress: false,
+      queueError: undefined,
+      lifecycle: {
+        branchNamingValid: true,
+        inProgressIssueCount: 0,
+        activeIssueNumber: null,
+        activeIssueBranch: null,
+        currentBranchMatchesActiveIssue: null,
+        linkedWorktreeBlocked: false,
+        openPullRequestCheckEnabled: true,
+        baseBranchFresh: true,
+        queueError: undefined,
+        lifecycleCommandsReady: true,
+      },
+      gateReadiness,
+      instructions: {
+        agents: false,
+        agentsManaged: false,
+        claude: false,
+        claudeManaged: false,
+        opencodeMakeItSo: false,
+        opencodeMakeItSoManaged: false,
+        opencodeMakeitsoAlias: false,
+        opencodeMakeitsoAliasManaged: false,
+        codexReviewFocusAgent: false,
+        codexReviewFocusAgentManaged: false,
+        targets: [],
+      },
+      dirty: { dirty: false, entries: [], error: null },
+      currentBranch: 'main',
+      blockingPullRequests: [],
+      evidence: { head: null, lanes: [] },
+    });
+    // The local adapter never runs provider reviewers, so their names cannot make review readiness ready.
+    assert.deepEqual(workflow.review.providerReviewers, []);
+    assert.notEqual(workflow.review.state, 'provider-reviewers');
+  });
+
+  it('accepts only identity-bound lane evidence records inside the evidence root', () => {
+    const { matchesLaneEvidenceIdentity } = require('../dist/doctor.js');
+    const { realpathSync, symlinkSync, rmSync } = require('node:fs');
+    const root = mkdtempSync(join(tmpdir(), 'aie-evidence-identity-'));
+    const evidenceRoot = join(root, '.qube', 'aie', 'reviews');
+    const headDir = join(evidenceRoot, '304', '395', 'abc123');
+    mkdirSync(headDir, { recursive: true });
+    const rootReal = realpathSync(evidenceRoot);
+
+    const validRecord = {
+      lane: 'code-quality',
+      issueNumber: 304,
+      prNumber: 395,
+      headSha: 'abc123',
+      status: 'passed',
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host' },
+    };
+    writeFileSync(join(headDir, 'code-quality.json'), JSON.stringify(validRecord));
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'code-quality.json'), rootReal, 'code-quality', 304, 395, 'abc123'), true);
+
+    // Empty, forged, or mismatched records never count as current evidence.
+    writeFileSync(join(headDir, 'issue-compliance.json'), '{}');
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'issue-compliance.json'), rootReal, 'issue-compliance', 304, 395, 'abc123'), false);
+    writeFileSync(join(headDir, 'performance.json'), JSON.stringify({ ...validRecord, lane: 'performance', headSha: 'stale99' }));
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'performance.json'), rootReal, 'performance', 304, 395, 'abc123'), false);
+    writeFileSync(join(headDir, 'tests-quality.json'), JSON.stringify({ ...validRecord, lane: 'code-quality' }));
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'tests-quality.json'), rootReal, 'tests-quality', 304, 395, 'abc123'), false);
+    writeFileSync(join(headDir, 'manual-qa.json'), JSON.stringify({ ...validRecord, lane: 'manual-qa', runnerProvenance: null }));
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'manual-qa.json'), rootReal, 'manual-qa', 304, 395, 'abc123'), false);
+    writeFileSync(join(headDir, 'final-gate.json'), 'not json');
+    assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'final-gate.json'), rootReal, 'final-gate', 304, 395, 'abc123'), false);
+
+    // A symlink resolving outside the evidence root is rejected even with valid content.
+    const outsideFile = join(root, 'outside-evidence.json');
+    writeFileSync(outsideFile, JSON.stringify({ ...validRecord, lane: 'task-record-compliance' }));
+    let symlinkCreated = false;
+    try {
+      symlinkSync(outsideFile, join(headDir, 'task-record-compliance.json'), 'file');
+      symlinkCreated = true;
+    } catch {
+      // Symlink creation needs elevated rights on some Windows setups; the containment rule is still enforced at runtime.
+    }
+    if (symlinkCreated) {
+      assert.equal(matchesLaneEvidenceIdentity(join(headDir, 'task-record-compliance.json'), rootReal, 'task-record-compliance', 304, 395, 'abc123'), false);
+    }
+    rmSync(root, { recursive: true, force: true });
+  });
+});

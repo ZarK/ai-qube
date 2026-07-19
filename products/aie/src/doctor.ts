@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync, readdirSync } from 'fs';
-import { join } from 'path';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { join, sep } from 'path';
 import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { cwd } from 'process';
@@ -359,13 +359,22 @@ class DoctorDiagnosticsBuilder {
     if (!existsSync(evidenceRoot)) return { head: headSha, lanes: [] };
     const lanes = new Set<string>();
     try {
+      const rootReal = realpathSync(evidenceRoot);
       for (const issueDir of readdirSync(evidenceRoot)) {
         if (!/^\d+$/.test(issueDir)) continue;
         const headDir = join(evidenceRoot, issueDir, String(currentPr.number), headSha);
         if (!existsSync(headDir)) continue;
+        let headDirReal: string;
+        try {
+          headDirReal = realpathSync(headDir);
+        } catch {
+          continue;
+        }
+        if (!headDirReal.startsWith(rootReal + sep)) continue;
         for (const file of readdirSync(headDir)) {
           if (file.startsWith('.') || !file.endsWith('.json') || file.endsWith('.raw-output.json')) continue;
-          lanes.add(file.slice(0, -'.json'.length));
+          const lane = file.slice(0, -'.json'.length);
+          if (matchesLaneEvidenceIdentity(join(headDir, file), rootReal, lane, Number(issueDir), currentPr.number, headSha)) lanes.add(lane);
         }
       }
     } catch {
@@ -473,6 +482,24 @@ class DoctorDiagnosticsBuilder {
       else result.labelsError = err instanceof Error ? err.message : 'Unknown error during labels check';
     }
     return result;
+  }
+}
+
+export function matchesLaneEvidenceIdentity(filePath: string, evidenceRootReal: string, lane: string, issueNumber: number, prNumber: number, headSha: string): boolean {
+  try {
+    const fileReal = realpathSync(filePath);
+    if (!fileReal.startsWith(evidenceRootReal + sep)) return false;
+    const parsed = JSON.parse(readFileSync(fileReal, 'utf8')) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const laneId = parsed.lane ?? parsed.id;
+    return laneId === lane
+      && parsed.issueNumber === issueNumber
+      && parsed.prNumber === prNumber
+      && parsed.headSha === headSha
+      && typeof parsed.status === 'string' && parsed.status.trim() !== ''
+      && typeof parsed.runnerProvenance === 'object' && parsed.runnerProvenance !== null;
+  } catch {
+    return false;
   }
 }
 
