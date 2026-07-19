@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
@@ -86,26 +86,72 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   return { version: 1, lanes: {} };
 }
 
-export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
-  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
-  // A tally is only meaningful against one primary route identity; a config
-  // change to the lane's primary route restarts the count so the changed
-  // primary is actually tested before failover engages again.
-  const existing = ledger.lanes[lane];
-  const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
-  ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+const ROUTE_FAULT_LOCK_WAIT_MS = 2_000;
+const ROUTE_FAULT_LOCK_RETRY_MS = 25;
+
+// Serialize ledger read-modify-write across concurrent gate processes with a
+// bounded mkdir lock so parallel runs cannot overwrite each other's tallies.
+function withRouteFaultLock<T>(path: string, update: () => T): T {
+  const lockDir = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
-  return count;
+  const deadline = Date.now() + ROUTE_FAULT_LOCK_WAIT_MS;
+  let locked = false;
+  while (Date.now() < deadline) {
+    try {
+      mkdirSync(lockDir);
+      locked = true;
+      break;
+    } catch {
+      const waitUntil = Date.now() + ROUTE_FAULT_LOCK_RETRY_MS;
+      while (Date.now() < waitUntil) { /* bounded spin; ledger writes are rare and small */ }
+    }
+  }
+  if (!locked) {
+    // The previous holder exceeded the bounded wait; reclaim the stale lock and proceed.
+    try {
+      rmdirSync(lockDir);
+      mkdirSync(lockDir);
+      locked = true;
+    } catch {
+      // Proceed best-effort; a rare unsynchronized write beats losing the fault record entirely.
+    }
+  }
+  try {
+    return update();
+  } finally {
+    if (locked) {
+      try {
+        rmdirSync(lockDir);
+      } catch {
+        // Nothing to release.
+      }
+    }
+  }
+}
+
+export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
+  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  return withRouteFaultLock(path, () => {
+    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+    // A tally is only meaningful against one primary route identity; a config
+    // change to the lane's primary route restarts the count so the changed
+    // primary is actually tested before failover engages again.
+    const existing = ledger.lanes[lane];
+    const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
+    ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
+    writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    return count;
+  });
 }
 
 export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId): void {
-  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
-  if (!(lane in ledger.lanes)) return;
-  delete ledger.lanes[lane];
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  withRouteFaultLock(path, () => {
+    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+    if (!(lane in ledger.lanes)) return;
+    delete ledger.lanes[lane];
+    writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  });
 }
 
 export interface CarryForwardSource {
