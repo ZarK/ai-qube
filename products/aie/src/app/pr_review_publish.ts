@@ -2,7 +2,7 @@ import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { gitDeltaPathsSync, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
@@ -252,7 +252,10 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (summary === '') throw laneEvidenceFailure(path, 'summary must be a non-empty string.');
   const profile = stringField(raw, 'profile');
   if (profile === '') throw laneEvidenceFailure(path, 'profile must be a non-empty string.');
-  assertArrayField(raw, 'artifacts', path);
+  {
+    const artifactViolation = laneArtifactViolation(lane, String(raw.status), raw.artifacts, repoRoot);
+    if (artifactViolation) throw laneEvidenceFailure(path, `${artifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
+  }
   assertArrayField(raw, 'contextReviewed', path);
   assertArrayField(raw, 'promptStack', path);
   if (!Array.isArray(raw.preconditions)) throw laneEvidenceFailure(path, 'preconditions must be an array of observed gate-level facts (empty when none were observed).');
@@ -279,6 +282,8 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
       if (prior.raw.status !== 'passed' || readRecommendation(prior.raw.recommendation ?? prior.raw.status) !== 'approve') {
         throw laneEvidenceFailure(path, 'carried-forward evidence must reference an approved prior-head lane record.');
       }
+      const priorArtifactViolation = laneArtifactViolation(lane, String(prior.raw.status), prior.raw.artifacts, repoRoot);
+      if (priorArtifactViolation) throw laneEvidenceFailure(path, `carried-forward prior-head record is incomplete: ${priorArtifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
       validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, carriedForwardHead, lane, prior.raw, path, provenance);
     } else {
       validateTrustedHostProvenance(repoRoot, issueNumber, prNumber, headSha, lane, raw, path, provenance);

@@ -11,6 +11,8 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
   tmpdir,
   basename,
@@ -186,7 +188,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       ...codeQualityLane,
       id: 'performance',
       summary: 'performance reviewed',
-      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/performance.json', sha256: null }],
       promptStack: promptStackForLane('performance'),
       runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
     });
@@ -241,7 +243,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       ...codeQualityLane,
       id: 'performance',
       summary: 'performance reviewed',
-      artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/performance.txt', sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/performance.json', sha256: null }],
       promptStack: promptStackForLane('performance'),
       runnerProvenance: { ...codeQualityLane.runnerProvenance, promptStackHash: null },
     });
@@ -338,6 +340,94 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
       /blocking lane evidence must include structured findings\[\]/,
     );
+  });
+
+  it('rejects a passing lane with empty artifacts before any provider mutation', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality' ? { ...lane, artifacts: [] } : lane);
+    writeLocalEvidence(repo, evidence);
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec }),
+      error => {
+        assert.match(error.message, /code-quality passed evidence has an empty artifacts array/);
+        assert.match(error.message, /Accepted artifact shapes/);
+        return true;
+      },
+    );
+    assert.equal(fixture.calls.some(args => (args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST')), false, 'incomplete evidence must never reach the provider');
+  });
+
+  it('rejects request-changes evidence with empty artifacts and allows non-terminal artifact gaps', async () => {
+    const { laneArtifactViolation, LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence({ laneStatus: 'needs-work', blockers: ['Fix the parser.'] });
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, severity: 'high', findings: [{ id: 'cq-1', severity: 'blocking', message: 'Fix the parser.', location: { path: 'src/review.ts', line: 2 } }], artifacts: [] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /code-quality needs-work evidence has an empty artifacts array/,
+    );
+    // Non-terminal evidence may legitimately lack artifacts; terminal may not.
+    assert.equal(laneArtifactViolation('code-quality', 'inconclusive', []), null);
+    assert.equal(laneArtifactViolation('code-quality', 'pending', []), null);
+    assert.match(laneArtifactViolation('code-quality', 'failed', []), /empty artifacts array/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: '', path: 'x' }]), /non-empty kind and path/);
+    assert.ok(LANE_ARTIFACT_REQUIREMENT.includes('at least one artifact reference'));
+    // Every documented shape rule is enforced, not just stated.
+    writeFileSync(join(repo, 'README.md'), 'fixture readme\n');
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: '../outside.ts', sha256: null }], repo), /traversal/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'C:/absolute.ts', sha256: null }], repo), /non-repository-relative/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'does-not-exist.ts', sha256: null }], repo), /does not exist/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: 'NOT-A-DIGEST' }], repo), /invalid sha256/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: 'a'.repeat(64) }], repo), /does not match the current content/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'command:git diff', sha256: null }], repo), /must use kind "command"/);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff --check', sha256: null }], repo), null);
+    const readmeDigest = createHash('sha256').update(readFileSync(join(repo, 'README.md'))).digest('hex');
+    assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: readmeDigest }], repo), null);
+    // Directories and '.' are not inspectable file citations.
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: '.', sha256: null }], repo), /not a repository file/);
+    mkdirSync(join(repo, 'artifact-dir'), { recursive: true });
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'artifact-dir', sha256: null }], repo), /not a repository file/);
+    // A symlink that resolves outside the repository root must be rejected even though the lexical path looks repository-relative.
+    const outsideFile = join(repo, '..', `outside-artifact-${basename(repo)}.md`);
+    writeFileSync(outsideFile, 'outside\n');
+    let symlinkCreated = false;
+    try {
+      symlinkSync(outsideFile, join(repo, 'escape.md'), 'file');
+      symlinkCreated = true;
+    } catch {
+      // Symlink creation needs elevated rights on some Windows setups; the lexical rules above still hold.
+    }
+    if (symlinkCreated) {
+      assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'escape.md', sha256: null }], repo), /resolves outside the repository root/);
+    }
+    rmSync(outsideFile, { force: true });
+    // Normalized model-host evidence keeps null digests instead of coercing them into invalid empty strings.
+    const { normalizeExternalLane } = require('../dist/app/local_review_runner_support.js');
+    const normalized = normalizeExternalLane({
+      lane: 'code-quality', issueNumber: 93, prNumber: 12, headSha: 'abc123', status: 'passed', severity: 'none',
+      recommendation: 'approve', summary: 'ok', blockers: [], findings: [],
+      artifacts: [{ kind: 'json', path: 'README.md', sha256: null }],
+      commands: [], surfaces: [], contextReviewed: [], promptStack: [], toolsUsed: [], completeness: 'complete', preconditions: [],
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false },
+    }, 'code-quality', 93, 12, 'abc123');
+    assert.equal(normalized.artifacts[0].sha256, null);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', normalized.artifacts, repo), null);
+  });
+
+  it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
+    const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
+    const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
+    assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
   });
 
   it('partitions structured lane findings into inline review comments and review body findings', async () => {
@@ -914,7 +1004,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
             severity: 'none',
             recommendation: 'approve',
             summary: `${lane} passed without runner provenance`,
-            artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${lane}.json`, sha256: 'test-hash' }],
+            artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/abc123/${lane}.json`, sha256: null }],
             contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],
             promptStack: [{ id: `builtin:${lane}`, source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
           }),

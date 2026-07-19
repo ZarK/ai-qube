@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
 import { acceptedProviderLane } from './provider_lane_evidence.js';
@@ -484,6 +484,72 @@ function canonicalJson(value: unknown): string {
     return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(',')}}`;
   }
   return JSON.stringify(value);
+}
+
+// One contract statement feeds both the lane spawn prompts and the publish
+// validator so the required artifact forms can never drift between them.
+export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null.';
+
+export function laneArtifactViolation(lane: string, status: string, artifacts: unknown, repoRoot?: string): string | null {
+  if (!Array.isArray(artifacts)) return `${lane} artifacts must be an array.`;
+  for (const entry of artifacts) {
+    if (!isRecord(entry) || typeof entry.kind !== 'string' || entry.kind.trim() === '' || typeof entry.path !== 'string' || entry.path.trim() === '') {
+      return `${lane} artifacts contains an entry without a non-empty kind and path.`;
+    }
+    const path = entry.path;
+    if (entry.kind === 'command') {
+      if (!path.startsWith('command:')) return `${lane} artifacts contains a command entry whose path does not begin with "command:".`;
+    } else if (path.startsWith('command:')) {
+      return `${lane} artifacts contains a "command:" path under kind ${entry.kind}; command observations must use kind "command".`;
+    } else {
+      const segments = path.replace(/\\/g, '/').split('/');
+      if (/^([a-zA-Z]:|\/|\\)/.test(path) || segments.includes('..')) {
+        return `${lane} artifacts contains a non-repository-relative or traversal path: ${path}.`;
+      }
+      if (repoRoot) {
+        const candidate = join(repoRoot, path);
+        let candidateStat = null;
+        try {
+          candidateStat = statSync(candidate);
+        } catch {
+          candidateStat = null;
+        }
+        if (!candidateStat) {
+          return `${lane} artifacts references a file that does not exist in the repository: ${path}.`;
+        }
+        if (!candidateStat.isFile()) {
+          return `${lane} artifacts references a path that is not a repository file: ${path}.`;
+        }
+        try {
+          const rootReal = realpathSync(repoRoot);
+          const candidateReal = realpathSync(candidate);
+          if (candidateReal !== rootReal && !candidateReal.startsWith(rootReal + sep)) {
+            return `${lane} artifacts path resolves outside the repository root: ${path}.`;
+          }
+        } catch {
+          return `${lane} artifacts references a file that could not be resolved inside the repository: ${path}.`;
+        }
+      }
+      if (entry.sha256 !== null && entry.sha256 !== undefined) {
+        if (typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
+          return `${lane} artifacts contains an invalid sha256 for ${path}; use the lowercase SHA-256 digest of the file or null.`;
+        }
+        if (repoRoot) {
+          try {
+            const digest = createHash('sha256').update(readFileSync(join(repoRoot, path))).digest('hex');
+            if (digest !== entry.sha256) return `${lane} artifacts sha256 does not match the current content of ${path}.`;
+          } catch {
+            return `${lane} artifacts references a file that could not be read for digest verification: ${path}.`;
+          }
+        }
+      }
+    }
+  }
+  const terminal = status === 'passed' || status === 'failed' || status === 'needs-work';
+  if (terminal && artifacts.length === 0) {
+    return `${lane} ${status} evidence has an empty artifacts array; a ${status} lane must cite at least one inspected artifact.`;
+  }
+  return null;
 }
 
 export function localReviewEvidenceSha256(value: unknown): string {

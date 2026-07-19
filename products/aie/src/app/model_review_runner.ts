@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile, execFileSync } from 'node:child_process';
 import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '../core/policy.js';
-import type { LocalReviewLaneId, LocalReviewProfile, LocalReviewRunnerProvenance } from '../local_review_evidence.js';
+import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
 import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_support.js';
 
@@ -162,7 +162,7 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Return exactly one JSON object and no Markdown or commentary.',
     `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, coverage, and preconditions.`,
     `Attest coverage for exactly these areas: ${areas.join(', ')}. Each coverage entry is {"area":"...","status":"clear"|"finding"|"not-inspected"} with one entry per area. Use "finding" for every area where you report findings, "clear" only after genuinely inspecting the area's complete scope at this head, and "not-inspected" whenever you ran out of capacity — a "not-inspected" attestation makes the lane inconclusive instead of approved, and a false "clear" is a contract violation. Enumerate the complete finding set before attesting.`,
-    'Every artifact must identify a real repository source, test, command result, or other inspected surface using {"kind":"...","path":"...","sha256":null}.',
+    LANE_ARTIFACT_REQUIREMENT,
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
     'The exact lane prompt may describe the complete persisted evidence object. For routed execution, this stricter outer contract is authoritative: return only the fields listed above, and QUBE injects profile, adapter, promptStack, runnerProvenance, and recordedAt.',
@@ -708,7 +708,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
-    if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || evidence.artifacts.length === 0) {
+    // Non-terminal results (inconclusive, pending) may honestly lack artifacts
+    // per the shared lane artifact contract; terminal verdicts must cite one.
+    const terminalResult = evidence.status === 'passed' || evidence.status === 'failed' || evidence.status === 'needs-work';
+    if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || (terminalResult && evidence.artifacts.length === 0)) {
       return { evidence: null, reasonCode: 'model-route-incomplete-evidence', error: 'Model review result omitted required completeness, contextReviewed, or artifacts evidence.' };
     }
     return { evidence, reasonCode: null, error: null };

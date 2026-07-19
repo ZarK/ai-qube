@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
@@ -21,7 +21,7 @@ export interface LaneEvidence {
   summary: string;
   blockers: string[];
   findings: ReviewFinding[];
-  artifacts: Array<{ kind: string; path: string; sha256: string }>;
+  artifacts: Array<{ kind: string; path: string; sha256: string | null }>;
   commands: string[];
   surfaces: string[];
   contextReviewed: LocalReviewContextReviewed[];
@@ -274,6 +274,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `PR head SHA: ${headSha}.`,
     `Record the resulting local-host evidence JSON at this exact issue evidence path: ${primaryEvidencePath}.`,
     `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, preconditions, runnerProvenance, and recordedAt.`,
+    LANE_ARTIFACT_REQUIREMENT,
     'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, and location.path plus location.line when the finding can be anchored to the PR diff.',
     'Report the complete finding set for this lane at this head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
@@ -462,7 +463,7 @@ function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
   return value.filter(isRecord).map(item => ({
     kind: typeof item.kind === 'string' ? redact(item.kind) : 'json',
     path: typeof item.path === 'string' ? redact(item.path) : '',
-    sha256: typeof item.sha256 === 'string' ? item.sha256 : '',
+    sha256: typeof item.sha256 === 'string' && item.sha256 !== '' ? item.sha256 : null,
   }));
 }
 
