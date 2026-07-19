@@ -273,11 +273,23 @@ describe('init service', () => {
     assert.match(agents, /Configured review adapter: local/);
     assert.match(agents, /pr gate <pr> --dry-run --json --local-review-prompts/);
     assert.match(agents, /spawn one independent Codex subagent per lane with `agent_type: "qube-review-focus"`/);
+    // Each lane subagent must write current-head evidence and publish its own lane review; the gate only aggregates and verifies.
+    assert.match(agents, /require each lane subagent to write its current-head lane evidence JSON and publish its own lane review with/);
+    assert.match(agents, /pr review publish <pr> --lane <lane> --issue <issue>/);
+    assert.match(agents, /the gate is aggregation and verification after per-lane publication, not the publisher/);
+    assert.doesNotMatch(agents, /optional audit evidence/);
+    assert.doesNotMatch(agents, /publish through pr gate/);
     const agent = readFileSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml'), 'utf8');
     assert.match(agent, /name = "qube-review-focus"/);
     assert.match(agent, /read-only PR reviewer/);
     assert.match(agent, /^# BEGIN EXECUTOR MANAGED SECTION/);
     assert.doesNotMatch(agent, /<!--/);
+    // Lane JSON is required publication input for the subagent, never optional main-agent input.
+    assert.match(agent, /required publication input/);
+    assert.match(agent, /publish your own lane review with the pr review publish command named in the inline lane prompt/);
+    assert.match(agent, /aggregates and verifies published lane feedback after per-lane publication; it does not publish lane feedback for you/);
+    assert.doesNotMatch(agent, /optional audit evidence/);
+    assert.doesNotMatch(agent, /publish through pr gate/);
   });
 
   it('renders configured review tier model and effort into the Codex review agent', async () => {
