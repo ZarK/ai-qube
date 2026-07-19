@@ -8,12 +8,14 @@ import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_e
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
 import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
+import { inspectAffected } from '../repo/index.js';
+import type { RepoAffectedResult } from '@tjalve/qube-core';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 
@@ -389,7 +391,14 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const aiqFindings = loadAiqReviewFindings(input.repoRoot, input.changedPaths ?? []);
-  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings)];
+  // Layout facts are optional lane context; inspection failure degrades to none.
+  let layoutAffected: RepoAffectedResult | undefined;
+  try {
+    layoutAffected = await inspectAffected({ config, cwd: input.repoRoot, changedPaths: input.changedPaths });
+  } catch {
+    layoutAffected = undefined;
+  }
+  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected)];
   // Activate from issue text + changed paths only so hashes stay deterministic and do not
   // flip on every generated review-context line that happens to mention common keywords.
   const activatedRiskCards = selectRiskCards({

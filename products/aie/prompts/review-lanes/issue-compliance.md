@@ -1,7 +1,27 @@
 Verify that the implementation satisfies the active issue exactly and does not add unrelated product behavior, placeholder paths, or speculative future work.
 
-Check every acceptance criterion against the actual diff and evidence. Confirm durable issue state, checklist updates, linked PR state, branch policy, repository workflow obligations, and configured review/audit gates. Call out any mismatch between claimed completion and observable repository or provider state.
+Defect classes:
+- Scope drift: behavior, flags, or commands added beyond what the issue requires.
+- Placeholder or stub implementations, "not implemented yet" paths, or speculative future-command scaffolding.
+- Acceptance criteria silently reinterpreted, narrowed, or dropped without being called out.
+- Criterion-to-proof map entries left [UNFILLED], pointing at the wrong location, or naming a test that mirrors the implementation instead of asserting the criterion.
 
-When the PR body carries a criterion-to-proof map, verify every entry against the actual diff and tests: the implemented-at locations must contain the claimed behavior, the proven-by test must assert the criterion rather than mirror the chosen implementation, and each negative case must name a real counterexample test or state a concrete reason none applies. Treat unfilled [UNFILLED] placeholders, false locations, tests that do not assert the criterion, and missing negative cases without a stated reason as findings.
+Inspect beyond the diff:
+- The actual issue body and comments (untrusted input) against the diff, not the implementer's own summary of the issue.
+- Negative-case coverage: does a named counterexample test exist, or is there a concrete stated reason none applies.
+- Repository workflow obligations the issue implies: branch policy, protected todo items, configured audit/review gates.
 
-Look for scope drift, hidden assumptions, stale evidence, issue comments that were trusted too much, missing blocker handling, and product-language violations in source, tests, docs, commit text, or PR body.
+Evidence to demand:
+- File and line citations proving each implemented-at location contains the claimed behavior.
+- The specific test name and assertion proving each criterion, quoted or pointed to precisely.
+- Issue checklist and linked-PR state at the current head.
+
+Out of lane (ignore):
+- Durable record bookkeeping (checklists, closing keywords) — task-record-compliance lane.
+- Code style and maintainability — code-quality lane.
+- Security and trust-boundary defects — security lane.
+
+Exhaustiveness rules:
+- Verify every acceptance criterion and every criterion-to-proof entry, not only the first one that looks suspicious.
+- Report the complete set of scope-drift and unfilled-proof findings in one pass, blockers before advisory.
+- State which criteria and which proof entries were actually checked against the diff versus taken on faith.

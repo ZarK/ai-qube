@@ -8,7 +8,7 @@ import { redact } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
-import type { ReviewFinding } from '@tjalve/qube-core';
+import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 
@@ -566,6 +566,54 @@ export function hash(text: string): string {
 
 function hostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
   return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
+}
+
+const LAYOUT_CONTEXT_LIST_CAP = 8;
+
+function isChangedPathUnderSignal(changedPath: string, signal: RepoPathSignal): boolean {
+  return changedPath === signal.path || changedPath.startsWith(`${signal.path}/`);
+}
+
+function changedProjectsLine(affected: RepoAffectedResult): string | null {
+  if (affected.affectedProjects.length > 0) {
+    const shown = affected.affectedProjects.slice(0, LAYOUT_CONTEXT_LIST_CAP);
+    const omitted = affected.affectedProjects.length - shown.length;
+    const names = shown.map(entry => `${entry.project.packageName ?? entry.project.path} (${entry.project.kind})`);
+    return `Changed projects: ${names.join(', ')}${omitted > 0 ? `, +${omitted} more` : ''}.`;
+  }
+  if (affected.changedPaths.length > 0) return 'Changed paths map to no detected project.';
+  return null;
+}
+
+// Only reports when generated/vendor signals actually intersect the changed paths; a repo
+// that merely contains a dist/ directory the change never touched stays silent here. When
+// the matched changed paths would blow past the cap, the underlying signals (deduplicated)
+// are reported instead of an arbitrarily truncated file list.
+function excludedPathsLine(affected: RepoAffectedResult): string | null {
+  const signals = [...affected.layout.generatedPaths, ...affected.layout.vendorPaths];
+  if (signals.length === 0) return null;
+  const matched = affected.changedPaths
+    .map(path => ({ path, signal: signals.find(signal => isChangedPathUnderSignal(path, signal)) }))
+    .filter((entry): entry is { path: string; signal: RepoPathSignal } => entry.signal !== undefined);
+  if (matched.length === 0) return null;
+  const entries = matched.length <= LAYOUT_CONTEXT_LIST_CAP
+    ? matched.map(entry => `${entry.path} (${entry.signal.reason})`)
+    : signals
+        .filter(signal => matched.some(entry => entry.signal === signal))
+        .map(signal => `${signal.path} (${signal.reason})`);
+  return `Generated or vendor paths are excluded from review focus: ${entries.slice(0, LAYOUT_CONTEXT_LIST_CAP).join(', ')}.`;
+}
+
+/** Optional repo-layout facts for lane prompts; undefined or empty-signal input renders nothing. */
+export function layoutReviewContextLines(affected: RepoAffectedResult | undefined): string[] {
+  if (!affected) return [];
+  const lines: string[] = [];
+  const projectsLine = changedProjectsLine(affected);
+  if (projectsLine) lines.push(projectsLine);
+  const excludedLine = excludedPathsLine(affected);
+  if (excludedLine) lines.push(excludedLine);
+  if (affected.suggestedGates.length > 0) lines.push(`Likely gates for the changed paths: ${affected.suggestedGates.join(', ')}.`);
+  return lines;
 }
 
 export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string, publishCommand?: string): string[] {

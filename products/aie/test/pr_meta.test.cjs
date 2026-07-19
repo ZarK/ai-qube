@@ -457,8 +457,8 @@ describe('PR body service', { concurrency: 4 }, () => {
 
   it('directs the issue-compliance lane to verify the criterion-to-proof map', () => {
     const stack = promptStack('issue-compliance', []);
-    assert.match(stack.text, /criterion-to-proof map/);
-    assert.match(stack.text, /Treat unfilled \[UNFILLED\] placeholders, false locations, tests that do not assert the criterion, and missing negative cases without a stated reason as findings\./);
+    assert.match(stack.text, /Criterion-to-proof map entries left \[UNFILLED\], pointing at the wrong location, or naming a test that mirrors the implementation instead of asserting the criterion\./);
+    assert.match(stack.text, /Negative-case coverage: does a named counterexample test exist, or is there a concrete stated reason none applies\./);
   });
 
   it('does not report ready while GitHub merge state is still blocked', async () => {

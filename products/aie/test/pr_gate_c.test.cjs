@@ -441,6 +441,94 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.ok(contextLines.some(line => line.includes('Prefer consuming their summaries instead of rereading large texts directly')), 'the lane spawn prompt must steer lanes toward the economy catalog summaries');
   });
 
+  it('renders layout-aware review context lines from a repo-affected result', () => {
+    const { layoutReviewContextLines } = require('../dist/app/local_review_runner_support.js');
+
+    assert.deepEqual(layoutReviewContextLines(undefined), []);
+
+    const emptyAffected = {
+      layout: { kind: 'unknown', root: '/repo', remotes: [], rootMarkers: [], projects: [], packageManagers: [], lockfiles: [], ciHints: [], generatedPaths: [], vendorPaths: [], warnings: [] },
+      changedPaths: [],
+      affectedProjects: [],
+      suggestedGates: [],
+      warnings: [],
+    };
+    assert.deepEqual(layoutReviewContextLines(emptyAffected), []);
+
+    const noMatchAffected = {
+      ...emptyAffected,
+      changedPaths: ['docs/notes/unrelated.md'],
+    };
+    assert.deepEqual(layoutReviewContextLines(noMatchAffected), ['Changed paths map to no detected project.']);
+
+    const aieProject = { id: '@tjalve/aie', path: 'products/aie', kind: 'product', packageName: '@tjalve/aie', packageManager: 'pnpm', gates: [] };
+    const coreProject = { id: '@tjalve/qube-core', path: 'packages/qube-core', kind: 'package', packageName: '@tjalve/qube-core', packageManager: 'pnpm', gates: [] };
+    const twoProjectAffected = {
+      layout: {
+        kind: 'javascript-typescript-workspace',
+        root: '/repo',
+        remotes: [],
+        rootMarkers: [],
+        projects: [aieProject, coreProject],
+        packageManagers: [],
+        lockfiles: [],
+        ciHints: [],
+        generatedPaths: [{ path: 'products/aie/dist', reason: 'Generated package build output path exists.' }],
+        vendorPaths: [],
+        warnings: [],
+      },
+      changedPaths: ['products/aie/src/app/local_review_runner.ts', 'products/aie/dist/app/local_review_runner.js', 'packages/qube-core/src/index.ts'],
+      affectedProjects: [
+        { project: aieProject, changedPaths: ['products/aie/src/app/local_review_runner.ts'], gates: ['build', 'typecheck', 'test'] },
+        { project: coreProject, changedPaths: ['packages/qube-core/src/index.ts'], gates: ['build', 'typecheck', 'test'] },
+      ],
+      suggestedGates: ['build', 'typecheck', 'test'],
+      warnings: [],
+    };
+    assert.deepEqual(layoutReviewContextLines(twoProjectAffected), [
+      'Changed projects: @tjalve/aie (product), @tjalve/qube-core (package).',
+      'Generated or vendor paths are excluded from review focus: products/aie/dist/app/local_review_runner.js (Generated package build output path exists.).',
+      'Likely gates for the changed paths: build, typecheck, test.',
+    ]);
+
+    // Capping: 10 affected projects render only the first 8 with a "+N more" note.
+    const manyProjects = Array.from({ length: 10 }, (_, index) => ({ id: `pkg-${index}`, path: `packages/pkg-${index}`, kind: 'package', packageName: `pkg-${index}`, packageManager: 'pnpm', gates: [] }));
+    const cappedAffected = {
+      layout: { kind: 'javascript-typescript-workspace', root: '/repo', remotes: [], rootMarkers: [], projects: manyProjects, packageManagers: [], lockfiles: [], ciHints: [], generatedPaths: [], vendorPaths: [], warnings: [] },
+      changedPaths: manyProjects.map(project => `${project.path}/index.ts`),
+      affectedProjects: manyProjects.map(project => ({ project, changedPaths: [`${project.path}/index.ts`], gates: ['build'] })),
+      suggestedGates: ['build'],
+      warnings: [],
+    };
+    const cappedLines = layoutReviewContextLines(cappedAffected);
+    assert.match(cappedLines[0], /^Changed projects: (?:pkg-\d+ \(package\), ){7}pkg-\d+ \(package\), \+2 more\.$/);
+    assert.deepEqual(cappedLines[1], 'Likely gates for the changed paths: build.');
+  });
+
+  it('threads real repo-layout facts into the local review runner lane prompts', async () => {
+    const { runLocalReviewRunner } = require('../dist/app/local_review_runner.js');
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'package.json'), `${JSON.stringify({ name: 'fixture-pkg', version: '1.0.0' }, null, 2)}\n`);
+    const config = localHostConfig(null);
+
+    const result = await runLocalReviewRunner(config, {
+      repoRoot: repo,
+      issueNumbers: [93],
+      prNumber: 12,
+      headSha: 'layout-head',
+      required: true,
+      shadow: false,
+      dryRun: true,
+      includePrompts: true,
+      changedPaths: ['src/index.ts'],
+    });
+
+    assert.ok(result.lanes.length > 0, 'the runner must plan at least one lane');
+    for (const lane of result.lanes) {
+      assert.ok(lane.promptText.includes('Changed projects: fixture-pkg (app).'), `lane ${lane.lane} prompt must include layout-derived changed-project context`);
+    }
+  });
+
   it('partitions structured lane findings into inline review comments and review body findings', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
