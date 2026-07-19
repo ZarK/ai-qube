@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
@@ -193,12 +193,13 @@ function writeReviewFileGuarded(path: string, content: string, containRoot?: str
       throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
     }
   }
-  // Write to an unpredictable temp name and rename over the destination: rename
-  // replaces a symlink entry instead of following it, so a link planted between
-  // the checks and the write can never redirect the content.
-  const tempPath = `${path}.${process.pid}-${Math.random().toString(36).slice(2, 10)}.tmp`;
+  // Write to an unguessable temp name with exclusive create and rename over the
+  // destination: rename replaces a symlink entry instead of following it, and
+  // the exclusive create fails rather than following anything pre-planted even
+  // at the temp name.
+  const tempPath = `${path}.${randomUUID()}.tmp`;
   try {
-    writeFileSync(tempPath, content);
+    writeFileSync(tempPath, content, { flag: 'wx' });
     renameSync(tempPath, path);
   } catch (err: unknown) {
     rmSync(tempPath, { force: true });
@@ -414,7 +415,22 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
       const locks = findReviewSessionLocks(repoRoot, { prNumber, currentHeadSha: headSha });
       const active = locks.find(lock => !lock.stale);
       if (active) return { held: false, activeLock: active };
-      rmSync(path, { force: true }); // Every observed lock is stale; clear and retry the exclusive create.
+      // Every observed lock is stale. Displace it via atomic rename and verify
+      // the displaced content is the stale record that was observed; a fresh
+      // lock that raced in is restored so its holder keeps exclusivity.
+      try {
+        const observed = readFileSync(path, 'utf8');
+        const tombstone = `${path}.${randomUUID()}.reclaim`;
+        renameSync(path, tombstone);
+        const displaced = readFileSync(tombstone, 'utf8');
+        if (displaced !== observed) {
+          renameSync(tombstone, path);
+        } else {
+          rmSync(tombstone, { force: true });
+        }
+      } catch {
+        // The lock disappeared between attempts; retry the exclusive create.
+      }
     }
   }
   return { held: false, activeLock: null };

@@ -845,6 +845,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     : acquireReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
   const activeSessionLock = sessionLockAcquisition.activeLock ?? undefined;
   const gateSessionLockHeld = sessionLockAcquisition.held;
+  // Fail closed: lanes execute only while this gate provably holds the lock.
+  const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
   let localReviewRunner: LocalReviewRunResult;
   try {
   localReviewRunner = await runLocalReviewRunner(config, {
@@ -854,7 +856,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     headSha: finalSnapshot.pr.headRefOid,
     required: localRequired,
     shadow: localShadow,
-    dryRun: dryRun || activeSessionLock !== undefined,
+    dryRun: dryRun || sessionLockBlocksExecution,
     exec: options.exec,
     contextLines: localReviewContextLines,
     includePrompts: options.includeLocalReviewPrompts === true,
@@ -983,7 +985,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     ...linkedChecklistWarnings,
     ...runnerUnavailable,
     ...publishUnavailable,
-    ...(activeSessionLock ? [`Local review lanes were not executed: an active review session lock exists at ${activeSessionLock.path}. ${activeSessionLock.reason} Wait for that session to finish, or ${activeSessionLock.cleanupCommand}`] : []),
+    ...(sessionLockBlocksExecution
+      ? [activeSessionLock
+          ? `Local review lanes were not executed: an active review session lock exists at ${activeSessionLock.path}. ${activeSessionLock.reason} Wait for that session to finish, or ${activeSessionLock.cleanupCommand}`
+          : 'Local review lanes were not executed: the review session lock could not be acquired. Fix filesystem access to .qube/aie/reviews, then rerun `aie pr gate`.']
+      : []),
   ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
