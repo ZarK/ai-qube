@@ -430,11 +430,24 @@ function processAlive(pid: number): boolean {
   }
 }
 
+// The evidence subtree must resolve to its literal location under the repo
+// root before lock operations touch it; a symlinked segment fails closed.
+function reviewSubtreeResolvesLiterally(repoRoot: string, subtree: readonly string[]): boolean {
+  try {
+    return realpathSync(join(repoRoot, ...subtree)) === join(realpathSync(repoRoot), ...subtree);
+  } catch {
+    return false;
+  }
+}
+
 // Exclusive-create acquisition: two racing gates resolve to exactly one holder;
 // the loser observes the winner's fresh lock and skips lane execution.
 export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
   mkdirSync(dirname(path), { recursive: true });
+  if (!reviewSubtreeResolvesLiterally(repoRoot, ['.qube', 'aie', 'reviews'])) {
+    return { held: false, activeLock: null }; // Fail closed: lanes skip when the lock location is untrustworthy.
+  }
   const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
@@ -467,6 +480,7 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
 
 export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  if (!reviewSubtreeResolvesLiterally(repoRoot, ['.qube', 'aie', 'reviews'])) return; // Never remove through a symlinked subtree.
   // Release only a lock this process owns; a reclaimed-and-replaced lock belongs to its new holder.
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
@@ -623,6 +637,9 @@ export function layoutReviewContextLines(affected: RepoAffectedResult | undefine
   const excludedLine = excludedPathsLine(affected);
   if (excludedLine) lines.push(excludedLine);
   if (affected.suggestedGates.length > 0) lines.push(`Likely gates for the changed paths: ${affected.suggestedGates.join(', ')}.`);
+  // Non-throwing inspection problems stay visible so a lane never mistakes a
+  // partial classification for a complete one.
+  if (affected.warnings.length > 0) lines.push(`Layout inspection warnings: ${affected.warnings.slice(0, 4).map(warning => redact(warning)).join('; ')}${affected.warnings.length > 4 ? ` (+${affected.warnings.length - 4} more)` : ''}.`);
   return lines;
 }
 
@@ -888,32 +905,37 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
         freshness: item.freshness as LocalReviewContextReviewed['freshness'],
       }];
     }) : [],
+    // Prompt-stack metadata is untrusted model output: redact free-text fields
+    // and accept only well-formed digests so persisted evidence never carries
+    // secrets or forged hash shapes.
     promptStack: Array.isArray(value.promptStack) ? value.promptStack.filter(isRecord).map(item => ({
-      id: typeof item.id === 'string' ? item.id : 'unknown-prompt-fragment',
-      source: typeof item.source === 'string' ? item.source : 'evidence',
-      sourceCategory: typeof item.sourceCategory === 'string' ? item.sourceCategory : undefined,
-      path: typeof item.path === 'string' ? item.path : null,
-      sha256: typeof item.sha256 === 'string' ? item.sha256 : null,
-      trust: typeof item.trust === 'string' ? item.trust : 'local-evidence',
+      id: typeof item.id === 'string' ? redact(item.id) : 'unknown-prompt-fragment',
+      source: typeof item.source === 'string' ? redact(item.source) : 'evidence',
+      sourceCategory: typeof item.sourceCategory === 'string' ? redact(item.sourceCategory) : undefined,
+      path: typeof item.path === 'string' ? redact(item.path) : null,
+      sha256: typeof item.sha256 === 'string' && /^[a-f0-9]{64}$/i.test(item.sha256) ? item.sha256.toLowerCase() : null,
+      trust: typeof item.trust === 'string' ? redact(item.trust) : 'local-evidence',
     })) : [],
     toolsUsed: readStringArray(value.toolsUsed),
     completeness: typeof value.completeness === 'string' ? redact(value.completeness.trim()) : '',
     preconditions: readStringArray(value.preconditions),
+    // Provenance strings are untrusted model output: free-text fields are
+    // redacted before persistence and digest-shaped fields must be well-formed.
     runnerProvenance: {
       runnerKind: value.runnerProvenance.runnerKind === 'local-command' || value.runnerProvenance.runnerKind === 'local-host' || value.runnerProvenance.runnerKind === 'manual-evidence' || value.runnerProvenance.runnerKind === 'prompt-only' ? value.runnerProvenance.runnerKind : 'manual-evidence',
-      host: typeof value.runnerProvenance.host === 'string' ? value.runnerProvenance.host : 'unknown-host',
+      host: typeof value.runnerProvenance.host === 'string' ? redact(value.runnerProvenance.host) : 'unknown-host',
       freshContext: value.runnerProvenance.freshContext === true,
       promptOnly: value.runnerProvenance.promptOnly === true,
-      taskId: typeof value.runnerProvenance.taskId === 'string' ? value.runnerProvenance.taskId : null,
-      sessionId: typeof value.runnerProvenance.sessionId === 'string' ? value.runnerProvenance.sessionId : null,
-      threadId: typeof value.runnerProvenance.threadId === 'string' ? value.runnerProvenance.threadId : null,
-      promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' ? value.runnerProvenance.promptStackHash : null,
-      headSha: typeof value.runnerProvenance.headSha === 'string' ? value.runnerProvenance.headSha : headSha,
-      providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? value.runnerProvenance.providerPublishStatus : null,
-      model: typeof value.runnerProvenance.model === 'string' ? value.runnerProvenance.model : null,
-      effort: typeof value.runnerProvenance.effort === 'string' ? value.runnerProvenance.effort : null,
+      taskId: typeof value.runnerProvenance.taskId === 'string' ? redact(value.runnerProvenance.taskId) : null,
+      sessionId: typeof value.runnerProvenance.sessionId === 'string' ? redact(value.runnerProvenance.sessionId) : null,
+      threadId: typeof value.runnerProvenance.threadId === 'string' ? redact(value.runnerProvenance.threadId) : null,
+      promptStackHash: typeof value.runnerProvenance.promptStackHash === 'string' && /^[a-f0-9]{64}$/i.test(value.runnerProvenance.promptStackHash) ? value.runnerProvenance.promptStackHash.toLowerCase() : null,
+      headSha: typeof value.runnerProvenance.headSha === 'string' ? redact(value.runnerProvenance.headSha) : headSha,
+      providerPublishStatus: typeof value.runnerProvenance.providerPublishStatus === 'string' ? redact(value.runnerProvenance.providerPublishStatus) : null,
+      model: typeof value.runnerProvenance.model === 'string' ? redact(value.runnerProvenance.model) : null,
+      effort: typeof value.runnerProvenance.effort === 'string' ? redact(value.runnerProvenance.effort) : null,
       isolation: value.runnerProvenance.isolation === 'read-only' ? 'read-only' : null,
-      invocationId: typeof value.runnerProvenance.invocationId === 'string' ? value.runnerProvenance.invocationId : null,
+      invocationId: typeof value.runnerProvenance.invocationId === 'string' ? redact(value.runnerProvenance.invocationId) : null,
       routeSource: value.runnerProvenance.routeSource === 'configured' || value.runnerProvenance.routeSource === 'fallback' ? value.runnerProvenance.routeSource : null,
     },
   };
