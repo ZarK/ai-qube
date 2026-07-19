@@ -810,12 +810,23 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     artifacts: readArtifacts(value.artifacts),
     commands: readStringArray(value.commands),
     surfaces: readStringArray(value.surfaces),
-    contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).map(item => ({
-      kind: typeof item.kind === 'string' ? item.kind as LocalReviewContextReviewed['kind'] : 'diff',
-      source: typeof item.source === 'string' ? redact(item.source) : 'local-command',
-      trust: typeof item.trust === 'string' ? item.trust as LocalReviewContextReviewed['trust'] : 'local-evidence',
-      freshness: typeof item.freshness === 'string' ? item.freshness as LocalReviewContextReviewed['freshness'] : 'current',
-    })) : [],
+    // Enum-validate context entries and drop incomplete ones: a missing field is
+    // never defaulted into a success-shaped value like freshness 'current'.
+    contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).flatMap(item => {
+      const kinds: readonly string[] = ['agents', 'issue-body', 'issue-comment', 'milestone', 'functional-requirement', 'linked-issue', 'pr-body', 'pr-comment', 'review-thread', 'doc', 'diff', 'ci', 'manual-qa'];
+      const trusts: readonly string[] = ['policy', 'trusted-provider', 'repo-doc', 'untrusted-task-input', 'local-evidence'];
+      const freshnessValues: readonly string[] = ['current', 'stale', 'unknown', 'missing', 'unavailable', 'not-configured'];
+      if (typeof item.kind !== 'string' || !kinds.includes(item.kind)) return [];
+      if (typeof item.source !== 'string' || item.source.trim() === '') return [];
+      if (typeof item.trust !== 'string' || !trusts.includes(item.trust)) return [];
+      if (typeof item.freshness !== 'string' || !freshnessValues.includes(item.freshness)) return [];
+      return [{
+        kind: item.kind as LocalReviewContextReviewed['kind'],
+        source: redact(item.source),
+        trust: item.trust as LocalReviewContextReviewed['trust'],
+        freshness: item.freshness as LocalReviewContextReviewed['freshness'],
+      }];
+    }) : [],
     promptStack: Array.isArray(value.promptStack) ? value.promptStack.filter(isRecord).map(item => ({
       id: typeof item.id === 'string' ? item.id : 'unknown-prompt-fragment',
       source: typeof item.source === 'string' ? item.source : 'evidence',
