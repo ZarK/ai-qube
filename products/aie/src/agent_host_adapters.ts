@@ -9,7 +9,20 @@ export interface InstructionTarget {
   description: string;
 }
 
-export type CommandRenderer = 'make-it-so' | 'codex-review-focus-agent' | 'claude-review-focus-agent' | 'opencode-review-focus-agent';
+export type CommandRenderer =
+  | 'make-it-so'
+  | 'codex-review-focus-agent'
+  | 'claude-review-focus-agent'
+  | 'opencode-review-focus-agent'
+  | 'codex-review-explorer-agent'
+  | 'codex-review-digest-agent'
+  | 'codex-review-librarian-agent'
+  | 'claude-review-explorer-agent'
+  | 'claude-review-digest-agent'
+  | 'claude-review-librarian-agent'
+  | 'opencode-review-explorer-agent'
+  | 'opencode-review-digest-agent'
+  | 'opencode-review-librarian-agent';
 
 export interface CommandTarget {
   id: string;
@@ -91,11 +104,38 @@ const OPENCODE_REVIEW_FOCUS_AGENT: CommandTarget = {
   renderer: 'opencode-review-focus-agent',
 };
 
+const OPENCODE_REVIEW_EXPLORER_AGENT: CommandTarget = {
+  id: 'opencode-review-explorer-agent',
+  path: pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'),
+  description: 'OpenCode read-only economy subagent that reads and summarizes large texts for a review lane.',
+  optional: false,
+  enabledBy: 'hostLocalReview',
+  renderer: 'opencode-review-explorer-agent',
+};
+
+const OPENCODE_REVIEW_DIGEST_AGENT: CommandTarget = {
+  id: 'opencode-review-digest-agent',
+  path: pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'),
+  description: 'OpenCode read-only economy subagent that condenses diffs and test output for a review lane.',
+  optional: false,
+  enabledBy: 'hostLocalReview',
+  renderer: 'opencode-review-digest-agent',
+};
+
+const OPENCODE_REVIEW_LIBRARIAN_AGENT: CommandTarget = {
+  id: 'opencode-review-librarian-agent',
+  path: pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md'),
+  description: 'OpenCode read-only economy subagent that locates files, symbols, and prior review evidence for a review lane.',
+  optional: false,
+  enabledBy: 'hostLocalReview',
+  renderer: 'opencode-review-librarian-agent',
+};
+
 const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   id: 'opencode',
   displayName: 'OpenCode',
   instructionTargets: [AGENTS_INSTRUCTIONS],
-  commandTargets: [OPENCODE_COMMAND, OPENCODE_COMMAND_ALIAS, OPENCODE_REVIEW_FOCUS_AGENT],
+  commandTargets: [OPENCODE_COMMAND, OPENCODE_COMMAND_ALIAS, OPENCODE_REVIEW_FOCUS_AGENT, OPENCODE_REVIEW_EXPLORER_AGENT, OPENCODE_REVIEW_DIGEST_AGENT, OPENCODE_REVIEW_LIBRARIAN_AGENT],
   todo: {
     tools: ['todowrite', 'todoread'],
     fallback: 'Use a visible checklist only if the host todo tools are unavailable.',
