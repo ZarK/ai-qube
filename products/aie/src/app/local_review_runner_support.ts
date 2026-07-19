@@ -267,6 +267,21 @@ function readLockRecord(lockPath: string): { createdAt: string | null; malformed
   }
 }
 
+function unreadableLockReport(relativePath: string, message: string): ReviewSessionLockReport {
+  // An unreadable evidence directory must fail closed: lock state is unknown, so it counts as stale.
+  return {
+    path: relativePath,
+    issueNumber: null,
+    prNumber: null,
+    headSha: null,
+    createdAt: null,
+    ageMinutes: null,
+    stale: true,
+    reason: `The review evidence directory could not be read (${message}); review lock state is unknown and counts as blocked.`,
+    cleanupCommand: `Fix filesystem access to ${relativePath}, then rerun the blocked command.`,
+  };
+}
+
 export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: number; currentHeadSha?: string; now?: number; maxAgeMinutes?: number } = {}): ReviewSessionLockReport[] {
   const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
   if (!existsSync(evidenceRoot)) return [];
@@ -276,14 +291,15 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
   let issueDirs: string[];
   try {
     issueDirs = readdirSync(evidenceRoot).filter(name => /^\d+$/.test(name));
-  } catch {
-    return [];
+  } catch (err: unknown) {
+    return [unreadableLockReport('.qube/aie/reviews', err instanceof Error ? err.message : String(err))];
   }
   for (const issueDir of issueDirs) {
     let prDirs: string[];
     try {
       prDirs = readdirSync(join(evidenceRoot, issueDir)).filter(name => /^\d+$/.test(name));
-    } catch {
+    } catch (err: unknown) {
+      reports.push(unreadableLockReport(`.qube/aie/reviews/${issueDir}`, err instanceof Error ? err.message : String(err)));
       continue;
     }
     for (const prDir of prDirs) {
@@ -291,7 +307,8 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
       let headDirs: string[];
       try {
         headDirs = readdirSync(join(evidenceRoot, issueDir, prDir));
-      } catch {
+      } catch (err: unknown) {
+        reports.push(unreadableLockReport(`.qube/aie/reviews/${issueDir}/${prDir}`, err instanceof Error ? err.message : String(err)));
         continue;
       }
       for (const headDir of headDirs) {

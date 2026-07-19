@@ -2174,12 +2174,34 @@ describe("composer surface envelopes and naming", () => {
     assert.notEqual(result.status, 0);
   });
 
-  it("emits exactly one JSON object for a succeeding direct --json command", () => {
+  it("preserves the planning failure exit code and cause in one JSON envelope", () => {
+    // aiu is not resolvable at its pinned version in this workspace, so planning fails with the component-missing contract.
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-continue-json-"));
     const result = runCli(["continue", "--json"], { cwd });
     const parsed = JSON.parse(result.stdout);
-    assert.equal(typeof parsed, "object");
-    assert.notEqual(parsed, null);
+    assert.equal(parsed.ok, false);
+    assert.equal(result.status, 4);
+    assert.match(JSON.stringify(parsed), /Cannot find aiu/);
+  });
+
+  it("rejects non-object child JSON with one synthesized error envelope", () => {
+    const packageShimRoot = mkdtempSync(path.join(tmpdir(), "qube-array-envelope-packages-"));
+    const binDir = path.join(packageShimRoot, "node_modules", ".bin");
+    const packageDir = path.join(packageShimRoot, "node_modules", "@tjalve", "aiu");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(packageDir, { recursive: true });
+    const commandPath = path.join(binDir, process.platform === "win32" ? "aiu.cmd" : "aiu");
+    writeFileSync(commandPath, process.platform === "win32"
+      ? "@echo off\r\necho []\r\n"
+      : "#!/bin/sh\nprintf '[]\\n'\n", "utf8");
+    if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+    writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiu", version: "0.0.5" })}\n`, "utf8");
+
+    const result = runCli(["continue", "--json"], { env: { QUBE_TEST_PACKAGE_ROOT: packageShimRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.notEqual(result.status, 0);
+    assert.match(JSON.stringify(parsed), /not a single JSON object/);
   });
 
   it("lists only the canonical continuation command in root help", () => {

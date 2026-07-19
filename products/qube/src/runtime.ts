@@ -4124,13 +4124,18 @@ function rewriteQubeReviewHelp(output: string, commandName: string): string {
 
 async function executeQubeJsonDispatch(componentName: string, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const planned = planQubeDispatch(componentName, componentArgs, environment);
-  if (!planned.dispatch) return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  // A planning failure has no child envelope; forwarding stderr without jsonStdout preserves the exit code and cause in one synthesized envelope.
+  if (!planned.dispatch) return { exitCode: planned.exitCode, stderr: joinNonEmpty(planned.stderr, planned.stdout) };
   const captured = await dispatchCommandCaptured(planned.dispatch);
   const stderr = `${planned.stderr}${captured.stderr}`;
+  let envelope: unknown;
   try {
-    JSON.parse(captured.stdout);
+    envelope = JSON.parse(captured.stdout);
   } catch {
-    // The child produced no valid single JSON envelope; forward the failure so exactly one envelope is synthesized.
+    envelope = undefined;
+  }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    // The child violated the single-JSON-object contract; forward the failure so exactly one envelope is synthesized.
     return {
       exitCode: captured.exitCode === 0 ? 1 : captured.exitCode,
       stderr: `${stderr}${captured.stdout.trim() === "" ? "" : `Component output was not a single JSON object: ${captured.stdout.trim().slice(0, 200)}\n`}`,
@@ -4141,6 +4146,10 @@ async function executeQubeJsonDispatch(componentName: string, componentArgs: rea
     jsonStdout: captured.stdout,
     stderr,
   };
+}
+
+function joinNonEmpty(...parts: readonly string[]): string {
+  return parts.filter(part => part.trim() !== "").join("");
 }
 
 function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): { readonly args: readonly string[] } | { readonly error: CliExecution } {
@@ -4783,6 +4792,8 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
   });
 }
 
+const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
+
 function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string }> {
   return new Promise(resolve => {
     const [command, args] = spawnInput(request);
@@ -4791,8 +4802,9 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: 
     let stderr = '';
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
+    // Bounded capture: a runaway or compromised component cannot exhaust composer memory before validation.
+    child.stdout.on('data', chunk => { if (stdout.length < CAPTURED_DISPATCH_MAX_CHARS) stdout += chunk; });
+    child.stderr.on('data', chunk => { if (stderr.length < CAPTURED_DISPATCH_MAX_CHARS) stderr += chunk; });
     child.on('exit', (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);

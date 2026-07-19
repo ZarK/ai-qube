@@ -1056,6 +1056,15 @@ describe('review session locks', () => {
     // No locks means no reports.
     const empty = mkdtempSync(join(tmpdir(), 'aie-review-lock-empty-'));
     assert.deepEqual(findReviewSessionLocks(empty, { now }), []);
+    // An unreadable evidence directory fails closed as an unknown-state stale report.
+    const unreadable = mkdtempSync(join(tmpdir(), 'aie-review-lock-unreadable-'));
+    mkdirSync(join(unreadable, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(unreadable, '.qube', 'aie', 'reviews'), 'not a directory');
+    const failedClosed = findReviewSessionLocks(unreadable, { now });
+    assert.equal(failedClosed.length, 1);
+    assert.equal(failedClosed[0].stale, true);
+    assert.match(failedClosed[0].reason, /could not be read/);
+    assert.match(failedClosed[0].cleanupCommand, /Fix filesystem access/);
   });
 
   it('reports stale locks through doctor with cleanup guidance', () => {
