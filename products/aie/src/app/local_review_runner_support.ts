@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
@@ -86,45 +86,47 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   return { version: 1, lanes: {} };
 }
 
-const ROUTE_FAULT_LOCK_WAIT_MS = 2_000;
+const ROUTE_FAULT_LOCK_STALE_MS = 30_000;
 const ROUTE_FAULT_LOCK_RETRY_MS = 25;
 
 // Serialize ledger read-modify-write across concurrent gate processes with a
-// bounded mkdir lock so parallel runs cannot overwrite each other's tallies.
+// mkdir lock. Real holds last microseconds, so the loop waits until the lock
+// is acquired or the holder is provably dead (lock age beyond the staleness
+// threshold) — a slow live writer is never overlapped, and termination is
+// guaranteed because any surviving lock eventually crosses the age threshold.
 function withRouteFaultLock<T>(path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
-  const deadline = Date.now() + ROUTE_FAULT_LOCK_WAIT_MS;
-  let locked = false;
-  while (Date.now() < deadline) {
+  for (;;) {
     try {
       mkdirSync(lockDir);
-      locked = true;
       break;
     } catch {
+      let holderDead = false;
+      try {
+        holderDead = Date.now() - statSync(lockDir).mtimeMs > ROUTE_FAULT_LOCK_STALE_MS;
+      } catch {
+        continue; // The holder released between attempts; retry immediately.
+      }
+      if (holderDead) {
+        try {
+          rmdirSync(lockDir);
+        } catch {
+          // Another writer reclaimed it first; retry the acquire.
+        }
+        continue;
+      }
       const waitUntil = Date.now() + ROUTE_FAULT_LOCK_RETRY_MS;
       while (Date.now() < waitUntil) { /* bounded spin; ledger writes are rare and small */ }
-    }
-  }
-  if (!locked) {
-    // The previous holder exceeded the bounded wait; reclaim the stale lock and proceed.
-    try {
-      rmdirSync(lockDir);
-      mkdirSync(lockDir);
-      locked = true;
-    } catch {
-      // Proceed best-effort; a rare unsynchronized write beats losing the fault record entirely.
     }
   }
   try {
     return update();
   } finally {
-    if (locked) {
-      try {
-        rmdirSync(lockDir);
-      } catch {
-        // Nothing to release.
-      }
+    try {
+      rmdirSync(lockDir);
+    } catch {
+      // Reclaimed as stale by another writer.
     }
   }
 }
