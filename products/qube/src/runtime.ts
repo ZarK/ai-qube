@@ -4134,11 +4134,12 @@ async function executeQubeJsonDispatch(componentName: string, componentArgs: rea
   } catch {
     envelope = undefined;
   }
-  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
-    // The child violated the single-JSON-object contract; forward the failure so exactly one envelope is synthesized.
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope) || typeof (envelope as Record<string, unknown>).ok !== "boolean") {
+    // The child violated the single-JSON-envelope contract (one object carrying the shared ok field);
+    // forward the failure so exactly one envelope is synthesized.
     return {
       exitCode: captured.exitCode === 0 ? 1 : captured.exitCode,
-      stderr: `${stderr}${captured.stdout.trim() === "" ? "" : `Component output was not a single JSON object: ${captured.stdout.trim().slice(0, 200)}\n`}`,
+      stderr: `${stderr}${captured.stdout.trim() === "" ? "" : `Component output was not a single JSON envelope object: ${captured.stdout.trim().slice(0, 200)}\n`}`,
     };
   }
   return {

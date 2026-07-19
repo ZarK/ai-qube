@@ -2201,7 +2201,7 @@ describe("composer surface envelopes and naming", () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.notEqual(result.status, 0);
-    assert.match(JSON.stringify(parsed), /not a single JSON object/);
+    assert.match(JSON.stringify(parsed), /not a single JSON envelope object/);
   });
 
   it("lists only the canonical continuation command in root help", () => {

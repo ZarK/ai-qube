@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
@@ -154,6 +154,23 @@ function withRouteFaultLock<T>(path: string, update: () => T): T {
   }
 }
 
+
+// Evidence, raw-output, bundle, and provenance writes refuse symlinked
+// destinations so a planted link can never redirect a gate write to an
+// arbitrary same-user file.
+function writeReviewFileGuarded(path: string, content: string): void {
+  let symlink = false;
+  try {
+    symlink = lstatSync(path).isSymbolicLink();
+  } catch {
+    symlink = false; // Missing file: nothing to follow.
+  }
+  if (symlink) {
+    throw new Error(`Refusing to write review evidence through a symlink: ${path}. Remove the symlink, then rerun.`);
+  }
+  writeFileSync(path, content);
+}
+
 export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
   return withRouteFaultLock(path, () => {
@@ -302,7 +319,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`);
     return path;
   } catch {
     return null;
@@ -779,7 +796,7 @@ function writeReviewBundle(input: {
 }): string {
   const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({
+  writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
@@ -831,7 +848,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeFileSync(rawPath, rawBodyText);
+  writeReviewFileGuarded(rawPath, rawBodyText);
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
@@ -868,7 +885,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`);
   return path;
 }
 
@@ -880,7 +897,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
   if (!isRecord(evidence)) return null;
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({
+  writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber,
     prNumber,

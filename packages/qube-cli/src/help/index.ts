@@ -46,7 +46,9 @@ export function renderHelp(registry: CommandRegistry, request: HelpRequest, opti
   const target = request.targetTokens.join(" ");
   const command = findCommand(registry, target);
   if (command) {
-    return renderCommandHelp(command, options);
+    // Help for a hidden synonym renders the canonical composer-facing command.
+    const canonical = command.aliasOf ? findCommand(registry, command.aliasOf) ?? command : command;
+    return renderCommandHelp(canonical, options);
   }
   const topic = findTopic(registry, target);
   if (topic) {
