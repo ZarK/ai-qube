@@ -23,6 +23,7 @@ import {
   PullRequestSummary,
 } from './repo/index.js';
 import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from './doctor_diagnostics/index.js';
+import { findReviewSessionLocks } from './app/local_review_runner_support.js';
 import type { WorkflowDirtyState } from './doctor_diagnostics/index.js';
 
 export {
@@ -101,6 +102,10 @@ class DoctorDiagnosticsBuilder {
       blockingPullRequests: pullRequestState.blockingPullRequests,
       evidence: this.resolveCurrentEvidence(repoRoot, branch, pullRequestState.openPullRequests),
     });
+    const reviewSessionLocks = repoRoot ? findReviewSessionLocks(repoRoot) : [];
+    for (const lock of reviewSessionLocks.filter(lock => lock.stale)) {
+      recommendations.push(`Stale review session lock detected at ${lock.path}: ${lock.reason} ${lock.cleanupCommand}`);
+    }
     const milestoneState = await this.readMilestones(effectiveConfig, queueState.openIssuesForMilestones, recommendations);
     this.addMilestoneRecommendations(milestoneState.milestoneWarnings, recommendations);
     const overallOk = computeDoctorOk({
@@ -121,6 +126,7 @@ class DoctorDiagnosticsBuilder {
       blockingPullRequestCount: effectiveConfig.blockOnOpenPRs ? pullRequestState.blockingPullRequests.length : 0,
       pullRequestError: effectiveConfig.blockOnOpenPRs ? pullRequestState.pullRequestError : undefined,
       instructionInstallOk: !repoRoot || ((!(instructions.opencodeMakeItSo || instructions.opencodeMakeitsoAlias) || instructions.opencodeMakeItSoManaged) && (instructions.agentsManaged || instructions.claudeManaged) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
+      staleReviewLockCount: reviewSessionLocks.filter(lock => lock.stale).length,
     });
     return {
       ok: overallOk,
@@ -156,6 +162,7 @@ class DoctorDiagnosticsBuilder {
       repositoryPolicy,
       gateReadiness,
       workflowReadiness,
+      reviewSessionLocks,
       migrationReadiness,
       baseRef,
       openPullRequests: pullRequestState.openPullRequests,

@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
@@ -86,26 +86,164 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   return { version: 1, lanes: {} };
 }
 
-export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
-  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
-  // A tally is only meaningful against one primary route identity; a config
-  // change to the lane's primary route restarts the count so the changed
-  // primary is actually tested before failover engages again.
-  const existing = ledger.lanes[lane];
-  const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
-  ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+const ROUTE_FAULT_LOCK_STALE_MS = 30_000;
+const ROUTE_FAULT_LOCK_RETRY_MS = 25;
+const ROUTE_FAULT_LOCK_HARD_DEADLINE_MS = 90_000;
+
+function lockHolderAlive(lockDir: string): boolean | null {
+  try {
+    const holder = JSON.parse(readFileSync(join(lockDir, 'holder.json'), 'utf8')) as Record<string, unknown>;
+    if (!Number.isSafeInteger(holder.pid)) return null;
+    try {
+      process.kill(Number(holder.pid), 0);
+      return true;
+    } catch (err: unknown) {
+      return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'EPERM';
+    }
+  } catch {
+    return null; // No readable holder record; liveness is unknown.
+  }
+}
+
+// Serialize ledger read-modify-write across concurrent gate processes with a
+// mkdir lock carrying the holder pid. Real holds last microseconds. A lock is
+// reclaimed only when it is old beyond the staleness threshold AND its holder
+// process is provably not alive (or unrecorded), so a slow live writer is never
+// overlapped; pid reuse combined with the age threshold is the residual risk.
+// A hard deadline turns an unremovable or hostile lock into an explicit error
+// instead of an unbounded hang.
+function withRouteFaultLock<T>(path: string, update: () => T): T {
+  const lockDir = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
-  return count;
+  const hardDeadline = Date.now() + ROUTE_FAULT_LOCK_HARD_DEADLINE_MS;
+  for (;;) {
+    try {
+      mkdirSync(lockDir);
+      writeFileSync(join(lockDir, 'holder.json'), `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`);
+      break;
+    } catch {
+      if (Date.now() > hardDeadline) {
+        throw new Error(`Route-fault ledger lock could not be acquired at ${lockDir}. Remove that lock path manually after confirming no PR gate process is running, then rerun the command.`);
+      }
+      let aged = false;
+      try {
+        aged = Date.now() - statSync(lockDir).mtimeMs > ROUTE_FAULT_LOCK_STALE_MS;
+      } catch {
+        continue; // The holder released between attempts; retry immediately.
+      }
+      if (aged && lockHolderAlive(lockDir) !== true) {
+        // Reclaim via atomic rename, then verify the displaced lock is the same
+        // stale one that was observed; a fresh lock that raced in is restored so
+        // its live holder is never overlapped.
+        const tombstone = `${lockDir}.reclaim-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
+        try {
+          const observedHolder = readFileSync(join(lockDir, 'holder.json'), 'utf8');
+          renameSync(lockDir, tombstone);
+          const displacedHolder = readFileSync(join(tombstone, 'holder.json'), 'utf8');
+          if (displacedHolder !== observedHolder) {
+            renameSync(tombstone, lockDir);
+            continue;
+          }
+          rmSync(tombstone, { recursive: true, force: true });
+        } catch {
+          rmSync(tombstone, { recursive: true, force: true });
+        }
+        continue;
+      }
+      const waitUntil = Date.now() + ROUTE_FAULT_LOCK_RETRY_MS;
+      while (Date.now() < waitUntil) { /* bounded spin; ledger writes are rare and small */ }
+    }
+  }
+  try {
+    return update();
+  } finally {
+    try {
+      rmSync(lockDir, { recursive: true, force: true });
+    } catch {
+      // Reclaimed as stale by another writer.
+    }
+  }
+}
+
+
+// Evidence, raw-output, bundle, and provenance writes refuse symlinked
+// destinations and symlinked ancestors that resolve outside the repository
+// root, so a planted link can never redirect a gate write to an arbitrary
+// same-user file. The lstat-to-write window is the residual risk on hosts
+// without O_NOFOLLOW semantics.
+function writeReviewFileGuarded(path: string, content: string, containRoot?: string): void {
+  let symlink = false;
+  try {
+    symlink = lstatSync(path).isSymbolicLink();
+  } catch {
+    symlink = false; // Missing file: nothing to follow.
+  }
+  if (symlink) {
+    throw new Error(`Refusing to write review evidence through a symlink: ${path}. Remove the symlink, then rerun.`);
+  }
+  if (containRoot) {
+    try {
+      const rootReal = realpathSync(containRoot);
+      const parentReal = realpathSync(dirname(path));
+      if (parentReal !== rootReal && !parentReal.startsWith(rootReal + sep)) {
+        throw new Error(`Refusing to write review evidence outside the repository root: ${path} resolves to ${parentReal}.`);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
+      throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
+    }
+  }
+  // Write to an unguessable temp name with exclusive create and rename over the
+  // destination: rename replaces a symlink entry instead of following it, and
+  // the exclusive create fails rather than following anything pre-planted even
+  // at the temp name.
+  const tempPath = `${path}.${randomUUID()}.tmp`;
+  try {
+    writeFileSync(tempPath, content, { flag: 'wx' });
+    try {
+      renameSync(tempPath, path);
+    } catch {
+      // Windows can refuse to replace a locked destination; clear it and retry.
+      rmSync(path, { force: true });
+      try {
+        renameSync(tempPath, path);
+      } catch {
+        // Final fallback: the destination entry was just removed, so recreate it
+        // with exclusive create (no replacement symlink can be followed) and
+        // only then discard the temp copy — content is never silently lost.
+        writeFileSync(path, content, { flag: 'wx' });
+        rmSync(tempPath, { force: true });
+      }
+    }
+  } catch (err: unknown) {
+    rmSync(tempPath, { force: true });
+    throw err;
+  }
+}
+
+export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
+  const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  return withRouteFaultLock(path, () => {
+    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+    // A tally is only meaningful against one primary route identity; a config
+    // change to the lane's primary route restarts the count so the changed
+    // primary is actually tested before failover engages again.
+    const existing = ledger.lanes[lane];
+    const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
+    ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    return count;
+  });
 }
 
 export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId): void {
-  const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
-  if (!(lane in ledger.lanes)) return;
-  delete ledger.lanes[lane];
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  withRouteFaultLock(path, () => {
+    const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
+    if (!(lane in ledger.lanes)) return;
+    delete ledger.lanes[lane];
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
+  });
 }
 
 export interface CarryForwardSource {
@@ -231,7 +369,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
     return path;
   } catch {
     return null;
@@ -240,6 +378,173 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
 
 export function reviewSessionLockPath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), '.review-lock.json');
+}
+
+export const REVIEW_SESSION_LOCK_MAX_AGE_MINUTES = 60;
+
+export interface ReviewSessionLockReport {
+  path: string;
+  issueNumber: number | null;
+  prNumber: number | null;
+  headSha: string | null;
+  createdAt: string | null;
+  ageMinutes: number | null;
+  stale: boolean;
+  reason: string;
+  cleanupCommand: string;
+}
+
+function readLockRecord(lockPath: string, expected?: { issueNumber: number; prNumber: number; headSha: string }): { createdAt: string | null; pid: number | null; malformed: boolean } {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { createdAt: null, pid: null, malformed: true };
+    const createdAt = typeof parsed.createdAt === 'string' && !Number.isNaN(Date.parse(parsed.createdAt)) ? parsed.createdAt : null;
+    const pid = Number.isSafeInteger(parsed.pid) ? Number(parsed.pid) : null;
+    // The record must identify itself as version 1 for the coordinates its path claims;
+    // a partial or cross-target record is malformed, never an active lock.
+    const identityValid = parsed.version === 1
+      && (expected === undefined || (parsed.issueNumber === expected.issueNumber && parsed.prNumber === expected.prNumber && typeof parsed.headSha === 'string' && safeSegment(parsed.headSha) === safeSegment(expected.headSha)));
+    return { createdAt, pid, malformed: createdAt === null || !identityValid };
+  } catch {
+    return { createdAt: null, pid: null, malformed: true };
+  }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'EPERM';
+  }
+}
+
+// Exclusive-create acquisition: two racing gates resolve to exactly one holder;
+// the loser observes the winner's fresh lock and skips lane execution.
+export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
+  const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  mkdirSync(dirname(path), { recursive: true });
+  const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      writeFileSync(path, record, { flag: 'wx' });
+      return { held: true, activeLock: null };
+    } catch {
+      const locks = findReviewSessionLocks(repoRoot, { prNumber, currentHeadSha: headSha });
+      const active = locks.find(lock => !lock.stale);
+      if (active) return { held: false, activeLock: active };
+      // Every observed lock is stale. Displace it via atomic rename and verify
+      // the displaced content is the stale record that was observed; a fresh
+      // lock that raced in is restored so its holder keeps exclusivity.
+      try {
+        const observed = readFileSync(path, 'utf8');
+        const tombstone = `${path}.${randomUUID()}.reclaim`;
+        renameSync(path, tombstone);
+        const displaced = readFileSync(tombstone, 'utf8');
+        if (displaced !== observed) {
+          renameSync(tombstone, path);
+        } else {
+          rmSync(tombstone, { force: true });
+        }
+      } catch {
+        // The lock disappeared between attempts; retry the exclusive create.
+      }
+    }
+  }
+  return { held: false, activeLock: null };
+}
+
+export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
+  const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  // Release only a lock this process owns; a reclaimed-and-replaced lock belongs to its new holder.
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object' && parsed.pid !== process.pid) return;
+  } catch {
+    // Missing or unreadable lock: removal is a no-op or clears debris.
+  }
+  rmSync(path, { force: true });
+}
+
+function unreadableLockReport(relativePath: string, message: string): ReviewSessionLockReport {
+  // An unreadable evidence directory must fail closed: lock state is unknown, so it counts as stale.
+  return {
+    path: relativePath,
+    issueNumber: null,
+    prNumber: null,
+    headSha: null,
+    createdAt: null,
+    ageMinutes: null,
+    stale: true,
+    reason: `The review evidence directory could not be read (${message}); review lock state is unknown and counts as blocked.`,
+    cleanupCommand: `Fix filesystem access to ${relativePath}, then rerun the blocked command.`,
+  };
+}
+
+export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: number; currentHeadSha?: string; now?: number; maxAgeMinutes?: number } = {}): ReviewSessionLockReport[] {
+  const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
+  if (!existsSync(evidenceRoot)) return [];
+  const now = options.now ?? Date.now();
+  const maxAgeMinutes = options.maxAgeMinutes ?? REVIEW_SESSION_LOCK_MAX_AGE_MINUTES;
+  const reports: ReviewSessionLockReport[] = [];
+  let issueDirs: string[];
+  try {
+    issueDirs = readdirSync(evidenceRoot).filter(name => /^\d+$/.test(name));
+  } catch (err: unknown) {
+    return [unreadableLockReport('.qube/aie/reviews', err instanceof Error ? err.message : String(err))];
+  }
+  for (const issueDir of issueDirs) {
+    let prDirs: string[];
+    try {
+      prDirs = readdirSync(join(evidenceRoot, issueDir)).filter(name => /^\d+$/.test(name));
+    } catch (err: unknown) {
+      reports.push(unreadableLockReport(`.qube/aie/reviews/${issueDir}`, err instanceof Error ? err.message : String(err)));
+      continue;
+    }
+    for (const prDir of prDirs) {
+      if (options.prNumber !== undefined && Number(prDir) !== options.prNumber) continue;
+      let headDirs: string[];
+      try {
+        headDirs = readdirSync(join(evidenceRoot, issueDir, prDir));
+      } catch (err: unknown) {
+        reports.push(unreadableLockReport(`.qube/aie/reviews/${issueDir}/${prDir}`, err instanceof Error ? err.message : String(err)));
+        continue;
+      }
+      for (const headDir of headDirs) {
+        const lockPath = join(evidenceRoot, issueDir, prDir, headDir, '.review-lock.json');
+        if (!existsSync(lockPath)) continue;
+        const relativePath = ['.qube', 'aie', 'reviews', issueDir, prDir, headDir, '.review-lock.json'].join('/');
+        const record = readLockRecord(lockPath, { issueNumber: Number(issueDir), prNumber: Number(prDir), headSha: headDir });
+        const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
+        const headMismatch = options.currentHeadSha !== undefined && headDir !== safeSegment(options.currentHeadSha);
+        const holderDead = record.pid !== null && !processAlive(record.pid);
+        // A recorded live holder beats the age threshold: a long-running gate stays exclusive.
+        const ageStale = record.pid === null && ageMinutes !== null && ageMinutes > maxAgeMinutes;
+        const stale = record.malformed || headMismatch || holderDead || ageStale;
+        const reason = record.malformed
+          ? 'The lock record is malformed or missing createdAt; an unreadable lock counts as stale.'
+          : headMismatch
+            ? `The lock belongs to head ${headDir}, not the current PR head.`
+            : holderDead
+              ? `The lock holder process ${record.pid} is no longer running.`
+              : ageStale
+                ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold, and records no holder process.`
+                : `An active review session holds this lock (${ageMinutes} minute(s) old).`;
+        reports.push({
+          path: relativePath,
+          issueNumber: Number(issueDir),
+          prNumber: Number(prDir),
+          headSha: headDir,
+          createdAt: record.createdAt,
+          ageMinutes,
+          stale,
+          reason,
+          cleanupCommand: `Delete ${relativePath} after confirming no review subagents are still running, then rerun the blocked command.`,
+        });
+      }
+    }
+  }
+  return reports;
 }
 
 export function reviewSessionLockLines(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, evidencePaths: readonly string[]): string[] {
@@ -505,12 +810,23 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
     artifacts: readArtifacts(value.artifacts),
     commands: readStringArray(value.commands),
     surfaces: readStringArray(value.surfaces),
-    contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).map(item => ({
-      kind: typeof item.kind === 'string' ? item.kind as LocalReviewContextReviewed['kind'] : 'diff',
-      source: typeof item.source === 'string' ? redact(item.source) : 'local-command',
-      trust: typeof item.trust === 'string' ? item.trust as LocalReviewContextReviewed['trust'] : 'local-evidence',
-      freshness: typeof item.freshness === 'string' ? item.freshness as LocalReviewContextReviewed['freshness'] : 'current',
-    })) : [],
+    // Enum-validate context entries and drop incomplete ones: a missing field is
+    // never defaulted into a success-shaped value like freshness 'current'.
+    contextReviewed: Array.isArray(value.contextReviewed) ? value.contextReviewed.filter(isRecord).flatMap(item => {
+      const kinds: readonly string[] = ['agents', 'issue-body', 'issue-comment', 'milestone', 'functional-requirement', 'linked-issue', 'pr-body', 'pr-comment', 'review-thread', 'doc', 'diff', 'ci', 'manual-qa'];
+      const trusts: readonly string[] = ['policy', 'trusted-provider', 'repo-doc', 'untrusted-task-input', 'local-evidence'];
+      const freshnessValues: readonly string[] = ['current', 'stale', 'unknown', 'missing', 'unavailable', 'not-configured'];
+      if (typeof item.kind !== 'string' || !kinds.includes(item.kind)) return [];
+      if (typeof item.source !== 'string' || item.source.trim() === '') return [];
+      if (typeof item.trust !== 'string' || !trusts.includes(item.trust)) return [];
+      if (typeof item.freshness !== 'string' || !freshnessValues.includes(item.freshness)) return [];
+      return [{
+        kind: item.kind as LocalReviewContextReviewed['kind'],
+        source: redact(item.source),
+        trust: item.trust as LocalReviewContextReviewed['trust'],
+        freshness: item.freshness as LocalReviewContextReviewed['freshness'],
+      }];
+    }) : [],
     promptStack: Array.isArray(value.promptStack) ? value.promptStack.filter(isRecord).map(item => ({
       id: typeof item.id === 'string' ? item.id : 'unknown-prompt-fragment',
       source: typeof item.source === 'string' ? item.source : 'evidence',
@@ -607,7 +923,7 @@ function writeReviewBundle(input: {
 }): string {
   const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({
+  writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber: input.issueNumber,
     prNumber: input.prNumber,
@@ -621,7 +937,7 @@ function writeReviewBundle(input: {
     promptText: input.promptText,
     outputContract: input.outputContract,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`);
+  }, null, 2)}\n`, input.repoRoot);
   return path;
 }
 
@@ -659,7 +975,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeFileSync(rawPath, rawBodyText);
+  writeReviewFileGuarded(rawPath, rawBodyText, repoRoot);
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
@@ -696,7 +1012,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeFileSync(path, `${JSON.stringify(body, null, 2)}\n`);
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
   return path;
 }
 
@@ -708,7 +1024,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
   if (!isRecord(evidence)) return null;
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify({
+  writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber,
     prNumber,
@@ -729,7 +1045,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     invocationId: provenance.invocationId,
     routeSource: provenance.routeSource,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`);
+  }, null, 2)}\n`, repoRoot);
   return path;
 }
 

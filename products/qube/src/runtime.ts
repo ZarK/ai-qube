@@ -11,6 +11,7 @@ import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
 import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
+import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
@@ -858,6 +859,8 @@ const makeItSoCommand = defineCommand({
 interface DirectQubeCommand {
   readonly command: ReturnType<typeof defineCommand>;
   readonly component: QubeComponent["command"];
+  readonly targetCommand: string;
+  readonly canonicalName: string;
   readonly supportsJson: boolean;
   readonly passthroughJson?: boolean;
   readonly qubePrimaryHelp?: boolean;
@@ -919,6 +922,8 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
       extensions: passthroughExtensions
     }),
     component: "aib",
+    targetCommand: "init",
+    canonicalName: "idea",
     supportsJson: true,
     mapArgs(args) {
       return mapIdeaArgs(args);
@@ -985,9 +990,9 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
   createDirectCommand("bench", "Run the standalone AIQ benchmark corpus.", "aiq", "bench", { translateJson: true }),
   createDirectCommand("watch", "Run AIQ continuously for explicit paths.", "aiq", "watch", { translateJson: true }),
   createDirectCommand("serve", "Start the standalone AIQ quality server.", "aiq", "serve", { translateJson: true }),
-  createDirectCommand("status", "Show Umpire continuation status.", "aiu", "status"),
-  createDirectCommand("continue", "Show Umpire continuation status.", "aiu", "status"),
-  createDirectCommand("continue status", "Show Umpire continuation status.", "aiu", "status"),
+  createDirectCommand("continue", "Show Umpire continuation status and resume guidance.", "aiu", "status"),
+  createDirectCommand("status", "Show Umpire continuation status and resume guidance.", "aiu", "status", { hidden: true, aliasOf: "continue" }),
+  createDirectCommand("continue status", "Show Umpire continuation status and resume guidance.", "aiu", "status", { hidden: true, aliasOf: "continue" }),
   createDirectCommand("whip", "Inspect and manage durable idle whip tasks.", "aiu", "whip"),
 ];
 
@@ -1064,6 +1069,62 @@ const componentCommands = qubeComponents.map(component => defineCommand({
 }));
 
 let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+
+export function renderCommandSurfacesDoc(): string {
+  const composerCommands = [componentsCommand, installCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
+  const visibleDirect = directCommandDefinitions.filter(definition => definition.command.hidden !== true);
+  const hiddenDirect = directCommandDefinitions.filter(definition => definition.command.hidden === true);
+  const lines: string[] = [
+    "# QUBE Command Surfaces",
+    "",
+    "Generated from the composer command registry. Do not edit by hand; regenerate with `pnpm --dir products/qube run docs:surfaces` after a build.",
+    "",
+    "See also the static command-flow visual: [QUBE Command Surface: Idea to Complete Implementation](./qube-command-surface-visual.html).",
+    "",
+    "## Composer-level commands",
+    "",
+    "| Command | Description |",
+    "| --- | --- |",
+    ...composerCommands.map(command => `| \`qube ${command.name}\` | ${command.description} |`),
+    "",
+    "## Direct workflow commands",
+    "",
+    "Each direct command is the composer-facing name for one component command.",
+    "",
+    "| Command | Routes to | Description |",
+    "| --- | --- | --- |",
+    ...visibleDirect.map(definition => `| \`qube ${definition.command.name}\` | \`${definition.component} ${definition.targetCommand}\` | ${definition.command.description} |`),
+    "",
+    "## Hidden synonyms",
+    "",
+    "These names stay dispatchable for compatibility but are excluded from help listings; their help renders the canonical composer-facing command.",
+    "",
+    "| Synonym | Canonical command |",
+    "| --- | --- |",
+    ...hiddenDirect.map(definition => `| \`qube ${definition.command.name}\` | \`qube ${definition.canonicalName}\` |`),
+    "",
+    "## Component passthroughs",
+    "",
+    "`qube components` exposes the package-level component CLIs only. Standalone-only package commands remain valid on each component CLI without being required for composer dispatch or component discovery.",
+    "",
+    "| Command | Component | Aliases |",
+    "| --- | --- | --- |",
+    ...qubeComponents.map(component => {
+      const aliases = component.id === component.command || directCommandNames.has(component.id) ? '—' : `\`qube ${component.id}\``;
+      return `| \`qube ${component.command} <args...>\` | ${component.packageName} | ${aliases} |`;
+    }),
+    "",
+    "## Package command surface contracts",
+    "",
+    "Package-level classification from the core contracts: which package command patterns are QUBE-facing workflow surfaces and which stay standalone-only.",
+    "",
+    "| Package | Command pattern | Classification | QUBE-facing | Schema required | Notes |",
+    "| --- | --- | --- | --- | --- | --- |",
+    ...qubeCommandSurfaceContracts.map(contract => `| \`${contract.packageName}\` | \`${contract.commandPattern.replaceAll("|", "\\|")}\` | ${contract.classification} | ${contract.qubeFacing ? 'yes' : 'no'} | ${contract.schemaRequired ? 'yes' : 'no'} | ${contract.notes} |`),
+    "",
+  ];
+  return lines.join("\n");
+}
 
 export function planQubeCli(input: readonly string[], environment: CliEnvironment = defaultEnvironment()): CliExecution {
   const args = [...input];
@@ -1230,6 +1291,9 @@ async function collectWorkflowReadiness(offline: boolean, environment: CliEnviro
   if (captured.exitCode !== 0) {
     return { status: "unavailable", error: captured.stderr.trim() || `Executor doctor exited with code ${captured.exitCode}.` };
   }
+  if (captured.truncated) {
+    return { status: "unavailable", error: "Executor doctor output exceeded the capture limit; truncated output is never accepted as workflow readiness." };
+  }
   try {
     const parsed = JSON.parse(captured.stdout) as { workflowReadiness?: unknown };
     if (parsed && typeof parsed === "object" && parsed.workflowReadiness) {
@@ -1289,15 +1353,19 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
-  const exitCode = quality.exitCode === 0
+  let exitCode = quality.exitCode === 0
     ? connectionExitCode
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
     try {
-      qualityPayload = JSON.parse(quality.stdout);
+      qualityPayload = quality.truncated ? { ok: false, error: "Quality Control doctor output exceeded the capture limit." } : JSON.parse(quality.stdout);
     } catch {
       qualityPayload = { ok: false, error: "Quality Control doctor returned invalid JSON." };
+    }
+    // A zero exit with a failing or unreadable payload is still a failure.
+    if (exitCode === 0 && (!qualityPayload || typeof qualityPayload !== "object" || (qualityPayload as { ok?: unknown }).ok === false)) {
+      exitCode = 1;
     }
     const payload = {
       ok: exitCode === 0,
@@ -4018,20 +4086,38 @@ async function executeDirectCommand(definition: DirectQubeCommand, args: readonl
     return { exitCode: mapped.error.exitCode, stdout: mapped.error.stdout, stderr: mapped.error.stderr };
   }
   // Help must win over JSON so combined --help --json still returns human help.
-  if (definition.qubePrimaryHelp && isDirectHelpRequest(args)) {
+  if (isDirectHelpRequest(args)) {
     const planned = planQubeDispatch(definition.component, mapped.args, environment);
     if (!planned.dispatch) return { exitCode: planned.exitCode, stdout: planned.stdout, stderr: planned.stderr };
     const captured = await dispatchCommandCaptured(planned.dispatch);
     return {
       exitCode: captured.exitCode,
-      stdout: rewriteQubeReviewHelp(captured.stdout, definition.command.name),
+      stdout: definition.qubePrimaryHelp
+        ? rewriteQubeReviewHelp(captured.stdout, definition.command.name)
+        : rewriteDirectCommandHelp(captured.stdout, definition),
       stderr: `${planned.stderr}${captured.stderr}`,
     };
   }
   if (definition.passthroughJson && hasTopLevelJsonFlag(args)) {
     return executeQubeJsonDispatch(definition.component, mapped.args, environment);
   }
+  // A JSON-requesting direct command must capture the child envelope so exactly one JSON object reaches stdout.
+  if (definition.supportsJson && mappedArgsRequestJson(mapped.args)) {
+    return executeQubeJsonDispatch(definition.component, mapped.args, environment);
+  }
   return executeQubeDispatch(definition.component, mapped.args, environment);
+}
+
+function mappedArgsRequestJson(args: readonly string[]): boolean {
+  if (args.includes("--json")) return true;
+  const formatIndex = args.indexOf("--format");
+  return formatIndex >= 0 && args[formatIndex + 1] === "json";
+}
+
+function rewriteDirectCommandHelp(output: string, definition: DirectQubeCommand): string {
+  const componentPath = `${definition.component} ${definition.targetCommand}`;
+  const primary = output.split(componentPath).join(`qube ${definition.canonicalName}`).trimEnd();
+  return `${primary}\n\nEquivalent paths: \`qube ${componentPath}\` or \`${componentPath}\`.\n`;
 }
 
 function isDirectHelpRequest(args: readonly string[]): boolean {
@@ -4045,13 +4131,33 @@ function rewriteQubeReviewHelp(output: string, commandName: string): string {
 
 async function executeQubeJsonDispatch(componentName: string, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const planned = planQubeDispatch(componentName, componentArgs, environment);
-  if (!planned.dispatch) return { exitCode: planned.exitCode, jsonStdout: planned.stdout, stderr: planned.stderr };
+  // A planning failure has no child envelope; forwarding stderr without jsonStdout preserves the exit code and cause in one synthesized envelope.
+  if (!planned.dispatch) return { exitCode: planned.exitCode, stderr: joinNonEmpty(planned.stderr, planned.stdout) };
   const captured = await dispatchCommandCaptured(planned.dispatch);
+  const stderr = `${planned.stderr}${captured.stderr}`;
+  let envelope: unknown;
+  try {
+    envelope = captured.truncated ? undefined : JSON.parse(captured.stdout);
+  } catch {
+    envelope = undefined;
+  }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope) || typeof (envelope as Record<string, unknown>).ok !== "boolean") {
+    // The child violated the single-JSON-envelope contract (one object carrying the shared ok field);
+    // forward the failure so exactly one envelope is synthesized.
+    return {
+      exitCode: captured.exitCode === 0 ? 1 : captured.exitCode,
+      stderr: `${stderr}${captured.stdout.trim() === "" ? "" : `Component output was not a single JSON envelope object: ${captured.stdout.trim().slice(0, 200)}\n`}`,
+    };
+  }
   return {
     exitCode: captured.exitCode,
     jsonStdout: captured.stdout,
-    stderr: `${planned.stderr}${captured.stderr}`,
+    stderr,
   };
+}
+
+function joinNonEmpty(...parts: readonly string[]): string {
+  return parts.filter(part => part.trim() !== "").join("");
 }
 
 function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): { readonly args: readonly string[] } | { readonly error: CliExecution } {
@@ -4116,7 +4222,7 @@ function createDirectCommand(
   description: string,
   component: QubeComponent["command"],
   targetCommand: string,
-  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean } = {}
+  options: { readonly translateJson?: boolean; readonly supportsJson?: boolean; readonly passthroughJson?: boolean; readonly qubePrimaryHelp?: boolean; readonly hidden?: boolean; readonly aliasOf?: string } = {}
 ): DirectQubeCommand {
   const supportsJson = options.supportsJson ?? true;
   return {
@@ -4124,6 +4230,8 @@ function createDirectCommand(
       kind: "command",
       name,
       description,
+      hidden: options.hidden === true,
+      aliasOf: options.aliasOf,
       arguments: [
         defineArgument({
           name: "args",
@@ -4147,6 +4255,8 @@ function createDirectCommand(
       extensions: passthroughExtensions
     }),
     component,
+    targetCommand,
+    canonicalName: options.aliasOf ?? name,
     supportsJson,
     passthroughJson: options.passthroughJson === true,
     qubePrimaryHelp: options.qubePrimaryHelp === true,
@@ -4674,7 +4784,15 @@ function commandNames(command: string, environment: CliEnvironment): readonly st
 
 function dispatchCommand(request: DispatchRequest): Promise<number> {
   return new Promise(resolve => {
-    const [command, args] = spawnInput(request);
+    let command: string;
+    let args: string[];
+    try {
+      [command, args] = spawnInput(request);
+    } catch (err: unknown) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      resolve(2);
+      return;
+    }
     const child = spawn(command, args, { stdio: "inherit", shell: false });
     child.on("exit", (code, signal) => {
       if (signal) {
@@ -4690,29 +4808,56 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
   });
 }
 
-function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
+
+function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
   return new Promise(resolve => {
-    const [command, args] = spawnInput(request);
+    let command: string;
+    let args: string[];
+    try {
+      [command, args] = spawnInput(request);
+    } catch (err: unknown) {
+      resolve({ exitCode: 2, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n`, truncated: false });
+      return;
+    }
     const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });
     let stdout = '';
     let stderr = '';
+    let truncated = false;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    child.stdout.on('data', chunk => { stdout += chunk; });
-    child.stderr.on('data', chunk => { stderr += chunk; });
+    // Bounded capture: a runaway or compromised component cannot exhaust composer memory,
+    // and truncation is recorded so a valid-JSON prefix is never treated as a complete envelope.
+    const append = (existing: string, chunk: string): string => {
+      const remaining = CAPTURED_DISPATCH_MAX_CHARS - existing.length;
+      if (chunk.length <= remaining) return existing + chunk;
+      truncated = true;
+      return existing + chunk.slice(0, Math.max(0, remaining));
+    };
+    child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
+    child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
     child.on('exit', (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);
         return;
       }
-      resolve({ exitCode: code ?? 1, stdout, stderr });
+      resolve({ exitCode: code ?? 1, stdout, stderr, truncated });
     });
-    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n` }));
+    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`, truncated }));
   });
 }
 
+const CMD_UNSAFE_ARGUMENT = /[&|<>^%!"\r\n]/;
+
 function spawnInput(request: DispatchRequest): [string, string[]] {
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(request.commandPath)) {
+    // cmd.exe parses metacharacters inside forwarded arguments regardless of
+    // Node's quoting, so arguments that could splice commands are refused
+    // instead of being forwarded through the .cmd shim.
+    const unsafe = request.args.find(argument => CMD_UNSAFE_ARGUMENT.test(argument));
+    if (unsafe !== undefined) {
+      throw new Error(`Refusing to forward an argument containing cmd metacharacters through ${request.commandPath}: ${JSON.stringify(unsafe)}.`);
+    }
     return [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", request.commandPath, ...request.args]];
   }
   return [request.commandPath, [...request.args]];

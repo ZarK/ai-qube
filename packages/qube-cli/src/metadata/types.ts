@@ -135,6 +135,10 @@ export interface CommandMetadata<Extensions extends MetadataExtensions = Metadat
   readonly name: string;
   readonly description: string;
   readonly aliases?: readonly string[];
+  /** Hidden commands stay dispatchable but are excluded from help listings. */
+  readonly hidden?: boolean;
+  /** Names the canonical command this entry is a synonym of. */
+  readonly aliasOf?: string;
   readonly arguments?: readonly ArgumentMetadata[];
   readonly flags?: readonly FlagMetadata[];
   readonly examples?: readonly ExampleMetadata[];

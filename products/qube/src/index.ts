@@ -50,5 +50,5 @@ export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
-export { planQubeCli, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
+export { planQubeCli, renderCommandSurfacesDoc, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
 export type { CliEnvironment, CliExecution, CommandResolution, DispatchRequest } from "./runtime.js";

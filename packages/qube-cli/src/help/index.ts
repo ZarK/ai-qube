@@ -46,7 +46,9 @@ export function renderHelp(registry: CommandRegistry, request: HelpRequest, opti
   const target = request.targetTokens.join(" ");
   const command = findCommand(registry, target);
   if (command) {
-    return renderCommandHelp(command, options);
+    // Help for a hidden synonym renders the canonical composer-facing command.
+    const canonical = command.aliasOf ? findCommand(registry, command.aliasOf) ?? command : command;
+    return renderCommandHelp(canonical, options);
   }
   const topic = findTopic(registry, target);
   if (topic) {
@@ -67,7 +69,7 @@ export function renderRootHelp(registry: CommandRegistry, options: HelpRenderOpt
       ...(options.packageVersion ? [`  ${options.bin} --version`] : [])
     ]),
     renderNameDescriptionSection("Topics:", listTopics(registry)),
-    renderNameDescriptionSection("Commands:", listCommands(registry)),
+    renderNameDescriptionSection("Commands:", listCommands(registry).filter(command => !command.hidden)),
     "Help invocations never execute command handlers."
   ]);
 }

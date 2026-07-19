@@ -23,6 +23,7 @@ import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
+import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
@@ -169,6 +170,7 @@ export interface PrGateResult {
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
+  reviewSessionLocks: ReviewSessionLockReport[];
   externalServices: string[];
   headChangedSinceRequest: boolean;
   counts: {
@@ -833,14 +835,30 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         issueNumbers: finalSnapshot.closingIssueNumbers,
       })
     : undefined;
-  const localReviewRunner = await runLocalReviewRunner(config, {
+  // The gate holds the review session lock while lanes execute so two
+  // concurrent gates for the same PR never interleave evidence writes; the
+  // exclusive-create acquisition resolves a race to exactly one holder, and
+  // the loser skips lane execution with guidance.
+  const lockIssueNumber = finalSnapshot.closingIssueNumbers[0] ?? options.prNumber;
+  const sessionLockAcquisition = dryRun
+    ? { held: false, activeLock: null }
+    : acquireReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  const activeSessionLock = sessionLockAcquisition.activeLock ?? undefined;
+  const gateSessionLockHeld = sessionLockAcquisition.held;
+  // Fail closed: lanes execute only while this gate provably holds the lock.
+  const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
+  try {
+  // The lock is released after evidence read and provider publish complete; a
+  // crashed gate's lock goes stale immediately via the holder pid liveness rule.
+  let localReviewRunner: LocalReviewRunResult;
+  localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
     prNumber: options.prNumber,
     headSha: finalSnapshot.pr.headRefOid,
     required: localRequired,
     shadow: localShadow,
-    dryRun,
+    dryRun: dryRun || sessionLockBlocksExecution,
     exec: options.exec,
     contextLines: localReviewContextLines,
     includePrompts: options.includeLocalReviewPrompts === true,
@@ -876,7 +894,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const publishUnavailable: string[] = [];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
-  if (deferProviderMutation) {
+  if (deferProviderMutation && sessionLockBlocksExecution) {
+    // A gate that does not hold the review session lock never mutates the provider.
+    localReviewPublish = pendingLocalReviewPublish('Provider publishing was withheld because this gate does not hold the review session lock; no provider mutation was performed.');
+  } else if (deferProviderMutation) {
     const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
     const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
     // Reused lanes (local current-head evidence or trusted provider records) are already
@@ -961,7 +982,17 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
-  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
+  const unavailable = [
+    ...finalSnapshot.unavailable,
+    ...linkedChecklistWarnings,
+    ...runnerUnavailable,
+    ...publishUnavailable,
+    ...(sessionLockBlocksExecution
+      ? [activeSessionLock
+          ? `Local review lanes were not executed: an active review session lock exists at ${activeSessionLock.path}. ${activeSessionLock.reason} Wait for that session to finish, or ${activeSessionLock.cleanupCommand}`
+          : 'Local review lanes were not executed: the review session lock could not be acquired. Fix filesystem access to .qube/aie/reviews, then rerun `aie pr gate`.']
+      : []),
+  ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
@@ -1018,6 +1049,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
+    reviewSessionLocks: findReviewSessionLocks(repoRoot, { prNumber: options.prNumber, currentHeadSha: finalSnapshot.pr.headRefOid }),
     externalServices: reviewers.filter(reviewer => reviewer.externalService).map(reviewer => reviewer.handle),
     headChangedSinceRequest: reviewers.some(reviewer => reviewer.staleRequest),
     counts: {
@@ -1029,10 +1061,16 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     warnings: warnings(finalSnapshot.item, reviewers),
     nextAction: shipReady.nextAction,
   };
+  } finally {
+    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  }
 }
 
 export function formatPrGate(result: PrGateResult): string {
   const lines = [`PR review gate for #${result.pr.number}: ${result.status}.`];
+  for (const lock of result.reviewSessionLocks.filter(lock => lock.stale)) {
+    lines.push(`Stale review session lock: ${lock.path}. ${lock.reason} ${lock.cleanupCommand}`);
+  }
   lines.push(`Pull request: ${result.pr.title} (${result.pr.url})`);
   lines.push(`Head: ${result.pr.headSha}`);
   lines.push(`Ship readiness: ${result.shipReady.ready ? 'ready' : 'not ready'}; residual advisories=${result.shipReady.advisoryCount}.`);

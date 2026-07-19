@@ -51,6 +51,8 @@ export interface CommandSchema {
   readonly name: string;
   readonly description: string;
   readonly aliases: readonly string[];
+  readonly hidden: boolean;
+  readonly aliasOf: string | null;
   readonly arguments: readonly ArgumentSchema[];
   readonly flags: readonly FlagSchema[];
   readonly examples: readonly ExampleSchema[];
@@ -186,6 +188,8 @@ function renderCommand(command: CommandMetadata): CommandSchema {
       name: command.name,
       description: command.description,
       aliases: sortText(command.aliases ?? []),
+      hidden: command.hidden === true,
+      aliasOf: command.aliasOf ?? null,
       arguments: (command.arguments ?? []).map(renderArgument),
       flags: [...(command.flags ?? [])].sort(compareByName).map(renderFlag),
       examples: [...(command.examples ?? [])].sort(compareExamples).map(renderExample),
