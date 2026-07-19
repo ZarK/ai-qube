@@ -203,9 +203,17 @@ function writeReviewFileGuarded(path: string, content: string, containRoot?: str
     try {
       renameSync(tempPath, path);
     } catch {
-      // Windows can refuse to replace a locked destination; clear it and retry once.
+      // Windows can refuse to replace a locked destination; clear it and retry.
       rmSync(path, { force: true });
-      renameSync(tempPath, path);
+      try {
+        renameSync(tempPath, path);
+      } catch {
+        // Final fallback: the destination entry was just removed, so recreate it
+        // with exclusive create (no replacement symlink can be followed) and
+        // only then discard the temp copy — content is never silently lost.
+        writeFileSync(path, content, { flag: 'wx' });
+        rmSync(tempPath, { force: true });
+      }
     }
   } catch (err: unknown) {
     rmSync(tempPath, { force: true });
