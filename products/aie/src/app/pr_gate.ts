@@ -23,7 +23,7 @@ import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import { findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
+import { clearReviewSessionLock, findReviewSessionLocks, writeReviewSessionLock, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
@@ -835,14 +835,31 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         issueNumbers: finalSnapshot.closingIssueNumbers,
       })
     : undefined;
-  const localReviewRunner = await runLocalReviewRunner(config, {
+  // The gate holds the review session lock while lanes execute so two
+  // concurrent gates for the same PR never interleave evidence writes; an
+  // active lock from another live process skips lane execution with guidance.
+  const gateSessionLocks = findReviewSessionLocks(repoRoot, { prNumber: options.prNumber, currentHeadSha: finalSnapshot.pr.headRefOid });
+  const activeSessionLock = dryRun ? undefined : gateSessionLocks.find(lock => !lock.stale);
+  const lockIssueNumber = finalSnapshot.closingIssueNumbers[0] ?? options.prNumber;
+  let gateSessionLockHeld = false;
+  if (!dryRun && !activeSessionLock) {
+    try {
+      writeReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+      gateSessionLockHeld = true;
+    } catch {
+      // A lock that cannot be written never blocks review execution.
+    }
+  }
+  let localReviewRunner: LocalReviewRunResult;
+  try {
+  localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
     prNumber: options.prNumber,
     headSha: finalSnapshot.pr.headRefOid,
     required: localRequired,
     shadow: localShadow,
-    dryRun,
+    dryRun: dryRun || activeSessionLock !== undefined,
     exec: options.exec,
     contextLines: localReviewContextLines,
     includePrompts: options.includeLocalReviewPrompts === true,
@@ -854,6 +871,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     routeProbe: options.routeProbe,
     providerLaneReuse,
   });
+  } finally {
+    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  }
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
     contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
@@ -963,7 +983,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
-  const unavailable = [...finalSnapshot.unavailable, ...linkedChecklistWarnings, ...runnerUnavailable, ...publishUnavailable];
+  const unavailable = [
+    ...finalSnapshot.unavailable,
+    ...linkedChecklistWarnings,
+    ...runnerUnavailable,
+    ...publishUnavailable,
+    ...(activeSessionLock ? [`Local review lanes were not executed: an active review session lock exists at ${activeSessionLock.path}. ${activeSessionLock.reason} Wait for that session to finish, or ${activeSessionLock.cleanupCommand}`] : []),
+  ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);

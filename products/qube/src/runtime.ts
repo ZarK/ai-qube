@@ -1291,6 +1291,9 @@ async function collectWorkflowReadiness(offline: boolean, environment: CliEnviro
   if (captured.exitCode !== 0) {
     return { status: "unavailable", error: captured.stderr.trim() || `Executor doctor exited with code ${captured.exitCode}.` };
   }
+  if (captured.truncated) {
+    return { status: "unavailable", error: "Executor doctor output exceeded the capture limit; truncated output is never accepted as workflow readiness." };
+  }
   try {
     const parsed = JSON.parse(captured.stdout) as { workflowReadiness?: unknown };
     if (parsed && typeof parsed === "object" && parsed.workflowReadiness) {

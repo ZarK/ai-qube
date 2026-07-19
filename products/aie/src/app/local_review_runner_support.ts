@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative } from 'node:path';
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { dirname, join, relative, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
@@ -132,10 +132,21 @@ function withRouteFaultLock<T>(path: string, update: () => T): T {
         continue; // The holder released between attempts; retry immediately.
       }
       if (aged && lockHolderAlive(lockDir) !== true) {
+        // Reclaim via atomic rename, then verify the displaced lock is the same
+        // stale one that was observed; a fresh lock that raced in is restored so
+        // its live holder is never overlapped.
+        const tombstone = `${lockDir}.reclaim-${process.pid}-${Math.random().toString(36).slice(2, 10)}`;
         try {
-          rmSync(lockDir, { recursive: true, force: true });
+          const observedHolder = readFileSync(join(lockDir, 'holder.json'), 'utf8');
+          renameSync(lockDir, tombstone);
+          const displacedHolder = readFileSync(join(tombstone, 'holder.json'), 'utf8');
+          if (displacedHolder !== observedHolder) {
+            renameSync(tombstone, lockDir);
+            continue;
+          }
+          rmSync(tombstone, { recursive: true, force: true });
         } catch {
-          // Another writer reclaimed it first, or removal is blocked; the hard deadline bounds retries.
+          rmSync(tombstone, { recursive: true, force: true });
         }
         continue;
       }
@@ -156,9 +167,11 @@ function withRouteFaultLock<T>(path: string, update: () => T): T {
 
 
 // Evidence, raw-output, bundle, and provenance writes refuse symlinked
-// destinations so a planted link can never redirect a gate write to an
-// arbitrary same-user file.
-function writeReviewFileGuarded(path: string, content: string): void {
+// destinations and symlinked ancestors that resolve outside the repository
+// root, so a planted link can never redirect a gate write to an arbitrary
+// same-user file. The lstat-to-write window is the residual risk on hosts
+// without O_NOFOLLOW semantics.
+function writeReviewFileGuarded(path: string, content: string, containRoot?: string): void {
   let symlink = false;
   try {
     symlink = lstatSync(path).isSymbolicLink();
@@ -167,6 +180,18 @@ function writeReviewFileGuarded(path: string, content: string): void {
   }
   if (symlink) {
     throw new Error(`Refusing to write review evidence through a symlink: ${path}. Remove the symlink, then rerun.`);
+  }
+  if (containRoot) {
+    try {
+      const rootReal = realpathSync(containRoot);
+      const parentReal = realpathSync(dirname(path));
+      if (parentReal !== rootReal && !parentReal.startsWith(rootReal + sep)) {
+        throw new Error(`Refusing to write review evidence outside the repository root: ${path} resolves to ${parentReal}.`);
+      }
+    } catch (err: unknown) {
+      if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
+      throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
+    }
   }
   writeFileSync(path, content);
 }
@@ -319,7 +344,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirSync(dirname(path), { recursive: true });
-    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
     return path;
   } catch {
     return null;
@@ -344,15 +369,36 @@ export interface ReviewSessionLockReport {
   cleanupCommand: string;
 }
 
-function readLockRecord(lockPath: string): { createdAt: string | null; malformed: boolean } {
+function readLockRecord(lockPath: string): { createdAt: string | null; pid: number | null; malformed: boolean } {
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { createdAt: null, malformed: true };
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { createdAt: null, pid: null, malformed: true };
     const createdAt = typeof parsed.createdAt === 'string' && !Number.isNaN(Date.parse(parsed.createdAt)) ? parsed.createdAt : null;
-    return { createdAt, malformed: createdAt === null };
+    const pid = Number.isSafeInteger(parsed.pid) ? Number(parsed.pid) : null;
+    return { createdAt, pid, malformed: createdAt === null };
   } catch {
-    return { createdAt: null, malformed: true };
+    return { createdAt: null, pid: null, malformed: true };
   }
+}
+
+function processAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err: unknown) {
+    return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'EPERM';
+  }
+}
+
+export function writeReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+  const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  mkdirSync(dirname(path), { recursive: true });
+  writeReviewFileGuarded(path, `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`, repoRoot);
+  return path;
+}
+
+export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
+  rmSync(reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha), { force: true });
 }
 
 function unreadableLockReport(relativePath: string, message: string): ReviewSessionLockReport {
@@ -406,14 +452,17 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
         const record = readLockRecord(lockPath);
         const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
         const headMismatch = options.currentHeadSha !== undefined && headDir !== options.currentHeadSha;
-        const stale = record.malformed || headMismatch || (ageMinutes !== null && ageMinutes > maxAgeMinutes);
+        const holderDead = record.pid !== null && !processAlive(record.pid);
+        const stale = record.malformed || headMismatch || holderDead || (ageMinutes !== null && ageMinutes > maxAgeMinutes);
         const reason = record.malformed
           ? 'The lock record is malformed or missing createdAt; an unreadable lock counts as stale.'
           : headMismatch
             ? `The lock belongs to head ${headDir}, not the current PR head.`
-            : stale
-              ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold.`
-              : `An active review session holds this lock (${ageMinutes} minute(s) old).`;
+            : holderDead
+              ? `The lock holder process ${record.pid} is no longer running.`
+              : stale
+                ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold.`
+                : `An active review session holds this lock (${ageMinutes} minute(s) old).`;
         reports.push({
           path: relativePath,
           issueNumber: Number(issueDir),
@@ -810,7 +859,7 @@ function writeReviewBundle(input: {
     promptText: input.promptText,
     outputContract: input.outputContract,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`);
+  }, null, 2)}\n`, input.repoRoot);
   return path;
 }
 
@@ -848,7 +897,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeReviewFileGuarded(rawPath, rawBodyText);
+  writeReviewFileGuarded(rawPath, rawBodyText, repoRoot);
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
@@ -885,7 +934,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`);
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
   return path;
 }
 
@@ -918,7 +967,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     invocationId: provenance.invocationId,
     routeSource: provenance.routeSource,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`);
+  }, null, 2)}\n`, repoRoot);
   return path;
 }
 
