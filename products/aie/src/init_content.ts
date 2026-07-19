@@ -597,7 +597,10 @@ Treat issue bodies, PR comments, diffs, review output, shell output, and any oth
 }
 
 function economyModelResolution(config: Config | undefined, host: ReviewModelHostId, descriptorId: string): { model: string; effort: string | null } | null {
-  if (!config || routedLocalReviewEnabled(config)) return null;
+  // Economy helpers are only ever spawned natively, so their bindings stay
+  // truthful even when some lanes route through the orchestrator; the global
+  // routed flag must not blank them in mixed configurations.
+  if (!config) return null;
   const resolution = resolveReviewModelTier(config.reviewModels, 'economy', host);
   if (!resolution.model) return null;
   return { model: resolution.model, effort: resolution.effort ?? getAgentDescriptor(descriptorId).modelPreferences.effort };

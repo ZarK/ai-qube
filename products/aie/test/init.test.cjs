@@ -499,7 +499,7 @@ describe('init service', () => {
     assert.match(librarian, /model_reasoning_effort = "low"/);
   });
 
-  it('omits model lines from the economy catalog when routed local review is configured', async () => {
+  it('keeps economy catalog bindings truthful under routed review configurations', async () => {
     const repo = makeGitRepo();
     const config = cleanConfig();
     config.policy.reviews.adapter = 'local';
@@ -513,8 +513,19 @@ describe('init service', () => {
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
 
     assert.equal(result.ok, true);
+    // No codex binding resolves for the economy tier, so model lines are omitted.
     const explorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
     assert.doesNotMatch(explorer, /model = /);
+
+    // A configured economy binding renders even in a routed configuration:
+    // economy helpers only spawn natively, so the global routed flag never blanks their bindings.
+    config.policy.reviews.models = { review: { grok: { model: 'grok-4.5', effort: null } }, economy: { codex: { model: 'gpt-5.5-mini', effort: 'low' } }, synthesis: {} };
+    writeFileSync(join(repo, '.qube/aie/config.json'), `${JSON.stringify(config, null, 2)}\n`);
+    const mixed = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(mixed.ok, true);
+    const mixedExplorer = readFileSync(join(repo, '.codex', 'agents', 'qube-review-explorer.toml'), 'utf8');
+    assert.match(mixedExplorer, /model = "gpt-5\.5-mini"/);
+    assert.match(mixedExplorer, /model_reasoning_effort = "low"/);
   });
 
   it('mentions the economy catalog in host instructions only for hosts with rendered catalog assets', async () => {
