@@ -30,6 +30,17 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   lines.push(`External services: ${readiness.externalServices.length > 0 ? readiness.externalServices.join(', ') : 'none configured'}`);
 }
 
+function pushWorkflowReadiness(lines: string[], diagnostics: DoctorDiagnostics): void {
+  const workflow = diagnostics.workflowReadiness;
+  lines.push('Workflow readiness:');
+  for (const stage of workflow.stages) {
+    lines.push(`- ${stage.stage}: ${stage.status} — ${stage.detail}${stage.nextAction ? ` Next: ${stage.nextAction}` : ''}`);
+  }
+  lines.push(`Review state: ${workflow.review.state}; fallback prompt=${workflow.review.fallbackPromptAvailable ? 'available (not enforced review)' : 'missing'}; lanes=${workflow.review.lanes.configured.length}/${workflow.review.lanes.required.length} required; runner=${workflow.review.lanes.runnerReadiness}; publisher=${workflow.review.publisher.mode}; evidence=${workflow.review.evidence.state}`);
+  lines.push(`Shipping mode: ${workflow.shipping.mode}`);
+  lines.push(`Selected agent hosts: ${workflow.selectedHosts.length > 0 ? workflow.selectedHosts.join(', ') : 'none detected'}`);
+}
+
 export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   const lines: string[] = [];
   lines.push('AI Executor doctor');
@@ -48,6 +59,7 @@ export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {
   if (diagnostics.pullRequestError) lines.push(`Open PR details: ${diagnostics.pullRequestError}`);
   pushConfigAndQueue(lines, diagnostics);
   pushInstructionAndGateState(lines, diagnostics);
+  pushWorkflowReadiness(lines, diagnostics);
   lines.push(`Legacy state: ${diagnostics.legacy.length > 0 ? diagnostics.legacy.map(item => `${item.category}=${item.paths.join(',')}`).join('; ') : 'none detected'}`);
   lines.push(`Planning artifacts: spec=${diagnostics.planning.spec ? 'yes' : 'no'}, milestones=${diagnostics.planning.milestones.length}`);
   lines.push(`Lifecycle readiness: ${diagnostics.lifecycle.lifecycleCommandsReady ? 'ready' : 'blocked'}; active issues=${diagnostics.lifecycle.inProgressIssueCount}; branch policy=${diagnostics.lifecycle.branchNamingValid ? 'valid' : 'invalid'}`);

@@ -74,6 +74,35 @@ function createQualityDoctorShim(root) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiq", version: "0.2.3" })}\n`, "utf8");
 }
 
+function createWorkflowDoctorShim(root) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const packageDir = path.join(root, "node_modules", "@tjalve", "aie");
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  const doctorPayload = JSON.stringify({
+    ok: true,
+    command: "doctor",
+    workflowReadiness: {
+      stages: [
+        { stage: "lifecycle", status: "ready", detail: "Config, labels, and issue queue are healthy.", nextAction: null },
+        { stage: "quality-gates", status: "unconfigured", detail: "No quality gates are configured.", nextAction: "Configure policy.gates entries." },
+        { stage: "shipping", status: "manual", detail: "Manual shipping mode.", nextAction: null },
+      ],
+      review: { state: "fallback-only", fallbackPromptAvailable: true, fallbackEnforcesReview: false },
+      shipping: { mode: "manual" },
+      selectedHosts: ["codex"],
+    },
+  });
+  writeFileSync(path.join(packageDir, "doctor.json"), `${doctorPayload}\n`, "utf8");
+  const commandPath = path.join(binDir, process.platform === "win32" ? "aie.cmd" : "aie");
+  // Shell builtins only: the doctor tests run with an empty PATH, so external commands like cat are unavailable.
+  writeFileSync(commandPath, process.platform === "win32"
+    ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\n"
+    : `#!/bin/sh\nprintf '%s\\n' '${doctorPayload}'\n`, "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.2.2" })}\n`, "utf8");
+}
+
 function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   const target = path.join(cwd, "target");
   mkdirSync(target, { recursive: true });
@@ -536,6 +565,86 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.connectionStatus, "unverified");
     assert.deepEqual(parsed.connections.connections.map(connection => [connection.adapterId, connection.status]), [["github", "unverified"]]);
     assert.equal(parsed.connections.connections[0].readOnly, true);
+    assert.equal(parsed.workflow.status, "not-run");
+  });
+
+  it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-doctor-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-packages-"));
+    createQualityDoctorShim(packageRoot);
+    createWorkflowDoctorShim(packageRoot);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.workflow.status, "ok", result.stderr);
+    assert.deepEqual(parsed.workflow.readiness.stages.map(stage => [stage.stage, stage.status]), [
+      ["lifecycle", "ready"],
+      ["quality-gates", "unconfigured"],
+      ["shipping", "manual"],
+    ]);
+    assert.equal(parsed.workflow.readiness.review.state, "fallback-only");
+    assert.equal(parsed.workflow.readiness.shipping.mode, "manual");
+
+    const human = runCli(["doctor"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.match(human.stdout, /Workflow readiness:/);
+    assert.match(human.stdout, /- quality-gates: unconfigured — No quality gates are configured\. Next: Configure policy\.gates entries\./);
+    assert.match(human.stdout, /- shipping: manual — Manual shipping mode\./);
+  });
+
+  it("reports the workflow section unavailable when the Executor doctor exits with a failure", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-exit-packages-"));
+    createQualityDoctorShim(packageRoot);
+    createWorkflowDoctorShim(packageRoot);
+    const failingCommand = path.join(packageRoot, "node_modules", ".bin", process.platform === "win32" ? "aie.cmd" : "aie");
+    writeFileSync(failingCommand, process.platform === "win32"
+      ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b 3\r\n"
+      : "#!/bin/sh\nprintf '%s\\n' '{\"workflowReadiness\":{\"stages\":[]}}'\nexit 3\n", "utf8");
+    if (process.platform !== "win32") chmodSync(failingCommand, 0o755);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    const parsed = JSON.parse(result.stdout);
+    // A failed Executor doctor invocation is never reported as successful workflow readiness, even with JSON on stdout.
+    assert.equal(parsed.workflow.status, "unavailable", result.stderr);
+  });
+
+  it("reports the workflow section unavailable when the Executor component cannot run", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-workflow-missing-"));
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-workflow-missing-quality-"));
+    createQualityDoctorShim(qualityRoot);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.workflow.status, "unavailable", result.stderr);
+    assert.equal(typeof parsed.workflow.error, "string");
+    assert.notEqual(parsed.workflow.error.trim(), "");
   });
 
   it("preserves a missing Quality Control failure in offline doctor mode", () => {

@@ -3,7 +3,7 @@ import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { suggestBranchName, validateBranchPattern } from '../branch.js';
 import type { Config, GateKind, GateStage } from '../config/index.js';
-import type { BaseRefStatus } from '../repo/index.js';
+import type { BaseRefStatus, InstructionStatus } from '../repo/index.js';
 import type { GitHubIssue } from '../providers/github_adapter_exports.js';
 import { MANAGED_START } from '../managed_file.js';
 import { buildGatePlan, buildGateStatus, configuredGates } from '../gates/index.js';
@@ -16,6 +16,8 @@ import { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 export { buildReviewPreflightDiagnostics } from './review_preflight.js';
+export { buildWorkflowReadiness, buildReviewReadiness, selectedAgentHosts } from './workflow_readiness.js';
+export type { WorkflowReadinessDiagnostics, WorkflowReadinessInput, WorkflowReviewReadiness, WorkflowReviewState, WorkflowStage, WorkflowStageId, WorkflowStageStatus, WorkflowEvidenceState, WorkflowDirtyState, WorkflowShippingReadiness } from './workflow_readiness.js';
 
 export function computeDoctorOk(input: DoctorOkInputs): boolean {
   const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate);
@@ -332,7 +334,7 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     },
     reviewAgent: {
       required: true,
-      readiness: 'ready',
+      readiness: (!defaultOracle && configuredReviewers.length > 0) || localRunnerReadiness === 'ready' ? 'ready' : 'needs-action',
       descriptorSupport: {
         available: true,
         runnerAvailable: localRunner.readiness === 'ready',
@@ -409,6 +411,27 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
     },
     externalServices,
   };
+}
+
+export function buildInstructionRecommendations(input: {
+  repoRoot: string | null;
+  instructions: InstructionStatus;
+  instructionPolicy: InstructionPolicyDiagnostics;
+  supplyChainSafetyConfigured: boolean;
+}): string[] {
+  const recommendations: string[] = [];
+  const unmanagedTargets = input.repoRoot ? input.instructions.targets.filter(target => target.present && !target.managed) : [];
+  const unhealthyTargets = input.repoRoot ? input.instructions.targets.filter(target => target.managed && !target.healthy) : [];
+  const missingInstructionChecks = missingConfiguredInstructionChecks(input.instructionPolicy);
+  if (input.repoRoot && !input.instructions.agentsManaged && !input.instructions.claudeManaged) recommendations.push('Managed always-loaded instructions are not installed. Run `aie init . --dry-run` to review installation.');
+  const opencodeSelected = input.instructions.opencodeMakeItSo || input.instructions.opencodeMakeitsoAlias;
+  if (input.repoRoot && opencodeSelected && !input.instructions.opencodeMakeItSoManaged) recommendations.push('OpenCode project command is not installed. Run `aie init . --tool opencode --dry-run` to review installation.');
+  if (unmanagedTargets.length > 0) recommendations.push(`Instruction targets without Executor managed sections: ${unmanagedTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
+  if (input.repoRoot && missingInstructionChecks.length > 0) recommendations.push(`Configured instruction policy is not installed for: ${missingInstructionChecks.join(', ')}. Run \`aie init . --dry-run\` to refresh managed instructions.`);
+  if (unhealthyTargets.length > 0) recommendations.push(`Managed instruction targets need refresh: ${unhealthyTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
+  if (input.repoRoot && input.supplyChainSafetyConfigured && !input.instructionPolicy.supplyChainSafety.installed) recommendations.push('Supply-chain safety instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
+  if (input.repoRoot && input.supplyChainSafetyConfigured && !input.instructionPolicy.canonicalSupplyChainGuard.installed) recommendations.push('Canonical supply-chain guard instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
+  return recommendations;
 }
 
 export function missingConfiguredInstructionChecks(policy: InstructionPolicyDiagnostics): string[] {

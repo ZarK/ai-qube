@@ -1,5 +1,6 @@
 import { execSync } from 'child_process';
-import { existsSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, realpathSync } from 'fs';
+import { join, sep } from 'path';
 import { readFile } from 'fs/promises';
 import { createRequire } from 'node:module';
 import { cwd } from 'process';
@@ -21,16 +22,22 @@ import {
   listOpenPullRequests,
   PullRequestSummary,
 } from './repo/index.js';
-import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from './doctor_diagnostics/index.js';
+import { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildLifecycleDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, DoctorDiagnostics, missingConfiguredInstructionChecks } from './doctor_diagnostics/index.js';
+import type { WorkflowDirtyState } from './doctor_diagnostics/index.js';
 
 export {
   buildGateReadinessDiagnostics,
   buildInstructionPolicyDiagnostics,
+  buildInstructionRecommendations,
   buildLifecycleDiagnostics,
   buildProviderHealthDiagnostics,
   buildReviewPreflightDiagnostics,
   buildRepositoryPolicyDiagnostics,
+  buildReviewReadiness,
+  buildWorkflowReadiness,
+  chooseNextCommand,
   computeDoctorOk,
+  selectedAgentHosts,
 } from './doctor_diagnostics/index.js';
 export { buildMigrationReadinessDiagnostics } from './migration_diagnostics.js';
 
@@ -78,6 +85,22 @@ class DoctorDiagnosticsBuilder {
       pullRequestError: pullRequestState.pullRequestError,
     });
     this.addLifecycleRecommendations(lifecycle, queueState.activeIssue, recommendations);
+    const dirty = this.checkDirtyState(repoRoot);
+    const workflowReadiness = buildWorkflowReadiness({
+      config: effectiveConfig,
+      configValid: configStatus.valid,
+      labelsOk: labelStatus.ok,
+      queueDriftCount: queueState.queueDriftCount,
+      queueMultipleInProgress: queueState.queueMultipleInProgress,
+      queueError: queueState.queueError,
+      lifecycle,
+      gateReadiness,
+      instructions,
+      dirty,
+      currentBranch: branch,
+      blockingPullRequests: pullRequestState.blockingPullRequests,
+      evidence: this.resolveCurrentEvidence(repoRoot, branch, pullRequestState.openPullRequests),
+    });
     const milestoneState = await this.readMilestones(effectiveConfig, queueState.openIssuesForMilestones, recommendations);
     this.addMilestoneRecommendations(milestoneState.milestoneWarnings, recommendations);
     const overallOk = computeDoctorOk({
@@ -97,7 +120,7 @@ class DoctorDiagnosticsBuilder {
       baseRef,
       blockingPullRequestCount: effectiveConfig.blockOnOpenPRs ? pullRequestState.blockingPullRequests.length : 0,
       pullRequestError: effectiveConfig.blockOnOpenPRs ? pullRequestState.pullRequestError : undefined,
-      instructionInstallOk: !repoRoot || (instructions.opencodeMakeItSoManaged && (instructions.agentsManaged || instructions.claudeManaged) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
+      instructionInstallOk: !repoRoot || ((!(instructions.opencodeMakeItSo || instructions.opencodeMakeitsoAlias) || instructions.opencodeMakeItSoManaged) && (instructions.agentsManaged || instructions.claudeManaged) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
     });
     return {
       ok: overallOk,
@@ -132,6 +155,7 @@ class DoctorDiagnosticsBuilder {
       instructionPolicy,
       repositoryPolicy,
       gateReadiness,
+      workflowReadiness,
       migrationReadiness,
       baseRef,
       openPullRequests: pullRequestState.openPullRequests,
@@ -204,16 +228,12 @@ class DoctorDiagnosticsBuilder {
   }
 
   private addInstructionRecommendations(input: Parameters<DoctorDiagnosticsBuilder['buildEarlyRecommendations']>[0], recommendations: string[]): void {
-    const unmanagedTargets = input.repoRoot ? input.instructions.targets.filter(target => target.present && !target.managed) : [];
-    const unhealthyTargets = input.repoRoot ? input.instructions.targets.filter(target => target.managed && !target.healthy) : [];
-    const missingInstructionChecks = missingConfiguredInstructionChecks(input.instructionPolicy);
-    if (input.repoRoot && !input.instructions.agentsManaged && !input.instructions.claudeManaged) recommendations.push('Managed always-loaded instructions are not installed. Run `aie init . --dry-run` to review installation.');
-    if (input.repoRoot && !input.instructions.opencodeMakeItSoManaged) recommendations.push('OpenCode project command is not installed. Run `aie init . --tool opencode --dry-run` to review installation.');
-    if (unmanagedTargets.length > 0) recommendations.push(`Instruction targets without Executor managed sections: ${unmanagedTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
-    if (input.repoRoot && missingInstructionChecks.length > 0) recommendations.push(`Configured instruction policy is not installed for: ${missingInstructionChecks.join(', ')}. Run \`aie init . --dry-run\` to refresh managed instructions.`);
-    if (unhealthyTargets.length > 0) recommendations.push(`Managed instruction targets need refresh: ${unhealthyTargets.map(target => target.path).join(', ')}. Run \`aie init . --dry-run\` to review safe updates.`);
-    if (input.repoRoot && input.effectiveConfig.instructions.supplyChainSafety && !input.instructionPolicy.supplyChainSafety.installed) recommendations.push('Supply-chain safety instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
-    if (input.repoRoot && input.effectiveConfig.instructions.supplyChainSafety && !input.instructionPolicy.canonicalSupplyChainGuard.installed) recommendations.push('Canonical supply-chain guard instructions are configured but not installed. Run `aie init . --dry-run` to refresh managed instructions before dependency work.');
+    recommendations.push(...buildInstructionRecommendations({
+      repoRoot: input.repoRoot,
+      instructions: input.instructions,
+      instructionPolicy: input.instructionPolicy,
+      supplyChainSafetyConfigured: input.effectiveConfig.instructions.supplyChainSafety,
+    }));
   }
 
   private addGateReadinessRecommendations(gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>, recommendations: string[]): void {
@@ -308,6 +328,59 @@ class DoctorDiagnosticsBuilder {
     if (warnings.length === 0) return;
     const sample = warnings.slice(0, 3).map(warning => warning.message).join(' ');
     recommendations.push(`Milestone preservation warnings detected: ${sample} Review milestone assignments before relying on milestone ordering.`);
+  }
+
+  private checkDirtyState(repoRoot: string | null): WorkflowDirtyState {
+    if (!repoRoot) return { dirty: false, entries: [], error: null };
+    try {
+      const entries = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot })
+        .split('\n')
+        .map(line => line.trimEnd())
+        .filter(line => line.trim() !== '');
+      return { dirty: entries.length > 0, entries: entries.slice(0, 50), error: null };
+    } catch (err: unknown) {
+      // An unobserved working tree must never be reported as clean.
+      return { dirty: false, entries: [], error: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  private resolveCurrentEvidence(repoRoot: string | null, currentBranch: string, openPullRequests: PullRequestSummary[]): { head: string | null; lanes: string[] } {
+    if (!repoRoot) return { head: null, lanes: [] };
+    const currentPr = openPullRequests.find(pr => pr.headRefName === currentBranch);
+    if (!currentPr) return { head: null, lanes: [] };
+    let headSha: string;
+    try {
+      headSha = execSync('git rev-parse HEAD', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot }).trim();
+    } catch {
+      return { head: null, lanes: [] };
+    }
+    if (!/^[a-f0-9]{4,64}$/i.test(headSha)) return { head: null, lanes: [] };
+    const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
+    if (!existsSync(evidenceRoot)) return { head: headSha, lanes: [] };
+    const lanes = new Set<string>();
+    try {
+      const rootReal = realpathSync(evidenceRoot);
+      for (const issueDir of readdirSync(evidenceRoot)) {
+        if (!/^\d+$/.test(issueDir)) continue;
+        const headDir = join(evidenceRoot, issueDir, String(currentPr.number), headSha);
+        if (!existsSync(headDir)) continue;
+        let headDirReal: string;
+        try {
+          headDirReal = realpathSync(headDir);
+        } catch {
+          continue;
+        }
+        if (!headDirReal.startsWith(rootReal + sep)) continue;
+        for (const file of readdirSync(headDir)) {
+          if (file.startsWith('.') || !file.endsWith('.json') || file.endsWith('.raw-output.json')) continue;
+          const lane = file.slice(0, -'.json'.length);
+          if (matchesLaneEvidenceIdentity(join(headDir, file), rootReal, lane, Number(issueDir), currentPr.number, headSha)) lanes.add(lane);
+        }
+      }
+    } catch {
+      return { head: headSha, lanes: [] };
+    }
+    return { head: headSha, lanes: [...lanes].sort() };
   }
 
   private checkGit(): boolean {
@@ -409,6 +482,24 @@ class DoctorDiagnosticsBuilder {
       else result.labelsError = err instanceof Error ? err.message : 'Unknown error during labels check';
     }
     return result;
+  }
+}
+
+export function matchesLaneEvidenceIdentity(filePath: string, evidenceRootReal: string, lane: string, issueNumber: number, prNumber: number, headSha: string): boolean {
+  try {
+    const fileReal = realpathSync(filePath);
+    if (!fileReal.startsWith(evidenceRootReal + sep)) return false;
+    const parsed = JSON.parse(readFileSync(fileReal, 'utf8')) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    const laneId = parsed.lane ?? parsed.id;
+    return laneId === lane
+      && parsed.issueNumber === issueNumber
+      && parsed.prNumber === prNumber
+      && parsed.headSha === headSha
+      && typeof parsed.status === 'string' && parsed.status.trim() !== ''
+      && typeof parsed.runnerProvenance === 'object' && parsed.runnerProvenance !== null;
+  } catch {
+    return false;
   }
 }
 

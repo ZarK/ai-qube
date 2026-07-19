@@ -3,6 +3,7 @@ import type { LegacyState } from '../init/index.js';
 import type { BaseRefStatus, InstructionStatus, IssueMilestoneWarning, MilestoneSummary, PlanningStatus, PullRequestSummary } from '../repo/index.js';
 import type { GateStatusResult } from '../gates/index.js';
 import type { MigrationReadinessDiagnostics } from '../migration_diagnostics.js';
+import type { WorkflowReadinessDiagnostics } from './workflow_readiness.js';
 
 export interface DoctorDiagnostics {
   ok: boolean;
@@ -37,6 +38,7 @@ export interface DoctorDiagnostics {
   instructionPolicy: InstructionPolicyDiagnostics;
   repositoryPolicy: RepositoryPolicyDiagnostics;
   gateReadiness: GateReadinessDiagnostics;
+  workflowReadiness: WorkflowReadinessDiagnostics;
   migrationReadiness: MigrationReadinessDiagnostics;
   baseRef: BaseRefStatus;
   openPullRequests: PullRequestSummary[];
