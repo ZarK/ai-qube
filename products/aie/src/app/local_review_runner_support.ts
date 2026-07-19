@@ -210,9 +210,17 @@ function writeReviewFileGuarded(path: string, content: string, containment?: Rev
       if (containReal !== join(repoReal, ...containment.subtree)) {
         throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the repository root.`);
       }
+      // Every segment below the subtree root must also resolve literally, so a
+      // symlinked issue, PR, or head directory cannot redirect the write into
+      // another head's evidence.
+      const relativeParent = relative(join(containment.repoRoot, ...containment.subtree), dirname(path));
+      if (relativeParent.startsWith('..')) {
+        throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path}.`);
+      }
       const parentReal = realpathSync(dirname(path));
-      if (parentReal !== containReal && !parentReal.startsWith(containReal + sep)) {
-        throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path} resolves to ${parentReal}.`);
+      const expectedParent = relativeParent === '' ? containReal : join(containReal, relativeParent);
+      if (parentReal !== expectedParent) {
+        throw new Error(`Refusing to write review evidence through a symlinked directory: ${path} resolves to ${parentReal} instead of ${expectedParent}.`);
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
