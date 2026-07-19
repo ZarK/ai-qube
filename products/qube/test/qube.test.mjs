@@ -95,9 +95,10 @@ function createWorkflowDoctorShim(root) {
   });
   writeFileSync(path.join(packageDir, "doctor.json"), `${doctorPayload}\n`, "utf8");
   const commandPath = path.join(binDir, process.platform === "win32" ? "aie.cmd" : "aie");
+  // Shell builtins only: the doctor tests run with an empty PATH, so external commands like cat are unavailable.
   writeFileSync(commandPath, process.platform === "win32"
     ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\n"
-    : "#!/bin/sh\ncat \"$(dirname \"$0\")/../@tjalve/aie/doctor.json\"\n", "utf8");
+    : `#!/bin/sh\nprintf '%s\\n' '${doctorPayload}'\n`, "utf8");
   if (process.platform !== "win32") chmodSync(commandPath, 0o755);
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.2.2" })}\n`, "utf8");
 }
@@ -607,7 +608,7 @@ describe("qube composer CLI", () => {
     const failingCommand = path.join(packageRoot, "node_modules", ".bin", process.platform === "win32" ? "aie.cmd" : "aie");
     writeFileSync(failingCommand, process.platform === "win32"
       ? "@echo off\r\ntype \"%~dp0..\\@tjalve\\aie\\doctor.json\"\r\nexit /b 3\r\n"
-      : "#!/bin/sh\ncat \"$(dirname \"$0\")/../@tjalve/aie/doctor.json\"\nexit 3\n", "utf8");
+      : "#!/bin/sh\nprintf '%s\\n' '{\"workflowReadiness\":{\"stages\":[]}}'\nexit 3\n", "utf8");
     if (process.platform !== "win32") chmodSync(failingCommand, 0o755);
     mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
     writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
