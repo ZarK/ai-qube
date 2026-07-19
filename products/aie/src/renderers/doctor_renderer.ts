@@ -39,6 +39,11 @@ function pushWorkflowReadiness(lines: string[], diagnostics: DoctorDiagnostics):
   lines.push(`Review state: ${workflow.review.state}; fallback prompt=${workflow.review.fallbackPromptAvailable ? 'available (not enforced review)' : 'missing'}; lanes=${workflow.review.lanes.configured.length}/${workflow.review.lanes.required.length} required; runner=${workflow.review.lanes.runnerReadiness}; publisher=${workflow.review.publisher.mode}; evidence=${workflow.review.evidence.state}`);
   lines.push(`Shipping mode: ${workflow.shipping.mode}`);
   lines.push(`Selected agent hosts: ${workflow.selectedHosts.length > 0 ? workflow.selectedHosts.join(', ') : 'none detected'}`);
+  const locks = diagnostics.reviewSessionLocks ?? [];
+  lines.push(`Review session locks: ${locks.length === 0 ? 'none' : locks.map(lock => `${lock.path} (${lock.stale ? 'stale' : 'active'})`).join(', ')}`);
+  for (const lock of locks.filter(lock => lock.stale)) {
+    lines.push(`- Stale review lock: ${lock.reason} ${lock.cleanupCommand}`);
+  }
 }
 
 export function formatDoctorHuman(diagnostics: DoctorDiagnostics): string {

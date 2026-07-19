@@ -269,8 +269,8 @@ describe('pre-start lifecycle policy', () => {
     assert.equal(policy.ok, true);
     assert.equal(policy.bypassed, true);
     assert.equal(policy.blockingPullRequests.length, 0);
-    assert.deepEqual(policy.checks.map(check => check.skipped), [true, true, true]);
-    assert.deepEqual(policy.checks.map(check => check.action.failure), [undefined, undefined, undefined]);
+    assert.deepEqual(policy.checks.map(check => check.skipped), [true, true, true, true]);
+    assert.deepEqual(policy.checks.map(check => check.action.failure), [undefined, undefined, undefined, undefined]);
     assert.match(policy.reason, /Resuming the single active S-InProgress issue #94/);
   });
 

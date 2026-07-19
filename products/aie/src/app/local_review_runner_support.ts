@@ -242,6 +242,90 @@ export function reviewSessionLockPath(repoRoot: string, issueNumber: number, prN
   return join(laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha), '.review-lock.json');
 }
 
+export const REVIEW_SESSION_LOCK_MAX_AGE_MINUTES = 60;
+
+export interface ReviewSessionLockReport {
+  path: string;
+  issueNumber: number | null;
+  prNumber: number | null;
+  headSha: string | null;
+  createdAt: string | null;
+  ageMinutes: number | null;
+  stale: boolean;
+  reason: string;
+  cleanupCommand: string;
+}
+
+function readLockRecord(lockPath: string): { createdAt: string | null; malformed: boolean } {
+  try {
+    const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { createdAt: null, malformed: true };
+    const createdAt = typeof parsed.createdAt === 'string' && !Number.isNaN(Date.parse(parsed.createdAt)) ? parsed.createdAt : null;
+    return { createdAt, malformed: createdAt === null };
+  } catch {
+    return { createdAt: null, malformed: true };
+  }
+}
+
+export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: number; currentHeadSha?: string; now?: number; maxAgeMinutes?: number } = {}): ReviewSessionLockReport[] {
+  const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
+  if (!existsSync(evidenceRoot)) return [];
+  const now = options.now ?? Date.now();
+  const maxAgeMinutes = options.maxAgeMinutes ?? REVIEW_SESSION_LOCK_MAX_AGE_MINUTES;
+  const reports: ReviewSessionLockReport[] = [];
+  let issueDirs: string[];
+  try {
+    issueDirs = readdirSync(evidenceRoot).filter(name => /^\d+$/.test(name));
+  } catch {
+    return [];
+  }
+  for (const issueDir of issueDirs) {
+    let prDirs: string[];
+    try {
+      prDirs = readdirSync(join(evidenceRoot, issueDir)).filter(name => /^\d+$/.test(name));
+    } catch {
+      continue;
+    }
+    for (const prDir of prDirs) {
+      if (options.prNumber !== undefined && Number(prDir) !== options.prNumber) continue;
+      let headDirs: string[];
+      try {
+        headDirs = readdirSync(join(evidenceRoot, issueDir, prDir));
+      } catch {
+        continue;
+      }
+      for (const headDir of headDirs) {
+        const lockPath = join(evidenceRoot, issueDir, prDir, headDir, '.review-lock.json');
+        if (!existsSync(lockPath)) continue;
+        const relativePath = ['.qube', 'aie', 'reviews', issueDir, prDir, headDir, '.review-lock.json'].join('/');
+        const record = readLockRecord(lockPath);
+        const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
+        const headMismatch = options.currentHeadSha !== undefined && headDir !== options.currentHeadSha;
+        const stale = record.malformed || headMismatch || (ageMinutes !== null && ageMinutes > maxAgeMinutes);
+        const reason = record.malformed
+          ? 'The lock record is malformed or missing createdAt; an unreadable lock counts as stale.'
+          : headMismatch
+            ? `The lock belongs to head ${headDir}, not the current PR head.`
+            : stale
+              ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold.`
+              : `An active review session holds this lock (${ageMinutes} minute(s) old).`;
+        reports.push({
+          path: relativePath,
+          issueNumber: Number(issueDir),
+          prNumber: Number(prDir),
+          headSha: headDir,
+          createdAt: record.createdAt,
+          ageMinutes,
+          stale,
+          reason,
+          cleanupCommand: `Delete ${relativePath} after confirming no review subagents are still running, then rerun the blocked command.`,
+        });
+      }
+    }
+  }
+  return reports;
+}
+
 export function reviewSessionLockLines(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, evidencePaths: readonly string[]): string[] {
   const lockPath = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
   return [

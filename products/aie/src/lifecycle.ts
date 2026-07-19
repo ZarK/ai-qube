@@ -21,7 +21,8 @@ export type LifecycleActionKind =
   | 'create-branch'
   | 'check-worktree'
   | 'check-open-pull-requests'
-  | 'check-base-branch';
+  | 'check-base-branch'
+  | 'check-review-lock';
 
 export type LifecycleIssueSelection =
   | { kind: 'help' }
@@ -71,7 +72,7 @@ export interface LifecycleActionSummary {
 }
 
 export interface PreStartPolicyCheck {
-  name: 'worktree' | 'open-pull-requests' | 'base-ref';
+  name: 'worktree' | 'open-pull-requests' | 'base-ref' | 'review-lock';
   ok: boolean;
   skipped: boolean;
   reason?: string;
@@ -262,7 +263,7 @@ function failAction(action: LifecycleAction, operation: string, cause: string, n
 export function makePreStartPolicyCheck(name: PreStartPolicyCheck['name'], issueNumber: number, ok: boolean, skipped: boolean, reason: string | undefined, details: JsonObject): PreStartPolicyCheck {
   const action = createLifecycleAction({
     id: `${name}:${issueNumber}`,
-    kind: name === 'worktree' ? 'check-worktree' : name === 'open-pull-requests' ? 'check-open-pull-requests' : 'check-base-branch',
+    kind: name === 'worktree' ? 'check-worktree' : name === 'open-pull-requests' ? 'check-open-pull-requests' : name === 'review-lock' ? 'check-review-lock' : 'check-base-branch',
     targetType: 'repository',
     targetId: 'current',
     description: getPreStartDescription(name),
@@ -279,6 +280,7 @@ export function makePreStartPolicyCheck(name: PreStartPolicyCheck['name'], issue
 function getPreStartDescription(name: PreStartPolicyCheck['name']): string {
   if (name === 'worktree') return 'Check linked worktree policy';
   if (name === 'open-pull-requests') return 'Check blocking open pull requests';
+  if (name === 'review-lock') return 'Check for review session locks';
   return 'Check local base branch freshness';
 }
 

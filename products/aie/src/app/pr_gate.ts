@@ -23,6 +23,7 @@ import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
+import { findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
@@ -169,6 +170,7 @@ export interface PrGateResult {
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
+  reviewSessionLocks: ReviewSessionLockReport[];
   externalServices: string[];
   headChangedSinceRequest: boolean;
   counts: {
@@ -1018,6 +1020,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
+    reviewSessionLocks: findReviewSessionLocks(repoRoot, { prNumber: options.prNumber, currentHeadSha: finalSnapshot.pr.headRefOid }),
     externalServices: reviewers.filter(reviewer => reviewer.externalService).map(reviewer => reviewer.handle),
     headChangedSinceRequest: reviewers.some(reviewer => reviewer.staleRequest),
     counts: {
@@ -1033,6 +1036,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
 
 export function formatPrGate(result: PrGateResult): string {
   const lines = [`PR review gate for #${result.pr.number}: ${result.status}.`];
+  for (const lock of result.reviewSessionLocks.filter(lock => lock.stale)) {
+    lines.push(`Stale review session lock: ${lock.path}. ${lock.reason} ${lock.cleanupCommand}`);
+  }
   lines.push(`Pull request: ${result.pr.title} (${result.pr.url})`);
   lines.push(`Head: ${result.pr.headSha}`);
   lines.push(`Ship readiness: ${result.shipReady.ready ? 'ready' : 'not ready'}; residual advisories=${result.shipReady.advisoryCount}.`);

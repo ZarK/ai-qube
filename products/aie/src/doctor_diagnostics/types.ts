@@ -39,6 +39,7 @@ export interface DoctorDiagnostics {
   repositoryPolicy: RepositoryPolicyDiagnostics;
   gateReadiness: GateReadinessDiagnostics;
   workflowReadiness: WorkflowReadinessDiagnostics;
+  reviewSessionLocks: ReviewSessionLockDiagnostics[];
   migrationReadiness: MigrationReadinessDiagnostics;
   baseRef: BaseRefStatus;
   openPullRequests: PullRequestSummary[];
@@ -119,6 +120,18 @@ export interface LifecycleDiagnostics {
 }
 
 export type DoctorReadinessStatus = 'ready' | 'disabled' | 'missing' | 'needs-action' | 'unavailable';
+
+export interface ReviewSessionLockDiagnostics {
+  path: string;
+  issueNumber: number | null;
+  prNumber: number | null;
+  headSha: string | null;
+  createdAt: string | null;
+  ageMinutes: number | null;
+  stale: boolean;
+  reason: string;
+  cleanupCommand: string;
+}
 
 export interface DoctorToolAvailability {
   command: string;

@@ -34,6 +34,7 @@ import {
   listGrokBuildInstallNotes,
   planQubeCli,
   qubeComponents,
+  renderCommandSurfacesDoc,
   runConnectionDoctor,
   resolveCommand,
   resolveComponentCommand,
@@ -228,7 +229,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
 
     assert.match(help.stdout, /evidence\s+Emit structured AIQ quality evidence\./);
-    assert.match(help.stdout, /status\s+Show Umpire continuation status\./);
+    assert.match(help.stdout, /continue\s+Show Umpire continuation status and resume guidance\./);
     assert.match(help.stdout, /schema\s+Render deterministic command schema as JSON\./);
 
     const runHelp = runCli(["run", "--help"]);
@@ -2141,8 +2142,11 @@ describe("qube composer CLI", () => {
         OS: process.env.OS
       }
     });
-    assert.equal(ideaWithoutText.status, 0);
-    assert.match(ideaWithoutText.stdout, /dispatched init \. --json/);
+    // A --json direct command captures the child output; a shim that violates the JSON contract yields one synthesized error envelope.
+    assert.equal(ideaWithoutText.status, 1);
+    const envelope = JSON.parse(ideaWithoutText.stdout);
+    assert.equal(envelope.ok, false);
+    assert.match(JSON.stringify(envelope), /dispatched init \. --json/);
   });
 
   it("returns an actionable error when a component command is unavailable", () => {
@@ -2157,5 +2161,76 @@ describe("qube composer CLI", () => {
     assert.equal(result.exitCode, 4);
     assert.match(result.stderr, /Cannot find aiq/);
     assert.match(result.stderr, /Install QUBE with its component dependencies/);
+  });
+});
+
+describe("composer surface envelopes and naming", () => {
+  it("emits exactly one JSON object for qube plan status --json with no state", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-plan-status-json-"));
+    const result = runCli(["plan", "status", "--json"], { cwd });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(typeof parsed, "object");
+    assert.notEqual(parsed, null);
+    assert.notEqual(result.status, 0);
+  });
+
+  it("emits exactly one JSON object for a succeeding direct --json command", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-continue-json-"));
+    const result = runCli(["continue", "--json"], { cwd });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(typeof parsed, "object");
+    assert.notEqual(parsed, null);
+  });
+
+  it("lists only the canonical continuation command in root help", () => {
+    // Dispatch of the hidden synonyms to aiu status stays pinned by the direct-dispatch mapping test above.
+    const help = runCli(["--help"], {});
+    assert.match(help.stdout, /^\s{2}continue\s{2,}/m);
+    assert.doesNotMatch(help.stdout, /^\s{2}status\s{2,}/m);
+    assert.doesNotMatch(help.stdout, /^\s{2}continue status\s{2,}/m);
+  });
+
+  it("renders composer-facing names in alias and direct command help", () => {
+    const packageShimRoot = mkdtempSync(path.join(tmpdir(), "qube-alias-help-packages-"));
+    const binDir = path.join(packageShimRoot, "node_modules", ".bin");
+    const packageDir = path.join(packageShimRoot, "node_modules", "@tjalve", "aiu");
+    mkdirSync(binDir, { recursive: true });
+    mkdirSync(packageDir, { recursive: true });
+    const helpText = "Usage: aiu status [--json]";
+    const commandPath = path.join(binDir, process.platform === "win32" ? "aiu.cmd" : "aiu");
+    writeFileSync(commandPath, process.platform === "win32"
+      ? `@echo off\r\necho ${helpText}\r\n`
+      : `#!/bin/sh\nprintf '%s\\n' '${helpText}'\n`, "utf8");
+    if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+    writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiu", version: "0.0.5" })}\n`, "utf8");
+
+    const aliasHelp = runCli(["status", "--help"], { env: { QUBE_TEST_PACKAGE_ROOT: packageShimRoot } });
+    assert.match(aliasHelp.stdout, /qube continue/);
+    assert.doesNotMatch(aliasHelp.stdout, /aiu status \[--json\]/);
+    assert.match(aliasHelp.stdout, /Equivalent paths: `qube aiu status` or `aiu status`\./);
+    const directHelp = runCli(["plan", "status", "--help"], {});
+    assert.match(directHelp.stdout, /qube plan status/);
+    assert.doesNotMatch(directHelp.stdout, /Usage:\s*\r?\n?\s*aib status/);
+  });
+
+  it("marks hidden synonyms in the schema", () => {
+    const schema = runCli(["schema", "--json"], {});
+    const parsed = JSON.parse(schema.stdout);
+    const commands = parsed.commands.filter(command => command.kind === "command");
+    const statusEntry = commands.find(command => command.name === "status");
+    const continueEntry = commands.find(command => command.name === "continue");
+    assert.equal(statusEntry.hidden, true);
+    assert.equal(statusEntry.aliasOf, "continue");
+    assert.equal(continueEntry.hidden, false);
+    assert.equal(continueEntry.aliasOf, null);
+  });
+
+  it("regenerates the command surface doc from the registry", () => {
+    const committed = readFileSync(path.join(path.resolve(packageRoot, "..", ".."), "docs", "qube-command-surfaces.md"), "utf8").replace(/\r\n/g, "\n");
+    const rendered = renderCommandSurfacesDoc().replace(/\r\n/g, "\n");
+    assert.equal(committed, rendered);
+    assert.match(rendered, /## Hidden synonyms/);
+    assert.match(rendered, /`qube status` \| `qube continue`/);
+    assert.match(rendered, /`qube plan status` \| `aib status`/);
   });
 });

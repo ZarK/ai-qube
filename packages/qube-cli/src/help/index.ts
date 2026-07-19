@@ -67,7 +67,7 @@ export function renderRootHelp(registry: CommandRegistry, options: HelpRenderOpt
       ...(options.packageVersion ? [`  ${options.bin} --version`] : [])
     ]),
     renderNameDescriptionSection("Topics:", listTopics(registry)),
-    renderNameDescriptionSection("Commands:", listCommands(registry)),
+    renderNameDescriptionSection("Commands:", listCommands(registry).filter(command => !command.hidden)),
     "Help invocations never execute command handlers."
   ]);
 }

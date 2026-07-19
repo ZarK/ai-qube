@@ -12,6 +12,7 @@ import {
 } from '../lifecycle.js';
 import { BaseRefStatus, listOpenPullRequests, PullRequestSummary, WorktreeStatus } from '../repo/index.js';
 import { createLocalGitRepositoryProvider } from '../providers/local/local_git_provider.js';
+import { findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 
 export async function buildPreStartPolicy(input: {
   config: Config;
@@ -35,7 +36,8 @@ export async function buildPreStartPolicy(input: {
     policy: executorPolicy.branch,
     bypassReason: input.bypassForResume ? bypassReason : undefined,
   });
-  const checks = buildPreStartChecks(input.config, input.issueNumber, branchChecks, blockingPullRequests, input.bypassForResume ? bypassReason : undefined);
+  const reviewSessionLocks = repoState.root ? findReviewSessionLocks(repoState.root) : [];
+  const checks = buildPreStartChecks(input.config, input.issueNumber, branchChecks, blockingPullRequests, reviewSessionLocks, input.bypassForResume ? bypassReason : undefined);
   const blockers = checks.filter(check => !check.ok && !check.skipped).map(check => check.reason ?? check.action.description);
   return {
     ok: blockers.length === 0,
@@ -50,10 +52,12 @@ export async function buildPreStartPolicy(input: {
   };
 }
 
-function buildPreStartChecks(config: Config, issueNumber: number, branchChecks: CorePreStartBranchCheck[], blockingPullRequests: PullRequestSummary[], bypassReason?: string): PreStartPolicyCheck[] {
+function buildPreStartChecks(config: Config, issueNumber: number, branchChecks: CorePreStartBranchCheck[], blockingPullRequests: PullRequestSummary[], reviewSessionLocks: ReviewSessionLockReport[], bypassReason?: string): PreStartPolicyCheck[] {
   const worktree = getCoreBranchCheck(branchChecks, 'worktree');
   const baseRef = getCoreBranchCheck(branchChecks, 'base-ref');
   const openPullRequestsOk = bypassReason ? true : !(config.blockOnOpenPRs && blockingPullRequests.length > 0);
+  const reviewLockOk = bypassReason ? true : reviewSessionLocks.length === 0;
+  const blockingLock = reviewSessionLocks[0];
   return [
     makePreStartPolicyCheck('worktree', issueNumber, worktree.ok, worktree.skipped, worktree.reason, worktree.details),
     makePreStartPolicyCheck(
@@ -65,6 +69,18 @@ function buildPreStartChecks(config: Config, issueNumber: number, branchChecks: 
       { blockingPullRequests: blockingPullRequests.map(pr => ({ number: pr.number, title: pr.title, author: pr.author, url: pr.url })) },
     ),
     makePreStartPolicyCheck('base-ref', issueNumber, baseRef.ok, baseRef.skipped, baseRef.reason, baseRef.details),
+    makePreStartPolicyCheck(
+      'review-lock',
+      issueNumber,
+      reviewLockOk,
+      bypassReason !== undefined,
+      bypassReason ?? (reviewLockOk || !blockingLock
+        ? undefined
+        : blockingLock.stale
+          ? `A stale review session lock blocks new issue work at ${blockingLock.path}. ${blockingLock.reason} ${blockingLock.cleanupCommand}`
+          : `An active review session lock blocks new issue work at ${blockingLock.path}. ${blockingLock.reason} Wait for that review session to publish, or ${blockingLock.cleanupCommand}`),
+      { reviewSessionLocks: reviewSessionLocks.map(lock => ({ path: lock.path, prNumber: lock.prNumber, stale: lock.stale, ageMinutes: lock.ageMinutes })) },
+    ),
   ];
 }
 

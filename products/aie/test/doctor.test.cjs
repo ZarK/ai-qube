@@ -1020,3 +1020,81 @@ describe('workflow evidence identity', () => {
     rmSync(root, { recursive: true, force: true });
   });
 });
+
+describe('review session locks', () => {
+  const { findReviewSessionLocks, REVIEW_SESSION_LOCK_MAX_AGE_MINUTES } = require('../dist/app/local_review_runner_support.js');
+
+  function writeLock(repo, issue, pr, head, body) {
+    const dir = join(repo, '.qube', 'aie', 'reviews', String(issue), String(pr), head);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.review-lock.json'), body);
+    return `.qube/aie/reviews/${issue}/${pr}/${head}/.review-lock.json`;
+  }
+
+  it('detects fresh, stale, malformed, and head-mismatched locks with cleanup guidance', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-review-lock-'));
+    const now = Date.parse('2026-07-19T12:00:00Z');
+    const freshPath = writeLock(repo, 93, 12, 'abc123', JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', createdAt: new Date(now - 5 * 60_000).toISOString() }));
+    const stalePath = writeLock(repo, 94, 13, 'def456', JSON.stringify({ version: 1, issueNumber: 94, prNumber: 13, headSha: 'def456', createdAt: new Date(now - 2 * 60 * 60_000).toISOString() }));
+    const malformedPath = writeLock(repo, 95, 14, 'ghi789', 'not json');
+
+    const locks = findReviewSessionLocks(repo, { now });
+    const byPath = Object.fromEntries(locks.map(lock => [lock.path, lock]));
+    assert.equal(locks.length, 3);
+    assert.equal(byPath[freshPath].stale, false);
+    assert.match(byPath[freshPath].reason, /active review session/);
+    assert.equal(byPath[stalePath].stale, true);
+    assert.match(byPath[stalePath].reason, new RegExp(`${REVIEW_SESSION_LOCK_MAX_AGE_MINUTES}-minute staleness threshold`));
+    assert.match(byPath[stalePath].cleanupCommand, /Delete \.qube\/aie\/reviews\/94\/13\/def456\/\.review-lock\.json/);
+    assert.equal(byPath[malformedPath].stale, true);
+    assert.match(byPath[malformedPath].reason, /malformed/);
+    // Scoped to one PR, a fresh lock for an older head counts as stale.
+    const scoped = findReviewSessionLocks(repo, { now, prNumber: 12, currentHeadSha: 'newhead' });
+    assert.equal(scoped.length, 1);
+    assert.equal(scoped[0].stale, true);
+    assert.match(scoped[0].reason, /not the current PR head/);
+    // No locks means no reports.
+    const empty = mkdtempSync(join(tmpdir(), 'aie-review-lock-empty-'));
+    assert.deepEqual(findReviewSessionLocks(empty, { now }), []);
+  });
+
+  it('reports stale locks through doctor with cleanup guidance', () => {
+    const repo = makeGitRepo();
+    const dir = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.review-lock.json'), JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', createdAt: '2026-01-01T00:00:00Z' }));
+
+    const result = binRun(['doctor', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.reviewSessionLocks.length, 1);
+    assert.equal(parsed.reviewSessionLocks[0].stale, true);
+    assert.match(parsed.reviewSessionLocks[0].cleanupCommand, /Delete \.qube\/aie\/reviews\/93\/12\/abc123\/\.review-lock\.json/);
+    assert.equal(parsed.recommendations.some(entry => entry.includes('Stale review session lock detected')), true);
+    const human = formatDoctorHuman(parsed);
+    assert.match(human, /Review session locks: .*\(stale\)/);
+    assert.match(human, /Stale review lock: /);
+  });
+
+  it('blocks issue start while a review session lock exists and names the unblocking command', async () => {
+    const { buildPreStartPolicy } = require('../dist/app/pre_start_policy.js');
+    const repo = makeGitRepo();
+    const dir = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, '.review-lock.json'), JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', createdAt: '2026-01-01T00:00:00Z' }));
+    const config = getDefaults();
+    config.requireBaseBranchFreshness = false;
+    config.blockOnOpenPRs = true;
+    const exec = async () => ({ stdout: '[]', stderr: '', code: 0 });
+
+    const policy = await buildPreStartPolicy({ config, issueNumber: 93, bypassForResume: false, exec, cwd: repo });
+    const lockCheck = policy.checks.find(check => check.name === 'review-lock');
+    assert.equal(lockCheck.ok, false);
+    assert.match(lockCheck.reason, /stale review session lock/i);
+    assert.match(lockCheck.reason, /Delete \.qube\/aie\/reviews\/93\/12\/abc123\/\.review-lock\.json/);
+    assert.equal(policy.ok, false);
+
+    // Resume bypass skips the lock check like the other pre-start checks.
+    const bypassed = await buildPreStartPolicy({ config, issueNumber: 93, bypassForResume: true, exec, cwd: repo });
+    assert.equal(bypassed.checks.find(check => check.name === 'review-lock').skipped, true);
+  });
+});
