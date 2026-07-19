@@ -8,7 +8,7 @@ import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_e
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
@@ -398,9 +398,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   let layoutUnavailableLines: string[] = [];
   try {
     layoutAffected = await (input.layoutInspector ?? inspectAffected)({ config, cwd: input.repoRoot, changedPaths: input.changedPaths });
-  } catch {
+  } catch (err: unknown) {
     layoutAffected = undefined;
-    layoutUnavailableLines = ['Layout inspection was unavailable for this run; changed-project and generated/vendor classification is missing from this context.'];
+    const cause = err instanceof Error ? err.message : String(err);
+    layoutUnavailableLines = [`Layout inspection was unavailable for this run (cause: ${layoutContextText(cause)}); changed-project and generated/vendor classification is missing from this context.`];
   }
   const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected), ...layoutUnavailableLines];
   // Activate from issue text + changed paths only so hashes stay deterministic and do not

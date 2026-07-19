@@ -9,6 +9,7 @@ import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForward
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
+import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 
@@ -675,17 +676,14 @@ function hostProvenancePath(repoRoot: string, issueNumber: number, prNumber: num
 
 const LAYOUT_CONTEXT_LIST_CAP = 8;
 
-function isChangedPathUnderSignal(changedPath: string, signal: RepoPathSignal): boolean {
-  return changedPath === signal.path || changedPath.startsWith(`${signal.path}/`);
-}
-
 // Repository-derived names are untrusted prompt input: strip control and
-// markup-relevant characters, bound length, and wrap in quotes so the value
-// reads as delimited data. Ordinary instruction words cannot be filtered out
-// of names without destroying them; the data framing and the reviewers'
-// untrusted-input rules carry that residual.
-function layoutContextText(value: string): string {
-  return `"${redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80)}"`;
+// markup-relevant characters, bound length, and serialize as a JSON string so
+// the value always sits inside explicit delimiters regardless of its content.
+// Ordinary instruction words cannot be filtered out of names without
+// destroying them; the data framing and the reviewers' untrusted-input rules
+// carry that residual.
+export function layoutContextText(value: string): string {
+  return JSON.stringify(redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80));
 }
 
 function changedProjectsLine(affected: RepoAffectedResult): string | null {
@@ -702,12 +700,14 @@ function changedProjectsLine(affected: RepoAffectedResult): string | null {
 // Only reports when generated/vendor signals actually intersect the changed paths; a repo
 // that merely contains a dist/ directory the change never touched stays silent here. When
 // the matched changed paths would blow past the cap, the underlying signals (deduplicated)
-// are reported instead of an arbitrarily truncated file list.
+// are reported instead of an arbitrarily truncated file list. The line states the actual
+// classification effect — these paths are omitted from project-affected classification —
+// not a review-focus exclusion, because focus matching runs against the raw changed paths.
 function excludedPathsLine(affected: RepoAffectedResult): string | null {
   const signals = [...affected.layout.generatedPaths, ...affected.layout.vendorPaths];
   if (signals.length === 0) return null;
   const matched = affected.changedPaths
-    .map(path => ({ path, signal: signals.find(signal => isChangedPathUnderSignal(path, signal)) }))
+    .map(path => ({ path, signal: signals.find(signal => changedPathUnderSignal(signal, path)) }))
     .filter((entry): entry is { path: string; signal: RepoPathSignal } => entry.signal !== undefined);
   if (matched.length === 0) return null;
   const entries = matched.length <= LAYOUT_CONTEXT_LIST_CAP
@@ -715,7 +715,9 @@ function excludedPathsLine(affected: RepoAffectedResult): string | null {
     : signals
         .filter(signal => matched.some(entry => entry.signal === signal))
         .map(signal => `${layoutContextText(signal.path)} (${layoutContextText(signal.reason)})`);
-  return `Generated or vendor paths are excluded from review focus: ${entries.slice(0, LAYOUT_CONTEXT_LIST_CAP).join(', ')}.`;
+  const shown = entries.slice(0, LAYOUT_CONTEXT_LIST_CAP);
+  const omitted = entries.length - shown.length;
+  return `Generated or vendor paths present in the change set (omitted from project-affected classification): ${shown.join(', ')}${omitted > 0 ? `, +${omitted} more` : ''}.`;
 }
 
 /** Optional repo-layout facts for lane prompts; undefined or empty-signal input renders nothing. */
