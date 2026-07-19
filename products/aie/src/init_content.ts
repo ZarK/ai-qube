@@ -611,6 +611,7 @@ export function renderClaudeEconomyAgent(agent: EconomyReviewCatalogAgent, confi
   return `---
 name: ${agent.name}
 description: Read-only economy delegation helper for one QUBE local review lane.
+tools: Read, Grep, Glob
 ${modelLines}---
 
 ${renderEconomyAgentInstructions(agent)}
@@ -625,6 +626,10 @@ export function renderOpenCodeEconomyAgent(agent: EconomyReviewCatalogAgent, con
   return `---
 description: Read-only economy delegation helper for one QUBE local review lane.
 mode: subagent
+tools:
+  write: false
+  edit: false
+  bash: false
 ${modelLines}---
 
 ${renderEconomyAgentInstructions(agent)}
@@ -638,6 +643,7 @@ export function renderCodexEconomyAgent(agent: EconomyReviewCatalogAgent, config
     : '';
   return `name = "${agent.name}"
 description = "Read-only economy delegation helper for one QUBE local review lane."
+sandbox_mode = "read-only"
 ${modelLines}developer_instructions = """
 ${renderEconomyAgentInstructions(agent)}
 """
