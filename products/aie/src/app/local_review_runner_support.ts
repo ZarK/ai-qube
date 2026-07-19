@@ -622,9 +622,12 @@ function isChangedPathUnderSignal(changedPath: string, signal: RepoPathSignal): 
 }
 
 // Repository-derived names are untrusted prompt input: strip control and
-// markup-relevant characters and bound length before they enter lane context.
+// markup-relevant characters, bound length, and wrap in quotes so the value
+// reads as delimited data. Ordinary instruction words cannot be filtered out
+// of names without destroying them; the data framing and the reviewers'
+// untrusted-input rules carry that residual.
 function layoutContextText(value: string): string {
-  return redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80);
+  return `"${redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80)}"`;
 }
 
 function changedProjectsLine(affected: RepoAffectedResult): string | null {
