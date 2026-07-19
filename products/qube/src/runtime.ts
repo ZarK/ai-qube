@@ -1353,15 +1353,19 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
-  const exitCode = quality.exitCode === 0
+  let exitCode = quality.exitCode === 0
     ? connectionExitCode
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
     try {
-      qualityPayload = JSON.parse(quality.stdout);
+      qualityPayload = quality.truncated ? { ok: false, error: "Quality Control doctor output exceeded the capture limit." } : JSON.parse(quality.stdout);
     } catch {
       qualityPayload = { ok: false, error: "Quality Control doctor returned invalid JSON." };
+    }
+    // A zero exit with a failing or unreadable payload is still a failure.
+    if (exitCode === 0 && (!qualityPayload || typeof qualityPayload !== "object" || (qualityPayload as { ok?: unknown }).ok === false)) {
+      exitCode = 1;
     }
     const payload = {
       ok: exitCode === 0,

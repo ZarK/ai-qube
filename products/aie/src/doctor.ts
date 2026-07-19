@@ -126,6 +126,7 @@ class DoctorDiagnosticsBuilder {
       blockingPullRequestCount: effectiveConfig.blockOnOpenPRs ? pullRequestState.blockingPullRequests.length : 0,
       pullRequestError: effectiveConfig.blockOnOpenPRs ? pullRequestState.pullRequestError : undefined,
       instructionInstallOk: !repoRoot || ((!(instructions.opencodeMakeItSo || instructions.opencodeMakeitsoAlias) || instructions.opencodeMakeItSoManaged) && (instructions.agentsManaged || instructions.claudeManaged) && unmanagedTargets.length === 0 && unhealthyTargets.length === 0 && missingInstructionChecks.length === 0),
+      staleReviewLockCount: reviewSessionLocks.filter(lock => lock.stale).length,
     });
     return {
       ok: overallOk,

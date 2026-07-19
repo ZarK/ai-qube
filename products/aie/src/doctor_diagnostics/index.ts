@@ -34,6 +34,7 @@ export function computeDoctorOk(input: DoctorOkInputs): boolean {
     !input.queueError &&
     baseBranchReady &&
     pullRequestReady &&
+    (input.staleReviewLockCount ?? 0) === 0 &&
     (input.instructionInstallOk ?? true);
 }
 

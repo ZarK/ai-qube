@@ -200,7 +200,13 @@ function writeReviewFileGuarded(path: string, content: string, containRoot?: str
   const tempPath = `${path}.${randomUUID()}.tmp`;
   try {
     writeFileSync(tempPath, content, { flag: 'wx' });
-    renameSync(tempPath, path);
+    try {
+      renameSync(tempPath, path);
+    } catch {
+      // Windows can refuse to replace a locked destination; clear it and retry once.
+      rmSync(path, { force: true });
+      renameSync(tempPath, path);
+    }
   } catch (err: unknown) {
     rmSync(tempPath, { force: true });
     throw err;
@@ -380,13 +386,17 @@ export interface ReviewSessionLockReport {
   cleanupCommand: string;
 }
 
-function readLockRecord(lockPath: string): { createdAt: string | null; pid: number | null; malformed: boolean } {
+function readLockRecord(lockPath: string, expected?: { issueNumber: number; prNumber: number; headSha: string }): { createdAt: string | null; pid: number | null; malformed: boolean } {
   try {
     const parsed = JSON.parse(readFileSync(lockPath, 'utf8')) as Record<string, unknown>;
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { createdAt: null, pid: null, malformed: true };
     const createdAt = typeof parsed.createdAt === 'string' && !Number.isNaN(Date.parse(parsed.createdAt)) ? parsed.createdAt : null;
     const pid = Number.isSafeInteger(parsed.pid) ? Number(parsed.pid) : null;
-    return { createdAt, pid, malformed: createdAt === null };
+    // The record must identify itself as version 1 for the coordinates its path claims;
+    // a partial or cross-target record is malformed, never an active lock.
+    const identityValid = parsed.version === 1
+      && (expected === undefined || (parsed.issueNumber === expected.issueNumber && parsed.prNumber === expected.prNumber && parsed.headSha === expected.headSha));
+    return { createdAt, pid, malformed: createdAt === null || !identityValid };
   } catch {
     return { createdAt: null, pid: null, malformed: true };
   }
@@ -437,7 +447,15 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
 }
 
 export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
-  rmSync(reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha), { force: true });
+  const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
+  // Release only a lock this process owns; a reclaimed-and-replaced lock belongs to its new holder.
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
+    if (parsed && typeof parsed === 'object' && parsed.pid !== process.pid) return;
+  } catch {
+    // Missing or unreadable lock: removal is a no-op or clears debris.
+  }
+  rmSync(path, { force: true });
 }
 
 function unreadableLockReport(relativePath: string, message: string): ReviewSessionLockReport {
@@ -488,7 +506,7 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
         const lockPath = join(evidenceRoot, issueDir, prDir, headDir, '.review-lock.json');
         if (!existsSync(lockPath)) continue;
         const relativePath = ['.qube', 'aie', 'reviews', issueDir, prDir, headDir, '.review-lock.json'].join('/');
-        const record = readLockRecord(lockPath);
+        const record = readLockRecord(lockPath, { issueNumber: Number(issueDir), prNumber: Number(prDir), headSha: headDir });
         const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
         const headMismatch = options.currentHeadSha !== undefined && headDir !== options.currentHeadSha;
         const holderDead = record.pid !== null && !processAlive(record.pid);

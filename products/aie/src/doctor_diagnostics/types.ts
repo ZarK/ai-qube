@@ -353,4 +353,5 @@ export interface DoctorOkInputs {
   blockingPullRequestCount: number;
   pullRequestError?: string;
   instructionInstallOk?: boolean;
+  staleReviewLockCount?: number;
 }
