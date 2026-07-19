@@ -52,6 +52,7 @@ export interface WorkflowReadinessDiagnostics {
 export interface WorkflowDirtyState {
   dirty: boolean;
   entries: string[];
+  error?: string | null;
 }
 
 export interface WorkflowEvidenceInput {
@@ -106,6 +107,14 @@ function buildLifecycleStage(input: WorkflowReadinessInput): WorkflowStage {
 }
 
 function buildIssueStartStage(input: WorkflowReadinessInput): WorkflowStage {
+  if (input.dirty.error) {
+    return {
+      stage: 'issue-start',
+      status: 'unavailable',
+      detail: `The working tree state could not be observed: ${input.dirty.error}. An unobserved checkout is not reported as clean.`,
+      nextAction: 'Fix git availability or repository access, then rerun `aie doctor --json`.',
+    };
+  }
   const blockers: string[] = [];
   let nextAction: string | null = null;
   if (input.dirty.dirty) {
@@ -166,12 +175,16 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
   const providerReviewers = reviewAgent.defaultOracle ? [] : reviewAgent.reviewers.filter(name => name.trim() !== '');
   const lanesConfigured = reviewAgent.configuredLanes.length > 0 || reviewAgent.localRunner.configured;
   const lanesRunnable = lanesConfigured && reviewAgent.localRunner.readiness === 'ready';
+  // Only known lane ids count as evidence; lock files, raw-output captures, or unrelated JSON never do.
+  const knownLanes = new Set([...reviewAgent.requiredLanes, ...reviewAgent.configuredLanes]);
+  const evidenceLanes = input.evidence.lanes.filter(lane => knownLanes.has(lane));
   const evidenceState: WorkflowEvidenceState = !lanesConfigured || input.evidence.head === null
     ? 'not-applicable'
-    : input.evidence.lanes.length > 0
+    : evidenceLanes.length > 0
       ? 'present'
       : 'missing';
-  const state: WorkflowReviewState = lanesRunnable && evidenceState === 'present'
+  const evidenceCoversRequired = reviewAgent.requiredLanes.length > 0 && reviewAgent.requiredLanes.every(lane => evidenceLanes.includes(lane));
+  const state: WorkflowReviewState = lanesRunnable && evidenceState === 'present' && evidenceCoversRequired
     ? 'evidence-ready'
     : lanesRunnable
       ? 'local-lanes'
@@ -196,7 +209,7 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
     evidence: {
       state: evidenceState,
       head: input.evidence.head,
-      lanes: [...input.evidence.lanes],
+      lanes: evidenceLanes,
     },
   };
 }
@@ -219,9 +232,9 @@ function buildReviewStage(review: WorkflowReviewReadiness): WorkflowStage {
     };
   }
   const description = review.state === 'evidence-ready'
-    ? `Local review lanes are runnable and current-head evidence exists for ${review.evidence.lanes.length} lane(s).`
+    ? `Local review lanes are runnable and current-head evidence covers every required lane (${review.evidence.lanes.length} lane(s)).`
     : review.state === 'local-lanes'
-      ? `Local review lanes are configured and runnable (${review.lanes.configured.length} configured, ${review.lanes.required.length} required); no current-head evidence yet.`
+      ? `Local review lanes are configured and runnable (${review.lanes.configured.length} configured, ${review.lanes.required.length} required); current-head evidence does not yet cover every required lane.`
       : `Provider reviewers are configured (${review.providerReviewers.join(', ')}); no local review lanes run on this host.`;
   return { stage: 'review', status: 'ready', detail: description, nextAction: null };
 }

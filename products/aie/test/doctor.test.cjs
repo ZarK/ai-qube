@@ -830,15 +830,21 @@ describe('staged workflow readiness', () => {
     config.providers.review.publisher = { mode: 'token' };
     const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
     const withEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
-      evidence: { head: 'abc123', lanes: ['code-quality', 'issue-compliance'] },
+      evidence: { head: 'abc123', lanes: ['code-quality', 'issue-compliance', 'performance'] },
     }));
     assert.deepEqual(withEvidence.review.lanes.required, [...requiredLocalReviewLanes('local-focused')]);
     assert.deepEqual(withEvidence.review.lanes.configured, ['issue-compliance', 'code-quality']);
     assert.equal(withEvidence.review.lanes.runnerReadiness, 'ready');
     assert.deepEqual(withEvidence.review.publisher, { configured: true, mode: 'token' });
-    assert.deepEqual(withEvidence.review.evidence, { state: 'present', head: 'abc123', lanes: ['code-quality', 'issue-compliance'] });
+    assert.deepEqual(withEvidence.review.evidence, { state: 'present', head: 'abc123', lanes: ['code-quality', 'issue-compliance', 'performance'] });
     assert.equal(withEvidence.review.state, 'evidence-ready');
     assert.equal(stagesById(withEvidence)['review'].status, 'ready');
+    // Partial required-lane coverage stays local-lanes: evidence-ready needs every required lane covered.
+    const partialEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      evidence: { head: 'abc123', lanes: ['code-quality'] },
+    }));
+    assert.equal(partialEvidence.review.state, 'local-lanes');
+    assert.equal(partialEvidence.review.evidence.state, 'present');
     // The same profile without current-head evidence reports the lanes and runner unchanged but the evidence gap independently.
     const withoutEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
       evidence: { head: 'abc123', lanes: [] },
@@ -846,9 +852,30 @@ describe('staged workflow readiness', () => {
     assert.equal(withoutEvidence.review.state, 'local-lanes');
     assert.equal(withoutEvidence.review.evidence.state, 'missing');
     assert.equal(withoutEvidence.review.lanes.runnerReadiness, 'ready');
+    // Lock files, raw-output captures, and unknown names never count as lane evidence.
+    const forgedEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      evidence: { head: 'abc123', lanes: ['.review-lock', 'code-quality.raw-output', 'not-a-lane'] },
+    }));
+    assert.equal(forgedEvidence.review.evidence.state, 'missing');
+    assert.deepEqual(forgedEvidence.review.evidence.lanes, []);
+    assert.equal(forgedEvidence.review.state, 'local-lanes');
     // Without a current PR head, evidence is not applicable instead of fabricated.
     const noHead = buildWorkflowReadiness(workflowInput(config, gateReadiness));
     assert.equal(noHead.review.evidence.state, 'not-applicable');
+  });
+
+  it('reports issue start unavailable when the working tree cannot be observed', () => {
+    const config = getDefaults();
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      dirty: { dirty: false, entries: [], error: 'git status failed: not a git repository' },
+    }));
+    const stage = stagesById(workflow)['issue-start'];
+    assert.equal(stage.status, 'unavailable');
+    assert.notEqual(stage.status, 'ready');
+    assert.match(stage.detail, /could not be observed/);
+    assert.match(stage.detail, /not reported as clean/);
+    assert.match(stage.nextAction, /git/);
   });
 
   it('never recommends OpenCode initialization for a Codex-only repository', () => {

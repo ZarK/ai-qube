@@ -331,15 +331,16 @@ class DoctorDiagnosticsBuilder {
   }
 
   private checkDirtyState(repoRoot: string | null): WorkflowDirtyState {
-    if (!repoRoot) return { dirty: false, entries: [] };
+    if (!repoRoot) return { dirty: false, entries: [], error: null };
     try {
       const entries = execSync('git status --porcelain', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], cwd: repoRoot })
         .split('\n')
         .map(line => line.trimEnd())
         .filter(line => line.trim() !== '');
-      return { dirty: entries.length > 0, entries };
-    } catch {
-      return { dirty: false, entries: [] };
+      return { dirty: entries.length > 0, entries: entries.slice(0, 50), error: null };
+    } catch (err: unknown) {
+      // An unobserved working tree must never be reported as clean.
+      return { dirty: false, entries: [], error: err instanceof Error ? err.message : String(err) };
     }
   }
 
@@ -353,15 +354,18 @@ class DoctorDiagnosticsBuilder {
     } catch {
       return { head: null, lanes: [] };
     }
+    if (!/^[a-f0-9]{4,64}$/i.test(headSha)) return { head: null, lanes: [] };
     const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
     if (!existsSync(evidenceRoot)) return { head: headSha, lanes: [] };
     const lanes = new Set<string>();
     try {
       for (const issueDir of readdirSync(evidenceRoot)) {
+        if (!/^\d+$/.test(issueDir)) continue;
         const headDir = join(evidenceRoot, issueDir, String(currentPr.number), headSha);
         if (!existsSync(headDir)) continue;
         for (const file of readdirSync(headDir)) {
-          if (file.endsWith('.json')) lanes.add(file.slice(0, -'.json'.length));
+          if (file.startsWith('.') || !file.endsWith('.json') || file.endsWith('.raw-output.json')) continue;
+          lanes.add(file.slice(0, -'.json'.length));
         }
       }
     } catch {
