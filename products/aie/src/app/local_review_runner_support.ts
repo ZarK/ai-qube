@@ -613,11 +613,17 @@ function isChangedPathUnderSignal(changedPath: string, signal: RepoPathSignal): 
   return changedPath === signal.path || changedPath.startsWith(`${signal.path}/`);
 }
 
+// Repository-derived names are untrusted prompt input: strip control and
+// markup-relevant characters and bound length before they enter lane context.
+function layoutContextText(value: string): string {
+  return redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80);
+}
+
 function changedProjectsLine(affected: RepoAffectedResult): string | null {
   if (affected.affectedProjects.length > 0) {
     const shown = affected.affectedProjects.slice(0, LAYOUT_CONTEXT_LIST_CAP);
     const omitted = affected.affectedProjects.length - shown.length;
-    const names = shown.map(entry => `${entry.project.packageName ?? entry.project.path} (${entry.project.kind})`);
+    const names = shown.map(entry => `${layoutContextText(entry.project.packageName ?? entry.project.path)} (${layoutContextText(entry.project.kind)})`);
     return `Changed projects: ${names.join(', ')}${omitted > 0 ? `, +${omitted} more` : ''}.`;
   }
   if (affected.changedPaths.length > 0) return 'Changed paths map to no detected project.';
@@ -636,10 +642,10 @@ function excludedPathsLine(affected: RepoAffectedResult): string | null {
     .filter((entry): entry is { path: string; signal: RepoPathSignal } => entry.signal !== undefined);
   if (matched.length === 0) return null;
   const entries = matched.length <= LAYOUT_CONTEXT_LIST_CAP
-    ? matched.map(entry => `${entry.path} (${entry.signal.reason})`)
+    ? matched.map(entry => `${layoutContextText(entry.path)} (${layoutContextText(entry.signal.reason)})`)
     : signals
         .filter(signal => matched.some(entry => entry.signal === signal))
-        .map(signal => `${signal.path} (${signal.reason})`);
+        .map(signal => `${layoutContextText(signal.path)} (${layoutContextText(signal.reason)})`);
   return `Generated or vendor paths are excluded from review focus: ${entries.slice(0, LAYOUT_CONTEXT_LIST_CAP).join(', ')}.`;
 }
 
@@ -651,7 +657,7 @@ export function layoutReviewContextLines(affected: RepoAffectedResult | undefine
   if (projectsLine) lines.push(projectsLine);
   const excludedLine = excludedPathsLine(affected);
   if (excludedLine) lines.push(excludedLine);
-  if (affected.suggestedGates.length > 0) lines.push(`Likely gates for the changed paths: ${affected.suggestedGates.join(', ')}.`);
+  if (affected.suggestedGates.length > 0) lines.push(`Likely gates for the changed paths: ${affected.suggestedGates.map(gate => layoutContextText(gate)).join(', ')}.`);
   // Non-throwing inspection problems stay visible so a lane never mistakes a
   // partial classification for a complete one.
   if (affected.warnings.length > 0) lines.push(`Layout inspection warnings: ${affected.warnings.slice(0, 4).map(warning => redact(warning)).join('; ')}${affected.warnings.length > 4 ? ` (+${affected.warnings.length - 4} more)` : ''}.`);
