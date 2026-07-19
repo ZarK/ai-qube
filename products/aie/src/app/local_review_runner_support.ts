@@ -232,7 +232,7 @@ export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber
     const existing = ledger.lanes[lane];
     const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
     ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, join(repoRoot, '.git', 'qube', 'aie'));
     return count;
   });
 }
@@ -370,7 +370,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirSync(dirname(path), { recursive: true });
-    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, join(repoRoot, '.qube', 'aie', 'reviews'));
     return path;
   } catch {
     return null;
@@ -988,7 +988,7 @@ function writeReviewBundle(input: {
     promptText: input.promptText,
     outputContract: input.outputContract,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, input.repoRoot);
+  }, null, 2)}\n`, join(input.repoRoot, '.git', 'qube', 'aie'));
   return path;
 }
 
@@ -1026,7 +1026,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeReviewFileGuarded(rawPath, rawBodyText, repoRoot);
+  writeReviewFileGuarded(rawPath, rawBodyText, join(repoRoot, '.qube', 'aie', 'reviews'));
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
@@ -1063,7 +1063,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, repoRoot);
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, join(repoRoot, '.qube', 'aie', 'reviews'));
   return path;
 }
 
@@ -1096,7 +1096,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     invocationId: provenance.invocationId,
     routeSource: provenance.routeSource,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, repoRoot);
+  }, null, 2)}\n`, join(repoRoot, '.git', 'qube', 'aie'));
   return path;
 }
 
