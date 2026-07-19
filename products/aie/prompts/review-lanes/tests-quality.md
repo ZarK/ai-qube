@@ -1,5 +1,27 @@
 Review whether tests cover the real behavior, negative paths, and regressions introduced by the change. Do not accept tests that pass without validating the requested behavior.
 
-Check that tests exercise provider-visible behavior, current-head/stale-head behavior, dry-run versus mutating behavior, failure handling, duplicate/idempotent operations, malformed input, trust-boundary cases, and configured host behavior. Verify assertions would fail if the product behavior regressed.
+Defect classes:
+- Assertion-free or shape-only tests that pass regardless of actual behavior.
+- Mock-echo tests that assert a mock returned what the test told it to return.
+- Missing negative or failure-path tests for a change that added error handling.
+- Tests coupled to incidental ordering or an implementation detail instead of observable behavior.
 
-Call out missing integration coverage, overly broad fixtures, assertions that only check shape while missing semantics, tests that depend on incidental ordering, and verification gaps between source checkout behavior and installed/package behavior.
+Inspect beyond the diff:
+- Whether an existing test would have caught the bug this change fixes (regression coverage).
+- Fixture realism: toy inputs versus representative current-head/stale-head/malformed-input cases.
+- Whether new tests exercise provider-visible behavior or only an internal helper.
+
+Evidence to demand:
+- The specific assertion line proving the criterion, not just the test name.
+- A demonstration that the test fails when the fix or feature is reverted.
+- Coverage of dry-run versus mutating behavior where both exist.
+
+Out of lane (ignore):
+- Whether the implementation itself is well-structured — code-quality lane.
+- Whether documentation describes the tested behavior — docs-instructions lane.
+- Manual or browser QA evidence — manual-qa lane.
+
+Exhaustiveness rules:
+- Report every coverage gap found in one pass, ranked by regression risk, not just the first missing case.
+- Do not stop after finding one weak test; check every changed behavior for a corresponding assertion.
+- State which test files were actually read versus assumed adequate from their names.

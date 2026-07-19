@@ -110,6 +110,33 @@ describe('agent descriptors and prompt registry', () => {
     assert.match(rendered.text, /release, CI, and supply-chain/);
   });
 
+  it('gives every review-lane fragment a heuristic checklist with all five sections', async () => {
+    const { renderAgentPrompt, listPromptFragmentDefinitions } = await import('../dist/agent_descriptors.js');
+    const laneFragments = listPromptFragmentDefinitions().filter(fragment => fragment.sourceCategory === 'lane');
+    assert.equal(laneFragments.length, 15);
+    const sectionLabels = ['Defect classes:', 'Inspect beyond the diff:', 'Evidence to demand:', 'Out of lane (ignore):', 'Exhaustiveness rules:'];
+
+    for (const fragment of laneFragments) {
+      const laneId = fragment.id.replace(/^review-lanes\//, '');
+      const rendered = renderAgentPrompt({
+        hostId: 'codex',
+        descriptorId: 'qa-reviewer',
+        categoryId: 'review',
+        laneIds: [laneId],
+        contextLines: [`Review PR #1 for lane ${laneId}.`],
+      });
+      for (let index = 0; index < sectionLabels.length; index += 1) {
+        const label = sectionLabels[index];
+        const start = rendered.text.indexOf(label);
+        assert.ok(start >= 0, `${fragment.id} is missing section "${label}"`);
+        // Each section must carry concrete bullet content, not a bare label.
+        const nextLabel = index + 1 < sectionLabels.length ? rendered.text.indexOf(sectionLabels[index + 1], start) : -1;
+        const sectionBody = rendered.text.slice(start + label.length, nextLabel === -1 ? undefined : nextLabel);
+        assert.match(sectionBody, /(^|\n)- \S/, `${fragment.id} section "${label}" must contain at least one concrete bullet`);
+      }
+    }
+  });
+
   it('includes a read-only low-effort librarian descriptor for economy delegation', async () => {
     const { getAgentDescriptor } = await import('../dist/agent_descriptors.js');
 

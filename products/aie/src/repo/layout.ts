@@ -510,11 +510,15 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   };
 }
 
+/** True when a changed path sits at or under a layout path signal, using portable separators. */
+export function changedPathUnderSignal(signal: RepoPathSignal, changedPath: string): boolean {
+  const signalPath = portablePath(signal.path).replace(/\/+$/, '');
+  const changed = portablePath(changedPath);
+  return changed === signalPath || changed.startsWith(`${signalPath}/`);
+}
+
 function signalContainsPath(signals: readonly RepoPathSignal[], changedPath: string): boolean {
-  return signals.some(signal => {
-    const signalPath = portablePath(signal.path).replace(/\/+$/, '');
-    return changedPath === signalPath || changedPath.startsWith(`${signalPath}/`);
-  });
+  return signals.some(signal => changedPathUnderSignal(signal, changedPath));
 }
 
 function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPath: string): boolean {
