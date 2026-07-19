@@ -531,6 +531,87 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     }
   });
 
+  it('degrades to a visible layout-unavailable line when layout inspection fails', async () => {
+    const { runLocalReviewRunner } = require('../dist/app/local_review_runner.js');
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+
+    const result = await runLocalReviewRunner(config, {
+      repoRoot: repo,
+      issueNumbers: [93],
+      prNumber: 12,
+      headSha: 'layout-broken-head',
+      required: true,
+      shadow: false,
+      dryRun: true,
+      includePrompts: true,
+      changedPaths: ['src/index.ts'],
+      layoutInspector: async () => { throw new Error('layout inspection exploded'); },
+    });
+
+    assert.ok(result.lanes.length > 0, 'the runner must plan at least one lane');
+    for (const lane of result.lanes) {
+      assert.ok(lane.promptText.includes('Layout inspection was unavailable for this run; changed-project and generated/vendor classification is missing from this context.'), `lane ${lane.lane} prompt must state that layout classification is missing`);
+      assert.ok(!lane.promptText.includes('Changed projects:'), `lane ${lane.lane} prompt must not carry layout facts when inspection failed`);
+    }
+  });
+
+  describe('review lock write containment', { concurrency: 4 }, () => {
+    it('fails closed instead of acquiring a session lock through a symlinked head directory', () => {
+      const { acquireReviewSessionLock } = require('../dist/app/local_review_runner_support.js');
+      const repo = mkdtempSync(join(tmpdir(), 'aie-lock-containment-'));
+      const outside = mkdtempSync(join(tmpdir(), 'aie-lock-outside-'));
+      mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+      symlinkSync(outside, join(repo, '.qube', 'aie', 'reviews', '93', '12', 'headsha'), 'junction');
+
+      const result = acquireReviewSessionLock(repo, 93, 12, 'headsha');
+
+      assert.equal(result.held, false);
+      assert.ok(!existsSync(join(outside, '.review-lock.json')), 'no lock may be written through the symlinked head directory');
+    });
+
+    it('never releases a lock through a symlinked head directory', () => {
+      const { clearReviewSessionLock } = require('../dist/app/local_review_runner_support.js');
+      const repo = mkdtempSync(join(tmpdir(), 'aie-lock-clear-'));
+      const outside = mkdtempSync(join(tmpdir(), 'aie-lock-clear-outside-'));
+      writeFileSync(join(outside, '.review-lock.json'), JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'headsha', pid: process.pid, createdAt: new Date().toISOString() }));
+      mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+      symlinkSync(outside, join(repo, '.qube', 'aie', 'reviews', '93', '12', 'headsha'), 'junction');
+
+      clearReviewSessionLock(repo, 93, 12, 'headsha');
+
+      assert.ok(existsSync(join(outside, '.review-lock.json')), 'a lock behind a symlinked directory must never be removed');
+    });
+
+    it('reports a symlinked evidence descendant as blocked instead of following it', () => {
+      const { findReviewSessionLocks } = require('../dist/app/local_review_runner_support.js');
+      const repo = mkdtempSync(join(tmpdir(), 'aie-lock-walk-'));
+      const outside = mkdtempSync(join(tmpdir(), 'aie-lock-walk-outside-'));
+      writeFileSync(join(outside, '.review-lock.json'), JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'headsha', pid: process.pid, createdAt: new Date().toISOString() }));
+      mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12'), { recursive: true });
+      symlinkSync(outside, join(repo, '.qube', 'aie', 'reviews', '93', '12', 'headsha'), 'junction');
+
+      const locks = findReviewSessionLocks(repo, {});
+
+      assert.equal(locks.length, 1);
+      assert.match(locks[0].reason, /symlink/);
+      assert.equal(locks[0].stale, true);
+      assert.equal(locks[0].path, '.qube/aie/reviews/93/12/headsha');
+    });
+
+    it('refuses route-fault writes through a symlinked route-faults descendant', () => {
+      const { recordRouteFault } = require('../dist/app/local_review_runner_support.js');
+      const repo = mkdtempSync(join(tmpdir(), 'aie-route-fault-lock-'));
+      const outside = mkdtempSync(join(tmpdir(), 'aie-route-fault-outside-'));
+      mkdirSync(join(repo, '.git', 'qube', 'aie', 'route-faults'), { recursive: true });
+      symlinkSync(outside, join(repo, '.git', 'qube', 'aie', 'route-faults', '93'), 'junction');
+
+      assert.throws(() => recordRouteFault(repo, 93, 12, 'security', 'process-failed', 'route-key'), /Refusing to write/);
+      assert.ok(!existsSync(join(outside, '12.json')), 'no ledger may be written through the symlinked descendant');
+      assert.ok(!existsSync(join(outside, '12.json.lock')), 'no lock directory may be created through the symlinked descendant');
+    });
+  });
+
   it('partitions structured lane findings into inline review comments and review body findings', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

@@ -128,14 +128,17 @@ function lockHolderAlive(lockDir: string): boolean | null {
 // overlapped; pid reuse combined with the age threshold is the residual risk.
 // A hard deadline turns an unremovable or hostile lock into an explicit error
 // instead of an unbounded hang.
-function withRouteFaultLock<T>(path: string, update: () => T): T {
+function withRouteFaultLock<T>(repoRoot: string, path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
+  // The lock directory and its holder record share the ledger's parent chain;
+  // a symlinked route-faults descendant must refuse the lock write too.
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   const hardDeadline = Date.now() + ROUTE_FAULT_LOCK_HARD_DEADLINE_MS;
   for (;;) {
     try {
       mkdirSync(lockDir);
-      writeFileSync(join(lockDir, 'holder.json'), `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`);
+      writeFileSync(join(lockDir, 'holder.json'), `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`, { flag: 'wx' });
       break;
     } catch {
       if (Date.now() > hardDeadline) {
@@ -193,6 +196,34 @@ interface ReviewWriteContainment {
   subtree: readonly string[];
 }
 
+// Verify the whole containment chain for a destination path: the expected
+// subtree must resolve to its literal location under the repository root (a
+// symlinked .qube or .git segment is refused), and the destination parent must
+// resolve inside that subtree with every descendant segment literal, so a
+// symlinked issue, PR, or head directory cannot redirect a write into another
+// head's evidence or outside the repository.
+function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
+  try {
+    const repoReal = realpathSync(containment.repoRoot);
+    const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
+    if (containReal !== join(repoReal, ...containment.subtree)) {
+      throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the repository root.`);
+    }
+    const relativeParent = relative(join(containment.repoRoot, ...containment.subtree), dirname(path));
+    if (relativeParent.startsWith('..')) {
+      throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path}.`);
+    }
+    const parentReal = realpathSync(dirname(path));
+    const expectedParent = relativeParent === '' ? containReal : join(containReal, relativeParent);
+    if (parentReal !== expectedParent) {
+      throw new Error(`Refusing to write review evidence through a symlinked directory: ${path} resolves to ${parentReal} instead of ${expectedParent}.`);
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
+    throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
+  }
+}
+
 function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
   let symlink = false;
   try {
@@ -203,30 +234,7 @@ function writeReviewFileGuarded(path: string, content: string, containment?: Rev
   if (symlink) {
     throw new Error(`Refusing to write review evidence through a symlink: ${path}. Remove the symlink, then rerun.`);
   }
-  if (containment) {
-    try {
-      const repoReal = realpathSync(containment.repoRoot);
-      const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
-      if (containReal !== join(repoReal, ...containment.subtree)) {
-        throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the repository root.`);
-      }
-      // Every segment below the subtree root must also resolve literally, so a
-      // symlinked issue, PR, or head directory cannot redirect the write into
-      // another head's evidence.
-      const relativeParent = relative(join(containment.repoRoot, ...containment.subtree), dirname(path));
-      if (relativeParent.startsWith('..')) {
-        throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path}.`);
-      }
-      const parentReal = realpathSync(dirname(path));
-      const expectedParent = relativeParent === '' ? containReal : join(containReal, relativeParent);
-      if (parentReal !== expectedParent) {
-        throw new Error(`Refusing to write review evidence through a symlinked directory: ${path} resolves to ${parentReal} instead of ${expectedParent}.`);
-      }
-    } catch (err: unknown) {
-      if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
-      throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
-    }
-  }
+  if (containment) verifyReviewWriteContainment(path, containment);
   // Write to an unguessable temp name with exclusive create and rename over the
   // destination: rename replaces a symlink entry instead of following it, and
   // the exclusive create fails rather than following anything pre-planted even
@@ -257,7 +265,7 @@ function writeReviewFileGuarded(path: string, content: string, containment?: Rev
 
 export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  return withRouteFaultLock(path, () => {
+  return withRouteFaultLock(repoRoot, path, () => {
     const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
     // A tally is only meaningful against one primary route identity; a config
     // change to the lane's primary route restarts the count so the changed
@@ -272,7 +280,7 @@ export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber
 
 export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId): void {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
-  withRouteFaultLock(path, () => {
+  withRouteFaultLock(repoRoot, path, () => {
     const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
     if (!(lane in ledger.lanes)) return;
     delete ledger.lanes[lane];
@@ -453,22 +461,17 @@ function processAlive(pid: number): boolean {
   }
 }
 
-// The evidence subtree must resolve to its literal location under the repo
-// root before lock operations touch it; a symlinked segment fails closed.
-function reviewSubtreeResolvesLiterally(repoRoot: string, subtree: readonly string[]): boolean {
-  try {
-    return realpathSync(join(repoRoot, ...subtree)) === join(realpathSync(repoRoot), ...subtree);
-  } catch {
-    return false;
-  }
-}
-
 // Exclusive-create acquisition: two racing gates resolve to exactly one holder;
 // the loser observes the winner's fresh lock and skips lane execution.
 export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
   mkdirSync(dirname(path), { recursive: true });
-  if (!reviewSubtreeResolvesLiterally(repoRoot, ['.qube', 'aie', 'reviews'])) {
+  try {
+    // The full parent chain must resolve literally: a symlinked issue, PR, or
+    // head directory could otherwise redirect the lock write outside the
+    // repository or into another head's evidence.
+    verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  } catch {
     return { held: false, activeLock: null }; // Fail closed: lanes skip when the lock location is untrustworthy.
   }
   const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
@@ -503,7 +506,11 @@ export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, 
 
 export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
-  if (!reviewSubtreeResolvesLiterally(repoRoot, ['.qube', 'aie', 'reviews'])) return; // Never remove through a symlinked subtree.
+  try {
+    verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  } catch {
+    return; // Never remove through a symlinked or unverifiable path chain.
+  }
   // Release only a lock this process owns; a reclaimed-and-replaced lock belongs to its new holder.
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
@@ -512,6 +519,30 @@ export function clearReviewSessionLock(repoRoot: string, issueNumber: number, pr
     // Missing or unreadable lock: removal is a no-op or clears debris.
   }
   rmSync(path, { force: true });
+}
+
+function symlinkedLockReport(relativePath: string): ReviewSessionLockReport {
+  // A symlinked evidence path is untrusted: lock state behind it fails closed
+  // and is never followed.
+  return {
+    path: relativePath,
+    issueNumber: null,
+    prNumber: null,
+    headSha: null,
+    createdAt: null,
+    ageMinutes: null,
+    stale: true,
+    reason: 'The review evidence path is a symlink; lock state behind a symlink is untrusted and counts as blocked.',
+    cleanupCommand: `Remove the symlink at ${relativePath} after confirming no review session depends on it, then rerun the blocked command.`,
+  };
+}
+
+function entryIsSymlink(path: string): boolean {
+  try {
+    return lstatSync(path).isSymbolicLink();
+  } catch {
+    return false; // Missing entries are handled where they are read.
+  }
 }
 
 function unreadableLockReport(relativePath: string, message: string): ReviewSessionLockReport {
@@ -532,6 +563,16 @@ function unreadableLockReport(relativePath: string, message: string): ReviewSess
 export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: number; currentHeadSha?: string; now?: number; maxAgeMinutes?: number } = {}): ReviewSessionLockReport[] {
   const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
   if (!existsSync(evidenceRoot)) return [];
+  // The walker never follows symlinked segments: a planted symlink could
+  // otherwise redirect lock reads outside the repository. Each symlinked
+  // level fails closed as a blocking report instead of being descended.
+  try {
+    if (realpathSync(evidenceRoot) !== join(realpathSync(repoRoot), '.qube', 'aie', 'reviews')) {
+      return [symlinkedLockReport('.qube/aie/reviews')];
+    }
+  } catch (err: unknown) {
+    return [unreadableLockReport('.qube/aie/reviews', err instanceof Error ? err.message : String(err))];
+  }
   const now = options.now ?? Date.now();
   const maxAgeMinutes = options.maxAgeMinutes ?? REVIEW_SESSION_LOCK_MAX_AGE_MINUTES;
   const reports: ReviewSessionLockReport[] = [];
@@ -542,6 +583,10 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
     return [unreadableLockReport('.qube/aie/reviews', err instanceof Error ? err.message : String(err))];
   }
   for (const issueDir of issueDirs) {
+    if (entryIsSymlink(join(evidenceRoot, issueDir))) {
+      reports.push(symlinkedLockReport(`.qube/aie/reviews/${issueDir}`));
+      continue;
+    }
     let prDirs: string[];
     try {
       prDirs = readdirSync(join(evidenceRoot, issueDir)).filter(name => /^\d+$/.test(name));
@@ -551,6 +596,10 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
     }
     for (const prDir of prDirs) {
       if (options.prNumber !== undefined && Number(prDir) !== options.prNumber) continue;
+      if (entryIsSymlink(join(evidenceRoot, issueDir, prDir))) {
+        reports.push(symlinkedLockReport(`.qube/aie/reviews/${issueDir}/${prDir}`));
+        continue;
+      }
       let headDirs: string[];
       try {
         headDirs = readdirSync(join(evidenceRoot, issueDir, prDir));
@@ -559,9 +608,18 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
         continue;
       }
       for (const headDir of headDirs) {
+        const relativeHead = `.qube/aie/reviews/${issueDir}/${prDir}/${headDir}`;
+        if (entryIsSymlink(join(evidenceRoot, issueDir, prDir, headDir))) {
+          reports.push(symlinkedLockReport(relativeHead));
+          continue;
+        }
         const lockPath = join(evidenceRoot, issueDir, prDir, headDir, '.review-lock.json');
         if (!existsSync(lockPath)) continue;
         const relativePath = ['.qube', 'aie', 'reviews', issueDir, prDir, headDir, '.review-lock.json'].join('/');
+        if (entryIsSymlink(lockPath)) {
+          reports.push(symlinkedLockReport(relativePath));
+          continue;
+        }
         const record = readLockRecord(lockPath, { issueNumber: Number(issueDir), prNumber: Number(prDir), headSha: headDir });
         const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
         const headMismatch = options.currentHeadSha !== undefined && headDir !== safeSegment(options.currentHeadSha);

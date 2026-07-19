@@ -125,8 +125,14 @@ describe('agent descriptors and prompt registry', () => {
         laneIds: [laneId],
         contextLines: [`Review PR #1 for lane ${laneId}.`],
       });
-      for (const label of sectionLabels) {
-        assert.ok(rendered.text.includes(label), `${fragment.id} is missing section "${label}"`);
+      for (let index = 0; index < sectionLabels.length; index += 1) {
+        const label = sectionLabels[index];
+        const start = rendered.text.indexOf(label);
+        assert.ok(start >= 0, `${fragment.id} is missing section "${label}"`);
+        // Each section must carry concrete bullet content, not a bare label.
+        const nextLabel = index + 1 < sectionLabels.length ? rendered.text.indexOf(sectionLabels[index + 1], start) : -1;
+        const sectionBody = rendered.text.slice(start + label.length, nextLabel === -1 ? undefined : nextLabel);
+        assert.match(sectionBody, /(^|\n)- \S/, `${fragment.id} section "${label}" must contain at least one concrete bullet`);
       }
     }
   });

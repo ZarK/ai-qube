@@ -104,6 +104,7 @@ interface LocalReviewRunnerInput {
   resolveModelHead?: (repoRoot: string) => Promise<string>;
   routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
   providerLaneReuse?: ProviderLaneReuse;
+  layoutInspector?: typeof inspectAffected;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -396,7 +397,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   let layoutAffected: RepoAffectedResult | undefined;
   let layoutUnavailableLines: string[] = [];
   try {
-    layoutAffected = await inspectAffected({ config, cwd: input.repoRoot, changedPaths: input.changedPaths });
+    layoutAffected = await (input.layoutInspector ?? inspectAffected)({ config, cwd: input.repoRoot, changedPaths: input.changedPaths });
   } catch {
     layoutAffected = undefined;
     layoutUnavailableLines = ['Layout inspection was unavailable for this run; changed-project and generated/vendor classification is missing from this context.'];
