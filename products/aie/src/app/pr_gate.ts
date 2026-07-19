@@ -847,8 +847,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const gateSessionLockHeld = sessionLockAcquisition.held;
   // Fail closed: lanes execute only while this gate provably holds the lock.
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
+  // The lock is released after evidence read and provider publish complete; a
+  // crashed gate's lock goes stale immediately via the holder pid liveness rule.
   let localReviewRunner: LocalReviewRunResult;
-  try {
   localReviewRunner = await runLocalReviewRunner(config, {
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -868,9 +869,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     routeProbe: options.routeProbe,
     providerLaneReuse,
   });
-  } finally {
-    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
-  }
   const carryForwardScope = {
     laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
     contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
@@ -980,6 +978,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
+  if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
   const unavailable = [
     ...finalSnapshot.unavailable,
     ...linkedChecklistWarnings,
