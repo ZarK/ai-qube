@@ -1212,15 +1212,54 @@ function createQubeCli(environment: CliEnvironment) {
   return cli;
 }
 
+interface QubeDoctorWorkflowSection {
+  status: "ok" | "unavailable" | "not-run";
+  readiness?: unknown;
+  error?: string;
+}
+
+async function collectWorkflowReadiness(offline: boolean, environment: CliEnvironment): Promise<QubeDoctorWorkflowSection> {
+  if (offline) {
+    return { status: "not-run", error: "Offline doctor mode skips workflow readiness diagnostics." };
+  }
+  const planned = planQubeDispatch("aie", ["doctor", "--json"], environment);
+  if (!planned.dispatch) {
+    return { status: "unavailable", error: planned.stderr.trim() || "Executor doctor is unavailable." };
+  }
+  const captured = await dispatchCommandCaptured(planned.dispatch);
+  try {
+    const parsed = JSON.parse(captured.stdout) as { workflowReadiness?: unknown };
+    if (parsed && typeof parsed === "object" && parsed.workflowReadiness) {
+      return { status: "ok", readiness: parsed.workflowReadiness };
+    }
+    return { status: "unavailable", error: "Executor doctor returned no workflow readiness section." };
+  } catch {
+    return { status: "unavailable", error: "Executor doctor returned invalid JSON." };
+  }
+}
+
+function formatWorkflowReadiness(workflow: QubeDoctorWorkflowSection): string {
+  if (workflow.status !== "ok") {
+    return `Workflow readiness: ${workflow.status}${workflow.error ? ` — ${workflow.error}` : ""}\n`;
+  }
+  const readiness = workflow.readiness as { stages?: Array<{ stage?: string; status?: string; detail?: string; nextAction?: string | null }> };
+  const lines = ["Workflow readiness:"];
+  for (const stage of readiness.stages ?? []) {
+    lines.push(`- ${stage.stage}: ${stage.status} — ${stage.detail}${stage.nextAction ? ` Next: ${stage.nextAction}` : ""}`);
+  }
+  return `${lines.join("\n")}\n`;
+}
+
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
     env: environment.env,
     mode: offline ? "offline" : "live",
   });
+  const workflowPromise = collectWorkflowReadiness(offline, environment);
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const connections = await connectionsPromise;
+    const [connections, workflow] = await Promise.all([connectionsPromise, workflowPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0 ? connectionExitCode : planned.exitCode || 1;
     if (json) {
@@ -1228,6 +1267,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         ok: false,
         command: "doctor",
         quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
+        workflow,
         connectionStatus: connections.status,
         connections,
       };
@@ -1236,12 +1276,13 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const [connections, quality] = await Promise.all([
+  const [connections, quality, workflow] = await Promise.all([
     connectionsPromise,
     dispatchCommandCaptured(planned.dispatch),
+    workflowPromise,
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
@@ -1259,6 +1300,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
       ok: exitCode === 0,
       command: "doctor",
       quality: qualityPayload,
+      workflow,
       connectionStatus: connections.status,
       connections,
     };
@@ -1266,7 +1308,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
 }

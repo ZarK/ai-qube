@@ -9,7 +9,9 @@ const { join } = require('node:path');
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
 const { getInstructionStatus } = require('../dist/repo/index.js');
-const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, computeDoctorOk } = require('../dist/doctor.js');
+const { buildGateReadinessDiagnostics, buildInstructionPolicyDiagnostics, buildInstructionRecommendations, buildMigrationReadinessDiagnostics, buildProviderHealthDiagnostics, buildRepositoryPolicyDiagnostics, buildReviewPreflightDiagnostics, buildWorkflowReadiness, chooseNextCommand, computeDoctorOk, selectedAgentHosts } = require('../dist/doctor.js');
+const { formatDoctorHuman } = require('../dist/renderers/doctor_renderer.js');
+const { requiredLocalReviewLanes } = require('../dist/local_review_evidence.js');
 const { hasCanonicalSupplyChainGuardInstruction, SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } = require('../dist/supply_chain_guard.js');
 
 function makeGitRepo() {
@@ -695,5 +697,200 @@ describe('doctor diagnostics', () => {
     assert.equal(computeDoctorOk({ ...healthy, blockingPullRequestCount: 0, pullRequestError: 'gh failed', blockOnOpenPRs: false }), true);
     assert.equal(computeDoctorOk({ ...healthy, blockingPullRequestCount: 0, pullRequestError: 'gh failed', blockOnOpenPRs: true }), false);
     assert.equal(computeDoctorOk({ ...healthy, instructionInstallOk: false }), false);
+  });
+});
+
+describe('staged workflow readiness', () => {
+  function healthyLifecycle(overrides = {}) {
+    return {
+      branchNamingValid: true,
+      inProgressIssueCount: 0,
+      activeIssueNumber: null,
+      activeIssueBranch: null,
+      currentBranchMatchesActiveIssue: null,
+      linkedWorktreeBlocked: false,
+      openPullRequestCheckEnabled: true,
+      baseBranchFresh: true,
+      queueError: undefined,
+      lifecycleCommandsReady: true,
+      ...overrides,
+    };
+  }
+
+  function instructionsFixture(overrides = {}) {
+    return {
+      agents: false,
+      agentsManaged: false,
+      claude: false,
+      claudeManaged: false,
+      opencodeMakeItSo: false,
+      opencodeMakeItSoManaged: false,
+      opencodeMakeitsoAlias: false,
+      opencodeMakeitsoAliasManaged: false,
+      codexReviewFocusAgent: false,
+      codexReviewFocusAgentManaged: false,
+      targets: [],
+      ...overrides,
+    };
+  }
+
+  function workflowInput(config, gateReadiness, overrides = {}) {
+    return {
+      config,
+      configValid: true,
+      labelsOk: true,
+      queueDriftCount: 0,
+      queueMultipleInProgress: false,
+      queueError: undefined,
+      lifecycle: healthyLifecycle(),
+      gateReadiness,
+      instructions: instructionsFixture(),
+      dirty: { dirty: false, entries: [] },
+      currentBranch: 'main',
+      blockingPullRequests: [],
+      evidence: { head: null, lanes: [] },
+      ...overrides,
+    };
+  }
+
+  function stagesById(workflow) {
+    return Object.fromEntries(workflow.stages.map(stage => [stage.stage, stage]));
+  }
+
+  it('reports lifecycle ready, gates unconfigured, review fallback-only, issue start blocked, and manual shipping for a fallback-only repository', () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    config.autonomousMode = false;
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      instructions: instructionsFixture({ agents: true, agentsManaged: true }),
+      dirty: { dirty: true, entries: ['?? .qube/aie/config.json'] },
+    }));
+    const byStage = stagesById(workflow);
+    assert.equal(byStage['lifecycle'].status, 'ready');
+    assert.equal(byStage['quality-gates'].status, 'unconfigured');
+    assert.equal(byStage['review'].status, 'fallback-only');
+    assert.equal(byStage['issue-start'].status, 'blocked');
+    assert.match(byStage['issue-start'].detail, /dirty primary checkout/);
+    assert.match(byStage['issue-start'].detail, /\.qube\/aie\/config\.json/);
+    assert.equal(byStage['shipping'].status, 'manual');
+    assert.equal(byStage['shipping'].nextAction, null);
+    assert.deepEqual(workflow.shipping, { mode: 'manual' });
+    assert.deepEqual(workflow.selectedHosts, ['codex']);
+    // The safe fallback prompt stays available without being represented as enforced review execution.
+    assert.equal(workflow.review.fallbackPromptAvailable, true);
+    assert.equal(workflow.review.fallbackEnforcesReview, false);
+    assert.equal(workflow.review.state, 'fallback-only');
+    // Exactly one prioritized next action per incomplete stage; complete stages and explicit modes carry none.
+    for (const stage of workflow.stages) {
+      if (stage.status === 'ready' || stage.status === 'manual' || stage.status === 'disabled') {
+        assert.equal(stage.nextAction, null, `${stage.stage} must not demand action`);
+      } else {
+        assert.equal(typeof stage.nextAction, 'string', `${stage.stage} must carry a next action`);
+        assert.notEqual(stage.nextAction.trim(), '');
+      }
+    }
+  });
+
+  it('reports zero configured gates as unconfigured, not implicitly healthy', () => {
+    const config = getDefaults();
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    assert.equal(gateReadiness.gates.configured, 0);
+    const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness));
+    const gatesStage = stagesById(workflow)['quality-gates'];
+    assert.equal(gatesStage.status, 'unconfigured');
+    assert.notEqual(gatesStage.status, 'ready');
+    assert.match(gatesStage.nextAction, /gates/i);
+  });
+
+  it('blocks issue start on a dirty checkout even when everything else is ready', () => {
+    const config = getDefaults();
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const clean = buildWorkflowReadiness(workflowInput(config, gateReadiness));
+    assert.equal(stagesById(clean)['issue-start'].status, 'ready');
+    assert.equal(stagesById(clean)['issue-start'].nextAction, null);
+    const dirty = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      dirty: { dirty: true, entries: [' M src/setup.ts'] },
+    }));
+    const stage = stagesById(dirty)['issue-start'];
+    assert.equal(stage.status, 'blocked');
+    assert.match(stage.detail, /uncommitted changes/);
+    assert.match(stage.nextAction, /primary checkout/);
+  });
+
+  it('reports lanes, runner, publisher, and current evidence independently for a local-host review profile', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewProfile = 'local-focused';
+    config.reviewAgents = [];
+    config.reviewLanes = [
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', command: 'claude --print' },
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', command: 'claude --print' },
+    ];
+    config.providers.review.publisher = { mode: 'token' };
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const withEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      evidence: { head: 'abc123', lanes: ['code-quality', 'issue-compliance'] },
+    }));
+    assert.deepEqual(withEvidence.review.lanes.required, [...requiredLocalReviewLanes('local-focused')]);
+    assert.deepEqual(withEvidence.review.lanes.configured, ['issue-compliance', 'code-quality']);
+    assert.equal(withEvidence.review.lanes.runnerReadiness, 'ready');
+    assert.deepEqual(withEvidence.review.publisher, { configured: true, mode: 'token' });
+    assert.deepEqual(withEvidence.review.evidence, { state: 'present', head: 'abc123', lanes: ['code-quality', 'issue-compliance'] });
+    assert.equal(withEvidence.review.state, 'evidence-ready');
+    assert.equal(stagesById(withEvidence)['review'].status, 'ready');
+    // The same profile without current-head evidence reports the lanes and runner unchanged but the evidence gap independently.
+    const withoutEvidence = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      evidence: { head: 'abc123', lanes: [] },
+    }));
+    assert.equal(withoutEvidence.review.state, 'local-lanes');
+    assert.equal(withoutEvidence.review.evidence.state, 'missing');
+    assert.equal(withoutEvidence.review.lanes.runnerReadiness, 'ready');
+    // Without a current PR head, evidence is not applicable instead of fabricated.
+    const noHead = buildWorkflowReadiness(workflowInput(config, gateReadiness));
+    assert.equal(noHead.review.evidence.state, 'not-applicable');
+  });
+
+  it('never recommends OpenCode initialization for a Codex-only repository', () => {
+    const config = getDefaults();
+    const instructionPolicy = buildInstructionPolicyDiagnostics(config, null);
+    const codexOnly = instructionsFixture({
+      agents: true,
+      agentsManaged: true,
+      codexReviewFocusAgent: true,
+      codexReviewFocusAgentManaged: true,
+      targets: [{ name: 'agents', path: 'AGENTS.md', present: true, managed: true, checksumValid: true, healthy: true }],
+    });
+    const recommendations = buildInstructionRecommendations({ repoRoot: '/repo', instructions: codexOnly, instructionPolicy, supplyChainSafetyConfigured: false });
+    assert.equal(recommendations.some(entry => entry.includes('OpenCode')), false);
+    assert.equal(chooseNextCommand(true, recommendations).includes('opencode'), false);
+    assert.deepEqual(selectedAgentHosts(codexOnly), ['codex']);
+    // A present-but-unmanaged OpenCode asset is a selected host that still gets the repair recommendation.
+    const opencodeUnmanaged = instructionsFixture({ agents: true, agentsManaged: true, opencodeMakeItSo: true });
+    const repairRecommendations = buildInstructionRecommendations({ repoRoot: '/repo', instructions: opencodeUnmanaged, instructionPolicy, supplyChainSafetyConfigured: false });
+    assert.equal(repairRecommendations.some(entry => entry.includes('OpenCode project command is not installed')), true);
+    assert.deepEqual(selectedAgentHosts(opencodeUnmanaged), ['codex', 'opencode']);
+  });
+
+  it('exposes the same staged readiness in doctor JSON and human output', () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'uncommitted-setup.txt'), 'setup\n');
+
+    const result = binRun(['doctor', '--json'], repo);
+    const parsed = JSON.parse(result.stdout);
+    assert.ok(parsed.workflowReadiness, 'doctor JSON must expose workflowReadiness');
+    assert.deepEqual(parsed.workflowReadiness.stages.map(stage => stage.stage), ['lifecycle', 'issue-start', 'quality-gates', 'review', 'publication', 'ui-audit', 'shipping']);
+    const issueStart = parsed.workflowReadiness.stages.find(stage => stage.stage === 'issue-start');
+    assert.equal(issueStart.status, 'blocked');
+    assert.match(issueStart.detail, /uncommitted-setup\.txt/);
+
+    const human = formatDoctorHuman(parsed);
+    assert.match(human, /Workflow readiness:/);
+    for (const stage of parsed.workflowReadiness.stages) {
+      const line = `- ${stage.stage}: ${stage.status} — ${stage.detail}${stage.nextAction ? ` Next: ${stage.nextAction}` : ''}`;
+      assert.ok(human.includes(line), `human output must contain the staged line for ${stage.stage}`);
+    }
+    assert.ok(human.includes(`Shipping mode: ${parsed.workflowReadiness.shipping.mode}`));
+    assert.ok(human.includes(`Review state: ${parsed.workflowReadiness.review.state};`));
   });
 });
