@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, sep } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
@@ -563,10 +563,16 @@ function unreadableLockReport(relativePath: string, message: string): ReviewSess
 
 export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: number; currentHeadSha?: string; now?: number; maxAgeMinutes?: number } = {}): ReviewSessionLockReport[] {
   const evidenceRoot = join(repoRoot, '.qube', 'aie', 'reviews');
-  if (!existsSync(evidenceRoot)) return [];
   // The walker never follows symlinked segments: a planted symlink could
-  // otherwise redirect lock reads outside the repository. Each symlinked
-  // level fails closed as a blocking report instead of being descended.
+  // otherwise redirect lock reads outside the repository or hide the reviews
+  // directory entirely so unknown lock state reads as "no locks". Ancestor
+  // symlinks are checked before the missing-directory shortcut, and each
+  // symlinked level fails closed as a blocking report instead of being
+  // descended.
+  if (entryIsSymlink(join(repoRoot, '.qube')) || entryIsSymlink(join(repoRoot, '.qube', 'aie')) || entryIsSymlink(evidenceRoot)) {
+    return [symlinkedLockReport('.qube/aie/reviews')];
+  }
+  if (!existsSync(evidenceRoot)) return [];
   try {
     if (realpathSync(evidenceRoot) !== join(realpathSync(repoRoot), '.qube', 'aie', 'reviews')) {
       return [symlinkedLockReport('.qube/aie/reviews')];
@@ -670,20 +676,21 @@ export function hash(text: string): string {
   return createHash('sha256').update(text).digest('hex');
 }
 
-function hostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
-  return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
-}
-
 const LAYOUT_CONTEXT_LIST_CAP = 8;
 
 // Repository-derived names are untrusted prompt input: strip control and
-// markup-relevant characters, bound length, and serialize as a JSON string so
-// the value always sits inside explicit delimiters regardless of its content.
-// Ordinary instruction words cannot be filtered out of names without
-// destroying them; the data framing and the reviewers' untrusted-input rules
-// carry that residual.
+// markup-relevant characters, replace absolute filesystem paths (inspection
+// errors and warnings can embed local machine paths that must not reach lane
+// prompts), bound length, and serialize as a JSON string so the value always
+// sits inside explicit delimiters regardless of its content. Ordinary
+// instruction words cannot be filtered out of names without destroying them;
+// the data framing and the reviewers' untrusted-input rules carry that
+// residual.
 export function layoutContextText(value: string): string {
-  return JSON.stringify(redact(value).replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80));
+  const scrubbed = redact(value)
+    .replace(/[A-Za-z]:[\\/][^\s"')]+/g, 'absolute-path-omitted')
+    .replace(/\/(?:home|Users|root|tmp|var|private)\/[^\s"')]+/g, 'absolute-path-omitted');
+  return JSON.stringify(scrubbed.replace(/[^\w@/.:\\ -]+/g, '').slice(0, 80));
 }
 
 function changedProjectsLine(affected: RepoAffectedResult): string | null {
@@ -693,7 +700,14 @@ function changedProjectsLine(affected: RepoAffectedResult): string | null {
     const names = shown.map(entry => `${layoutContextText(entry.project.packageName ?? entry.project.path)} (${layoutContextText(entry.project.kind)})`);
     return `Changed projects: ${names.join(', ')}${omitted > 0 ? `, +${omitted} more` : ''}.`;
   }
-  if (affected.changedPaths.length > 0) return 'Changed paths map to no detected project.';
+  if (affected.changedPaths.length > 0) {
+    // Distinguish "layout found no projects at all" from "the change touches
+    // none of the detected projects" so lanes do not mistake a sparse layout
+    // inspection for a complete no-match classification.
+    return affected.layout.projects.length === 0
+      ? 'Layout inspection detected no projects in this repository; changed paths are unclassified.'
+      : `Changed paths match none of the ${affected.layout.projects.length} detected project(s).`;
+  }
   return null;
 }
 
@@ -754,7 +768,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
-    `Bind local-host evidence to same-user host provenance at this exact path: ${hostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
+    `Bind local-host evidence to same-user host provenance at this exact path: ${trustedLocalHostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
     'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',
     'This is audit evidence for a separate host task/session/thread, not a cryptographic attestation against same-user repo code.',
