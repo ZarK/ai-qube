@@ -4780,7 +4780,15 @@ function commandNames(command: string, environment: CliEnvironment): readonly st
 
 function dispatchCommand(request: DispatchRequest): Promise<number> {
   return new Promise(resolve => {
-    const [command, args] = spawnInput(request);
+    let command: string;
+    let args: string[];
+    try {
+      [command, args] = spawnInput(request);
+    } catch (err: unknown) {
+      process.stderr.write(`${err instanceof Error ? err.message : String(err)}\n`);
+      resolve(2);
+      return;
+    }
     const child = spawn(command, args, { stdio: "inherit", shell: false });
     child.on("exit", (code, signal) => {
       if (signal) {
@@ -4800,7 +4808,14 @@ const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
 
 function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
   return new Promise(resolve => {
-    const [command, args] = spawnInput(request);
+    let command: string;
+    let args: string[];
+    try {
+      [command, args] = spawnInput(request);
+    } catch (err: unknown) {
+      resolve({ exitCode: 2, stdout: '', stderr: `${err instanceof Error ? err.message : String(err)}\n`, truncated: false });
+      return;
+    }
     const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });
     let stdout = '';
     let stderr = '';
@@ -4828,8 +4843,17 @@ function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: 
   });
 }
 
+const CMD_UNSAFE_ARGUMENT = /[&|<>^%!"\r\n]/;
+
 function spawnInput(request: DispatchRequest): [string, string[]] {
   if (process.platform === "win32" && /\.(?:cmd|bat)$/i.test(request.commandPath)) {
+    // cmd.exe parses metacharacters inside forwarded arguments regardless of
+    // Node's quoting, so arguments that could splice commands are refused
+    // instead of being forwarded through the .cmd shim.
+    const unsafe = request.args.find(argument => CMD_UNSAFE_ARGUMENT.test(argument));
+    if (unsafe !== undefined) {
+      throw new Error(`Refusing to forward an argument containing cmd metacharacters through ${request.commandPath}: ${JSON.stringify(unsafe)}.`);
+    }
     return [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", request.commandPath, ...request.args]];
   }
   return [request.commandPath, [...request.args]];
