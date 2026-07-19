@@ -3,7 +3,7 @@ const { createHash } = require('node:crypto');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } = require('node:fs');
+const { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { basename, join } = require('node:path');
 
@@ -724,6 +724,8 @@ module.exports = {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
   tmpdir,
   basename,

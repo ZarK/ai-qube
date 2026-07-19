@@ -21,7 +21,7 @@ export interface LaneEvidence {
   summary: string;
   blockers: string[];
   findings: ReviewFinding[];
-  artifacts: Array<{ kind: string; path: string; sha256: string }>;
+  artifacts: Array<{ kind: string; path: string; sha256: string | null }>;
   commands: string[];
   surfaces: string[];
   contextReviewed: LocalReviewContextReviewed[];
@@ -463,7 +463,7 @@ function readArtifacts(value: unknown): LaneEvidence['artifacts'] {
   return value.filter(isRecord).map(item => ({
     kind: typeof item.kind === 'string' ? redact(item.kind) : 'json',
     path: typeof item.path === 'string' ? redact(item.path) : '',
-    sha256: typeof item.sha256 === 'string' ? item.sha256 : '',
+    sha256: typeof item.sha256 === 'string' && item.sha256 !== '' ? item.sha256 : null,
   }));
 }
 

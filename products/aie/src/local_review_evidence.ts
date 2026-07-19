@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { join, sep } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from './review_focus.js';
 import { acceptedProviderLane } from './provider_lane_evidence.js';
@@ -506,8 +506,29 @@ export function laneArtifactViolation(lane: string, status: string, artifacts: u
       if (/^([a-zA-Z]:|\/|\\)/.test(path) || segments.includes('..')) {
         return `${lane} artifacts contains a non-repository-relative or traversal path: ${path}.`;
       }
-      if (repoRoot && !existsSync(join(repoRoot, path))) {
-        return `${lane} artifacts references a file that does not exist in the repository: ${path}.`;
+      if (repoRoot) {
+        const candidate = join(repoRoot, path);
+        let candidateStat = null;
+        try {
+          candidateStat = statSync(candidate);
+        } catch {
+          candidateStat = null;
+        }
+        if (!candidateStat) {
+          return `${lane} artifacts references a file that does not exist in the repository: ${path}.`;
+        }
+        if (!candidateStat.isFile()) {
+          return `${lane} artifacts references a path that is not a repository file: ${path}.`;
+        }
+        try {
+          const rootReal = realpathSync(repoRoot);
+          const candidateReal = realpathSync(candidate);
+          if (candidateReal !== rootReal && !candidateReal.startsWith(rootReal + sep)) {
+            return `${lane} artifacts path resolves outside the repository root: ${path}.`;
+          }
+        } catch {
+          return `${lane} artifacts references a file that could not be resolved inside the repository: ${path}.`;
+        }
       }
       if (entry.sha256 !== null && entry.sha256 !== undefined) {
         if (typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) {

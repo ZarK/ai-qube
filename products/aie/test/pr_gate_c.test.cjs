@@ -11,6 +11,8 @@ const {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  rmSync,
+  symlinkSync,
   writeFileSync,
   tmpdir,
   basename,
@@ -391,6 +393,35 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff --check', sha256: null }], repo), null);
     const readmeDigest = createHash('sha256').update(readFileSync(join(repo, 'README.md'))).digest('hex');
     assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md', sha256: readmeDigest }], repo), null);
+    // Directories and '.' are not inspectable file citations.
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: '.', sha256: null }], repo), /not a repository file/);
+    mkdirSync(join(repo, 'artifact-dir'), { recursive: true });
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'artifact-dir', sha256: null }], repo), /not a repository file/);
+    // A symlink that resolves outside the repository root must be rejected even though the lexical path looks repository-relative.
+    const outsideFile = join(repo, '..', `outside-artifact-${basename(repo)}.md`);
+    writeFileSync(outsideFile, 'outside\n');
+    let symlinkCreated = false;
+    try {
+      symlinkSync(outsideFile, join(repo, 'escape.md'), 'file');
+      symlinkCreated = true;
+    } catch {
+      // Symlink creation needs elevated rights on some Windows setups; the lexical rules above still hold.
+    }
+    if (symlinkCreated) {
+      assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'escape.md', sha256: null }], repo), /resolves outside the repository root/);
+    }
+    rmSync(outsideFile, { force: true });
+    // Normalized model-host evidence keeps null digests instead of coercing them into invalid empty strings.
+    const { normalizeExternalLane } = require('../dist/app/local_review_runner_support.js');
+    const normalized = normalizeExternalLane({
+      lane: 'code-quality', issueNumber: 93, prNumber: 12, headSha: 'abc123', status: 'passed', severity: 'none',
+      recommendation: 'approve', summary: 'ok', blockers: [], findings: [],
+      artifacts: [{ kind: 'json', path: 'README.md', sha256: null }],
+      commands: [], surfaces: [], contextReviewed: [], promptStack: [], toolsUsed: [], completeness: 'complete', preconditions: [],
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false },
+    }, 'code-quality', 93, 12, 'abc123');
+    assert.equal(normalized.artifacts[0].sha256, null);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', normalized.artifacts, repo), null);
   });
 
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
