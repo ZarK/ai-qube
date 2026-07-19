@@ -847,6 +847,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const gateSessionLockHeld = sessionLockAcquisition.held;
   // Fail closed: lanes execute only while this gate provably holds the lock.
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
+  try {
   // The lock is released after evidence read and provider publish complete; a
   // crashed gate's lock goes stale immediately via the holder pid liveness rule.
   let localReviewRunner: LocalReviewRunResult;
@@ -893,7 +894,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
   const publishUnavailable: string[] = [];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
-  if (deferProviderMutation) {
+  if (deferProviderMutation && sessionLockBlocksExecution) {
+    // A gate that does not hold the review session lock never mutates the provider.
+    localReviewPublish = pendingLocalReviewPublish('Provider publishing was withheld because this gate does not hold the review session lock; no provider mutation was performed.');
+  } else if (deferProviderMutation) {
     const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
     const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
     // Reused lanes (local current-head evidence or trusted provider records) are already
@@ -978,7 +982,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const conversations = prConversations(finalSnapshot.item);
   const checkDiagnostics = prCheckDiagnostics(finalSnapshot.item);
   const runnerUnavailable = localReviewRunnerUnavailable(localReviewRunner);
-  if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
   const unavailable = [
     ...finalSnapshot.unavailable,
     ...linkedChecklistWarnings,
@@ -1058,6 +1061,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     warnings: warnings(finalSnapshot.item, reviewers),
     nextAction: shipReady.nextAction,
   };
+  } finally {
+    if (gateSessionLockHeld) clearReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  }
 }
 
 export function formatPrGate(result: PrGateResult): string {

@@ -403,7 +403,7 @@ function readLockRecord(lockPath: string, expected?: { issueNumber: number; prNu
     // The record must identify itself as version 1 for the coordinates its path claims;
     // a partial or cross-target record is malformed, never an active lock.
     const identityValid = parsed.version === 1
-      && (expected === undefined || (parsed.issueNumber === expected.issueNumber && parsed.prNumber === expected.prNumber && parsed.headSha === expected.headSha));
+      && (expected === undefined || (parsed.issueNumber === expected.issueNumber && parsed.prNumber === expected.prNumber && typeof parsed.headSha === 'string' && safeSegment(parsed.headSha) === safeSegment(expected.headSha)));
     return { createdAt, pid, malformed: createdAt === null || !identityValid };
   } catch {
     return { createdAt: null, pid: null, malformed: true };
@@ -516,7 +516,7 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
         const relativePath = ['.qube', 'aie', 'reviews', issueDir, prDir, headDir, '.review-lock.json'].join('/');
         const record = readLockRecord(lockPath, { issueNumber: Number(issueDir), prNumber: Number(prDir), headSha: headDir });
         const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
-        const headMismatch = options.currentHeadSha !== undefined && headDir !== options.currentHeadSha;
+        const headMismatch = options.currentHeadSha !== undefined && headDir !== safeSegment(options.currentHeadSha);
         const holderDead = record.pid !== null && !processAlive(record.pid);
         // A recorded live holder beats the age threshold: a long-running gate stays exclusive.
         const ageStale = record.pid === null && ageMinutes !== null && ageMinutes > maxAgeMinutes;
