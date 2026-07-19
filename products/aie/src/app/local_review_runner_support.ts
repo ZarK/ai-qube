@@ -660,7 +660,7 @@ export function layoutReviewContextLines(affected: RepoAffectedResult | undefine
   if (affected.suggestedGates.length > 0) lines.push(`Likely gates for the changed paths: ${affected.suggestedGates.map(gate => layoutContextText(gate)).join(', ')}.`);
   // Non-throwing inspection problems stay visible so a lane never mistakes a
   // partial classification for a complete one.
-  if (affected.warnings.length > 0) lines.push(`Layout inspection warnings: ${affected.warnings.slice(0, 4).map(warning => redact(warning)).join('; ')}${affected.warnings.length > 4 ? ` (+${affected.warnings.length - 4} more)` : ''}.`);
+  if (affected.warnings.length > 0) lines.push(`Layout inspection warnings: ${affected.warnings.slice(0, 4).map(warning => layoutContextText(warning)).join('; ')}${affected.warnings.length > 4 ? ` (+${affected.warnings.length - 4} more)` : ''}.`);
   return lines;
 }
 
