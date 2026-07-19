@@ -1043,3 +1043,100 @@ describe('init command metadata', () => {
     assert.match(generated, /reference repository names, local reference paths, or source-provenance explanations/);
   });
 });
+
+describe('managed section checksum normalization', () => {
+  const { createHash } = require('node:crypto');
+  const { planManagedUpdate, renderManagedSection, getManagedSectionHealth, MANAGED_START, MANAGED_END } = require('../dist/managed_file.js');
+
+  it('does not report conflicts for CRLF-only differences', () => {
+    const body = 'Line one.\nLine two.\nLine three.\n';
+    const rendered = renderManagedSection(body);
+    const crlfContent = rendered.replace(/\n/g, '\r\n');
+    assert.equal(getManagedSectionHealth(crlfContent).checksumValid, true);
+    const update = planManagedUpdate({ existingContent: crlfContent, generatedBody: body, allowAppend: true, force: false });
+    assert.equal(update.operation === 'blocked', false);
+    assert.equal(update.conflict, false);
+    assert.equal(update.diff, null);
+  });
+
+  it('does not report conflicts when per-line trailing whitespace drifts', () => {
+    const body = 'Line one.\nLine two.\nLine three.\n';
+    const rendered = renderManagedSection(body);
+    const driftedContent = rendered.replace('Line two.', 'Line two.   ');
+    assert.equal(getManagedSectionHealth(driftedContent).checksumValid, true);
+    const update = planManagedUpdate({ existingContent: driftedContent, generatedBody: body, allowAppend: true, force: false });
+    assert.equal(update.operation === 'blocked', false);
+    assert.equal(update.conflict, false);
+  });
+
+  it('accepts legacy checksums so existing managed files migrate without spurious conflicts', () => {
+    // A pre-normalization managed section stored its checksum over the CRLF-collapsed body including per-line trailing whitespace.
+    const legacyBody = 'Line one.  \nLine two.\n';
+    const legacyChecksum = createHash('sha256').update(legacyBody).digest('hex');
+    const legacyContent = [
+      MANAGED_START,
+      '<!-- executor-managed-version: 1 -->',
+      `<!-- executor-managed-checksum: ${legacyChecksum} -->`,
+      legacyBody.trimEnd(),
+      MANAGED_END,
+      '',
+    ].join('\n');
+    assert.equal(getManagedSectionHealth(legacyContent).checksumValid, true);
+    const update = planManagedUpdate({ existingContent: legacyContent, generatedBody: 'Line one.  \nLine two.\n', allowAppend: true, force: false });
+    assert.equal(update.operation === 'blocked', false);
+    assert.equal(update.conflict, false);
+  });
+
+  it('shows a bounded diff for real conflicts and still requires explicit force', () => {
+    const rendered = renderManagedSection('Keep this line.\nOriginal instruction.\n');
+    const editedContent = rendered.replace('Original instruction.', 'Hand-edited instruction.');
+    const blocked = planManagedUpdate({ existingContent: editedContent, generatedBody: 'Keep this line.\nOriginal instruction.\n', allowAppend: true, force: false });
+    assert.equal(blocked.ok, false);
+    assert.equal(blocked.operation, 'blocked');
+    assert.equal(blocked.conflict, true);
+    assert.match(blocked.reason, /Review the diff/);
+    assert.match(blocked.reason, /--force/);
+    assert.match(blocked.diff, /^- Hand-edited instruction\.$/m);
+    assert.match(blocked.diff, /^\+ Original instruction\.$/m);
+    assert.doesNotMatch(blocked.diff, /Keep this line\./);
+    const forced = planManagedUpdate({ existingContent: editedContent, generatedBody: 'Keep this line.\nOriginal instruction.\n', allowAppend: true, force: true });
+    assert.equal(forced.ok, true);
+    assert.equal(forced.operation, 'replace-managed');
+    assert.match(forced.content, /Original instruction\./);
+    // A checksum matching neither the strict nor the legacy form still blocks.
+    const forgedContent = rendered.replace(/executor-managed-checksum: [a-f0-9]+/, 'executor-managed-checksum: deadbeef');
+    const forged = planManagedUpdate({ existingContent: forgedContent, generatedBody: 'Keep this line.\nOriginal instruction.\n', allowAppend: true, force: false });
+    assert.equal(forged.operation, 'blocked');
+    // Non-conflict and unmanaged-file blocks carry no managed diff.
+    const unmanaged = planManagedUpdate({ existingContent: 'plain file\n', generatedBody: 'Body.\n', allowAppend: false, force: false });
+    assert.equal(unmanaged.operation, 'blocked');
+    assert.equal(unmanaged.diff, null);
+  });
+
+  it('caps oversized conflict diffs with an omission note', () => {
+    const originalBody = `${Array.from({ length: 80 }, (unused, index) => `Original line ${index}.`).join('\n')}\n`;
+    const editedBody = `${Array.from({ length: 80 }, (unused, index) => `Edited line ${index}.`).join('\n')}\n`;
+    const rendered = renderManagedSection(originalBody);
+    const editedContent = rendered.replace(originalBody.trimEnd(), editedBody.trimEnd());
+    const blocked = planManagedUpdate({ existingContent: editedContent, generatedBody: originalBody, allowAppend: true, force: false });
+    assert.equal(blocked.operation, 'blocked');
+    assert.match(blocked.diff, /more differing line\(s\) omitted\./);
+    assert.ok(blocked.diff.split('\n').length <= 61);
+  });
+
+  it('appends the managed diff to blocked init action reasons', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const agentsPath = join(repo, 'AGENTS.md');
+    const tampered = readFileSync(agentsPath, 'utf8').replace('Executor Issue Workflow', 'Tampered Workflow Title');
+    writeFileSync(agentsPath, tampered);
+    const blocked = await runInit({ target: '.', tool: 'codex', dryRun: true, force: false, cwd: repo });
+    assert.equal(blocked.ok, false);
+    const agentsAction = blocked.actions.find(action => action.path === 'AGENTS.md');
+    assert.equal(agentsAction.operation, 'blocked');
+    assert.match(agentsAction.reason, /Managed section diff \(current vs rendered\):/);
+    assert.match(agentsAction.reason, /^- .*Tampered Workflow Title/m);
+    assert.match(agentsAction.reason, /^\+ .*Executor Issue Workflow/m);
+  });
+});
