@@ -329,7 +329,7 @@ async function planManagedFile(input: {
     operation: update.operation,
     managedSection: update.managedFound || update.operation !== 'blocked',
     conflict: update.conflict,
-    reason: update.reason,
+    reason: update.diff ? `${update.reason}\nManaged section diff (current vs rendered):\n${update.diff}` : update.reason,
   });
   return update.ok && update.content !== null && update.operation !== 'unchanged'
     ? { action, write: { actionId: action.id, path, content: update.content } }

@@ -52,6 +52,7 @@ export interface ManagedUpdateResult {
   managedFound: boolean;
   conflict: boolean;
   reason: string;
+  diff: string | null;
 }
 
 export interface ManagedSectionHealth {
@@ -75,13 +76,64 @@ function normalizeBody(body: string): string {
   return `${body.replace(/\r\n/g, '\n').trimEnd()}\n`;
 }
 
+// Checksum input normalization: line endings and per-line trailing whitespace never count as edits.
+function normalizeForChecksum(body: string): string {
+  const lines = body.replace(/\r\n?/g, '\n').split('\n').map(line => line.replace(/[ \t]+$/, ''));
+  return `${lines.join('\n').trimEnd()}\n`;
+}
+
+// Accept the strict normalized checksum or the legacy checksum so existing managed files migrate without spurious conflicts.
+function managedChecksumMatches(stored: string | null, body: string): boolean {
+  if (stored === null) return false;
+  return stored === checksum(normalizeForChecksum(body)) || stored === checksum(normalizeBody(body));
+}
+
+const CONFLICT_DIFF_LINE_LIMIT = 60;
+
+function renderManagedConflictDiff(currentBody: string, renderedBody: string): string {
+  const currentLines = normalizeForChecksum(currentBody).trimEnd().split('\n');
+  const renderedLines = normalizeForChecksum(renderedBody).trimEnd().split('\n');
+  const rows = currentLines.length;
+  const cols = renderedLines.length;
+  const lcs: number[][] = Array.from({ length: rows + 1 }, () => new Array<number>(cols + 1).fill(0));
+  for (let row = rows - 1; row >= 0; row -= 1) {
+    for (let col = cols - 1; col >= 0; col -= 1) {
+      lcs[row][col] = currentLines[row] === renderedLines[col]
+        ? lcs[row + 1][col + 1] + 1
+        : Math.max(lcs[row + 1][col], lcs[row][col + 1]);
+    }
+  }
+  const diffLines: string[] = [];
+  let row = 0;
+  let col = 0;
+  while (row < rows && col < cols) {
+    if (currentLines[row] === renderedLines[col]) {
+      row += 1;
+      col += 1;
+    } else if (lcs[row + 1][col] >= lcs[row][col + 1]) {
+      diffLines.push(`- ${currentLines[row]}`);
+      row += 1;
+    } else {
+      diffLines.push(`+ ${renderedLines[col]}`);
+      col += 1;
+    }
+  }
+  while (row < rows) diffLines.push(`- ${currentLines[row++]}`);
+  while (col < cols) diffLines.push(`+ ${renderedLines[col++]}`);
+  if (diffLines.length > CONFLICT_DIFF_LINE_LIMIT) {
+    const omitted = diffLines.length - CONFLICT_DIFF_LINE_LIMIT;
+    return `${diffLines.slice(0, CONFLICT_DIFF_LINE_LIMIT).join('\n')}\n… ${omitted} more differing line(s) omitted.`;
+  }
+  return diffLines.join('\n');
+}
+
 export function renderManagedSection(generatedBody: string, commentStyle: ManagedCommentStyle = 'html'): string {
   const body = normalizeBody(generatedBody);
   const markers = MANAGED_MARKERS[commentStyle];
   return [
     markers.start,
     markers.version,
-    markers.checksum(checksum(body)),
+    markers.checksum(checksum(normalizeForChecksum(body))),
     body.trimEnd(),
     markers.end,
     '',
@@ -119,7 +171,7 @@ export function hasManagedSection(content: string): boolean {
 export function getManagedSectionHealth(content: string): ManagedSectionHealth {
   const parsed = parseManagedSection(content);
   if (!parsed) return { managedFound: false, checksumValid: false };
-  return { managedFound: true, checksumValid: parsed.checksum !== null && parsed.checksum === checksum(parsed.body) };
+  return { managedFound: true, checksumValid: managedChecksumMatches(parsed.checksum, parsed.body) };
 }
 
 function hasUnmanagedConflict(content: string, patterns: RegExp[]): boolean {
@@ -136,12 +188,12 @@ function appendSection(content: string, section: string): string {
 export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateResult {
   const section = renderManagedSection(options.generatedBody, options.commentStyle ?? 'html');
   if (options.existingContent === null) {
-    return { ok: true, operation: 'create', content: section, managedFound: false, conflict: false, reason: 'File does not exist and will be created.' };
+    return { ok: true, operation: 'create', content: section, managedFound: false, conflict: false, reason: 'File does not exist and will be created.', diff: null };
   }
 
   const parsed = parseManagedSection(options.existingContent);
   if (parsed) {
-    const checksumMatches = parsed.checksum !== null && parsed.checksum === checksum(parsed.body);
+    const checksumMatches = managedChecksumMatches(parsed.checksum, parsed.body);
     if (!checksumMatches && !options.force) {
       return {
         ok: false,
@@ -149,17 +201,18 @@ export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateR
         content: null,
         managedFound: true,
         conflict: true,
-        reason: 'Managed section was edited outside Executor. Rerun with --force to replace the managed section.',
+        reason: 'Managed section was edited outside Executor. Review the diff between the current managed section and the rendered content, then rerun with --force to replace the managed section.',
+        diff: renderManagedConflictDiff(parsed.body, normalizeBody(options.generatedBody)),
       };
     }
     if (checksumMatches && parsed.body === normalizeBody(options.generatedBody)) {
-      return { ok: true, operation: 'unchanged', content: options.existingContent, managedFound: true, conflict: false, reason: 'Managed section is already current.' };
+      return { ok: true, operation: 'unchanged', content: options.existingContent, managedFound: true, conflict: false, reason: 'Managed section is already current.', diff: null };
     }
     const content = `${options.existingContent.slice(0, parsed.start)}${section}${options.existingContent.slice(parsed.end)}`;
     if (content === options.existingContent) {
-      return { ok: true, operation: 'unchanged', content: options.existingContent, managedFound: true, conflict: false, reason: 'Managed section is already current.' };
+      return { ok: true, operation: 'unchanged', content: options.existingContent, managedFound: true, conflict: false, reason: 'Managed section is already current.', diff: null };
     }
-    return { ok: true, operation: 'replace-managed', content, managedFound: true, conflict: !checksumMatches, reason: 'Existing managed section will be updated.' };
+    return { ok: true, operation: 'replace-managed', content, managedFound: true, conflict: !checksumMatches, reason: 'Existing managed section will be updated.', diff: null };
   }
 
   const conflict = hasUnmanagedConflict(options.existingContent, options.conflictPatterns ?? []);
@@ -171,11 +224,12 @@ export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateR
       managedFound: false,
       conflict: true,
       reason: options.conflictReason ?? 'Existing unmanaged Executor-like content was found. Rerun with --force to add the managed section intentionally.',
+      diff: null,
     };
   }
   if (options.allowAppend) {
     const content = appendSection(options.existingContent, section);
-    return { ok: true, operation: 'append', content, managedFound: false, conflict, reason: 'Managed section will be appended while preserving existing content.' };
+    return { ok: true, operation: 'append', content, managedFound: false, conflict, reason: 'Managed section will be appended while preserving existing content.', diff: null };
   }
   if (!options.force) {
     return {
@@ -185,9 +239,10 @@ export function planManagedUpdate(options: ManagedUpdateOptions): ManagedUpdateR
       managedFound: false,
       conflict: true,
       reason: 'Existing file is not managed by Executor. Rerun with --force to replace it.',
+      diff: null,
     };
   }
-  return { ok: true, operation: 'replace-file', content: section, managedFound: false, conflict: true, reason: 'Existing unmanaged file will be replaced because --force is set.' };
+  return { ok: true, operation: 'replace-file', content: section, managedFound: false, conflict: true, reason: 'Existing unmanaged file will be replaced because --force is set.', diff: null };
 }
 
 export async function readTextIfPresent(path: string): Promise<string | null> {
