@@ -33,6 +33,21 @@ export interface LaneEvidence {
   runnerProvenance: LocalReviewRunnerProvenance | null;
 }
 
+// Raw command output can echo environment secrets; well-known credential
+// shapes are removed before the capture is persisted, on top of path
+// redaction. Truthful debugging keeps everything else verbatim.
+export function scrubSecrets(text: string): string {
+  return text
+    .replace(/\bgh[pousr]_[A-Za-z0-9]{20,}\b/g, '[redacted-token]')
+    .replace(/\bgithub_pat_[A-Za-z0-9_]{20,}\b/g, '[redacted-token]')
+    .replace(/\bsk-[A-Za-z0-9_-]{20,}\b/g, '[redacted-token]')
+    .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}\b/g, '[redacted-token]')
+    .replace(/\bAKIA[0-9A-Z]{16}\b/g, '[redacted-aws-key]')
+    .replace(/\beyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\b/g, '[redacted-jwt]')
+    .replace(/(authorization\s*[:=]\s*)(?:bearer\s+)?[A-Za-z0-9._~+/=-]{16,}/gi, '$1[redacted]')
+    .replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z ]*PRIVATE KEY-----/g, '[redacted-private-key]');
+}
+
 function safeSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
 }
@@ -1051,8 +1066,8 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
     runnerKind,
     args: args.map(redact),
     exitCode: result.exitCode,
-    stdout: redact(result.stdout),
-    stderr: redact(result.stderr),
+    stdout: scrubSecrets(redact(result.stdout)),
+    stderr: scrubSecrets(redact(result.stderr)),
     recordedAt: new Date().toISOString(),
   };
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
