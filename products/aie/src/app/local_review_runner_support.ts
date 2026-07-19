@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, rmdirSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
@@ -88,31 +88,54 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
 
 const ROUTE_FAULT_LOCK_STALE_MS = 30_000;
 const ROUTE_FAULT_LOCK_RETRY_MS = 25;
+const ROUTE_FAULT_LOCK_HARD_DEADLINE_MS = 90_000;
+
+function lockHolderAlive(lockDir: string): boolean | null {
+  try {
+    const holder = JSON.parse(readFileSync(join(lockDir, 'holder.json'), 'utf8')) as Record<string, unknown>;
+    if (!Number.isSafeInteger(holder.pid)) return null;
+    try {
+      process.kill(Number(holder.pid), 0);
+      return true;
+    } catch (err: unknown) {
+      return err instanceof Error && 'code' in err && (err as { code?: unknown }).code === 'EPERM';
+    }
+  } catch {
+    return null; // No readable holder record; liveness is unknown.
+  }
+}
 
 // Serialize ledger read-modify-write across concurrent gate processes with a
-// mkdir lock. Real holds last microseconds, so the loop waits until the lock
-// is acquired or the holder is provably dead (lock age beyond the staleness
-// threshold) — a slow live writer is never overlapped, and termination is
-// guaranteed because any surviving lock eventually crosses the age threshold.
+// mkdir lock carrying the holder pid. Real holds last microseconds. A lock is
+// reclaimed only when it is old beyond the staleness threshold AND its holder
+// process is provably not alive (or unrecorded), so a slow live writer is never
+// overlapped; pid reuse combined with the age threshold is the residual risk.
+// A hard deadline turns an unremovable or hostile lock into an explicit error
+// instead of an unbounded hang.
 function withRouteFaultLock<T>(path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
   mkdirSync(dirname(path), { recursive: true });
+  const hardDeadline = Date.now() + ROUTE_FAULT_LOCK_HARD_DEADLINE_MS;
   for (;;) {
     try {
       mkdirSync(lockDir);
+      writeFileSync(join(lockDir, 'holder.json'), `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`);
       break;
     } catch {
-      let holderDead = false;
+      if (Date.now() > hardDeadline) {
+        throw new Error(`Route-fault ledger lock could not be acquired at ${lockDir}. Remove that lock path manually after confirming no PR gate process is running, then rerun the command.`);
+      }
+      let aged = false;
       try {
-        holderDead = Date.now() - statSync(lockDir).mtimeMs > ROUTE_FAULT_LOCK_STALE_MS;
+        aged = Date.now() - statSync(lockDir).mtimeMs > ROUTE_FAULT_LOCK_STALE_MS;
       } catch {
         continue; // The holder released between attempts; retry immediately.
       }
-      if (holderDead) {
+      if (aged && lockHolderAlive(lockDir) !== true) {
         try {
-          rmdirSync(lockDir);
+          rmSync(lockDir, { recursive: true, force: true });
         } catch {
-          // Another writer reclaimed it first; retry the acquire.
+          // Another writer reclaimed it first, or removal is blocked; the hard deadline bounds retries.
         }
         continue;
       }
@@ -124,7 +147,7 @@ function withRouteFaultLock<T>(path: string, update: () => T): T {
     return update();
   } finally {
     try {
-      rmdirSync(lockDir);
+      rmSync(lockDir, { recursive: true, force: true });
     } catch {
       // Reclaimed as stale by another writer.
     }

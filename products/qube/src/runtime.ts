@@ -4130,7 +4130,7 @@ async function executeQubeJsonDispatch(componentName: string, componentArgs: rea
   const stderr = `${planned.stderr}${captured.stderr}`;
   let envelope: unknown;
   try {
-    envelope = JSON.parse(captured.stdout);
+    envelope = captured.truncated ? undefined : JSON.parse(captured.stdout);
   } catch {
     envelope = undefined;
   }
@@ -4794,25 +4794,33 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
 
 const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
 
-function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
   return new Promise(resolve => {
     const [command, args] = spawnInput(request);
     const child = spawn(command, args, { stdio: ['inherit', 'pipe', 'pipe'], shell: false });
     let stdout = '';
     let stderr = '';
+    let truncated = false;
     child.stdout.setEncoding('utf8');
     child.stderr.setEncoding('utf8');
-    // Bounded capture: a runaway or compromised component cannot exhaust composer memory before validation.
-    child.stdout.on('data', chunk => { if (stdout.length < CAPTURED_DISPATCH_MAX_CHARS) stdout += chunk; });
-    child.stderr.on('data', chunk => { if (stderr.length < CAPTURED_DISPATCH_MAX_CHARS) stderr += chunk; });
+    // Bounded capture: a runaway or compromised component cannot exhaust composer memory,
+    // and truncation is recorded so a valid-JSON prefix is never treated as a complete envelope.
+    const append = (existing: string, chunk: string): string => {
+      const remaining = CAPTURED_DISPATCH_MAX_CHARS - existing.length;
+      if (chunk.length <= remaining) return existing + chunk;
+      truncated = true;
+      return existing + chunk.slice(0, Math.max(0, remaining));
+    };
+    child.stdout.on('data', chunk => { stdout = append(stdout, chunk); });
+    child.stderr.on('data', chunk => { stderr = append(stderr, chunk); });
     child.on('exit', (code, signal) => {
       if (signal) {
         process.kill(process.pid, signal);
         return;
       }
-      resolve({ exitCode: code ?? 1, stdout, stderr });
+      resolve({ exitCode: code ?? 1, stdout, stderr, truncated });
     });
-    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n` }));
+    child.on('error', error => resolve({ exitCode: 1, stdout, stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`, truncated }));
   });
 }
 
