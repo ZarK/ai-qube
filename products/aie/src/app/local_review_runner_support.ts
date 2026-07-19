@@ -193,7 +193,17 @@ function writeReviewFileGuarded(path: string, content: string, containRoot?: str
       throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
     }
   }
-  writeFileSync(path, content);
+  // Write to an unpredictable temp name and rename over the destination: rename
+  // replaces a symlink entry instead of following it, so a link planted between
+  // the checks and the write can never redirect the content.
+  const tempPath = `${path}.${process.pid}-${Math.random().toString(36).slice(2, 10)}.tmp`;
+  try {
+    writeFileSync(tempPath, content);
+    renameSync(tempPath, path);
+  } catch (err: unknown) {
+    rmSync(tempPath, { force: true });
+    throw err;
+  }
 }
 
 export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber: number, lane: LocalReviewLaneId, reasonCode: string, routeKey: string): number {
@@ -206,7 +216,7 @@ export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber
     const existing = ledger.lanes[lane];
     const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
     ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-    writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
     return count;
   });
 }
@@ -217,7 +227,7 @@ export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber:
     const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
     if (!(lane in ledger.lanes)) return;
     delete ledger.lanes[lane];
-    writeFileSync(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
   });
 }
 
@@ -390,11 +400,24 @@ function processAlive(pid: number): boolean {
   }
 }
 
-export function writeReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): string {
+// Exclusive-create acquisition: two racing gates resolve to exactly one holder;
+// the loser observes the winner's fresh lock and skips lane execution.
+export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
   mkdirSync(dirname(path), { recursive: true });
-  writeReviewFileGuarded(path, `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`, repoRoot);
-  return path;
+  const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      writeFileSync(path, record, { flag: 'wx' });
+      return { held: true, activeLock: null };
+    } catch {
+      const locks = findReviewSessionLocks(repoRoot, { prNumber, currentHeadSha: headSha });
+      const active = locks.find(lock => !lock.stale);
+      if (active) return { held: false, activeLock: active };
+      rmSync(path, { force: true }); // Every observed lock is stale; clear and retry the exclusive create.
+    }
+  }
+  return { held: false, activeLock: null };
 }
 
 export function clearReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): void {
@@ -453,15 +476,17 @@ export function findReviewSessionLocks(repoRoot: string, options: { prNumber?: n
         const ageMinutes = record.createdAt === null ? null : Math.max(0, Math.round((now - Date.parse(record.createdAt)) / 60_000));
         const headMismatch = options.currentHeadSha !== undefined && headDir !== options.currentHeadSha;
         const holderDead = record.pid !== null && !processAlive(record.pid);
-        const stale = record.malformed || headMismatch || holderDead || (ageMinutes !== null && ageMinutes > maxAgeMinutes);
+        // A recorded live holder beats the age threshold: a long-running gate stays exclusive.
+        const ageStale = record.pid === null && ageMinutes !== null && ageMinutes > maxAgeMinutes;
+        const stale = record.malformed || headMismatch || holderDead || ageStale;
         const reason = record.malformed
           ? 'The lock record is malformed or missing createdAt; an unreadable lock counts as stale.'
           : headMismatch
             ? `The lock belongs to head ${headDir}, not the current PR head.`
             : holderDead
               ? `The lock holder process ${record.pid} is no longer running.`
-              : stale
-                ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold.`
+              : ageStale
+                ? `The lock is ${ageMinutes} minute(s) old, above the ${maxAgeMinutes}-minute staleness threshold, and records no holder process.`
                 : `An active review session holds this lock (${ageMinutes} minute(s) old).`;
         reports.push({
           path: relativePath,

@@ -23,7 +23,7 @@ import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
-import { clearReviewSessionLock, findReviewSessionLocks, writeReviewSessionLock, type ReviewSessionLockReport } from './local_review_runner_support.js';
+import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
@@ -836,20 +836,15 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
       })
     : undefined;
   // The gate holds the review session lock while lanes execute so two
-  // concurrent gates for the same PR never interleave evidence writes; an
-  // active lock from another live process skips lane execution with guidance.
-  const gateSessionLocks = findReviewSessionLocks(repoRoot, { prNumber: options.prNumber, currentHeadSha: finalSnapshot.pr.headRefOid });
-  const activeSessionLock = dryRun ? undefined : gateSessionLocks.find(lock => !lock.stale);
+  // concurrent gates for the same PR never interleave evidence writes; the
+  // exclusive-create acquisition resolves a race to exactly one holder, and
+  // the loser skips lane execution with guidance.
   const lockIssueNumber = finalSnapshot.closingIssueNumbers[0] ?? options.prNumber;
-  let gateSessionLockHeld = false;
-  if (!dryRun && !activeSessionLock) {
-    try {
-      writeReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
-      gateSessionLockHeld = true;
-    } catch {
-      // A lock that cannot be written never blocks review execution.
-    }
-  }
+  const sessionLockAcquisition = dryRun
+    ? { held: false, activeLock: null }
+    : acquireReviewSessionLock(repoRoot, lockIssueNumber, options.prNumber, finalSnapshot.pr.headRefOid);
+  const activeSessionLock = sessionLockAcquisition.activeLock ?? undefined;
+  const gateSessionLockHeld = sessionLockAcquisition.held;
   let localReviewRunner: LocalReviewRunResult;
   try {
   localReviewRunner = await runLocalReviewRunner(config, {
