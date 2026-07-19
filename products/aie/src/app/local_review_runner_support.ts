@@ -168,11 +168,17 @@ function withRouteFaultLock<T>(path: string, update: () => T): T {
 
 
 // Evidence, raw-output, bundle, and provenance writes refuse symlinked
-// destinations and symlinked ancestors that resolve outside the repository
-// root, so a planted link can never redirect a gate write to an arbitrary
-// same-user file. The lstat-to-write window is the residual risk on hosts
-// without O_NOFOLLOW semantics.
-function writeReviewFileGuarded(path: string, content: string, containRoot?: string): void {
+// destinations and verify the whole containment chain: the expected subtree
+// must resolve to its literal location under the repository root (a symlinked
+// .qube or .git segment is refused), and the destination parent must resolve
+// inside that subtree. The lstat-to-write window is the residual risk on
+// hosts without O_NOFOLLOW semantics.
+interface ReviewWriteContainment {
+  repoRoot: string;
+  subtree: readonly string[];
+}
+
+function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
   let symlink = false;
   try {
     symlink = lstatSync(path).isSymbolicLink();
@@ -182,12 +188,16 @@ function writeReviewFileGuarded(path: string, content: string, containRoot?: str
   if (symlink) {
     throw new Error(`Refusing to write review evidence through a symlink: ${path}. Remove the symlink, then rerun.`);
   }
-  if (containRoot) {
+  if (containment) {
     try {
-      const rootReal = realpathSync(containRoot);
+      const repoReal = realpathSync(containment.repoRoot);
+      const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
+      if (containReal !== join(repoReal, ...containment.subtree)) {
+        throw new Error(`Refusing to write review evidence: ${containment.subtree.join('/')} does not resolve to its literal location under the repository root.`);
+      }
       const parentReal = realpathSync(dirname(path));
-      if (parentReal !== rootReal && !parentReal.startsWith(rootReal + sep)) {
-        throw new Error(`Refusing to write review evidence outside the repository root: ${path} resolves to ${parentReal}.`);
+      if (parentReal !== containReal && !parentReal.startsWith(containReal + sep)) {
+        throw new Error(`Refusing to write review evidence outside its evidence subtree: ${path} resolves to ${parentReal}.`);
       }
     } catch (err: unknown) {
       if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
@@ -232,7 +242,7 @@ export function recordRouteFault(repoRoot: string, issueNumber: number, prNumber
     const existing = ledger.lanes[lane];
     const count = (existing && existing.routeKey === routeKey ? existing.count : 0) + 1;
     ledger.lanes[lane] = { count, routeKey, lastReasonCode: reasonCode, lastAt: new Date().toISOString() };
-    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, join(repoRoot, '.git', 'qube', 'aie'));
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
     return count;
   });
 }
@@ -243,7 +253,7 @@ export function clearRouteFault(repoRoot: string, issueNumber: number, prNumber:
     const ledger = readRouteFaults(repoRoot, issueNumber, prNumber);
     if (!(lane in ledger.lanes)) return;
     delete ledger.lanes[lane];
-    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`);
+    writeReviewFileGuarded(path, `${JSON.stringify(ledger, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   });
 }
 
@@ -370,7 +380,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirSync(dirname(path), { recursive: true });
-    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, join(repoRoot, '.qube', 'aie', 'reviews'));
+    writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     return path;
   } catch {
     return null;
@@ -988,7 +998,7 @@ function writeReviewBundle(input: {
     promptText: input.promptText,
     outputContract: input.outputContract,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, join(input.repoRoot, '.git', 'qube', 'aie'));
+  }, null, 2)}\n`, { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
   return path;
 }
 
@@ -1026,7 +1036,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
   const rawBodyText = `${JSON.stringify(rawBody, null, 2)}\n`;
   const rawPath = rawOutputPath(repoRoot, issueNumber, prNumber, headSha, lane);
   mkdirSync(dirname(rawPath), { recursive: true });
-  writeReviewFileGuarded(rawPath, rawBodyText, join(repoRoot, '.qube', 'aie', 'reviews'));
+  writeReviewFileGuarded(rawPath, rawBodyText, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   if (result.exitCode !== 0) return null;
   try {
     const evidence = normalizeExternalLane(JSON.parse(result.stdout), lane, issueNumber, prNumber, headSha);
@@ -1063,7 +1073,7 @@ export function writeLane(repoRoot: string, issueNumber: number, prNumber: numbe
     runnerProvenance: lane.runnerProvenance,
     recordedAt: new Date().toISOString(),
   };
-  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, join(repoRoot, '.qube', 'aie', 'reviews'));
+  writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   return path;
 }
 
@@ -1096,7 +1106,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
     invocationId: provenance.invocationId,
     routeSource: provenance.routeSource,
     recordedAt: new Date().toISOString(),
-  }, null, 2)}\n`, join(repoRoot, '.git', 'qube', 'aie'));
+  }, null, 2)}\n`, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   return path;
 }
 

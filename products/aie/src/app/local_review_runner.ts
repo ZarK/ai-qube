@@ -391,14 +391,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const aiqFindings = loadAiqReviewFindings(input.repoRoot, input.changedPaths ?? []);
-  // Layout facts are optional lane context; inspection failure degrades to none.
+  // Layout facts are optional lane context; inspection failure degrades to a
+  // visible statement instead of silently missing classification.
   let layoutAffected: RepoAffectedResult | undefined;
+  let layoutUnavailableLines: string[] = [];
   try {
     layoutAffected = await inspectAffected({ config, cwd: input.repoRoot, changedPaths: input.changedPaths });
   } catch {
     layoutAffected = undefined;
+    layoutUnavailableLines = ['Layout inspection was unavailable for this run; changed-project and generated/vendor classification is missing from this context.'];
   }
-  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected)];
+  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected), ...layoutUnavailableLines];
   // Activate from issue text + changed paths only so hashes stay deterministic and do not
   // flip on every generated review-context line that happens to mention common keywords.
   const activatedRiskCards = selectRiskCards({
