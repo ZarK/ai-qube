@@ -661,19 +661,21 @@ async function applyReviewPlan(provider: ReviewForgeProvider, plan: ActionPlan):
   return actionsFromPlan(plan, results);
 }
 
-async function loadIssueChecklists(issueNumbers: number[], options: PrGateOptions, warnings: string[]): Promise<{ summaries: IssueChecklistSummary[]; riskCardIssueText: string }> {
+async function loadIssueChecklists(issueNumbers: number[], options: PrGateOptions, warnings: string[]): Promise<{ summaries: IssueChecklistSummary[]; riskCardIssueText: string; issueBodies: Map<number, string> }> {
   const summaries: IssueChecklistSummary[] = [];
   const riskParts: string[] = [];
+  const issueBodies = new Map<number, string>();
   for (const issueNumber of issueNumbers) {
     try {
       const issue = await getIssue(issueNumber, { cwd: options.repoRoot, exec: options.exec });
       summaries.push(summarizeIssueChecklist(issue));
       riskParts.push(riskCardIssueTextFromIssue(issue));
+      issueBodies.set(issueNumber, issue.body ?? '');
     } catch (error: unknown) {
       warnings.push(`Issue #${issueNumber} checklist state unavailable: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { summaries, riskCardIssueText: riskParts.join('\n') };
+  return { summaries, riskCardIssueText: riskParts.join('\n'), issueBodies };
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
@@ -719,7 +721,16 @@ function boundedPathList(paths: readonly string[], maxPaths = 60, maxCharacters 
   return bounded(`${visible.join(', ')}${suffix}`, maxCharacters);
 }
 
-async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
+// The bounded bundle is the authoritative acceptance context for read-only
+// review lanes, so a genuinely absent element is named explicitly instead of
+// silently omitted: the lane can then return a named-gap verdict instead of a
+// blanket inconclusive.
+function criterionProofSectionFromPrBody(prBody: string): string | null {
+  const match = prBody.match(/(?:^|\n)(##\s+Criterion-to-proof[\s\S]*?)(?=\n##\s|$)/i);
+  return match ? match[1].trim() : null;
+}
+
+async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], issueBodies: ReadonlyMap<number, string>, prBody: string | undefined): Promise<string[]> {
   const paths = await changedReviewPaths(config, repoRoot);
   const diffStat = await gitText(repoRoot, ['diff', '--stat', `${config.baseRemote}/${config.baseBranch}...HEAD`], 4000);
   const sources = config.reviewContextSources;
@@ -744,7 +755,18 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
     'Bounded review bundle:',
     `Bundle PR: #${snapshot.pr.number} ${snapshot.pr.title}; url=${snapshot.pr.url}; head=${snapshot.pr.headRefOid}; state=${snapshot.pr.state}; draft=${snapshot.pr.isDraft}; reviewDecision=${snapshot.pr.reviewDecision}; mergeState=${snapshot.pr.mergeStateStatus}; mergeable=${snapshot.pr.mergeable}.`,
     `Bundle issues: ${issueChecklists.map(summary => `#${summary.issue.number} ${summary.issue.title} (${summary.issue.state}) ${summary.issue.url}`).join(' | ') || 'none loaded'}.`,
-    `Bundle acceptance checklists: ${issueChecklists.map(summary => `#${summary.issue.number} checked=${summary.checklist.checked}/${summary.checklist.total}; unchecked=${summary.checklist.items.filter(item => !item.checked).map(item => `#${item.index} ${bounded(item.text, 160)}`).join('; ') || 'none'}`).join(' | ') || 'none loaded'}.`,
+    `Bundle acceptance checklists: ${issueChecklists.map(summary => `#${summary.issue.number} checked=${summary.checklist.checked}/${summary.checklist.total}; items=${summary.checklist.items.map(item => `[${item.checked ? 'x' : ' '}] #${item.index} ${bounded(item.text, 160)}`).join('; ') || 'none'}`).join(' | ') || 'none loaded'}.`,
+    ...issueChecklists.map(summary => {
+      const body = issueBodies.get(summary.issue.number) ?? '';
+      return body.trim() === ''
+        ? `Bundle issue body #${summary.issue.number}: MISSING - the work provider supplied no issue body for this issue.`
+        : `Bundle issue body #${summary.issue.number}: ${bounded(body, 6000)}`;
+    }),
+    prBody === undefined
+      ? 'Bundle PR criterion-to-proof map: UNAVAILABLE - the PR body could not be loaded from the review provider.'
+      : criterionProofSectionFromPrBody(prBody) === null
+        ? 'Bundle PR criterion-to-proof map: MISSING - the PR body contains no Criterion-to-proof section.'
+        : `Bundle PR criterion-to-proof map: ${bounded(criterionProofSectionFromPrBody(prBody) ?? '', 6000)}`,
     `Bundle changed files: ${changedPaths}.`,
     `Bundle diff stat: ${diffStat === '' ? 'unavailable' : bounded(diffStat, 4000)}.`,
     `Bundle checks: ${checkDiagnostics.map(diagnostic => `${diagnostic.checkName}=${diagnostic.status}; ${bounded(diagnostic.summary, 220)}`).join(' | ') || 'none loaded'}.`,
@@ -767,11 +789,11 @@ async function loadPrBodyText(prNumber: number, repoRoot: string, exec: PrGateEx
   return loadPullRequestBody(prNumber, { cwd: repoRoot, exec: exec as GhExec | undefined });
 }
 
-async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[]): Promise<string[]> {
+async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], issueBodies: ReadonlyMap<number, string>, prBody: string | undefined): Promise<string[]> {
   const key = localReviewContextCacheKey(snapshot);
   const cached = cache.get(key);
   if (cached) return cached;
-  const loaded = buildLocalReviewContextLines(config, repoRoot, snapshot, issueChecklists, checkDiagnostics, feedback);
+  const loaded = buildLocalReviewContextLines(config, repoRoot, snapshot, issueChecklists, checkDiagnostics, feedback, issueBodies, prBody);
   cache.set(key, loaded);
   return loaded;
 }
@@ -823,7 +845,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const linkedChecklistWarnings: string[] = [];
   const loadedChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const issueChecklists = loadedChecklists.summaries;
-  const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback);
+  const bundlePrBody = await loadPrBodyText(options.prNumber, repoRoot, options.exec);
+  const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback, loadedChecklists.issueBodies, bundlePrBody);
   const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
   const gateProfile = localShadow ? 'local-shadow' as const : localRequired && config.reviewProfile === 'remote-compatible' ? 'local-standard' as const : config.reviewProfile;
   const providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
@@ -1014,7 +1037,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
   const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
   const selfCheck = dryRun
-    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: await loadPrBodyText(options.prNumber, repoRoot, options.exec), repoRoot })
+    ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: bundlePrBody, repoRoot })
     : null;
   // Dedupe by lane + finding identity so multi-issue evidence does not inflate the count.
   const advisoryCount = new Set(localReview.evidence.flatMap(evidence => evidence.lanes.flatMap(lane => lane.findings.filter(finding => finding.severity === 'advisory').map(finding => `${lane.id} ${finding.id} ${finding.message}`)))).size;

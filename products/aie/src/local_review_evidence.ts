@@ -1080,6 +1080,7 @@ export function readApprovedLaneEvidenceAt(repoRoot: string, issueNumber: number
   // violating artifacts, or missing promptStack/preconditions coverage can
   // never seed approval at a new head, matching the publish-side validation.
   if (parsed.lane.findings.some(finding => finding.severity === 'blocking')) return null;
+  if (parsed.lane.blockers.length > 0 || parsed.lane.severity === 'high' || parsed.lane.severity === 'critical') return null;
   if (parsed.lane.promptStack.length === 0 || parsed.lane.preconditions === null) return null;
   if (laneArtifactViolation(laneId, parsed.lane.status, parsed.lane.artifactsRaw, repoRoot) !== null) return null;
   return { evidenceSha256: parsed.evidenceSha256 };

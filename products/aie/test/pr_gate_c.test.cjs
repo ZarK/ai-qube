@@ -1105,6 +1105,19 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       : lane);
     writeLocalEvidence(repo, blockingFinding);
     assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
+    // A contradictory passed record with blockers or high severity is rejected.
+    const contradictoryBlockers = localEvidence({ headSha: priorHead });
+    contradictoryBlockers.lanes = contradictoryBlockers.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, blockers: ['Unresolved defect recorded against a passed status.'] }
+      : lane);
+    writeLocalEvidence(repo, contradictoryBlockers);
+    assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
+    const contradictorySeverity = localEvidence({ headSha: priorHead });
+    contradictorySeverity.lanes = contradictorySeverity.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, severity: 'high' }
+      : lane);
+    writeLocalEvidence(repo, contradictorySeverity);
+    assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
   });
 
   it('fails an unrecognized finding severity closed to blocking instead of downgrading to advisory', () => {
