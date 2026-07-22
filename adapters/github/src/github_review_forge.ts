@@ -1847,40 +1847,72 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         && authorIsTrusted(reviewAuthor(review), trustedMarkerAuthor)
         && sameRoundLaneMetadata(parseLaneReviewMetadata(review.body), input));
     if (existingRoundReview) {
-      const updateBody = laneReviewBody(input, allFindings, 0);
-      const payloadPath = reviewPayloadPath({ body: updateBody.body });
+      const existingMetadata = parseLaneReviewMetadata(existingRoundReview.body);
+      const verdictUnchanged = existingMetadata !== null
+        && existingMetadata.recommendation === input.recommendation
+        && existingMetadata.status === input.status;
+      if (verdictUnchanged) {
+        const updateBody = laneReviewBody(input, allFindings, 0);
+        const payloadPath = reviewPayloadPath({ body: updateBody.body });
+        try {
+          await assertHeadUnchanged();
+          const updateResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', payloadPath], ghOptions);
+          if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api pull request review update failed');
+          const reviewUrl = publishedReviewUrl(updateResult) ?? (existingRoundReview.url ? redact(String(existingRoundReview.url)) : null);
+          return localReviewPublishResult({
+            status: 'published',
+            runId: updateBody.runId,
+            marker: updateBody.marker,
+            body: updateBody.body,
+            url: reviewUrl,
+            reviewUrl,
+            publishKind: 'pull-request-review',
+            inlineCommentCount: 0,
+            bodyFindingCount: updateBody.bodyFindingCount,
+            publisher: publisher.identity,
+            nextAction: `Provider-visible lane review for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
+          });
+        } catch (error: unknown) {
+          return localReviewPublishResult({
+            status: 'failed',
+            runId: updateBody.runId,
+            marker: updateBody.marker,
+            body: updateBody.body,
+            publishKind: 'pull-request-review',
+            bodyFindingCount: updateBody.bodyFindingCount,
+            publisher: publisher.identity,
+            failure: redact(error instanceof Error ? error.message : String(error)),
+            nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+          });
+        } finally {
+          cleanupReviewPayload(payloadPath);
+        }
+      }
+      // The verdict changed within the round: a body PUT cannot change the
+      // formal review event, so the old marker is tombstoned (its marker
+      // removed and its inline comments flagged as superseded) and a fresh
+      // review with the correct event is created below. The round still ends
+      // with exactly one live marker; a tombstone failure fails closed.
+      const tombstone = `This ${input.lane} review was superseded within its review round by an updated verdict; its inline comments may reference superseded findings. See the latest QUBE ${input.lane} review for this round.`;
+      const tombstonePath = reviewPayloadPath({ body: tombstone });
       try {
         await assertHeadUnchanged();
-        const updateResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', payloadPath], ghOptions);
-        if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api pull request review update failed');
-        const reviewUrl = publishedReviewUrl(updateResult) ?? (existingRoundReview.url ? redact(String(existingRoundReview.url)) : null);
-        return localReviewPublishResult({
-          status: 'published',
-          runId: updateBody.runId,
-          marker: updateBody.marker,
-          body: updateBody.body,
-          url: reviewUrl,
-          reviewUrl,
-          publishKind: 'pull-request-review',
-          inlineCommentCount: 0,
-          bodyFindingCount: updateBody.bodyFindingCount,
-          publisher: publisher.identity,
-          nextAction: `Provider-visible lane review for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
-        });
+        const tombstoneResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', tombstonePath], ghOptions);
+        if (tombstoneResult.exitCode !== 0) throw new Error(tombstoneResult.stderr || tombstoneResult.stdout || 'gh api pull request review tombstone failed');
       } catch (error: unknown) {
         return localReviewPublishResult({
           status: 'failed',
-          runId: updateBody.runId,
-          marker: updateBody.marker,
-          body: updateBody.body,
+          runId: plannedBody.runId,
+          marker: plannedBody.marker,
+          body: plannedBody.body,
           publishKind: 'pull-request-review',
-          bodyFindingCount: updateBody.bodyFindingCount,
+          bodyFindingCount: plannedBody.bodyFindingCount,
           publisher: publisher.identity,
           failure: redact(error instanceof Error ? error.message : String(error)),
-          nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+          nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second live same-round marker is never created.`,
         });
       } finally {
-        cleanupReviewPayload(payloadPath);
+        cleanupReviewPayload(tombstonePath);
       }
     }
     const existingRoundComment = comments

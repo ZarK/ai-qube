@@ -1587,6 +1587,50 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(exactDuplicate.status, 'skipped');
   });
 
+  it('tombstones the old review and posts a fresh event when the verdict flips within a round', async () => {
+    const approveInput = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      expectedLanes: ['code-quality'],
+      round: 'round-flip-1',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review passed',
+      findings: [],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const draftProvider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const approveDraft = await draftProvider.publishLaneReviewFeedback((await draftProvider.loadPullRequestReview(12)).item, approveInput);
+    const existingReview = { id: 555, author: { login: 'executor' }, body: approveDraft.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ reviews: [existingReview], latestReviews: [existingReview] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const flipped = await provider.publishLaneReviewFeedback(snapshot.item, {
+      ...approveInput,
+      dryRun: false,
+      status: 'failed',
+      recommendation: 'request-changes',
+      summary: 'code review found a blocker',
+      findings: [{ severity: 'blocking', message: 'Fix the regression.', location: { path: 'src/review.ts', line: 2 } }],
+    });
+
+    // A body PUT cannot change the formal review event, so a verdict flip
+    // tombstones the old marker and creates one fresh review with the right
+    // event: the round still ends with exactly one live marker.
+    assert.equal(flipped.status, 'published');
+    const tombstonePut = fixture.reviewPayloads.find(payload => payload.update === 'repos/example/repo/pulls/12/reviews/555');
+    assert.ok(tombstonePut, 'the superseded review must be tombstoned in place');
+    assert.doesNotMatch(tombstonePut.body, /qube-pr-review:/, 'the tombstone must carry no live marker');
+    const freshReview = fixture.reviewPayloads.find(payload => payload.event === 'REQUEST_CHANGES');
+    assert.ok(freshReview, 'the verdict flip must publish a fresh review with the correct formal event');
+  });
+
   it('publishes updated lane feedback when only structured findings change', async () => {
     const input = {
       dryRun: true,
