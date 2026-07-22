@@ -134,6 +134,8 @@ interface LaneReviewMetadata {
   lane: string;
   expectedLanes?: string[];
   round?: string;
+  /** A superseded marker preserves a replaced verdict for history readers; live read paths ignore it. */
+  superseded?: boolean;
   profile: string;
   runId: string;
   issueNumber: number;
@@ -416,6 +418,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       ? [...new Set(parsed.expectedLanes.map(lane => redact(String(lane).trim())))].sort()
       : undefined;
     const round = typeof parsed.round === 'string' && parsed.round.trim() !== '' ? redact(parsed.round.trim()) : undefined;
+    const superseded = parsed.superseded === true ? true : undefined;
     if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
     if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
     const issueNumber = parsed.issueNumber;
@@ -433,6 +436,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       lane: redact(parsed.lane),
       expectedLanes,
       round,
+      superseded,
       profile: redact(parsed.profile),
       runId: redact(parsed.runId),
       issueNumber,
@@ -524,7 +528,9 @@ function chronologicalLaneReviewRecords(input: { comments: RawComment[]; latestR
 
 function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
-  const records = chronologicalLaneReviewRecords(input);
+  // Superseded markers are history, not current state: they stay visible to
+  // chronological readers (stats) but never represent a live lane verdict.
+  const records = chronologicalLaneReviewRecords(input).filter(record => record.metadata.superseded !== true);
   for (const record of records) {
     const key = `${record.metadata.head}\0${record.metadata.lane}`;
     const existing = latest.get(key);
@@ -663,6 +669,7 @@ function laneReviewBody(
 // accumulates more than one marker per lane.
 function sameRoundLaneMetadata(metadata: LaneReviewMetadata | null, input: GitHubLaneReviewPublishInput): boolean {
   return metadata !== null
+    && metadata.superseded !== true
     && metadata.head === input.headSha
     && metadata.lane === input.lane
     && metadata.prNumber === input.prNumber
@@ -681,6 +688,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
+    if (review.superseded === true) return false;
     if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
     return review.head === input.headSha
       && review.lane === input.lane
@@ -706,6 +714,7 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       lane: metadata.lane,
       expectedLanes: metadata.expectedLanes ?? null,
       round: metadata.round ?? null,
+      superseded: metadata.superseded === true,
       profile: metadata.profile,
       runId: metadata.runId,
       issueNumber: metadata.issueNumber,
@@ -1889,11 +1898,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
         }
       }
       // The verdict changed within the round: a body PUT cannot change the
-      // formal review event, so the old marker is tombstoned (its marker
-      // removed and its inline comments flagged as superseded) and a fresh
-      // review with the correct event is created below. The round still ends
-      // with exactly one live marker; a tombstone failure fails closed.
-      const tombstone = `This ${input.lane} review was superseded within its review round by an updated verdict; its inline comments may reference superseded findings. See the latest QUBE ${input.lane} review for this round.`;
+      // formal review event, so the old review is tombstoned and a fresh
+      // review with the correct event is created below. The tombstone keeps
+      // a superseded marker preserving the replaced verdict - history readers
+      // (convergence stats) still see the original blocking evidence while
+      // live read paths ignore it - so the round ends with exactly one live
+      // marker and no rework history is destroyed. A tombstone failure fails
+      // closed.
+      const tombstone = [
+        laneReviewMarker({ ...existingMetadata as LaneReviewMetadata, superseded: true }),
+        '',
+        `This ${input.lane} review was superseded within its review round by an updated verdict; its inline comments may reference superseded findings. See the latest QUBE ${input.lane} review for this round.`,
+      ].join('\n');
       const tombstonePath = reviewPayloadPath({ body: tombstone });
       try {
         await assertHeadUnchanged();

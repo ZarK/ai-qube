@@ -127,6 +127,8 @@ export interface GitLabMetadata {
   readonly lane?: string;
   readonly expectedLanes?: readonly string[];
   readonly round?: string;
+  /** A superseded marker preserves a replaced verdict for history readers; live read paths ignore it. */
+  readonly superseded?: boolean;
   readonly profile?: string;
   readonly runId?: string;
   readonly issueNumber?: number;

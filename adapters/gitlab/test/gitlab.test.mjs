@@ -867,6 +867,70 @@ describe("GitLab review forge adapter", () => {
     assert.match(notes[0].body, /Second review\./);
   });
 
+  it("preserves a superseded verdict when a GitLab round verdict flips", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const note = notes.find(candidate => String(candidate.id) === String(noteId));
+        note.body = body;
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      round: "round-flip-gl-1",
+      profile: "focused",
+      status: "failed",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Blocking review.",
+      findings: ["Fix the blocker."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    const blocking = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const flipped = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      status: "complete",
+      recommendation: "approve",
+      summary: "Review passed after fixes.",
+      findings: [],
+    });
+
+    assert.equal(blocking.status, "published");
+    assert.equal(flipped.status, "published");
+    // The old note becomes a superseded tombstone preserving the replaced
+    // verdict for history readers; one fresh live note carries the new one.
+    assert.equal(notes.length, 2);
+    assert.match(notes[0].body, /"superseded":true/);
+    assert.match(notes[0].body, /"recommendation":"request-changes"/);
+    assert.match(notes[1].body, /"recommendation":"approve"/);
+    assert.doesNotMatch(notes[1].body, /"superseded":true/);
+  });
+
   it("fails a same-round republish closed when the client cannot update notes", async () => {
     const notes = [];
     const client = {

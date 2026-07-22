@@ -1622,13 +1622,36 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     // A body PUT cannot change the formal review event, so a verdict flip
     // tombstones the old marker and creates one fresh review with the right
-    // event: the round still ends with exactly one live marker.
+    // event: the round still ends with exactly one live marker, and the
+    // tombstone preserves the replaced verdict for history readers.
     assert.equal(flipped.status, 'published');
     const tombstonePut = fixture.reviewPayloads.find(payload => payload.update === 'repos/example/repo/pulls/12/reviews/555');
     assert.ok(tombstonePut, 'the superseded review must be tombstoned in place');
-    assert.doesNotMatch(tombstonePut.body, /qube-pr-review:/, 'the tombstone must carry no live marker');
+    assert.match(tombstonePut.body, /"superseded":true/, 'the tombstone must preserve the replaced verdict as a superseded history marker');
+    assert.match(tombstonePut.body, /"recommendation":"approve"/, 'the superseded marker must keep the original verdict');
     const freshReview = fixture.reviewPayloads.find(payload => payload.event === 'REQUEST_CHANGES');
     assert.ok(freshReview, 'the verdict flip must publish a fresh review with the correct formal event');
+  });
+
+  it('counts a superseded same-round verdict once in provider-derived stats', () => {
+    const { computeReviewStats } = require('../dist/app/review_stats.js');
+    // The provider record after a same-round verdict flip: a superseded
+    // request-changes marker plus the live approve marker. History keeps the
+    // blocking evidence exactly once and the head never reads first-clean.
+    const result = computeReviewStats([{
+      number: 400,
+      title: 'Same-round verdict flip',
+      trustedLaneReviews: [
+        { head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], round: 'round-1', superseded: true, recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2, blockingFindingCount: 2, publishedAt: '2026-03-01T00:00:00Z', issueNumber: 93 },
+        { head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], round: 'round-1', recommendation: 'approve', status: 'passed', bodyFindingCount: 0, blockingFindingCount: 0, publishedAt: '2026-03-01T00:10:00Z', issueNumber: 93 },
+      ],
+    }]);
+
+    const pr = result.pullRequests[0];
+    assert.equal(pr.noLaneEvidence, false);
+    assert.equal(pr.blockingEntries, 2, 'the superseded blocking verdict stays in history exactly once');
+    assert.equal(pr.firstReviewClean, false, 'a head with superseded blocking evidence never reads first-review-clean');
+    assert.deepEqual(pr.rounds, { complete: 1, inProgress: 0, abandoned: 0 });
   });
 
   it('publishes updated lane feedback when only structured findings change', async () => {

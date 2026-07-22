@@ -84,6 +84,9 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
 
   for (const value of records) {
     if (!isRecord(value)) continue;
+    // Superseded markers preserve replaced verdicts for history readers;
+    // they are never live state and can never seed reuse or completeness.
+    if (value.superseded === true) continue;
     const lane = nonEmptyString(value.lane);
     const head = nonEmptyString(value.head);
     if (!lane || !head) continue;

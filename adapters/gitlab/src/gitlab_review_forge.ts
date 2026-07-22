@@ -435,28 +435,45 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   // changed content updates the existing note in place. A client without
   // note-update support fails the publish closed instead of creating a
   // second same-round marker.
-  private async findSameRoundNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput): Promise<GitLabNote | undefined> {
+  private async findSameRoundNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput): Promise<{ note: GitLabNote; metadata: GitLabMetadata } | undefined> {
     const trustedAuthor = await this.trustedMarkerAuthor();
     const candidates = notes ?? await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
-    return candidates.find(note => {
-      if (note.id === undefined || note.id === null) return false;
+    for (const note of candidates) {
+      if (note.id === undefined || note.id === null) continue;
       const parsed = trustedMetadataNote(note, trustedAuthor);
-      return parsed?.kind === "lane-review"
+      if (parsed?.kind === "lane-review"
+        && parsed.superseded !== true
         && parsed.head === input.headSha
         && parsed.lane === input.lane
         && (parsed.prNumber ?? input.prNumber) === input.prNumber
-        && (parsed.round ?? null) === input.round;
-    });
+        && (parsed.round ?? null) === input.round) {
+        return { note, metadata: parsed };
+      }
+    }
+    return undefined;
   }
 
   private async createOrUpdateLaneNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput, body: string): Promise<{ note: GitLabNote; updated: boolean }> {
-    const existingRoundNote = await this.findSameRoundNote(notes, input);
-    if (existingRoundNote) {
+    const existingRound = await this.findSameRoundNote(notes, input);
+    if (existingRound) {
       if (!this.client.updateMergeRequestNote) {
         throw new Error(`a provider-visible ${input.lane} marker already exists for this round and the GitLab client does not support note updates; failing closed instead of creating a second same-round marker. Use a review client with updateMergeRequestNote support, then rerun publish.`);
       }
-      const note = await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRoundNote.id), body });
-      return { note, updated: true };
+      const verdictUnchanged = existingRound.metadata.recommendation === input.recommendation && existingRound.metadata.status === input.status;
+      if (verdictUnchanged) {
+        const note = await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRound.note.id), body });
+        return { note, updated: true };
+      }
+      // The verdict changed within the round: the old note becomes a
+      // superseded tombstone preserving the replaced verdict for history
+      // readers, and one fresh live note carries the new verdict, so no
+      // rework history is destroyed and the round keeps one live marker.
+      const tombstone = [
+        metadataLine({ ...existingRound.metadata, superseded: true }),
+        `This ${input.lane} review was superseded within its review round by an updated verdict. See the latest QUBE ${input.lane} review for this round.`,
+      ].join("\n");
+      await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRound.note.id), body: tombstone });
+      return { note: await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body }), updated: false };
     }
     return { note: await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body }), updated: false };
   }
@@ -671,6 +688,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     const plannedMetadata = JSON.parse(planned.marker) as GitLabMetadata;
     const records = Array.isArray(trustedMetadata.trustedLaneReviews) ? trustedMetadata.trustedLaneReviews : [];
     return records.some(record => record !== null && typeof record === "object" && !Array.isArray(record)
+      && record.superseded !== true
       && record.head === input.headSha
       && record.lane === input.lane
       && record.round === input.round
@@ -779,6 +797,7 @@ function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: s
       lane: parsed.lane,
       expectedLanes: Array.isArray(parsed.expectedLanes) && parsed.expectedLanes.every(lane => typeof lane === "string" && lane.trim() !== "") ? [...parsed.expectedLanes] : null,
       round: typeof parsed.round === "string" && parsed.round.trim() !== "" ? parsed.round : null,
+      superseded: parsed.superseded === true,
       profile: parsed.profile ?? "",
       runId: parsed.runId,
       issueNumber: parsed.issueNumber ?? 0,

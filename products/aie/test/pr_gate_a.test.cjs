@@ -819,15 +819,13 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
     config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
     const fixture = makePrExec({ prViews: [cleanLocalPr()] });
-    let commentMutations = 0;
     const exec = async args => {
-      const isCommentMutation = (args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST');
-      if (isCommentMutation) {
-        commentMutations += 1;
-        // The first mutation is the idempotent review-request marker; lane
-        // feedback publications come afterwards and are the rejection target.
-        if (commentMutations > 1) throw new Error('provider rejected the lane mutation');
-      }
+      // Reject lane-feedback mutations by shape (streaming publishes lanes
+      // before the idempotent review-request marker is applied), leaving the
+      // request marker itself deliverable.
+      const isReviewPost = args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST';
+      const isLaneComment = args[0] === 'pr' && args[1] === 'comment' && String(args[4] ?? '').includes('qube-pr-review:');
+      if (isReviewPost || isLaneComment) throw new Error('provider rejected the lane mutation');
       return fixture.exec(args);
     };
     const modelRouteProcess = async invocation => {
@@ -918,7 +916,9 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.deepEqual(writtenLane.reviewer, { id: 'grok', name: 'Grok', adapterKind: 'local' });
     assert.notEqual(execFileSync('git', ['diff', '--name-only', 'origin/main...HEAD', '--', '.qube/aie/config.json'], { cwd: repo, encoding: 'utf8' }).trim(), '');
     assert.ok(order.filter(entry => entry === 'model').length >= result.localReviewRunner.lanes.length);
-    assert.ok(order.indexOf('provider-mutation') > order.lastIndexOf('model'));
+    // Streaming publication: a validated lane's mutation may interleave with
+    // later model runs, but no mutation can ever precede the first model run.
+    assert.ok(order.indexOf('provider-mutation') > order.indexOf('model'));
     // Every gate-published marker must declare the complete active lane set, or
     // convergence stats degrade multi-lane heads as inconsistent expected sets.
     const publishedMarkers = [...fixture.calls.flatMap(call => call.map(String)), ...fixture.reviewPayloads.map(payload => String(payload.body ?? ''))]
@@ -979,8 +979,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       onBeforeMutate: async () => { localHead = 'changed-head'; },
     });
 
-    assert.equal(result.localReviewRunner.status, 'completed');
-    assert.equal(result.localReview.status, 'passed');
+    // Disclosure fires at the first validated lane under streaming; drift
+    // after it withholds every provider mutation, and the drifted checkout
+    // fails the remaining lanes closed (checkout mismatch is fault-exempt).
+    assert.equal(result.localReviewRunner.status, 'failed');
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.blocker === 'model-route-checkout-mismatch'));
     assert.equal(result.localReviewPublish.status, 'pending');
     assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'edit'), false);
     assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
@@ -1041,6 +1044,67 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewPublish.status, 'published');
     assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'), 'blocking lane feedback must reach the provider');
     assert.equal(result.shipReady.ready, false);
+  });
+
+  it('publishes a validated blocking lane before slower siblings finish', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const codeQualityPublished = () => fixture.reviewPayloads.some(payload => typeof payload.body === 'string' && payload.body.includes('"lane":"code-quality"'));
+    let blockingMarkerSeenBeforeSlowSibling = false;
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (lane === 'final-gate') {
+        // The slow sibling: wait (bounded) until the blocking lane's marker
+        // reached the provider, proving publication happened mid-batch.
+        for (let attempt = 0; attempt < 200 && !codeQualityPublished(); attempt += 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+        blockingMarkerSeenBeforeSlowSibling = codeQualityPublished();
+      }
+      const blocking = lane === 'code-quality';
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: blocking ? 'needs-work' : 'passed',
+        severity: blocking ? 'high' : 'none',
+        recommendation: blocking ? 'request-changes' : 'approve',
+        summary: blocking ? `${lane} found a blocking defect.` : `${lane} routed review passed.`,
+        blockers: blocking ? ['Fix the parser crash before merge.'] : [],
+        findings: blocking ? [{ id: 'cq-1', severity: 'blocking', message: 'Fix the parser crash before merge.', location: { path: 'src/review.ts', line: 2 } }] : [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: blocking ? 'finding' : 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+    });
+
+    assert.equal(blockingMarkerSeenBeforeSlowSibling, true, 'the blocking lane must be provider-visible while slower siblings are still running');
+    assert.equal(result.localReviewPublish.status, 'published');
   });
 
   it('publishes validated lanes while a failed lane leaves the round incomplete', async () => {

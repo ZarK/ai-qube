@@ -19,10 +19,10 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitDeltaPathsSync, readCurrentHeadLaneEvidence, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
-import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
+import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewLaneRun, type LocalReviewRunResult } from './local_review_runner.js';
 import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
@@ -871,6 +871,39 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // Fail closed: lanes execute only while this gate provably holds the lock.
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
   try {
+  const carryForwardScope = {
+    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
+  };
+  // Prompt per-lane publication: every routed lane with terminal validated
+  // evidence publishes the moment its evidence lands, so a blocking lane is
+  // provider-visible while slower or failed siblings are still running. The
+  // batch publish loop below remains the idempotent catch-all; adapter
+  // skip-match makes a streamed lane a no-op there.
+  const streamedPublishFailures: string[] = [];
+  let streamingDisclosed = false;
+  const streamLanePublish = !dryRun && routedFocuses.length > 0 && !sessionLockBlocksExecution
+    ? async (lane: LocalReviewLaneRun): Promise<void> => {
+        if (lane.status !== 'completed' || !lane.route) return;
+        try {
+          const laneEvidence = readCurrentHeadLaneEvidence(repoRoot, lane.issueNumber, options.prNumber, finalSnapshot.pr.headRefOid, lane.lane);
+          if (!laneEvidence || (laneEvidence.status !== 'passed' && laneEvidence.status !== 'failed' && laneEvidence.status !== 'needs-work')) return;
+          if (!streamingDisclosed) {
+            await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
+            streamingDisclosed = true;
+          }
+          // The head is rechecked after disclosure so drift between disclosure
+          // and mutation withholds the publish, exactly like the batch loop.
+          if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) return;
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap });
+          const publishFailure = prReviewPublishFailureMessage(published);
+          if (publishFailure) streamedPublishFailures.push(`${lane.lane}: ${publishFailure}`);
+        } catch (error: unknown) {
+          streamedPublishFailures.push(`${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+        }
+      }
+    : undefined;
   // The lock is released after evidence read and provider publish complete; a
   // crashed gate's lock goes stale immediately via the holder pid liveness rule.
   let localReviewRunner: LocalReviewRunResult;
@@ -892,12 +925,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     resolveModelHead: options.resolveModelHead,
     routeProbe: options.routeProbe,
     providerLaneReuse,
+    onLaneValidated: streamLanePublish,
   });
-  const carryForwardScope = {
-    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
-    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
-    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
-  };
   const localReview = readLocalReviewGate({
     repoRoot,
     issueNumbers: finalSnapshot.closingIssueNumbers,
@@ -915,7 +944,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     providerLaneReuse,
   });
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
-  const publishUnavailable: string[] = [];
+  const publishUnavailable: string[] = [...streamedPublishFailures];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   if (deferProviderMutation && sessionLockBlocksExecution) {
     // A gate that does not hold the review session lock never mutates the provider.
