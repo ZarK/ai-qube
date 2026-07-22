@@ -73,15 +73,48 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(plans[0].withheldOffDiff, 0);
   });
 
-  it('keeps a location-less advisory finding even when a diff filter is active', () => {
-    const noLocation = finding({ severity: 'advisory' });
+  it('withholds a location-less advisory when the diff filter is active, keeping location-less blockers', () => {
+    const noLocationAdvisory = finding({ severity: 'advisory', message: 'Unanchored advisory.' });
+    const noLocationBlocking = finding({ severity: 'blocking', message: 'Gate-level blocking condition.' });
+    const plans = planFindingPublication(
+      [{ laneId: 'code-quality', findings: [noLocationAdvisory, noLocationBlocking] }],
+      { changedPaths: ['src/touched.ts'], nitCap: 10 },
+    );
+
+    assert.deepEqual(plans[0].published.map(item => item.message), ['Gate-level blocking condition.'], 'an anchor-less advisory cannot be re-confirmed against an observed diff');
+    assert.equal(plans[0].withheldOffDiff, 1);
+  });
+
+  it('keeps a location-less advisory when no changed-path set was observed', () => {
+    const noLocation = finding({ severity: 'advisory', message: 'Unanchored advisory.' });
     const plans = planFindingPublication(
       [{ laneId: 'code-quality', findings: [noLocation] }],
-      { changedPaths: ['src/touched.ts'], nitCap: 10 },
+      { nitCap: 10 },
     );
 
     assert.equal(plans[0].published.length, 1);
     assert.equal(plans[0].withheldOffDiff, 0);
+  });
+
+  it('promotes the highest reported confidence onto the owning lane before cap ranking', () => {
+    const ownerLowConfidence = finding({ id: 'owner', message: 'Harden the parser bounds.', location: { path: 'src/parser.ts', line: 7 }, confidence: 0.1 });
+    const restatedHighConfidence = finding({ id: 'restated', message: 'Harden the parser bounds.', location: { path: 'src/parser.ts', line: 7 }, confidence: 0.95 });
+    const competing = finding({ id: 'competing', message: 'Rename the ambiguous flag.', location: { path: 'src/parser.ts', line: 20 }, confidence: 0.5 });
+    const plans = planFindingPublication(
+      [
+        { laneId: 'code-quality', findings: [ownerLowConfidence] },
+        { laneId: 'security', findings: [restatedHighConfidence, competing] },
+      ],
+      { changedPaths: ['src/parser.ts'], nitCap: 1 },
+    );
+    const codeQuality = plans.find(plan => plan.laneId === 'code-quality');
+    const security = plans.find(plan => plan.laneId === 'security');
+
+    assert.deepEqual(codeQuality.published.map(item => item.message), ['Harden the parser bounds.'], 'the strongest observed confidence must win the cap slot for the owner');
+    assert.equal(codeQuality.published[0].confidence, 0.95);
+    assert.equal(security.withheldDuplicates, 1);
+    assert.deepEqual(security.published, []);
+    assert.equal(security.withheldByCap, 1);
   });
 
   it('keeps same-message findings at different lines distinct across lanes', () => {

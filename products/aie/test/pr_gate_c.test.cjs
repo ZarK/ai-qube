@@ -526,6 +526,36 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('rejects request-changes evidence without structured findings at publish validation', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality'
+        ? { status: 'needs-work', severity: 'high', recommendation: 'request-changes', blockers: [], findings: [] }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const provider = {
+      async loadPullRequestReview() {
+        throw new Error('validation must fail before any provider call');
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('validation must fail before any provider call');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: ['code-quality'] }),
+      /request-changes evidence must include at least one structured findings/,
+    );
+  });
+
   it('fails lane publish closed when the changed-path delta cannot be observed', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

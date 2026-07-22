@@ -351,6 +351,9 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
     throw laneEvidenceFailure(path, `recommendation ${recommendation} is not valid with status ${raw.status}; ${recommendationStatusRule()}.`);
   }
+  if (recommendation === 'request-changes' && structuredFindings.length === 0) {
+    throw laneEvidenceFailure(path, 'request-changes evidence must include at least one structured findings[] entry; a rejection without findings publishes no provider-visible obligation.');
+  }
   if (structuredFindings.some(finding => finding.severity === 'blocking')
     && (raw.status === 'passed' || recommendation !== 'request-changes')) {
     throw laneEvidenceFailure(path, `recorded blocking structured findings but claimed status ${raw.status} with recommendation ${recommendation}.`);

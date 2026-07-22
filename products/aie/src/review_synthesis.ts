@@ -73,13 +73,21 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
   const changedPaths = options.changedPaths && options.changedPaths.length > 0 ? new Set(options.changedPaths.map(normalizeComparablePath)) : null;
 
   // Cross-lane dedupe: the earliest canonical lane to report a finding
-  // identity owns it; every later lane withholds its own copy.
+  // identity owns it; every later lane withholds its own copy. The owner
+  // inherits the highest confidence any lane reported for the identity, so
+  // a withheld high-confidence restatement still wins its cap slot instead
+  // of vanishing behind the owner's lower score.
   const laneOrderForOwnership = [...lanes].sort((left, right) => lanePriorityRank(priorityOrder, left.laneId) - lanePriorityRank(priorityOrder, right.laneId));
   const identityOwner = new Map<string, LocalReviewLaneId>();
+  const identityMaxConfidence = new Map<string, number>();
   for (const lane of laneOrderForOwnership) {
     for (const finding of lane.findings) {
       const identity = findingIdentity(finding);
       if (!identityOwner.has(identity)) identityOwner.set(identity, lane.laneId);
+      if (typeof finding.confidence === 'number') {
+        const known = identityMaxConfidence.get(identity);
+        if (known === undefined || finding.confidence > known) identityMaxConfidence.set(identity, finding.confidence);
+      }
     }
   }
 
@@ -99,13 +107,20 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         withheldDuplicatesByLane.set(lane.laneId, (withheldDuplicatesByLane.get(lane.laneId) ?? 0) + 1);
         continue;
       }
-      const offDiff = finding.severity === 'advisory' && changedPaths !== null && finding.location !== undefined
-        && !changedPaths.has(normalizeComparablePath(finding.location.path));
+      // An advisory is re-confirmable against the diff only through its
+      // anchor: with an observed changed-path set, both off-diff anchors and
+      // anchor-less advisories are withheld. Blocking findings always pass.
+      const offDiff = finding.severity === 'advisory' && changedPaths !== null
+        && (finding.location === undefined || !changedPaths.has(normalizeComparablePath(finding.location.path)));
       if (offDiff) {
         withheldOffDiffByLane.set(lane.laneId, (withheldOffDiffByLane.get(lane.laneId) ?? 0) + 1);
         continue;
       }
-      survivingByLane.get(lane.laneId)!.push({ laneId: lane.laneId, finding });
+      const promotedConfidence = identityMaxConfidence.get(identity);
+      const surviving = promotedConfidence !== undefined && promotedConfidence !== finding.confidence
+        ? { ...finding, confidence: promotedConfidence }
+        : finding;
+      survivingByLane.get(lane.laneId)!.push({ laneId: lane.laneId, finding: surviving });
     }
   }
 
