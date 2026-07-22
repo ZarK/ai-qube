@@ -90,32 +90,37 @@ export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber:
   let ledgerStats;
   try {
     ledgerStats = lstatSync(path);
-  } catch {
-    return { version: 1, lanes: {} };
+  } catch (err: unknown) {
+    // Only a confirmed missing ledger means no recorded faults; any other
+    // observation failure must not silently erase fault state and re-enable
+    // a faulted route.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, lanes: {} };
+    throw new Error(`Refusing to treat an unreadable route-fault ledger as empty: ${path}. Fix filesystem access, then rerun.`);
   }
   if (!ledgerStats.isFile()) {
     throw new Error(`Refusing to read the route-fault ledger through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
   }
   verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  let parsed: unknown;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.lanes)) {
-      const lanes: Record<string, RouteFaultRecord> = {};
-      for (const [lane, record] of Object.entries(parsed.lanes)) {
-        if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
-        lanes[lane] = {
-          count: Number(record.count),
-          routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
-          lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
-          lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
-        };
-      }
-      return { version: 1, lanes };
-    }
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
   } catch {
-    // A missing or malformed ledger means no recorded faults.
+    throw new Error(`Refusing to treat an unreadable route-fault ledger as empty: ${path}. Inspect or remove the ledger, then rerun.`);
   }
-  return { version: 1, lanes: {} };
+  if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.lanes)) {
+    throw new Error(`Refusing to treat a malformed route-fault ledger as empty: ${path}. Inspect or remove the ledger, then rerun.`);
+  }
+  const lanes: Record<string, RouteFaultRecord> = {};
+  for (const [lane, record] of Object.entries(parsed.lanes)) {
+    if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
+    lanes[lane] = {
+      count: Number(record.count),
+      routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
+      lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
+      lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
+    };
+  }
+  return { version: 1, lanes };
 }
 
 const ROUTE_FAULT_LOCK_STALE_MS = 30_000;

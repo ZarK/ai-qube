@@ -572,6 +572,19 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
   });
 
+  it('fails route-fault ledger reads closed on malformed content and reads absence as empty', () => {
+    const repo = makeGitRepo();
+    assert.deepEqual(readRouteFaults(repo, 93, 12), { version: 1, lanes: {} }, 'a confirmed missing ledger means no recorded faults');
+
+    const ledgerDir = join(repo, '.git', 'qube', 'aie', 'route-faults', '93');
+    mkdirSync(ledgerDir, { recursive: true });
+    writeFileSync(join(ledgerDir, '12.json'), 'not json at all');
+    assert.throws(() => readRouteFaults(repo, 93, 12), /Refusing to treat an unreadable route-fault ledger as empty/);
+
+    writeFileSync(join(ledgerDir, '12.json'), `${JSON.stringify({ version: 99, lanes: 'forged' })}\n`);
+    assert.throws(() => readRouteFaults(repo, 93, 12), /Refusing to treat a malformed route-fault ledger as empty/);
+  });
+
   it('fails route-fault ledger reads closed through a symlinked ancestor directory', () => {
     const repo = makeGitRepo();
     const realStore = join(repo, '.git', 'qube-real');

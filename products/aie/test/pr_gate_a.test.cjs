@@ -809,6 +809,61 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(resolveModelReviewPlan(config, 'issue-compliance').host, 'grok');
   });
 
+  it('reports a failed routed publish batch when the provider rejects lane feedback', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    applyRoutedReviewFixture(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let commentMutations = 0;
+    const exec = async args => {
+      const isCommentMutation = (args[0] === 'pr' && args[1] === 'comment') || (args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST');
+      if (isCommentMutation) {
+        commentMutations += 1;
+        // The first mutation is the idempotent review-request marker; lane
+        // feedback publications come afterwards and are the rejection target.
+        if (commentMutations > 1) throw new Error('provider rejected the lane mutation');
+      }
+      return fixture.exec(args);
+    };
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'failed', 'a provider-rejected lane publication must never report a published batch');
+    assert.match(String(result.localReviewPublish.failure), /Failed to publish lane review|routed lane publish failed/);
+  });
+
   it('executes and publishes a complete routed lane batch from the QUBE orchestrator', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
