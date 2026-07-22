@@ -432,11 +432,10 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   }
 
   // One provider marker per lane per round: a same-round republish with
-  // changed content updates the existing note in place when the client
-  // supports note updates. Clients without update support fall back to a
-  // superseding note, which every read path already collapses latest-first.
+  // changed content updates the existing note in place. A client without
+  // note-update support fails the publish closed instead of creating a
+  // second same-round marker.
   private async findSameRoundNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput): Promise<GitLabNote | undefined> {
-    if (!this.client.updateMergeRequestNote) return undefined;
     const trustedAuthor = await this.trustedMarkerAuthor();
     const candidates = notes ?? await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
     return candidates.find(note => {
@@ -453,7 +452,10 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   private async createOrUpdateLaneNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput, body: string): Promise<{ note: GitLabNote; updated: boolean }> {
     const existingRoundNote = await this.findSameRoundNote(notes, input);
     if (existingRoundNote) {
-      const note = await this.client.updateMergeRequestNote!({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRoundNote.id), body });
+      if (!this.client.updateMergeRequestNote) {
+        throw new Error(`a provider-visible ${input.lane} marker already exists for this round and the GitLab client does not support note updates; failing closed instead of creating a second same-round marker. Use a review client with updateMergeRequestNote support, then rerun publish.`);
+      }
+      const note = await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRoundNote.id), body });
       return { note, updated: true };
     }
     return { note: await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body }), updated: false };

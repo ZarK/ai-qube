@@ -867,6 +867,60 @@ describe("GitLab review forge adapter", () => {
     assert.match(notes[0].body, /Second review\./);
   });
 
+  it("fails a same-round republish closed when the client cannot update notes", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "security",
+      expectedLanes: ["security"],
+      round: "round-security-1",
+      profile: "focused",
+      status: "complete",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "First review.",
+      findings: ["Fix the first issue."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/security.json",
+    };
+
+    const first = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const changed = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      summary: "Changed review.",
+      findings: ["Fix the changed issue."],
+    });
+
+    assert.equal(first.status, "published");
+    // Without note-update support the publish fails closed: a second live
+    // same-round marker is never created.
+    assert.equal(changed.status, "failed");
+    assert.match(changed.failure, /failing closed instead of creating a second same-round marker/);
+    assert.equal(notes.length, 1);
+  });
+
   it("resolves unresolved GitLab merge request discussions", async () => {
     const resolved = [];
     const provider = createGitLabReviewForgeProvider({
