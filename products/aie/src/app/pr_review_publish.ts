@@ -116,6 +116,9 @@ function writeSnapshotCache(repoRoot: string, path: string, snapshot: ReviewForg
     if (err instanceof Error && err.message.startsWith('Refusing to replace')) throw err;
     // A missing cache file is the normal first-write case.
   }
+  // Revalidate the chain immediately before the rename: a concurrent junction
+  // swap of a parent between the temp write and this rename must fail closed.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
   renameSync(tempPath, path);
 }
 

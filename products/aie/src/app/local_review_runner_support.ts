@@ -274,20 +274,31 @@ export function writeReviewFileGuarded(path: string, content: string, containmen
   // before the mutation so a directory swapped for a junction after the
   // containment check still fails closed.
   const tempPath = `${path}.${randomUUID()}.tmp`;
+  // The chain is revalidated immediately before EACH filesystem mutation, not
+  // just once: a concurrent junction swap of the destination parent between
+  // the temp write and the rename could otherwise redirect the final entry
+  // outside the trusted store.
+  const revalidate = (): void => {
+    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, path);
+  };
   try {
     if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, tempPath);
     writeFileSync(tempPath, content, { flag: 'wx' });
     try {
+      revalidate();
       renameSync(tempPath, path);
     } catch {
       // Windows can refuse to replace a locked destination; clear it and retry.
+      revalidate();
       rmSync(path, { force: true });
       try {
+        revalidate();
         renameSync(tempPath, path);
       } catch {
         // Final fallback: the destination entry was just removed, so recreate it
         // with exclusive create (no replacement symlink can be followed) and
         // only then discard the temp copy — content is never silently lost.
+        revalidate();
         writeFileSync(path, content, { flag: 'wx' });
         rmSync(tempPath, { force: true });
       }
