@@ -449,6 +449,16 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       if (currentHead !== input.headSha) {
         throw new Error(`merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`);
       }
+      // Revalidate the head immediately before the note create: work since
+      // the initial head check (note listing, metadata) is asynchronous, so a
+      // merge request that advanced meanwhile must not receive stale feedback.
+      const headCheck = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const latestHead = typeof (headCheck as { sha?: unknown }).sha === "string" ? String((headCheck as { sha?: unknown }).sha) : "";
+      if (latestHead === "" || latestHead !== input.headSha) {
+        throw new Error(latestHead === ""
+          ? `merge request !${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+          : `merge request !${input.prNumber} head changed from ${input.headSha} to ${latestHead} before publication; rerun pr gate for the current head.`);
+      }
       const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
       return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
     } catch (error) {
@@ -488,6 +498,16 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       return { status: "planned", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Rerun \`aie pr review publish <mr> --lane ${input.lane}\` without --dry-run to publish provider-visible GitLab note feedback.` };
     }
     try {
+      // Revalidate the head immediately before the note create: work since
+      // the initial head check (note listing, metadata) is asynchronous, so a
+      // merge request that advanced meanwhile must not receive stale feedback.
+      const headCheck = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const latestHead = typeof (headCheck as { sha?: unknown }).sha === "string" ? String((headCheck as { sha?: unknown }).sha) : "";
+      if (latestHead === "" || latestHead !== input.headSha) {
+        throw new Error(latestHead === ""
+          ? `merge request !${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+          : `merge request !${input.prNumber} head changed from ${input.headSha} to ${latestHead} before publication; rerun pr gate for the current head.`);
+      }
       const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
       return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
     } catch (error) {

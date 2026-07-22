@@ -592,6 +592,17 @@ export function verifyTrustedStoreChain(repoRoot: string, subtree: readonly stri
   }
 }
 
+// Read a JSON file from a trusted store only after verifying its literal
+// ancestor chain and confirming it is a regular file; a planted symlink or
+// junction can never redirect the read to forged content outside the store.
+export function readTrustedStoreJson(repoRoot: string, subtree: readonly string[], path: string): unknown {
+  verifyTrustedStoreChain(repoRoot, subtree, path);
+  if (!lstatSync(path).isFile()) {
+    throw new Error(`Refusing to read trusted store content that is not a regular file: ${path}.`);
+  }
+  return JSON.parse(readFileSync(path, 'utf8'));
+}
+
 export function trustedLocalHostProvenancePath(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): string {
   return join(repoRoot, '.git', 'qube', 'aie', 'host-provenance', String(issueNumber), String(prNumber), safeSegment(headSha), `${lane}.json`);
 }
@@ -781,10 +792,12 @@ function explicitExpectedPromptHash(input: { issueNumber: number; laneId: LocalR
 
 function readTrustedLocalHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, laneId: LocalReviewLaneId): TrustedLocalHostProvenance | null {
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, laneId);
-  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
-  if (!existsSync(path)) return null;
+  if (!existsSync(path)) {
+    verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
+    return null;
+  }
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.git', 'qube', 'aie'], path);
     if (!isRecord(parsed) || parsed.version !== 1) return null;
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha || parsed.lane !== laneId) return null;
     if (parsed.runnerKind !== 'local-host' || typeof parsed.host !== 'string' || parsed.host.trim() === '') return null;
@@ -954,7 +967,7 @@ function evidenceSchemaVersion(parsed: Record<string, unknown>): unknown {
 
 function parseEvidence(path: string, repoRoot: string, issueNumber: number, prNumber: number, headSha: string, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean, expectedPromptStackHashes?: Readonly<Record<string, string>>): LocalReviewEvidence {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.qube', 'aie'], path);
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence JSON must be an object.', reviewers, profile);
     if (evidenceSchemaVersion(parsed) !== 1) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence version must be 1.', reviewers, profile);
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber) return malformedEvidence(issueNumber, prNumber, headSha, path, 'Local review evidence issue or PR metadata does not match this gate.', reviewers, profile);
@@ -999,9 +1012,9 @@ function parseEvidence(path: string, repoRoot: string, issueNumber: number, prNu
   }
 }
 
-function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter']; evidenceSha256: string } | null {
+function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, prNumber: number, headSha: string): { lane: LocalReviewLane; adapter: LocalReviewEvidence['adapter']; evidenceSha256: string } | null {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.qube', 'aie'], path);
     if (!isRecord(parsed) || evidenceSchemaVersion(parsed) !== 1) return null;
     const parsedIssueNumber = parsed.issueNumber ?? parsed.issue;
     const parsedPrNumber = parsed.prNumber ?? parsed.pr;
@@ -1041,18 +1054,18 @@ function parseLaneEvidence(path: string, issueNumber: number, prNumber: number, 
 export function readApprovedLaneEvidenceAt(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, laneId: LocalReviewLaneId): { evidenceSha256: string } | null {
   const path = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeSegment(headSha), `${laneId}.json`);
   if (!existsSync(path)) return null;
-  const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+  const parsed = parseLaneEvidence(repoRoot, path, issueNumber, prNumber, headSha);
   if (!parsed) return null;
   if (parsed.lane.id !== laneId || parsed.lane.status !== 'passed' || parsed.lane.recommendation !== 'approve') return null;
   if (parsed.lane.carriedForward) return null;
   return { evidenceSha256: parsed.evidenceSha256 };
 }
 
-function readLocalReviewPublishEvidence(directory: string, issueNumber: number, prNumber: number, headSha: string): LocalReviewPublishEvidence | null {
+function readLocalReviewPublishEvidence(repoRoot: string, directory: string, issueNumber: number, prNumber: number, headSha: string): LocalReviewPublishEvidence | null {
   const path = join(directory, 'publish.json');
   if (!existsSync(path)) return null;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.qube', 'aie'], path);
     if (!isRecord(parsed) || parsed.version !== 1) return null;
     if (parsed.issueNumber !== issueNumber || parsed.prNumber !== prNumber || parsed.headSha !== headSha) return null;
     if (typeof parsed.provider !== 'string' || parsed.provider.trim() === '') return null;
@@ -1074,7 +1087,7 @@ export function readCurrentHeadLaneEvidence(repoRoot: string, issueNumber: numbe
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
   if (!existsSync(path)) return null;
   try {
-    const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+    const parsed = parseLaneEvidence(repoRoot, path, issueNumber, prNumber, headSha);
     if (!parsed || parsed.lane.id !== lane) return null;
     return parsed.lane;
   } catch {
@@ -1132,7 +1145,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     for (const laneId of requiredLanes) {
       const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
       if (directoryExists && existsSync(path)) {
-        const parsed = parseLaneEvidence(path, issueNumber, prNumber, headSha);
+        const parsed = parseLaneEvidence(repoRoot, path, issueNumber, prNumber, headSha);
         if (!parsed || parsed.lane.id !== laneId) return malformedEvidence(issueNumber, prNumber, headSha, path, `Local review lane evidence for ${laneId} could not be parsed, is malformed, or its issue, PR, or headSha metadata does not match this gate.`, reviewers, profile);
         localLanes.push({ ...parsed.lane, origin: 'local' });
         adapters.push(parsed.adapter);
@@ -1151,7 +1164,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
     return malformedEvidence(issueNumber, prNumber, headSha, directory, 'Local review lane evidence JSON could not be parsed.', reviewers, profile);
   }
   if (localLanes.length === 0 && providerLanes.length === 0) return null;
-  const publishStatus = directoryExists ? readLocalReviewPublishEvidence(directory, issueNumber, prNumber, headSha)?.status ?? null : null;
+  const publishStatus = directoryExists ? readLocalReviewPublishEvidence(repoRoot, directory, issueNumber, prNumber, headSha)?.status ?? null : null;
   const localLanesWithPublishStatus = localLanes.map(lane => withProviderPublishStatus(lane, publishStatus));
   const lanesWithPublishStatus = [...localLanesWithPublishStatus, ...providerLanes];
   if (missing.length > 0) {
@@ -1195,7 +1208,7 @@ function parseLaneEvidenceSet(repoRoot: string, issueNumber: number, prNumber: n
 
 function parseIssueEvidence(path: string, repoRoot: string, issueNumber: number, reviewers: readonly string[], profile: LocalReviewProfile, severityThreshold: LocalReviewSeverity, shadow: boolean): LocalReviewEvidence {
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+    const parsed: unknown = readTrustedStoreJson(repoRoot, ['.qube', 'aie'], path);
     if (!isRecord(parsed)) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence JSON must be an object.', reviewers, profile);
     if (evidenceSchemaVersion(parsed) !== 1) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence version must be 1.', reviewers, profile);
     if (parsed.issueNumber !== issueNumber) return malformedEvidence(issueNumber, 0, 'unknown', path, 'Local review evidence issue metadata does not match this gate.', reviewers, profile);
@@ -1445,7 +1458,7 @@ function headDirectoryTimestamp(repoRoot: string, issueNumber: number, prNumber:
     const path = join(directory, `${laneId}.json`);
     if (!existsSync(path)) continue;
     try {
-      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      const parsed: unknown = readTrustedStoreJson(repoRoot, ['.qube', 'aie'], path);
       if (!isRecord(parsed)) continue;
       const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : null;
       if (recordedAt !== null && (maxRecordedAt === null || recordedAt > maxRecordedAt)) maxRecordedAt = recordedAt;
@@ -1488,7 +1501,7 @@ function readPriorFindings(repoRoot: string, issueNumbers: readonly number[], pr
     for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
       const path = join(directory, `${laneId}.json`);
       if (!existsSync(path)) continue;
-      const parsed = parseLaneEvidence(path, issueNumber, prNumber, priorHeadSha);
+      const parsed = parseLaneEvidence(repoRoot, path, issueNumber, prNumber, priorHeadSha);
       if (!parsed || parsed.lane.id !== laneId) continue;
       for (const finding of parsed.lane.findings) {
         priorFindings.push({ issueNumber, laneId, finding, contentHash: findingContentHash(laneId, finding) });

@@ -262,9 +262,12 @@ export function writeReviewFileGuarded(path: string, content: string, containmen
   // Write to an unguessable temp name with exclusive create and rename over the
   // destination: rename replaces a symlink entry instead of following it, and
   // the exclusive create fails rather than following anything pre-planted even
-  // at the temp name.
+  // at the temp name. The ancestor chain is revalidated at the last moment
+  // before the mutation so a directory swapped for a junction after the
+  // containment check still fails closed.
   const tempPath = `${path}.${randomUUID()}.tmp`;
   try {
+    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, tempPath);
     writeFileSync(tempPath, content, { flag: 'wx' });
     try {
       renameSync(tempPath, path);

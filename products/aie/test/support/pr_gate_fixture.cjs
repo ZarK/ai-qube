@@ -720,6 +720,7 @@ module.exports = {
   execFileSync,
   spawnSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,

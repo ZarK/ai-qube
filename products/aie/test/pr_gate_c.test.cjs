@@ -7,6 +7,7 @@ const {
   execFileSync,
   spawnSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -609,6 +610,42 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       () => readRouteFaults(repo, 93, 12),
       /Refusing to access the trusted store through a symlink or junction/,
       'absence behind a relocated ancestor must not read as an empty ledger',
+    );
+  });
+
+  it('fails lane publish closed when evidence is reached through a symlinked descendant', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    // Relocate the head evidence directory and leave a junction in its place:
+    // a read that follows the relocated ancestor chain would consume
+    // attacker-controlled content. Junctions work unprivileged on Windows.
+    const headDir = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+    const relocatedHeadDir = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123-relocated');
+    cpSync(headDir, relocatedHeadDir, { recursive: true });
+    rmSync(headDir, { recursive: true, force: true });
+    symlinkSync(relocatedHeadDir, headDir, 'junction');
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('evidence read must fail closed before any provider mutation');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
+      /symlink|junction|regular file|Refusing to access/,
     );
   });
 

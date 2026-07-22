@@ -248,6 +248,16 @@ function validPublishIdentifier(value: string): boolean {
 
 function loadLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { path: string; raw: Record<string, unknown> } {
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  // Evidence reads go through the verified literal chain and must land on a
+  // regular file: a planted symlink or junction can never redirect the gate
+  // to forged evidence outside the store.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
+  try {
+    if (!lstatSync(path).isFile()) throw laneEvidenceFailure(path, 'evidence must be a regular file, not a symlink or directory.');
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.startsWith('required local review lane evidence')) throw error;
+    throw laneEvidenceFailure(path, 'evidence file is missing or unreadable.');
+  }
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed)) throw laneEvidenceFailure(path, 'JSON root must be an object.');

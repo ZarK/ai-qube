@@ -1800,6 +1800,30 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     const publishToken = publisher.accessToken;
     const ghOptions = { ...this.options, token: publishToken ?? undefined };
 
+    // Identity resolution and diff reads above are asynchronous, so the head
+    // is revalidated immediately before any mutation: a PR that advanced
+    // during that work must not receive feedback bound to the old head.
+    try {
+      const freshPr = await this.getPullRequest(input.prNumber);
+      const freshHead = typeof freshPr.headRefOid === 'string' ? freshPr.headRefOid : '';
+      if (freshHead === '' || freshHead !== input.headSha) {
+        throw new Error(freshHead === ''
+          ? `pull request #${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+          : `pull request #${input.prNumber} head changed from ${input.headSha} to ${freshHead} before publication; rerun pr gate for the current PR head.`);
+      }
+    } catch (error: unknown) {
+      return localReviewPublishResult({
+        status: 'failed',
+        runId: plannedBody.runId,
+        marker: plannedBody.marker,
+        body: null,
+        publishKind: 'pull-request-review',
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Rerun \`aie pr gate ${input.prNumber}\` for the current PR head, then retry lane publish.`,
+      });
+    }
+
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
       const { body, marker, runId, bodyFindingCount } = laneReviewBody(input, allFindings, 0, 'issue-comment');
