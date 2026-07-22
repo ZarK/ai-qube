@@ -301,6 +301,26 @@ describe('review convergence stats', () => {
     assert.deepEqual(result.pullRequests[0].rounds, { complete: 0, inProgress: 1, abandoned: 0 });
   });
 
+  it('counts a changed-digest rerun within one round exactly once', () => {
+    // The same lane republished a superseding marker in the same round after
+    // a rescore changed its finding digest: the round's rework counts once,
+    // from the latest record, never once per historical marker.
+    const result = computeReviewStats([{
+      number: 310,
+      title: 'Superseding same-round marker',
+      trustedLaneReviews: [
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], recommendation: 'request-changes', status: 'failed', blockingFindingCount: 2, publishedAt: '2026-03-01T00:00:00Z' }),
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], recommendation: 'request-changes', status: 'failed', blockingFindingCount: 3, publishedAt: '2026-03-01T00:10:00Z' }),
+      ],
+    }]);
+
+    const pr = result.pullRequests[0];
+    assert.equal(pr.noLaneEvidence, false);
+    assert.equal(pr.blockingEntries, 3, 'only the latest same-round record counts');
+    assert.deepEqual(pr.rounds, { complete: 1, inProgress: 0, abandoned: 0 });
+    assert.deepEqual(result.summary.blockingEntriesByLane, [{ lane: 'code-quality', blockingEntries: 3 }]);
+  });
+
   it('classifies abandoned partial rounds without degrading the complete-round history', () => {
     // Head a: a complete blocking round. Head b: a partial round abandoned
     // when the head advanced. Head c: a complete approve round. The abandoned

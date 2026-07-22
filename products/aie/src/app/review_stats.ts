@@ -310,11 +310,21 @@ function summarizePullRequest(input: ReviewStatsInput): {
   const firstHeadRecords = parsed.records.filter(record => record.head === firstHead);
   const firstHeadHasCompleteRound = reviewedHeads.includes(firstHead);
   const failingHeads = new Set(parsed.records.filter(record => record.recommendation === 'request-changes').map(record => record.head));
-  const blockingRecords = parsed.records.filter(record => record.recommendation === 'request-changes');
+  // A changed-digest rerun republishes a superseding marker within the same
+  // round; counting every historical marker would double-count the same
+  // rework. Per (head, round, lane), only the latest request-changes record
+  // counts - a verdict transition (failed then approve) still counts its
+  // blocking record exactly once.
+  const latestBlockingByRoundLane = new Map<string, LaneReviewRecord>();
+  for (const record of parsed.records.filter(record => record.recommendation === 'request-changes')) {
+    const key = `${record.head}\0${record.round}\0${record.lane}`;
+    const existing = latestBlockingByRoundLane.get(key);
+    if (!existing || record.publishedAt >= existing.publishedAt) latestBlockingByRoundLane.set(key, record);
+  }
   const laneCounts = new Map<string, number>();
   let blockingEntries = 0;
   let blockingAfterFirstHead = 0;
-  for (const record of blockingRecords) {
+  for (const record of latestBlockingByRoundLane.values()) {
     blockingEntries += record.blockingFindingCount;
     if (record.head !== firstHead) blockingAfterFirstHead += record.blockingFindingCount;
     if (record.blockingFindingCount > 0) laneCounts.set(record.lane, (laneCounts.get(record.lane) ?? 0) + record.blockingFindingCount);
