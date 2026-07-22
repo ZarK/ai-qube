@@ -432,10 +432,13 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     { laneId: options.lane, findings: evidence.findings },
     ...loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane),
   ];
-  const [synthesisPlan] = planFindingPublication(synthesisLanes, {
+  const synthesisPlan = planFindingPublication(synthesisLanes, {
     changedPaths: options.changedPaths,
     nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
-  });
+  }).find(plan => plan.laneId === options.lane);
+  if (!synthesisPlan) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis returned no plan for lane ${options.lane}. Next action: rerun the lane review for the current head.`);
+  }
   const publishInput = {
     dryRun: options.dryRun ?? false,
     prNumber: options.prNumber,
