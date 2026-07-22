@@ -227,8 +227,12 @@ function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string').map(redact) : [];
 }
 
+// An omitted severity defaults to advisory, but a present value that is not
+// exactly 'advisory' or 'blocking' fails closed to blocking rather than
+// silently downgrading a real defect below the advisory cap.
 function readFindingSeverity(value: unknown): ReviewFinding['severity'] {
-  return value === 'blocking' ? 'blocking' : 'advisory';
+  if (value === undefined || value === null) return 'advisory';
+  return value === 'advisory' ? 'advisory' : 'blocking';
 }
 
 function readFindingConfidence(value: unknown): number | undefined {
@@ -576,7 +580,11 @@ export function verifyTrustedStoreChain(repoRoot: string, subtree: readonly stri
   if (relativeTarget.startsWith('..') || isAbsolute(relativeTarget)) {
     throw new Error(`Refusing to access ${path} outside its trusted store ${subtree.join('/')}.`);
   }
-  const components = relativeTarget === '' ? [] : relativeTarget.split(/[\/]/);
+  // node:path returns backslash separators on Windows, so normalize before
+  // splitting: a `/`-only split would collapse the whole tail into one blob
+  // and lstat only the fully resolved leaf, silently following junctions in
+  // every intermediate directory.
+  const components = relativeTarget === '' ? [] : relativeTarget.replace(/\\/g, '/').split('/').filter(segment => segment !== '');
   let current = repoRoot;
   for (const component of [...subtree, ...components]) {
     current = join(current, component);

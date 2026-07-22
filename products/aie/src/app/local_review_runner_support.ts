@@ -154,7 +154,7 @@ function lockHolderAlive(lockDir: string): boolean | null {
 // instead of an unbounded hang.
 function withRouteFaultLock<T>(repoRoot: string, path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
   // The lock directory and its holder record share the ledger's parent chain;
   // a symlinked route-faults descendant must refuse the lock write too.
   verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
@@ -246,6 +246,14 @@ export function verifyReviewWriteContainment(path: string, containment: ReviewWr
     if (err instanceof Error && err.message.startsWith('Refusing to write')) throw err;
     throw new Error(`Refusing to write review evidence because containment could not be verified for ${path}.`);
   }
+}
+
+// Create a trusted-store directory only after verifying its literal ancestor
+// chain, so recursive mkdir can never materialize directories through an
+// existing symlinked or junctioned ancestor before the containment guard runs.
+export function mkdirTrustedStoreSync(directory: string, containment: ReviewWriteContainment): void {
+  verifyTrustedStoreChain(containment.repoRoot, containment.subtree, directory);
+  mkdirSync(directory, { recursive: true });
 }
 
 export function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
@@ -437,7 +445,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
       recordedAt: new Date().toISOString(),
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     return path;
   } catch {
@@ -492,14 +500,15 @@ function processAlive(pid: number): boolean {
 // the loser observes the winner's fresh lock and skips lane execution.
 export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
-  mkdirSync(dirname(path), { recursive: true });
   try {
-    // The full parent chain must resolve literally: a symlinked issue, PR, or
-    // head directory could otherwise redirect the lock write outside the
-    // repository or into another head's evidence.
+    // The full parent chain must resolve literally before directory creation
+    // and again through containment: a symlinked issue, PR, or head directory
+    // could otherwise redirect the lock write outside the repository or into
+    // another head's evidence. Fail closed so lanes skip an untrustworthy lock.
+    mkdirTrustedStoreSync(dirname(path), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   } catch {
-    return { held: false, activeLock: null }; // Fail closed: lanes skip when the lock location is untrustworthy.
+    return { held: false, activeLock: null };
   }
   const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -950,6 +959,14 @@ function readFindingConfidence(value: unknown): number | undefined {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
 }
 
+// An omitted severity defaults to advisory, but a present value that is not
+// exactly 'advisory' or 'blocking' fails closed to blocking rather than
+// silently downgrading a real defect below the advisory cap.
+function readFindingSeverity(value: unknown): ReviewFinding['severity'] {
+  if (value === undefined || value === null) return 'advisory';
+  return value === 'advisory' ? 'advisory' : 'blocking';
+}
+
 function readFindings(value: unknown): ReviewFinding[] {
   if (!Array.isArray(value)) return [];
   const findings: ReviewFinding[] = [];
@@ -970,7 +987,10 @@ function readFindings(value: unknown): ReviewFinding[] {
     const confidence = readFindingConfidence(item.confidence);
     findings.push({
       id: typeof item.id === 'string' && item.id.trim() !== '' ? redact(item.id.trim()) : `finding-${findings.length + 1}`,
-      severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+      // Never silently downgrade a set severity: a present but unrecognized
+      // value fails closed to blocking so a typo cannot slip a real defect
+      // past the advisory nit cap. Only an omitted severity defaults advisory.
+      severity: readFindingSeverity(item.severity),
       ...(location ? { location } : {}),
       message: redact(item.message.trim()),
       ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: redact(item.suggestion.trim()) } : {}),
@@ -1144,7 +1164,7 @@ function writeReviewBundle(input: {
   evidencePath: string;
 }): string {
   const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber: input.issueNumber,
@@ -1217,7 +1237,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
 
 export function writeLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, lane: LaneEvidence, adapter: 'local-command' | 'local-host'): string {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
-  mkdirSync(directory, { recursive: true });
+  mkdirTrustedStoreSync(directory, { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   const reviewerId = adapter === 'local-host' ? lane.runnerProvenance?.host ?? 'codex' : 'local-command';
   const reviewerName = reviewerId === 'codex' ? 'Codex' : reviewerId === 'grok' ? 'Grok' : reviewerId;
@@ -1245,7 +1265,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
   const evidence: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
   if (!isRecord(evidence)) return null;
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber,

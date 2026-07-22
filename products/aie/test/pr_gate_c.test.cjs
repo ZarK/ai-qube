@@ -600,6 +600,24 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('detects a junctioned intermediate directory, not only the leaf, in the trusted-store chain', () => {
+    const { verifyTrustedStoreChain } = require('../dist/local_review_evidence.js');
+    const repo = mkdtempSync(join(tmpdir(), 'aie-chain-intermediate-'));
+    const outside = mkdtempSync(join(tmpdir(), 'aie-chain-outside-'));
+    // Junction a middle segment (the PR directory), not the leaf: a chain
+    // walker that only inspects the fully resolved leaf would miss this.
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93'), { recursive: true });
+    mkdirSync(join(outside, '12', 'abc123'), { recursive: true });
+    symlinkSync(join(outside, '12'), join(repo, '.qube', 'aie', 'reviews', '93', '12'), 'junction');
+    const target = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json');
+
+    assert.throws(
+      () => verifyTrustedStoreChain(repo, ['.qube', 'aie', 'reviews'], target),
+      /Refusing to access the trusted store through a symlink or junction/,
+      'a junctioned intermediate directory must be rejected, not silently followed',
+    );
+  });
+
   it('fails route-fault ledger reads closed for a relocated ancestor even when the ledger is absent', () => {
     const repo = makeGitRepo();
     const emptyStore = join(repo, '.git', 'qube-empty');
@@ -957,6 +975,27 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(laneArtifactViolation('code-quality', 'passed', normalized.artifacts, repo), null);
   });
 
+  it('fails an unrecognized finding severity closed to blocking instead of downgrading to advisory', () => {
+    const { normalizeExternalLane } = require('../dist/app/local_review_runner_support.js');
+    const normalized = normalizeExternalLane({
+      lane: 'code-quality', issueNumber: 93, prNumber: 12, headSha: 'abc123', status: 'needs-work', severity: 'high',
+      recommendation: 'request-changes', summary: 'found defects', blockers: ['Fix the parser.'],
+      findings: [
+        { severity: 'CRITICAL', message: 'A real defect with a typo severity.', location: { path: 'src/parser.ts', line: 4 } },
+        { message: 'An omitted severity stays advisory.', location: { path: 'src/parser.ts', line: 9 } },
+        { severity: 'advisory', message: 'An explicit advisory.', location: { path: 'src/parser.ts', line: 12 } },
+      ],
+      artifacts: [{ kind: 'json', path: 'README.md', sha256: null }],
+      commands: [], surfaces: [], contextReviewed: [], promptStack: [], toolsUsed: [], completeness: 'complete', preconditions: [],
+      runnerProvenance: { runnerKind: 'local-host', host: 'model-host', freshContext: true, promptOnly: false },
+    }, 'code-quality', 93, 12, 'abc123');
+
+    const byMessage = Object.fromEntries(normalized.findings.map(finding => [finding.message, finding.severity]));
+    assert.equal(byMessage['A real defect with a typo severity.'], 'blocking', 'an unrecognized severity must never silently downgrade below the advisory cap');
+    assert.equal(byMessage['An omitted severity stays advisory.'], 'advisory');
+    assert.equal(byMessage['An explicit advisory.'], 'advisory');
+  });
+
   it('keeps the spawn prompt and publisher validation on the same artifact contract', () => {
     const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
     const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');
@@ -1195,7 +1234,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       mkdirSync(join(repo, '.git', 'qube', 'aie', 'route-faults'), { recursive: true });
       symlinkSync(outside, join(repo, '.git', 'qube', 'aie', 'route-faults', '93'), 'junction');
 
-      assert.throws(() => recordRouteFault(repo, 93, 12, 'security', 'process-failed', 'route-key'), /Refusing to write/);
+      assert.throws(() => recordRouteFault(repo, 93, 12, 'security', 'process-failed', 'route-key'), /Refusing to (write|access)/);
       assert.ok(!existsSync(join(outside, '12.json')), 'no ledger may be written through the symlinked descendant');
       assert.ok(!existsSync(join(outside, '12.json.lock')), 'no lock directory may be created through the symlinked descendant');
     });
