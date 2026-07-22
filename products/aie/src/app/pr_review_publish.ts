@@ -62,7 +62,22 @@ function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: numb
   return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeHead, 'fallback-snapshot-cache.json');
 }
 
-function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+// Cache reads apply the same trust rules as cache writes: an absent file is
+// a miss, but a symlinked cache file or a relocated ancestor chain fails
+// the read closed instead of feeding redirected snapshot state into
+// publication decisions.
+function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+  let cacheStats;
+  try {
+    cacheStats = lstatSync(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`Refusing to treat an unreadable snapshot cache as a miss: ${path}. Fix filesystem access, then rerun.`);
+  }
+  if (!cacheStats.isFile()) {
+    throw new Error(`Refusing to read the snapshot cache through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
+  }
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -118,14 +133,14 @@ function sleep(milliseconds: number): Promise<void> {
 }
 
 async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string, repoRoot: string): Promise<ReviewForgeSnapshot> {
-  const cachedFile = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+  const cachedFile = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
   if (cachedFile) return cachedFile;
   const lockPath = snapshotCacheLockPath(cachePath);
   const deadline = Date.now() + SNAPSHOT_CACHE_LOCK_TIMEOUT_MS;
   while (true) {
     if (tryAcquireSnapshotCacheLock(lockPath)) {
       try {
-        const cachedAfterLock = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+        const cachedAfterLock = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
         if (cachedAfterLock) return cachedAfterLock;
         const snapshot = await provider.loadPullRequestReview(prNumber);
         if (snapshot.pr.headRefOid !== headSha) {
@@ -137,7 +152,7 @@ async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber
         releaseSnapshotCacheLock(lockPath);
       }
     }
-    const cachedWhileWaiting = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+    const cachedWhileWaiting = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
     if (cachedWhileWaiting) return cachedWhileWaiting;
     if (Date.now() >= deadline) {
       throw new Error(`publish lane review failed. Likely cause: fallback snapshot cache for pull request #${prNumber} head ${headSha} stayed locked. Next action: remove stale cache lock ${relativeEvidencePath(process.cwd(), lockPath) ?? lockPath}, rerun pr gate for the current PR head, then retry lane publish.`);

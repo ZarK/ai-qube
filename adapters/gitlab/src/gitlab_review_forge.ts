@@ -454,7 +454,10 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       // publishing review state against an obsolete commit.
       const mergeRequest = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
       const currentHead = typeof (mergeRequest as { sha?: unknown }).sha === "string" ? String((mergeRequest as { sha?: unknown }).sha) : "";
-      if (currentHead !== "" && currentHead !== input.headSha) {
+      if (currentHead === "") {
+        throw new Error(`merge request !${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitLab reports the current head.`);
+      }
+      if (currentHead !== input.headSha) {
         throw new Error(`merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`);
       }
       notes = await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });

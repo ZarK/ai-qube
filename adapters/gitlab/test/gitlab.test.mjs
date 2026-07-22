@@ -661,6 +661,51 @@ describe("GitLab review forge adapter", () => {
     assert.match(updated.item.trustedMetadata.trustedLaneReviews[0].findingDigest, /^[a-f0-9]{16}$/);
   });
 
+  it("fails lane publication closed when the merge request reports no head SHA", async () => {
+    const mergeRequest = makeGitLabMergeRequest({ reviewers: [] });
+    delete mergeRequest.sha;
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return mergeRequest;
+        },
+        async listMergeRequestNotes() {
+          throw new Error("notes must not be read for an unverifiable head");
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("no note may be created for an unverifiable head");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /did not report a head SHA/);
+  });
+
   it("publishes lane review feedback with only a light head check and no discussion reads", async () => {
     const notes = [];
     let mergeRequestReads = 0;
