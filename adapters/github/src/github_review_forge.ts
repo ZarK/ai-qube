@@ -1730,6 +1730,12 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       repositoryName = repository.nameWithOwner;
       comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
       const rawPr = await this.getPullRequest(input.prNumber);
+      // Lane feedback must bind to the PR's current head: a caller-supplied
+      // head that the PR has advanced past must fail instead of publishing
+      // review state against an obsolete commit.
+      if (typeof rawPr.headRefOid === 'string' && rawPr.headRefOid !== '' && rawPr.headRefOid !== input.headSha) {
+        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${rawPr.headRefOid}; rerun pr gate for the current PR head.`);
+      }
       laneReviews = laneMarkerReviews(rawPr);
       const prAuthorLogin = rawPr.author?.login ?? null;
       publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {

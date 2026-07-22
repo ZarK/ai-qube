@@ -1,5 +1,5 @@
 import type { Config } from '../config/index.js';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
@@ -7,6 +7,7 @@ import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCar
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
+import { verifyReviewWriteContainment, writeReviewFileGuarded } from './local_review_runner_support.js';
 import type { PrGateExec } from './pr_gate.js';
 
 // The default advisory publication cap when neither the caller nor config
@@ -73,10 +74,23 @@ function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string)
   return parsed as unknown as ReviewForgeSnapshot;
 }
 
-function writeSnapshotCache(path: string, snapshot: ReviewForgeSnapshot): void {
+// The fallback snapshot cache lives inside the review evidence subtree and
+// gets the same containment and symlink guards as evidence writes: a
+// symlinked descendant must not redirect the temp file or the final rename
+// outside the repository.
+function writeSnapshotCache(repoRoot: string, path: string, snapshot: ReviewForgeSnapshot): void {
   mkdirSync(dirname(path), { recursive: true });
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(snapshot), 'utf8');
+  writeReviewFileGuarded(tempPath, JSON.stringify(snapshot), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new Error(`Refusing to replace a symlinked snapshot cache: ${path}. Remove the symlink, then rerun.`);
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith('Refusing to replace')) throw err;
+    // A missing cache file is the normal first-write case.
+  }
   renameSync(tempPath, path);
 }
 
@@ -103,7 +117,7 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string): Promise<ReviewForgeSnapshot> {
+async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string, repoRoot: string): Promise<ReviewForgeSnapshot> {
   const cachedFile = cachedSnapshotFromFile(cachePath, prNumber, headSha);
   if (cachedFile) return cachedFile;
   const lockPath = snapshotCacheLockPath(cachePath);
@@ -117,7 +131,7 @@ async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber
         if (snapshot.pr.headRefOid !== headSha) {
           throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
         }
-        writeSnapshotCache(cachePath, snapshot);
+        writeSnapshotCache(repoRoot, cachePath, snapshot);
         return snapshot;
       } finally {
         releaseSnapshotCacheLock(lockPath);
@@ -132,11 +146,11 @@ async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber
   }
 }
 
-async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath?: string): Promise<ReviewForgeSnapshot> {
+async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string | undefined, repoRoot: string): Promise<ReviewForgeSnapshot> {
   const key = snapshotCacheKey(prNumber, headSha, cachePath);
   const cached = snapshotCacheByHead.get(key);
   if (cached) return cached;
-  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath) : provider.loadPullRequestReview(prNumber).then(snapshot => {
+  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath, repoRoot) : provider.loadPullRequestReview(prNumber).then(snapshot => {
     if (snapshot.pr.headRefOid !== headSha) {
       snapshotCacheByHead.delete(key);
       throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
@@ -437,7 +451,26 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   if (changedPaths === null) {
     throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch and the PR head, then rerun publish.');
   }
-  const expectedLaneIds = options.expectedLanes && options.expectedLanes.length > 0 ? options.expectedLanes : [options.lane];
+  // One canonical expected lane set drives sibling synthesis and provider
+  // metadata: it must name the publishing lane exactly once and contain
+  // only known lane ids, or markers could disown their own lane and
+  // duplicated entries would double-count findings during synthesis.
+  if (!options.expectedLanes || options.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided; a single-lane default would hide the head\'s other active lanes and corrupt convergence stats. Next action: pass the complete validated lane set for this head.');
+  }
+  const providedLaneIds = options.expectedLanes;
+  const expectedLaneIds = [...new Set(providedLaneIds)];
+  if (expectedLaneIds.length !== providedLaneIds.length) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set contains duplicate lane ids (${providedLaneIds.join(', ')}). Next action: pass each expected lane exactly once.`);
+  }
+  const knownLaneIds = new Set<string>(COMPREHENSIVE_LOCAL_REVIEW_LANES);
+  const unknownLaneIds = expectedLaneIds.filter(laneId => !knownLaneIds.has(laneId));
+  if (unknownLaneIds.length > 0) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set names unknown lane id(s) ${unknownLaneIds.join(', ')}. Next action: pass only configured review lane ids.`);
+  }
+  if (!expectedLaneIds.includes(options.lane)) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set (${expectedLaneIds.join(', ')}) does not name the publishing lane ${options.lane}. Next action: include the publishing lane in the expected set.`);
+  }
   const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds);
   if (missing.length > 0) {
     throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis requires validated current-head evidence for every expected lane, and ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid at ${headSha}. Next action: complete the remaining lane reviews at this head, then rerun publish or the PR gate.`);
@@ -466,7 +499,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     prNumber: options.prNumber,
     headSha,
     lane: options.lane,
-    expectedLanes: [...options.expectedLanes],
+    expectedLanes: expectedLaneIds,
     profile: evidence.profile,
     status: evidence.status,
     recommendation: evidence.recommendation,
@@ -478,9 +511,13 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
     withheld: { duplicates: synthesisPlan.withheldDuplicates, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
   };
+  // Both publish paths verify the provider still points at the head being
+  // published: the adapter's ForPullRequest path rejects a stale input head
+  // against the PR it loads, and the legacy path goes through
+  // loadCachedSnapshot, which throws on a head change.
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha))).item, publishInput);
+    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha), repoRoot)).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
 }
 

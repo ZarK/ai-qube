@@ -599,6 +599,50 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('rejects duplicate, unknown, and self-omitting expected lane sets', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const provider = {
+      async loadPullRequestReview() {
+        throw new Error('validation must fail before any provider call');
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('validation must fail before any provider call');
+      },
+    };
+    const publish = expectedLanes => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes });
+
+    await assert.rejects(() => publish(['code-quality', 'issue-compliance', 'issue-compliance']), /duplicate lane ids/);
+    await assert.rejects(() => publish(['code-quality', 'made-up-lane']), /unknown lane id/);
+    await assert.rejects(() => publish(['issue-compliance']), /does not name the publishing lane/);
+    await assert.rejects(() => publish([]), /no expected lane set was provided/);
+  });
+
+  it('blocks gate aggregation when a passed lane cites an escaping artifact path', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, artifacts: [{ kind: 'json', path: '../outside-the-repo.json', sha256: null }] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.match(JSON.stringify(result.localReview), /artifact/i);
+  });
+
   it('rejects request-changes evidence without structured findings at publish validation', async () => {
     const repo = makeGitRepo();
     const evidence = localEvidence();

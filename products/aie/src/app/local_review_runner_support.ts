@@ -223,7 +223,7 @@ interface ReviewWriteContainment {
 // resolve inside that subtree with every descendant segment literal, so a
 // symlinked issue, PR, or head directory cannot redirect a write into another
 // head's evidence or outside the repository.
-function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
+export function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
   try {
     const repoReal = realpathSync(containment.repoRoot);
     const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
@@ -245,7 +245,7 @@ function verifyReviewWriteContainment(path: string, containment: ReviewWriteCont
   }
 }
 
-function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
+export function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
   let symlink = false;
   try {
     symlink = lstatSync(path).isSymbolicLink();

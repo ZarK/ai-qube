@@ -449,6 +449,14 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     const planned = laneBody(input);
     let notes: GitLabNote[];
     try {
+      // Lane feedback must bind to the merge request's current head; a
+      // caller-supplied head the MR has advanced past must fail instead of
+      // publishing review state against an obsolete commit.
+      const mergeRequest = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const currentHead = typeof (mergeRequest as { sha?: unknown }).sha === "string" ? String((mergeRequest as { sha?: unknown }).sha) : "";
+      if (currentHead !== "" && currentHead !== input.headSha) {
+        throw new Error(`merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`);
+      }
       notes = await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
     } catch (error) {
       return { status: "failed", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: error instanceof Error ? error.message : String(error), nextAction: `Fix GitLab note visibility or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.` };

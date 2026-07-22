@@ -571,6 +571,47 @@ describe("GitLab review forge adapter", () => {
     assert.doesNotMatch(notes[1].body, /Synthesis withheld/);
   });
 
+  it("fails lane publication when the merge request head advanced past the input head", async () => {
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ sha: "advanced-head" });
+      },
+      async listMergeRequestNotes() {
+        throw new Error("notes must not be read for a stale head");
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote() {
+        throw new Error("no note may be created for a stale head");
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /head changed from head-sha to advanced-head/);
+  });
+
   it("publishes lane review feedback as GitLab merge request notes and observes the published lane", async () => {
     const notes = [];
     const client = {
@@ -620,13 +661,17 @@ describe("GitLab review forge adapter", () => {
     assert.match(updated.item.trustedMetadata.trustedLaneReviews[0].findingDigest, /^[a-f0-9]{16}$/);
   });
 
-  it("publishes lane review feedback without loading full merge request review state", async () => {
+  it("publishes lane review feedback with only a light head check and no discussion reads", async () => {
     const notes = [];
+    let mergeRequestReads = 0;
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
       client: {
         async getMergeRequest() {
-          throw new Error("full merge request read should not run");
+          // A single light read verifies the current head before mutation;
+          // full review state (discussions) must still stay unread.
+          mergeRequestReads += 1;
+          return makeGitLabMergeRequest({ reviewers: [] });
         },
         async listMergeRequestNotes() {
           return notes;
