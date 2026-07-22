@@ -26,6 +26,8 @@ export interface ReviewLaneReviewPublishInput {
   completeness: string | null;
   evidencePath: string | null;
   expectedLanes: readonly string[];
+  /** Cross-lane synthesis withheld counts for this lane; informational only, never part of the marker digest. */
+  withheld?: { duplicates: number; offDiff: number; byCap: number };
 }
 
 export interface ReviewLaneReviewPublishResult {

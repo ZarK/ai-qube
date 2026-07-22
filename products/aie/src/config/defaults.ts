@@ -90,6 +90,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       concurrency: 3,
       requestText: '',
       carryForwardPublish: 'note',
+      nitCap: 10,
       models: { review: {}, economy: {}, synthesis: {} },
       route: null,
       failover: null,
@@ -419,6 +420,7 @@ export function configFromFile(input: ConfigFileShape): Config {
     reviewConcurrency: policy.reviews.concurrency,
     reviewRequestText: policy.reviews.requestText,
     reviewCarryForwardPublish: policy.reviews.carryForwardPublish,
+    reviewNitCap: policy.reviews.nitCap,
     reviewModels: {
       review: { ...policy.reviews.models.review },
       economy: { ...policy.reviews.models.economy },

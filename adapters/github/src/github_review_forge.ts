@@ -173,6 +173,8 @@ export interface GitHubLaneReviewPublishInput {
   findings: Array<ReviewFinding | string>;
   completeness: string | null;
   evidencePath: string | null;
+  /** Cross-lane synthesis withheld counts for this lane; informational only, never part of the marker digest. */
+  withheld?: { duplicates: number; offDiff: number; byCap: number };
 }
 
 export interface GitHubLaneReviewPublishResult {
@@ -608,6 +610,11 @@ function laneReviewBody(
   };
   const marker = laneReviewMarker(metadata);
   const findings = bodyFindings.length === 0 ? ['- None recorded in the review body.'] : bodyFindings.map(item => `- ${findingBodyText(item, input.evidencePath)}`);
+  const withheld = input.withheld;
+  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
+  const withheldNote = withheldTotal > 0
+    ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld!.duplicates} cross-lane duplicate(s), ${withheld!.offDiff} outside the current diff, ${withheld!.byCap} beyond the advisory cap; see local evidence.`
+    : null;
   const body = [
     marker,
     '',
@@ -619,6 +626,7 @@ function laneReviewBody(
     'Findings:',
     ...findings,
     inlineCount > 0 ? `- ${inlineCount} finding(s) were published as inline review comments on the PR diff.` : '- Inline findings: none.',
+    ...(withheldNote ? ['', withheldNote] : []),
     '',
     'Completeness self-check:',
     input.completeness && input.completeness.trim() !== '' ? truncatePublishedFinding(input.completeness, input.evidencePath) : '- Not recorded.',
@@ -747,8 +755,9 @@ function findingBodyText(finding: ReviewFinding, evidencePath: string | null): s
   const location = finding.location
     ? ` (${redact(finding.location.path)}${finding.location.line ? `:${finding.location.line}` : ''})`
     : '';
+  const confidence = typeof finding.confidence === 'number' ? ` (confidence ${finding.confidence.toFixed(2)})` : '';
   const suggestion = finding.suggestion ? ` Suggestion: ${finding.suggestion}` : '';
-  return truncatePublishedFinding(`${finding.severity}${location}: ${finding.message}${suggestion}`, evidencePath);
+  return truncatePublishedFinding(`${finding.severity}${location}: ${finding.message}${suggestion}${confidence}`, evidencePath);
 }
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {

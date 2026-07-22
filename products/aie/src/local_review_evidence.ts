@@ -229,6 +229,10 @@ function readFindingSeverity(value: unknown): ReviewFinding['severity'] {
   return value === 'blocking' ? 'blocking' : 'advisory';
 }
 
+function readFindingConfidence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
+}
+
 function readFindings(value: unknown): ReviewFinding[] {
   if (!Array.isArray(value)) return [];
   const findings: ReviewFinding[] = [];
@@ -244,12 +248,14 @@ function readFindings(value: unknown): ReviewFinding[] {
           side: entry.location.side === 'source' ? 'source' as const : 'destination' as const,
         }
       : undefined;
+    const confidence = readFindingConfidence(entry.confidence);
     findings.push({
       id: typeof entry.id === 'string' && entry.id.trim() !== '' ? redact(entry.id.trim()) : `finding-${findings.length + 1}`,
       severity: readFindingSeverity(entry.severity),
       ...(location ? { location } : {}),
       message,
       ...(typeof entry.suggestion === 'string' && entry.suggestion.trim() !== '' ? { suggestion: redact(entry.suggestion.trim()) } : {}),
+      ...(confidence !== undefined ? { confidence } : {}),
     });
   }
   return findings;

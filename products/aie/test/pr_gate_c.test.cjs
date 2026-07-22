@@ -319,6 +319,107 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(result.publish.nextAction, 'planned review:14 code-quality');
   });
 
+  it('publishes a gate condition restated across final-gate and another lane exactly once', async () => {
+    const repo = makeGitRepo();
+    const gateCondition = 'CI required check build is failing at this head.';
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality' || lane.id === 'final-gate'
+        ? {
+            status: 'needs-work',
+            severity: 'high',
+            recommendation: 'request-changes',
+            blockers: [gateCondition],
+            findings: [{ severity: 'blocking', message: gateCondition }],
+          }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+    const expectedLanes = evidence.lanes.map(lane => lane.id);
+
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes });
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'final-gate', dryRun: true, repoRoot: repo, expectedLanes });
+
+    const publishedConditionCount = publishCalls
+      .flatMap(input => input.findings)
+      .filter(finding => finding.message === gateCondition)
+      .length;
+    assert.equal(publishedConditionCount, 1, 'the gate condition must publish exactly once across all lane publishes');
+    const codeQualityInput = publishCalls.find(input => input.lane === 'code-quality');
+    const finalGateInput = publishCalls.find(input => input.lane === 'final-gate');
+    assert.equal(codeQualityInput.findings.some(finding => finding.message === gateCondition), true, 'the earlier canonical lane owns the finding');
+    assert.deepEqual(codeQualityInput.withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+    assert.equal(finalGateInput.findings.some(finding => finding.message === gateCondition), false, 'final-gate never wins a cross-lane dedupe');
+    assert.deepEqual(finalGateInput.withheld, { duplicates: 1, offDiff: 0, byCap: 0 });
+  });
+
+  it('applies the off-diff filter and confidence-ranked nit cap in the published lane input', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality'
+        ? {
+            findings: [
+              { severity: 'advisory', message: 'Prefer the shared parser helper.', location: { path: 'src/parser.ts', line: 4 }, confidence: 0.9 },
+              { severity: 'advisory', message: 'Rename the local variable for clarity.', location: { path: 'src/parser.ts', line: 9 }, confidence: 0.1 },
+              { severity: 'advisory', message: 'Tighten wording in the unrelated doc.', location: { path: 'docs/unrelated.md', line: 2 }, confidence: 1 },
+            ],
+          }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+
+    await runPrReviewPublishWithProvider(provider, {
+      prNumber: 12,
+      issueNumber: 93,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      dryRun: true,
+      repoRoot: repo,
+      expectedLanes: evidence.lanes.map(lane => lane.id),
+      changedPaths: ['src/parser.ts'],
+      nitCap: 1,
+    });
+
+    assert.equal(publishCalls.length, 1);
+    assert.deepEqual(publishCalls[0].findings.map(finding => finding.message), ['Prefer the shared parser helper.'], 'only the highest-confidence on-diff advisory survives cap 1');
+    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 1, byCap: 1 });
+  });
+
   it('rejects blocking lane publish evidence without structured findings', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

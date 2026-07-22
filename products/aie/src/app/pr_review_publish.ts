@@ -1,12 +1,17 @@
 import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
-import type { ReviewFinding } from '@tjalve/qube-core';
-import { LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { normalizeReviewFinding, type ReviewFinding } from '@tjalve/qube-core';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
+import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
 import type { PrGateExec } from './pr_gate.js';
+
+// The default advisory publication cap when neither the caller nor config
+// resolves an explicit value; kept in sync with the config schema default.
+const DEFAULT_REVIEW_NIT_CAP = 10;
 
 export interface PrReviewPublishOptions {
   prNumber: number;
@@ -19,6 +24,10 @@ export interface PrReviewPublishOptions {
   carryForwardPublish?: 'note' | 'none';
   carryForwardScope?: CarryForwardScope;
   expectedLanes?: readonly LocalReviewLaneId[];
+  /** Paths changed by this PR head; undefined disables only the synthesis off-diff advisory filter, never dedupe or the nit cap. */
+  changedPaths?: readonly string[];
+  /** Global advisory publication cap for cross-lane synthesis; defaults to DEFAULT_REVIEW_NIT_CAP. */
+  nitCap?: number;
 }
 
 export interface PrReviewPublishResult {
@@ -159,6 +168,54 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
   return relativePath.replace(/\\/g, '/');
 }
 
+// Sibling lane evidence feeds cross-lane synthesis only; a missing or
+// unparseable file (or an individually malformed finding) is simply absent
+// from the synthesis input rather than a publish failure.
+function readSynthesisFindings(value: unknown): ReviewFinding[] {
+  if (!Array.isArray(value)) return [];
+  const findings: ReviewFinding[] = [];
+  for (const item of value) {
+    if (!isRecord(item)) continue;
+    try {
+      const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
+        ? {
+            path: item.location.path,
+            ...(typeof item.location.line === 'number' ? { line: item.location.line } : {}),
+            ...(typeof item.location.endLine === 'number' ? { endLine: item.location.endLine } : {}),
+            side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
+          }
+        : undefined;
+      findings.push(normalizeReviewFinding({
+        id: typeof item.id === 'string' ? item.id : undefined,
+        severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+        message: typeof item.message === 'string' ? item.message : '',
+        ...(location ? { location } : {}),
+        ...(typeof item.suggestion === 'string' ? { suggestion: item.suggestion } : {}),
+        ...(typeof item.confidence === 'number' ? { confidence: item.confidence } : {}),
+      }));
+    } catch {
+      continue;
+    }
+  }
+  return findings;
+}
+
+function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId): SynthesisLaneInput[] {
+  const siblings: SynthesisLaneInput[] = [];
+  for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
+    if (laneId === excludeLane) continue;
+    const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isRecord(parsed)) continue;
+      siblings.push({ laneId, findings: readSynthesisFindings(parsed.findings) });
+    } catch {
+      continue;
+    }
+  }
+  return siblings;
+}
+
 function laneEvidenceFailure(path: string, detail: string): Error {
   return new Error(`required local review lane evidence is missing or invalid at ${relativeEvidencePath(process.cwd(), path) ?? path}: ${detail}`);
 }
@@ -196,6 +253,9 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
     if (isRecord(item.location) && item.location.line !== undefined && !(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0)) throw laneEvidenceFailure(path, `${label}.location.line must be a positive integer when present.`);
     if (isRecord(item.location) && item.location.endLine !== undefined && !(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0)) throw laneEvidenceFailure(path, `${label}.location.endLine must be a positive integer when present.`);
     if (item.severity !== undefined && item.severity !== 'blocking' && item.severity !== 'advisory') throw laneEvidenceFailure(path, `${label}.severity must be blocking or advisory when present.`);
+    if (item.confidence !== undefined && !(typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1)) {
+      throw laneEvidenceFailure(path, `${label}.confidence must be a number between 0 and 1 when present.`);
+    }
     const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
       ? {
           path: item.location.path.trim(),
@@ -210,6 +270,7 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
       ...(location ? { location } : {}),
       message: item.message.trim(),
       ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+      ...(typeof item.confidence === 'number' ? { confidence: item.confidence } : {}),
     });
   }
   return findings;
@@ -241,7 +302,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
@@ -363,6 +424,18 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
       throw new Error(`publish lane review failed. Likely cause: the head delta touches the ${options.lane} lane scope or review context, so carried-forward evidence is invalid. Next action: rerun the lane review for the current head.`);
     }
   }
+  // Synthesis is the last mile before publication: it dedupes this lane's
+  // findings against every other comprehensive lane at the same head (so a
+  // gate-level restatement never republishes), drops advisory findings
+  // outside the diff, and enforces the global advisory nit cap exactly once.
+  const synthesisLanes: SynthesisLaneInput[] = [
+    { laneId: options.lane, findings: evidence.findings },
+    ...loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane),
+  ];
+  const [synthesisPlan] = planFindingPublication(synthesisLanes, {
+    changedPaths: options.changedPaths,
+    nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
+  });
   const publishInput = {
     dryRun: options.dryRun ?? false,
     prNumber: options.prNumber,
@@ -375,9 +448,10 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     host: evidence.host,
     issueNumber,
     summary: evidence.summary,
-    findings: evidence.findings,
+    findings: synthesisPlan.published,
     completeness: evidence.completeness,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
+    withheld: { duplicates: synthesisPlan.withheldDuplicates, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
   };
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
@@ -390,7 +464,14 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
   const changedPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
   const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
-  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, expectedLanes, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
+  return runPrReviewPublishWithProvider(provider, {
+    ...options,
+    repoRoot,
+    expectedLanes,
+    carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish,
+    changedPaths: options.changedPaths ?? changedPaths ?? undefined,
+    nitCap: options.nitCap ?? config.reviewNitCap,
+  });
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {

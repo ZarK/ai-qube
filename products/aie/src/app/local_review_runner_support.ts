@@ -763,7 +763,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `Record the resulting local-host evidence JSON at this exact issue evidence path: ${primaryEvidencePath}.`,
     `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, preconditions, runnerProvenance, and recordedAt.`,
     LANE_ARTIFACT_REQUIREMENT,
-    'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, and location.path plus location.line when the finding can be anchored to the PR diff.',
+    'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, location.path plus location.line when the finding can be anchored to the PR diff, and an optional confidence number from 0 to 1. Advisory findings compete for a global cross-lane publication cap ordered by confidence; blocking findings always publish.',
     'Report the complete finding set for this lane at this head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
@@ -920,6 +920,10 @@ function readStringArray(value: unknown): string[] {
     : [];
 }
 
+function readFindingConfidence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
+}
+
 function readFindings(value: unknown): ReviewFinding[] {
   if (!Array.isArray(value)) return [];
   const findings: ReviewFinding[] = [];
@@ -937,12 +941,14 @@ function readFindings(value: unknown): ReviewFinding[] {
               : {}),
         }
       : undefined;
+    const confidence = readFindingConfidence(item.confidence);
     findings.push({
       id: typeof item.id === 'string' && item.id.trim() !== '' ? redact(item.id.trim()) : `finding-${findings.length + 1}`,
       severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
       ...(location ? { location } : {}),
       message: redact(item.message.trim()),
       ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: redact(item.suggestion.trim()) } : {}),
+      ...(confidence !== undefined ? { confidence } : {}),
     });
   }
   return findings;

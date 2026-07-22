@@ -15,6 +15,7 @@ Evidence to demand:
 - Per-lane status and head SHA, cross-checked against the current PR head.
 - The exact unresolved thread, missing check, or config-drift item blocking merge, if any.
 - Confirmation every prior blocking finding was either fixed or has verified re-review evidence.
+- A numeric confidence from 0 to 1 on every advisory finding you record, since synthesis ranks advisories by confidence against the global cap.
 
 Out of lane (ignore):
 - Re-deriving lane-specific findings from scratch — trust each lane's own recorded evidence instead.
@@ -25,3 +26,4 @@ Exhaustiveness rules:
 - Enumerate every reason merge is not yet safe in one pass; approve only when none remain.
 - Do not approve on a single passing lane; cross-check all required lanes and gates before returning approve.
 - State explicitly which lanes, checks, and threads were actually inspected for this verdict.
+- State gate-level conditions only here: cross-lane synthesis withholds any restatement of them from other lanes, so this is the one place they must appear.

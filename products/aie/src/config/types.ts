@@ -155,6 +155,7 @@ export interface ReviewConfig {
   concurrency: number;
   requestText: string;
   carryForwardPublish: 'note' | 'none';
+  nitCap: number;
   models: ReviewModelsPolicy;
   route: ReviewRoutePolicy | null;
   failover: ReviewFailoverPolicy | null;
@@ -242,6 +243,7 @@ export interface Config extends ConfigFileShape {
   reviewConcurrency: number;
   reviewRequestText: string;
   reviewCarryForwardPublish: 'note' | 'none';
+  reviewNitCap: number;
   reviewModels: ReviewModelsPolicy;
   reviewRoute: ReviewRoutePolicy | null;
   reviewFailover: ReviewFailoverPolicy | null;
