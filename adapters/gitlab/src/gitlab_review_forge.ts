@@ -438,6 +438,17 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
       return { status: "planned", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Rerun \`aie pr review publish <mr> --lane ${input.lane}\` without --dry-run to publish provider-visible GitLab note feedback.` };
     }
     try {
+      // Same head-freshness contract as the ForPullRequest path: an
+      // unobservable or advanced head must fail instead of publishing lane
+      // feedback against an obsolete commit.
+      const mergeRequest = await this.client.getMergeRequest({ projectId: this.projectId, iid: String(input.prNumber) });
+      const currentHead = typeof (mergeRequest as { sha?: unknown }).sha === "string" ? String((mergeRequest as { sha?: unknown }).sha) : "";
+      if (currentHead === "") {
+        throw new Error(`merge request !${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitLab reports the current head.`);
+      }
+      if (currentHead !== input.headSha) {
+        throw new Error(`merge request !${input.prNumber} head changed from ${input.headSha} to ${currentHead}; rerun pr gate for the current head.`);
+      }
       const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
       return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
     } catch (error) {
