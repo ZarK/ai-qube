@@ -2316,10 +2316,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   }
 
   private async getPullRequestReviews(repoName: string, prNumber: number): Promise<RawReview[]> {
-    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews`, '--method', 'GET', '-F', 'per_page=100'], this.options);
+    // Paginated like getReviewComments: the same-round marker search must see
+    // every review, or a PR past 100 reviews would miss its existing marker
+    // and create a second one for the round.
+    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews`, '--method', 'GET', '-F', 'per_page=100', '--paginate', '--slurp'], this.options);
     ensureGhSuccess(`gh api pull reviews for PR ${prNumber}`, result);
-    const parsed = parseGhJson<RawReview[]>(result.stdout, `gh api pull reviews for PR ${prNumber}`, value => Array.isArray(value));
-    return parsed.map(review => ({
+    const parsed = parseGhJson<RawReview[] | RawReview[][]>(result.stdout, `gh api pull reviews for PR ${prNumber}`, value => Array.isArray(value));
+    return parsed.flat().map(review => ({
       ...review,
       author: review.author ?? review.user ?? null,
       url: review.url ?? review.html_url,

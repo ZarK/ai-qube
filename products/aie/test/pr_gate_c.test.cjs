@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const { describe, it } = require('node:test');
 const {
@@ -1483,7 +1483,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.equal(result.publish.status, 'published');
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call.includes('--input')).length, 2);
-    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100 --paginate --slurp'));
     assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'));
     assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews/456 --method DELETE'));
   });
@@ -1512,7 +1512,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
 
     assert.equal(result.publish.status, 'failed');
-    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100 --paginate --slurp'));
     assert.equal(fixture.calls.some(call => /^api repos\/example\/repo\/pulls\/12\/reviews\/456 --method DELETE$/.test(call.join(' '))), false);
   });
 
