@@ -96,6 +96,18 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(plans[0].withheldOffDiff, 0);
   });
 
+  it('withholds an anchored advisory against an observed empty diff, keeping blockers', () => {
+    const anchoredAdvisory = finding({ severity: 'advisory', message: 'Anchored advisory.', location: { path: 'src/parser.ts', line: 3 } });
+    const anchoredBlocking = finding({ severity: 'blocking', message: 'Anchored blocker.', location: { path: 'src/parser.ts', line: 8 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'code-quality', findings: [anchoredAdvisory, anchoredBlocking] }],
+      { changedPaths: [], nitCap: 10 },
+    );
+
+    assert.deepEqual(plans[0].published.map(item => item.message), ['Anchored blocker.'], 'an observed empty diff cannot re-confirm any anchored advisory');
+    assert.equal(plans[0].withheldOffDiff, 1);
+  });
+
   it('promotes the highest reported confidence onto the owning lane before cap ranking', () => {
     const ownerLowConfidence = finding({ id: 'owner', message: 'Harden the parser bounds.', location: { path: 'src/parser.ts', line: 7 }, confidence: 0.1 });
     const restatedHighConfidence = finding({ id: 'restated', message: 'Harden the parser bounds.', location: { path: 'src/parser.ts', line: 7 }, confidence: 0.95 });
@@ -133,17 +145,6 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(codeQuality.published.length, 1);
     assert.equal(security.published.length, 1, 'a distinct line anchor must never be withheld as a duplicate');
     assert.equal(security.withheldDuplicates, 0);
-  });
-
-  it('treats an empty changed-path set as a failed observation and keeps location-based advisories', () => {
-    const anchored = finding({ severity: 'advisory', message: 'Anchored advisory.', location: { path: 'src/anywhere.ts', line: 3 } });
-    const plans = planFindingPublication(
-      [{ laneId: 'code-quality', findings: [anchored] }],
-      { changedPaths: [], nitCap: 10 },
-    );
-
-    assert.equal(plans[0].published.length, 1, 'an empty changed-path set must not withhold anything');
-    assert.equal(plans[0].withheldOffDiff, 0);
   });
 
   it('ranks advisory findings by confidence descending, ranking missing confidence last', () => {

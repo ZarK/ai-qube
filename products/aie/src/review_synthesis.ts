@@ -8,10 +8,11 @@ export interface SynthesisLaneInput {
 
 export interface SynthesisPlanOptions {
   /**
-   * Paths changed by this PR head. Undefined or empty disables only the
-   * off-diff advisory filter, never dedupe or the nit cap: a PR head always
-   * changes at least one path, so an empty set means the observation failed
-   * and withholding on it would suppress real findings.
+   * Paths changed by this PR head. Only `undefined` disables the off-diff
+   * advisory filter (the delta was not observed); a failed observation is
+   * failed closed by the caller before synthesis. An empty array is a
+   * genuine observation of an empty diff, so anchored advisories cannot be
+   * re-confirmed and are withheld. Dedupe and the nit cap always apply.
    */
   readonly changedPaths?: readonly string[];
   readonly nitCap: number;
@@ -70,7 +71,9 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
     throw new Error('planFindingPublication requires nitCap to be a positive safe integer.');
   }
   const priorityOrder = canonicalLanePriority();
-  const changedPaths = options.changedPaths && options.changedPaths.length > 0 ? new Set(options.changedPaths.map(normalizeComparablePath)) : null;
+  // Only an unobserved delta (undefined) disables the filter; an observed
+  // empty diff is a real empty set that withholds every anchored advisory.
+  const changedPaths = options.changedPaths !== undefined ? new Set(options.changedPaths.map(normalizeComparablePath)) : null;
 
   // Cross-lane dedupe: the earliest canonical lane to report a finding
   // identity owns it; every later lane withholds its own copy. The owner

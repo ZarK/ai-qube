@@ -1312,7 +1312,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     writeLocalEvidence(repo, evidence);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: ['src/review.ts'], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'published');
     assert.equal(result.publish.publishKind, 'pull-request-review');
