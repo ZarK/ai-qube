@@ -32,9 +32,11 @@ export interface PrReviewPublishOptions {
    */
   providerReuseLanes?: readonly LocalReviewLaneId[];
   /**
-   * Paths changed by this PR head. Undefined or empty disables only the
-   * synthesis off-diff advisory filter (never dedupe or the nit cap);
+   * Paths changed by this PR head. Undefined disables only the synthesis
+   * off-diff advisory filter (the delta was not observed); an empty array is
+   * a genuine observation of an empty diff and withholds anchored advisories;
    * null records a failed delta observation and fails publication closed.
+   * Dedupe and the nit cap always apply.
    */
   changedPaths?: readonly string[] | null;
   /**
