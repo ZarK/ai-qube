@@ -879,9 +879,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // Prompt per-lane publication: every routed lane with terminal validated
   // evidence publishes the moment its evidence lands, so a blocking lane is
   // provider-visible while slower or failed siblings are still running. The
-  // batch publish loop below remains the idempotent catch-all; adapter
-  // skip-match makes a streamed lane a no-op there.
-  const streamedPublishFailures: string[] = [];
+  // batch publish loop below remains the idempotent catch-all and the
+  // arbiter of failure: a transient streamed failure is cleared when the
+  // batch retry lands the same lane, so it can never poison the result.
+  const streamedFailuresByLane = new Map<string, string>();
   let streamingDisclosed = false;
   const streamLanePublish = !dryRun && routedFocuses.length > 0 && !sessionLockBlocksExecution
     ? async (lane: LocalReviewLaneRun): Promise<void> => {
@@ -898,9 +899,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) return;
           const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap });
           const publishFailure = prReviewPublishFailureMessage(published);
-          if (publishFailure) streamedPublishFailures.push(`${lane.lane}: ${publishFailure}`);
+          if (publishFailure) streamedFailuresByLane.set(`${lane.issueNumber} ${lane.lane}`, `${lane.lane}: ${publishFailure}`);
         } catch (error: unknown) {
-          streamedPublishFailures.push(`${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+          streamedFailuresByLane.set(`${lane.issueNumber} ${lane.lane}`, `${lane.lane}: prompt lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
         }
       }
     : undefined;
@@ -944,7 +945,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     providerLaneReuse,
   });
   const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
-  const publishUnavailable: string[] = [...streamedPublishFailures];
+  const publishUnavailable: string[] = [];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   if (deferProviderMutation && sessionLockBlocksExecution) {
     // A gate that does not hold the review session lock never mutates the provider.
@@ -981,11 +982,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     } else {
       const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
+        publishUnavailable.push(...streamedFailuresByLane.values());
         publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the routed lanes for the new head.`);
         localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no provider mutation was performed.');
       } else {
         await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
         if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) {
+          publishUnavailable.push(...streamedFailuresByLane.values());
           publishUnavailable.push(`Routed review publishing was withheld because local checkout HEAD does not match ${finalSnapshot.pr.headRefOid}; rerun from the exact pull request head.`);
           localReviewPublish = pendingLocalReviewPublish('The local checkout changed before routed review publishing; no provider mutation was performed.');
         } else {
@@ -1001,6 +1004,10 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           let skipMatchedCount = 0;
           for (const { evidence, lane } of publishableLanes) {
             try {
+              // The batch outcome supersedes any streamed attempt for this
+              // lane, so a lane never reports twice and a transient streamed
+              // failure cannot poison a later batch success.
+              streamedFailuresByLane.delete(`${evidence.issueNumber} ${lane.id}`);
               if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
               // The expected set is the declared active focus set for this
               // head, never the subset that happened to produce evidence: a
@@ -1019,6 +1026,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
               publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
             }
           }
+          publishUnavailable.push(...streamedFailuresByLane.values());
           localReviewPublish = publishUnavailable.length > 0
             ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
             : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${publishedCount} routed current-head lane review(s) (${skipMatchedCount} already current) from the QUBE orchestrator.` };

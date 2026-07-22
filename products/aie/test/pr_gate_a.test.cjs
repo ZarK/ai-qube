@@ -1164,6 +1164,64 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.shipReady.ready, false);
   });
 
+  it('clears a transient streamed publish failure when the batch retry lands the lane', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    let laneMutations = 0;
+    const exec = async args => {
+      const isReviewPost = args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST';
+      const isLaneComment = args[0] === 'pr' && args[1] === 'comment' && String(args[4] ?? '').includes('qube-pr-review:');
+      if (isReviewPost || isLaneComment) {
+        laneMutations += 1;
+        // Only the very first streamed lane mutation fails transiently; the
+        // batch retry and every other lane publish succeed.
+        if (laneMutations === 1) throw new Error('transient provider failure');
+      }
+      return fixture.exec(args);
+    };
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, modelRouteProcess, routeProbe: readyRouteProbe, resolveModelHost: async () => 'grok.exe', resolveModelHead: async () => 'abc123' });
+
+    // The batch retry is the arbiter: once it lands the lane, the transient
+    // streamed failure must not poison the aggregate publish status.
+    assert.equal(result.localReviewRunner.status, 'completed');
+    assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(!result.unavailable.some(entry => /transient provider failure/.test(entry)), 'a superseded streamed failure must not remain in the unavailable list');
+  });
+
   it('publishes no provider mutation when no routed lane produced terminal evidence', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
