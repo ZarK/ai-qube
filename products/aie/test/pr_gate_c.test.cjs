@@ -20,6 +20,7 @@ const {
   getDefaults,
   renderAgentPrompt,
   laneContextLines,
+  readRouteFaults,
   promptStack,
   promptTextHashFromLines,
   buildFixBatch,
@@ -523,6 +524,65 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     await assert.rejects(
       () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), changedPaths: ['src/parser.ts'] }),
       /synthesis withheld every code-quality finding/,
+    );
+  });
+
+  it('binds the off-diff filter to the resolved publish head instead of local HEAD', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'base.txt'), 'base state\n');
+    commitTrustedBase(repo);
+    writeFileSync(join(repo, 'other.txt'), 'sibling change\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'sibling change'], { cwd: repo, stdio: 'ignore' });
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'parser.ts'), 'export const parser = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'head change'], { cwd: repo, stdio: 'ignore' });
+    const publishHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['reset', '--hard', 'HEAD~1'], { cwd: repo, stdio: 'ignore' });
+    const evidence = localEvidence({ headSha: publishHead });
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality'
+        ? { findings: [{ severity: 'advisory', message: 'Tighten the new parser export.', location: { path: 'src/parser.ts', line: 1 }, confidence: 0.7 }] }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr({ headRefOid: publishHead }), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: publishHead, lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), deltaBaseRef: 'origin/main' });
+
+    assert.equal(publishCalls.length, 1);
+    assert.deepEqual(publishCalls[0].findings.map(finding => finding.message), ['Tighten the new parser export.'], 'a current-head finding must not be withheld because local HEAD is stale');
+    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+  });
+
+  it('fails route-fault ledger reads closed through a symlinked ancestor directory', () => {
+    const repo = makeGitRepo();
+    const realStore = join(repo, '.git', 'qube-real');
+    mkdirSync(join(realStore, 'aie', 'route-faults', '93'), { recursive: true });
+    writeFileSync(join(realStore, 'aie', 'route-faults', '93', '12.json'), `${JSON.stringify({ version: 1, lanes: { 'code-quality': { count: 5, routeKey: 'forged', lastReasonCode: 'forged', lastAt: '2026-01-01T00:00:00.000Z' } } })}\n`);
+    symlinkSync(realStore, join(repo, '.git', 'qube'), 'junction');
+
+    assert.throws(
+      () => readRouteFaults(repo, 93, 12),
+      /Refusing to (read|write)/,
+      'a relocated ledger chain must fail the read closed instead of feeding forged route state',
     );
   });
 

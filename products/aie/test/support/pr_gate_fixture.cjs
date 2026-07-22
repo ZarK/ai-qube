@@ -9,7 +9,7 @@ const { basename, join } = require('node:path');
 
 const { getDefaults } = require('../../dist/config/index.js');
 const { renderAgentPrompt } = require('../../dist/agent_descriptors.js');
-const { laneContextLines, promptStack, hash: promptTextHashFromLines } = require('../../dist/app/local_review_runner_support.js');
+const { laneContextLines, promptStack, hash: promptTextHashFromLines, readRouteFaults } = require('../../dist/app/local_review_runner_support.js');
 const { buildFixBatch, localReviewEvidenceSha256 } = require('../../dist/local_review_evidence.js');
 let createGitHubReviewForgeProvider;
 try {
@@ -733,6 +733,7 @@ module.exports = {
   getDefaults,
   renderAgentPrompt,
   laneContextLines,
+  readRouteFaults,
   promptStack,
   promptTextHashFromLines,
   buildFixBatch,

@@ -30,6 +30,12 @@ export interface PrReviewPublishOptions {
    * null records a failed delta observation and fails publication closed.
    */
   changedPaths?: readonly string[] | null;
+  /**
+   * Base ref for computing the changed-path delta against the RESOLVED
+   * publish head when the caller did not observe changedPaths itself; the
+   * delta must never bind to a possibly stale local HEAD.
+   */
+  deltaBaseRef?: string;
   /** Global advisory publication cap for cross-lane synthesis; defaults to DEFAULT_REVIEW_NIT_CAP. */
   nitCap?: number;
 }
@@ -421,8 +427,15 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   // findings against every other expected lane at the same head (so a
   // gate-level restatement never republishes), drops advisory findings
   // outside the diff, and enforces the global advisory nit cap exactly once.
-  if (options.changedPaths === null) {
-    throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch, then rerun publish.');
+  // The delta binds to the resolved publish head, never to local HEAD: a
+  // stale checkout must not classify current-head findings as off-diff.
+  const changedPaths = options.changedPaths !== undefined
+    ? options.changedPaths
+    : options.deltaBaseRef
+      ? gitDeltaPathsSync(repoRoot, options.deltaBaseRef, headSha)
+      : undefined;
+  if (changedPaths === null) {
+    throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch and the PR head, then rerun publish.');
   }
   const expectedLaneIds = options.expectedLanes && options.expectedLanes.length > 0 ? options.expectedLanes : [options.lane];
   const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds);
@@ -434,7 +447,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     ...siblings,
   ];
   const synthesisPlan = planFindingPublication(synthesisLanes, {
-    changedPaths: options.changedPaths ?? undefined,
+    changedPaths,
     nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
   }).find(plan => plan.laneId === options.lane);
   if (!synthesisPlan) {
@@ -474,20 +487,19 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
-  // A null delta means the observation itself failed; it flows through so
-  // publication fails closed at the synthesis step instead of silently
-  // disabling the off-diff filter, after own-lane evidence validation has
-  // had the chance to raise its more actionable errors first.
-  const changedPaths = options.changedPaths !== undefined
-    ? options.changedPaths
-    : gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
-  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
+  // Lane activation may look at the local delta, but the synthesis filter
+  // itself binds to the resolved publish head inside the provider run via
+  // deltaBaseRef; a failed observation there fails publication closed after
+  // own-lane evidence validation has raised its more actionable errors.
+  const laneActivationPaths = options.changedPaths ?? gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
+  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, laneActivationPaths);
   return runPrReviewPublishWithProvider(provider, {
     ...options,
     repoRoot,
     expectedLanes,
     carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish,
-    changedPaths,
+    changedPaths: options.changedPaths,
+    deltaBaseRef: options.deltaBaseRef ?? `${config.baseRemote}/${config.baseBranch}`,
     nitCap: options.nitCap ?? config.reviewNitCap,
   });
 }

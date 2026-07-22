@@ -82,6 +82,21 @@ export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNu
 
 export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  // The ledger is a trusted store that steers configured-versus-failover
+  // routing, so reads apply the same containment contract as writes: an
+  // absent ledger means no faults, but a symlinked ledger file or a
+  // relocated ancestor chain fails the read closed instead of feeding
+  // attacker-controlled route state into the runner.
+  let ledgerStats;
+  try {
+    ledgerStats = lstatSync(path);
+  } catch {
+    return { version: 1, lanes: {} };
+  }
+  if (!ledgerStats.isFile()) {
+    throw new Error(`Refusing to read the route-fault ledger through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
+  }
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.lanes)) {
