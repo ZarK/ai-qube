@@ -403,20 +403,25 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     forged.findings = [{ severity: 'blocking', message: realFinding }];
     writeFileSync(forgedPath, `${JSON.stringify(forged, null, 2)}\n`);
     const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
     const provider = {
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback() {
-        throw new Error('publish must not run against a forged sibling set');
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     };
 
-    await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
-      /issue-compliance is missing or invalid/,
-      'a forged sibling must fail the publish closed, never steal finding ownership',
-    );
+    // The forged sibling fails validation and is excluded from synthesis
+    // entirely: it can neither withhold this lane's publication nor claim
+    // the finding identity, so the real lane still publishes its finding.
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.equal(publishCalls.length, 1);
+    assert.ok(publishCalls[0].findings.some(finding => (typeof finding === 'string' ? finding : finding.message) === realFinding), 'the forged sibling must never steal the real finding identity');
   });
 
   it('publishes a fresh lane on a mixed head where a sibling is a trusted-provider reuse', async () => {
@@ -466,7 +471,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(publishCalls[0].expectedLanes, evidence.lanes.map(lane => lane.id), 'the marker still declares the complete lane set');
   });
 
-  it('still fails closed when a non-reuse expected sibling lane has no evidence at the head', async () => {
+  it('publishes with partial sibling synthesis when a non-reuse expected sibling lane has no evidence at the head', async () => {
     const repo = makeGitRepo();
     const evidence = localEvidence();
     evidence.lanes = evidence.lanes.map(lane => ({
@@ -480,19 +485,28 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     writeLocalEvidence(repo, evidence);
     rmSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'final-gate.json'));
     const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
     const provider = {
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback() {
-        throw new Error('publish must not run against an incomplete lane set');
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     };
 
-    await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
-      /final-gate is missing or invalid/,
-    );
+    // A missing sibling no longer withholds this lane: per-result validation
+    // is the only withhold reason, and the marker keeps declaring the full
+    // expected set with its round so the incomplete round stays readable as
+    // incomplete on the provider record.
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.equal(publishCalls.length, 1);
+    assert.deepEqual(publishCalls[0].expectedLanes, evidence.lanes.map(lane => lane.id), 'the marker still declares the complete expected lane set including the missing sibling');
+    assert.equal(typeof publishCalls[0].round, 'string');
+    assert.ok(publishCalls[0].round.length > 0, 'every published marker carries its round grouping id');
   });
 
   it('rejects marker-breaking profile and host values before provider publication', async () => {
@@ -1531,6 +1545,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       headSha: 'abc123',
       lane: 'code-quality',
       expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
+      round: 'round-abc123-1',
       profile: 'local-standard',
       status: 'passed',
       recommendation: 'approve',

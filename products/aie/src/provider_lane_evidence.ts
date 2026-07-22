@@ -1,10 +1,12 @@
 import type { LocalReviewLaneId, LocalReviewProfile } from './local_review_evidence.js';
+import { normalizedRoundLanes, reviewRoundId } from './review_round.js';
 
 export interface TrustedProviderLane {
   head: string;
   lane: LocalReviewLaneId;
   profile: LocalReviewProfile;
   runId: string;
+  round: string;
   issueNumber: number;
   prNumber: number;
   host: string;
@@ -48,6 +50,23 @@ function positiveInteger(value: unknown): number | null {
 // fields a rerun would restore.
 const LOCAL_ONLY_FIELDS = 'findings, severities, prompt stack, and runner provenance';
 
+function declaredExpectedLanes(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  if (!value.every(item => typeof item === 'string' && item.trim() !== '')) return null;
+  return normalizedRoundLanes(value as string[]);
+}
+
+interface RoundMembership {
+  roundId: string | null;
+  expectedLanes: string[] | null;
+}
+
+interface RoundBucket {
+  lanes: Set<string>;
+  expectedLanes: string[] | null;
+  consistent: boolean;
+}
+
 export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
   headSha: string;
   prNumber: number;
@@ -60,6 +79,8 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
   const records = Array.isArray(trustedLaneReviews) ? trustedLaneReviews : [];
   const staleHeadsByLane = new Map<string, Set<string>>();
   const currentHeadByLaneIssue = new Map<string, Record<string, unknown>>();
+  const roundByLaneIssue = new Map<string, RoundMembership>();
+  const roundBuckets = new Map<string, RoundBucket>();
 
   for (const value of records) {
     if (!isRecord(value)) continue;
@@ -75,6 +96,24 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
     const issueNumber = positiveInteger(value.issueNumber);
     if (issueNumber === null) continue;
     currentHeadByLaneIssue.set(`${lane}#${issueNumber}`, value);
+    // Round membership: an explicit round id wins; markers that predate the
+    // round field but declared an expected lane set derive the same
+    // deterministic id the publisher would have minted. A record with neither
+    // belongs to no decidable round and can never be reused.
+    const expectedLanes = declaredExpectedLanes(value.expectedLanes);
+    const roundId = nonEmptyString(value.round)
+      ?? (expectedLanes ? reviewRoundId({ prNumber: input.prNumber, headSha: input.headSha, expectedLanes, issueNumber }) : null);
+    roundByLaneIssue.set(`${lane}#${issueNumber}`, { roundId, expectedLanes });
+    if (roundId === null) continue;
+    const bucketKey = `${issueNumber}#${roundId}`;
+    const bucket = roundBuckets.get(bucketKey) ?? { lanes: new Set<string>(), expectedLanes, consistent: true };
+    bucket.lanes.add(lane);
+    if ((bucket.expectedLanes === null) !== (expectedLanes === null)
+      || (bucket.expectedLanes !== null && expectedLanes !== null && bucket.expectedLanes.join('\0') !== expectedLanes.join('\0'))) {
+      bucket.consistent = false;
+    }
+    if (bucket.expectedLanes === null && expectedLanes !== null) bucket.expectedLanes = expectedLanes;
+    roundBuckets.set(bucketKey, bucket);
   }
 
   for (const laneId of input.requiredLanes) {
@@ -119,11 +158,34 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
         rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} is missing required marker fields (runId, host, or summary).` });
         continue;
       }
+      // Fail-closed round completeness: a partially published round can never
+      // be read as an approved head. Every lane the round declared must have a
+      // same-round record at this head before any of its lanes are reusable.
+      const membership = roundByLaneIssue.get(`${laneId}#${gateIssueNumber}`);
+      if (!membership || membership.roundId === null) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} carries no round grouping (round id or expected lane set), so round completeness is undecidable; the lane must rerun.` });
+        continue;
+      }
+      const bucket = roundBuckets.get(`${gateIssueNumber}#${membership.roundId}`);
+      if (!bucket || !bucket.consistent) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} belongs to a review round whose records disagree on the declared expected lane set; an inconsistent round is never reusable.` });
+        continue;
+      }
+      if (bucket.expectedLanes === null) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} belongs to a round that declares no expected lane set, so completeness is undecidable; the lane must rerun.` });
+        continue;
+      }
+      const missingRoundLanes = bucket.expectedLanes.filter(roundLane => !bucket.lanes.has(roundLane));
+      if (missingRoundLanes.length > 0) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} belongs to an incomplete review round (${bucket.lanes.size} of ${bucket.expectedLanes.length} declared lanes published at this head; missing: ${missingRoundLanes.join(', ')}); a partial round is never read as approved.` });
+        continue;
+      }
       accepted.push({
         head: input.headSha,
         lane: laneId,
         profile: input.profile,
         runId,
+        round: membership.roundId,
         issueNumber: gateIssueNumber,
         prNumber: input.prNumber,
         host,

@@ -987,7 +987,120 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
-  it('withholds every provider mutation when a routed lane batch is incomplete', async () => {
+  it('publishes blocking lane markers at the reviewed head before any fix commit', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      const blocking = lane === 'code-quality';
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: blocking ? 'needs-work' : 'passed',
+        severity: blocking ? 'high' : 'none',
+        recommendation: blocking ? 'request-changes' : 'approve',
+        summary: blocking ? `${lane} found a blocking defect.` : `${lane} routed review passed.`,
+        blockers: blocking ? ['Fix the parser crash before merge.'] : [],
+        findings: blocking ? [{ id: 'cq-1', severity: 'blocking', message: 'Fix the parser crash before merge.', location: { path: 'src/review.ts', line: 2 } }] : [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: blocking ? 'finding' : 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+    });
+
+    // The blocking round publishes at its reviewed head: the aggregate gate
+    // stays failed while every terminal lane result, approving and blocking,
+    // becomes provider-visible before any fix commit.
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'), 'blocking lane feedback must reach the provider');
+    assert.equal(result.shipReady.ready, false);
+  });
+
+  it('publishes validated lanes while a failed lane leaves the round incomplete', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    trustReviewCommands(repo);
+    config.reviewAdapter = 'mixed';
+    config.reviewAgents = [];
+    config.reviewWaitMinutes = 0;
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewModels.review.grok = { model: 'grok-4.5', effort: null };
+    const fixture = makePrExec({ prViews: [cleanLocalPr()] });
+    const modelRouteProcess = async invocation => {
+      const prompt = readFileSync(invocation.promptPath, 'utf8');
+      const lane = prompt.match(/Run local review lane ([a-z-]+)\./)?.[1];
+      if (lane === 'tests-quality') return { exitCode: 1, stderr: 'model unavailable', stdout: '', timedOut: false, stdinDelivered: true };
+      const body = {
+        issueNumber: 93,
+        prNumber: 12,
+        headSha: 'abc123',
+        lane,
+        status: 'passed',
+        severity: 'none',
+        recommendation: 'approve',
+        summary: `${lane} routed review passed.`,
+        blockers: [],
+        findings: [],
+        artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: null }],
+        commands: ['git diff --check'],
+        surfaces: ['PR diff'],
+        contextReviewed: requiredTaskContext(),
+        toolsUsed: ['git'],
+        completeness: `Inspected the complete ${lane} scope at the current head.`,
+        coverage: ((prompt.match(/Attest coverage for exactly these areas: ([^\n]+?)\. Each coverage entry/) || [])[1] || lane).split(', ').map(area => ({ area, status: 'clear' })),
+        preconditions: [],
+      };
+      return { exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: `session-${lane}` }) };
+    };
+
+    const result = await runPrGate(config, {
+      prNumber: 12,
+      repoRoot: repo,
+      exec: fixture.exec,
+      modelRouteProcess,
+      routeProbe: readyRouteProbe,
+      resolveModelHost: async () => 'grok.exe',
+      resolveModelHead: async () => 'abc123',
+    });
+
+    // One flaked lane never withholds the others: every validated lane
+    // publishes at this head, the round stays incomplete on the provider
+    // record, and ship-ready remains blocked by the missing lane evidence.
+    assert.ok(result.localReviewRunner.lanes.some(lane => lane.lane === 'tests-quality' && lane.status === 'failed'));
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'), 'validated lane feedback must reach the provider despite the failed sibling');
+    assert.notEqual(result.localReview.status, 'passed');
+    assert.equal(result.shipReady.ready, false);
+  });
+
+  it('publishes no provider mutation when no routed lane produced terminal evidence', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     trustReviewCommands(repo);
@@ -1016,8 +1129,10 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReviewRunner.status, 'failed');
     assert.equal(result.shipReady.ready, false);
     assert.ok(result.shipReady.reasons.length > 0);
-    assert.equal(result.localReviewPublish.status, 'pending');
-    assert.match(result.localReviewPublish.nextAction, /no provider mutation/i);
+    // Per-lane publish-on-validate: with zero terminal lane evidence there is
+    // nothing to publish, and no lane mutation may reach the provider.
+    assert.equal(result.localReviewPublish.status, 'skipped');
+    assert.match(result.localReviewPublish.nextAction, /No routed lane holds terminal current-head evidence/);
     assert.equal(fixture.calls.some(args => args[0] === 'pr' && args[1] === 'comment'), false);
     assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
@@ -1226,8 +1341,11 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(result.localReview.status, 'passed');
     assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'completed' && lane.evidenceSource === 'local'));
     assert.ok(result.localReview.evidence[0].lanes.every(lane => lane.origin === 'local'));
-    assert.equal(result.localReviewPublish.status, 'skipped');
-    assert.match(result.localReviewPublish.nextAction, /reused/i);
+    // Reused local evidence still publishes: a validated lane result without
+    // a current provider marker reaches the provider on this run instead of
+    // staying local-only.
+    assert.equal(result.localReviewPublish.status, 'published');
+    assert.match(result.localReviewPublish.nextAction, /routed current-head lane review/i);
   });
 
   it('re-executes a lane whose local current-head evidence is non-terminal instead of provider-reusing it', async () => {

@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
+import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
 import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
@@ -227,10 +228,10 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
 // status/recommendation consistency, artifact contract, trusted provenance).
 // An unvalidated sibling must never claim ownership of a finding identity,
 // because dedupe would then withhold the real lane's finding from the
-// provider. Synthesis also requires the complete expected lane set: a
-// partial sibling view would make dedupe ownership and the global advisory
-// cap depend on publish order, so missing or invalid siblings fail the
-// publish closed instead of being silently absent.
+// provider. A missing or invalid sibling no longer withholds this lane's
+// publication: per-result validation is the only withhold reason, so
+// synthesis runs over the siblings that validate, and round completeness on
+// the read side keeps a partial round from ever counting as approved.
 function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId, expectedLanes: readonly LocalReviewLaneId[], providerReuseLanes: ReadonlySet<LocalReviewLaneId>): { siblings: SynthesisLaneInput[]; missing: LocalReviewLaneId[] } {
   const siblings: SynthesisLaneInput[] = [];
   const missing: LocalReviewLaneId[] = [];
@@ -468,6 +469,13 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     throw new Error('publish lane review failed. Likely cause: no linked issue number was available. Next action: pass --issue or link a closing issue on the pull request.');
   }
   const evidence = validateLaneEvidence(repoRoot, issueNumber, options.prNumber, headSha, options.lane);
+  // Only terminal verdicts are provider-worthy results. Pending and
+  // inconclusive evidence is a rerun signal: publishing it would mint a
+  // marker the same round immediately supersedes, violating the
+  // one-marker-per-lane-per-round noise bound.
+  if (evidence.status !== 'passed' && evidence.status !== 'failed' && evidence.status !== 'needs-work') {
+    throw new Error(`publish lane review failed. Likely cause: ${options.lane} evidence carries the non-terminal status ${evidence.status}; only terminal lane verdicts (passed, failed, needs-work) publish provider-visible reviews. Next action: rerun the lane to a terminal verdict, then publish.`);
+  }
   const carriedForward = isRecord(evidence.evidence.carriedForward) && typeof evidence.evidence.carriedForward.fromHeadSha === 'string' ? evidence.evidence.carriedForward.fromHeadSha.trim() : null;
   if (carriedForward) {
     if (options.carryForwardPublish === 'none') {
@@ -522,10 +530,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     throw new Error(`publish lane review failed. Likely cause: the expected lane set (${expectedLaneIds.join(', ')}) does not name the publishing lane ${options.lane}. Next action: include the publishing lane in the expected set.`);
   }
   const providerReuseLaneSet = new Set<LocalReviewLaneId>(options.providerReuseLanes ?? []);
-  const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds, providerReuseLaneSet);
-  if (missing.length > 0) {
-    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis requires validated current-head evidence for every expected lane, and ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid at ${headSha}. Next action: complete the remaining lane reviews at this head, then rerun publish or the PR gate.`);
-  }
+  const { siblings } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds, providerReuseLaneSet);
   const synthesisLanes: SynthesisLaneInput[] = [
     { laneId: options.lane, findings: evidence.findings },
     ...siblings,
@@ -552,6 +557,7 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     headSha,
     lane: options.lane,
     expectedLanes: expectedLaneIds,
+    round: reviewRoundId({ prNumber: options.prNumber, headSha, expectedLanes: expectedLaneIds, issueNumber }),
     profile: evidence.profile,
     status: evidence.status,
     recommendation: evidence.recommendation,

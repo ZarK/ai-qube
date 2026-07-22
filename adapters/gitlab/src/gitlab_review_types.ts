@@ -124,6 +124,8 @@ export interface GitLabMetadata {
   readonly head: string;
   readonly reviewerId?: string;
   readonly lane?: string;
+  readonly expectedLanes?: readonly string[];
+  readonly round?: string;
   readonly profile?: string;
   readonly runId?: string;
   readonly issueNumber?: number;

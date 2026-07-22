@@ -157,11 +157,12 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
-function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount } = {}) {
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount, expectedLanes = [lane] } = {}) {
   const metadata = {
     version: 1,
     head,
     lane,
+    expectedLanes,
     profile,
     runId,
     issueNumber,

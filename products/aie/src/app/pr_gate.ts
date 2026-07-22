@@ -921,25 +921,38 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     // A gate that does not hold the review session lock never mutates the provider.
     localReviewPublish = pendingLocalReviewPublish('Provider publishing was withheld because this gate does not hold the review session lock; no provider mutation was performed.');
   } else if (deferProviderMutation) {
-    const routedRuns = localReviewRunner.lanes.filter(lane => lane.route !== null);
-    const routedBatchReady = routedRuns.length > 0 && routedRuns.every(lane => lane.status === 'completed' || lane.status === 'skipped');
-    // Reused lanes (local current-head evidence or trusted provider records) are already
-    // provider-visible; publishing again would duplicate the audit trail.
-    const freshRoutedLaneKeys = new Set(localReviewRunner.lanes.filter(lane => lane.route !== null && lane.evidenceSource === 'fresh-run' && lane.status === 'completed').map(lane => `${lane.issueNumber} ${lane.lane}`));
-    if (!routedBatchReady || localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable' || localReview.status !== 'passed') {
-      localReviewPublish = pendingLocalReviewPublish('Routed review publishing was withheld because the complete current-head lane batch did not validate; no provider mutation was performed.');
-    } else if (freshRoutedLaneKeys.size === 0) {
-      // Lane reviews are already provider-visible; only the idempotent review-request
-      // marker may still be missing, so apply the plan without republishing lanes.
+    // Per-lane publish-on-validate: every routed lane whose current-head
+    // evidence validates with a terminal verdict publishes regardless of what
+    // the other lanes did, so a blocking round leaves provider-visible
+    // markers before any fix commit. Per-result validation, the session
+    // lock, and current-head binding are the only withhold reasons; the
+    // adapter's round-scoped skip-match keeps republishing an unchanged lane
+    // a no-op, so reused local evidence publishes exactly once.
+    const publishableLanes = localReview.evidence
+      .filter(entry => entry.issueNumber !== null)
+      .flatMap(evidence => evidence.lanes
+        .filter(lane => routedFocuses.includes(lane.id)
+          && lane.carriedForward === null
+          && lane.origin !== 'trusted-provider'
+          && (lane.status === 'passed' || lane.status === 'failed' || lane.status === 'needs-work'))
+        .map(lane => ({ evidence, lane })));
+    if (publishableLanes.length === 0 && localReview.status === 'passed') {
+      // Every lane is already provider-visible (trusted-provider reuse);
+      // only the idempotent review-request marker may still be missing, so
+      // apply the plan without lane mutations.
       await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
       actions = await applyReviewPlan(provider, firstPlan);
       actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
       localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'All routed current-head lane evidence was reused; provider-visible lane reviews are already current and no publish was needed.' };
       finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
+    } else if (publishableLanes.length === 0) {
+      // No terminal lane evidence exists yet; nothing publishes and no
+      // provider mutation runs until lanes reach terminal verdicts.
+      localReviewPublish = { status: 'skipped', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'No routed lane holds terminal current-head evidence to publish; rerun lanes to terminal verdicts, then rerun the PR gate.' };
     } else {
       const currentSnapshot = await provider.loadPullRequestReview(options.prNumber);
       if (currentSnapshot.pr.headRefOid !== finalSnapshot.pr.headRefOid) {
-        publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the complete routed lane batch.`);
+        publishUnavailable.push(`Routed review publishing was withheld because the pull request head changed from ${finalSnapshot.pr.headRefOid} to ${currentSnapshot.pr.headRefOid}; rerun the routed lanes for the new head.`);
         localReviewPublish = pendingLocalReviewPublish('The pull request head changed before routed review publishing; no provider mutation was performed.');
       } else {
         await discloseExternalServices(firstReviewers, actions, options.onBeforeMutate);
@@ -955,28 +968,31 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           // pushed PR. A null observation fails publication closed downstream.
           const publishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
           const publishedUrls: string[] = [];
-          for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
-            for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
-              try {
-                if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
-                // The expected set names every lane carrying validated evidence at
-                // this head, so all markers on the head agree and stats can prove
-                // completeness; publishing only runs once the whole batch validates.
-                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap });
-                const publishFailure = prReviewPublishFailureMessage(published);
-                if (publishFailure) {
-                  publishUnavailable.push(`${lane.id}: ${publishFailure}`);
-                } else if (published.publish.url) {
-                  publishedUrls.push(published.publish.url);
-                }
-              } catch (error: unknown) {
-                publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
+          let publishedCount = 0;
+          let skipMatchedCount = 0;
+          for (const { evidence, lane } of publishableLanes) {
+            try {
+              if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) throw new Error('local checkout HEAD changed before lane publishing');
+              // The expected set is the declared active focus set for this
+              // head, never the subset that happened to produce evidence: a
+              // partial round must declare the full set it belongs to, or its
+              // markers would mint a smaller round that reads as complete.
+              const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap });
+              const publishFailure = prReviewPublishFailureMessage(published);
+              if (publishFailure) {
+                publishUnavailable.push(`${lane.id}: ${publishFailure}`);
+              } else {
+                if (published.publish.status === 'published') publishedCount += 1;
+                else skipMatchedCount += 1;
+                if (published.publish.url) publishedUrls.push(published.publish.url);
               }
+            } catch (error: unknown) {
+              publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
             }
           }
           localReviewPublish = publishUnavailable.length > 0
             ? { status: 'failed', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: publishUnavailable.join('; '), nextAction: 'Inspect provider publishing failures and rerun the PR gate; model lane evidence remains current-head bound.' }
-            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${freshRoutedLaneKeys.size} routed current-head lane review(s) from the QUBE orchestrator.` };
+            : { status: 'published', runId: null, marker: null, body: null, url: publishedUrls[0] ?? null, failure: null, nextAction: `Published ${publishedCount} routed current-head lane review(s) (${skipMatchedCount} already current) from the QUBE orchestrator.` };
           finalSnapshot = await provider.loadPullRequestReview(options.prNumber);
         }
       }
@@ -992,7 +1008,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
       for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
         try {
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap });
+          // The same declared active set as the fresh-lane loop: every marker
+          // at one head must agree on the round's expected lane set.
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap });
           const carriedFailure = prReviewPublishFailureMessage(published);
           if (carriedFailure) {
             publishUnavailable.push(`${lane.id}: ${carriedFailure}`);

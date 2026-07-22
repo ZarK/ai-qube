@@ -133,6 +133,7 @@ interface LaneReviewMetadata {
   head: string;
   lane: string;
   expectedLanes?: string[];
+  round?: string;
   profile: string;
   runId: string;
   issueNumber: number;
@@ -164,6 +165,8 @@ export interface GitHubLaneReviewPublishInput {
   headSha: string;
   lane: string;
   expectedLanes: readonly string[];
+  /** Deterministic round grouping id carried into the marker so round completeness is decidable from the provider record alone. */
+  round: string;
   profile: string;
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
@@ -412,6 +415,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       && parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')
       ? [...new Set(parsed.expectedLanes.map(lane => redact(String(lane).trim())))].sort()
       : undefined;
+    const round = typeof parsed.round === 'string' && parsed.round.trim() !== '' ? redact(parsed.round.trim()) : undefined;
     if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
     if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
     const issueNumber = parsed.issueNumber;
@@ -428,6 +432,7 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       head: redact(parsed.head),
       lane: redact(parsed.lane),
       expectedLanes,
+      round,
       profile: redact(parsed.profile),
       runId: redact(parsed.runId),
       issueNumber,
@@ -601,6 +606,7 @@ function laneReviewBody(
     head: input.headSha,
     lane: input.lane,
     expectedLanes: expectedLaneNames(input),
+    round: input.round,
     profile: input.profile,
     runId,
     issueNumber: input.issueNumber,
@@ -664,6 +670,7 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
       && review.lane === input.lane
       && Array.isArray(review.expectedLanes)
       && JSON.stringify([...review.expectedLanes].sort()) === JSON.stringify(expectedLaneNames(input))
+      && review.round === input.round
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
@@ -682,6 +689,7 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       head: metadata.head,
       lane: metadata.lane,
       expectedLanes: metadata.expectedLanes ?? null,
+      round: metadata.round ?? null,
       profile: metadata.profile,
       runId: metadata.runId,
       issueNumber: metadata.issueNumber,

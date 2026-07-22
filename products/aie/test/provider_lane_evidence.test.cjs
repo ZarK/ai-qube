@@ -8,6 +8,7 @@ function record(overrides = {}) {
   return {
     head: 'abc123',
     lane: 'code-quality',
+    expectedLanes: ['code-quality', 'issue-compliance'],
     profile: 'local-standard',
     runId: 'run-1',
     issueNumber: 93,
@@ -38,16 +39,52 @@ describe('readTrustedProviderLanes', () => {
     assert.ok(reuse.accepted.every(lane => lane.recommendation === 'approve' && lane.status === 'passed' && lane.head === 'abc123'));
   });
 
-  it('rejects lanes whose only records reference other heads with an actionable reason', () => {
+  it('rejects lanes whose only records reference other heads and fails the partial round closed', () => {
     const reuse = readTrustedProviderLanes([
       record({ lane: 'issue-compliance' }),
       record({ lane: 'code-quality', head: 'def456789012' }),
     ], gate);
-    assert.equal(reuse.accepted.length, 1);
-    assert.equal(reuse.rejected.length, 1);
-    assert.equal(reuse.rejected[0].lane, 'code-quality');
-    assert.match(reuse.rejected[0].reason, /other heads/);
-    assert.match(reuse.rejected[0].reason, /def456789012/);
+    // The current-head round declared both lanes but only issue-compliance
+    // published at this head, so even the well-formed record is rejected: a
+    // partial round is never read as approved.
+    assert.equal(reuse.accepted.length, 0);
+    assert.equal(reuse.rejected.length, 2);
+    const staleRejection = reuse.rejected.find(entry => entry.lane === 'code-quality');
+    assert.match(staleRejection.reason, /other heads/);
+    assert.match(staleRejection.reason, /def456789012/);
+    const partialRejection = reuse.rejected.find(entry => entry.lane === 'issue-compliance');
+    assert.match(partialRejection.reason, /incomplete review round/);
+    assert.match(partialRejection.reason, /missing: code-quality/);
+  });
+
+  it('never accepts a lane from an incomplete round and names the missing lanes', () => {
+    const threeLanes = ['code-quality', 'issue-compliance', 'security'];
+    const reuse = readTrustedProviderLanes([
+      record({ lane: 'issue-compliance', expectedLanes: threeLanes, runId: 'run-ic' }),
+      record({ lane: 'code-quality', expectedLanes: threeLanes, runId: 'run-cq' }),
+    ], gate);
+    assert.equal(reuse.accepted.length, 0);
+    assert.equal(reuse.rejected.length, 2);
+    assert.ok(reuse.rejected.every(entry => /incomplete review round \(2 of 3 declared lanes published/.test(entry.reason)));
+    assert.ok(reuse.rejected.every(entry => /missing: security/.test(entry.reason)));
+  });
+
+  it('rejects rounds whose records disagree on the declared expected lane set', () => {
+    const reuse = readTrustedProviderLanes([
+      record({ lane: 'issue-compliance', round: 'round-x', expectedLanes: ['code-quality', 'issue-compliance'] }),
+      record({ lane: 'code-quality', round: 'round-x', expectedLanes: ['code-quality', 'issue-compliance', 'security'] }),
+    ], gate);
+    assert.equal(reuse.accepted.length, 0);
+    assert.ok(reuse.rejected.every(entry => /disagree on the declared expected lane set/.test(entry.reason)));
+  });
+
+  it('rejects records with neither a round id nor an expected lane set', () => {
+    const reuse = readTrustedProviderLanes([
+      record({ lane: 'issue-compliance', expectedLanes: undefined }),
+      record({ lane: 'code-quality', expectedLanes: undefined }),
+    ], gate);
+    assert.equal(reuse.accepted.length, 0);
+    assert.ok(reuse.rejected.every(entry => /no round grouping/.test(entry.reason)));
   });
 
   it('rejects profile-incompatible records', () => {
@@ -93,8 +130,8 @@ describe('readTrustedProviderLanes', () => {
       42,
       'not-a-record',
       { lane: 'code-quality' },
-      record({ lane: 'performance' }),
-      record({ lane: 'issue-compliance' }),
+      record({ lane: 'performance', expectedLanes: ['performance'] }),
+      record({ lane: 'issue-compliance', expectedLanes: ['issue-compliance'] }),
     ], gate);
     assert.equal(reuse.accepted.length, 1);
     assert.equal(reuse.accepted[0].lane, 'issue-compliance');
@@ -102,7 +139,7 @@ describe('readTrustedProviderLanes', () => {
   });
 
   it('reports lanes with no provider records in the summary instead of rejecting them', () => {
-    const reuse = readTrustedProviderLanes([record({ lane: 'issue-compliance' })], gate);
+    const reuse = readTrustedProviderLanes([record({ lane: 'issue-compliance', expectedLanes: ['issue-compliance'] })], gate);
     assert.equal(reuse.rejected.length, 0);
     assert.match(reuse.summary, /No trusted provider review found for: code-quality/);
   });
@@ -149,7 +186,7 @@ describe('readTrustedProviderLanes with multiple linked issues', () => {
 
 describe('acceptedProviderLane', () => {
   it('matches lane and issue number exactly', () => {
-    const reuse = readTrustedProviderLanes([record({ lane: 'code-quality', issueNumber: 93 })], gate);
+    const reuse = readTrustedProviderLanes([record({ lane: 'code-quality', issueNumber: 93, expectedLanes: ['code-quality'] })], gate);
     assert.ok(acceptedProviderLane(reuse, 'code-quality', 93));
     assert.equal(acceptedProviderLane(reuse, 'code-quality', 94), null);
     assert.equal(acceptedProviderLane(reuse, 'issue-compliance', 93), null);

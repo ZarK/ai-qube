@@ -283,6 +283,8 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     kind: "lane-review",
     head: input.headSha,
     lane: input.lane,
+    expectedLanes: [...new Set(input.expectedLanes)].sort(),
+    round: input.round,
     profile: input.profile,
     runId,
     issueNumber: input.issueNumber,
@@ -641,6 +643,7 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     return records.some(record => record !== null && typeof record === "object" && !Array.isArray(record)
       && record.head === input.headSha
       && record.lane === input.lane
+      && record.round === input.round
       && record.runId === runId
       && record.recommendation === input.recommendation
       && record.status === input.status
@@ -744,6 +747,8 @@ function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: s
     return [{
       head: parsed.head,
       lane: parsed.lane,
+      expectedLanes: Array.isArray(parsed.expectedLanes) && parsed.expectedLanes.every(lane => typeof lane === "string" && lane.trim() !== "") ? [...parsed.expectedLanes] : null,
+      round: typeof parsed.round === "string" && parsed.round.trim() !== "" ? parsed.round : null,
       profile: parsed.profile ?? "",
       runId: parsed.runId,
       issueNumber: parsed.issueNumber ?? 0,

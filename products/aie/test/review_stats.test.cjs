@@ -14,8 +14,8 @@ const {
 const { getCommandMetadata } = require('../dist/command_metadata.js');
 const { listReviewForgeAdapters } = require('../dist/providers/review_forge_adapters.js');
 
-function lane({ head, lane, expectedLanes = [lane], recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z' }) {
-  return { head, lane, expectedLanes, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt };
+function lane({ head, lane, expectedLanes = [lane], recommendation = 'approve', status = 'passed', bodyFindingCount = 0, blockingFindingCount = bodyFindingCount, publishedAt = '2026-01-01T00:00:00Z', issueNumber = 93 }) {
+  return { head, lane, expectedLanes, recommendation, status, bodyFindingCount, blockingFindingCount, publishedAt, issueNumber };
 }
 
 function pullRequest(number, title = `PR ${number}`) {
@@ -94,6 +94,7 @@ describe('review convergence stats', () => {
       failingHeads: 2,
       blockingEntries: 5,
       firstReviewClean: false,
+      rounds: { complete: 3, inProgress: 0, abandoned: 0 },
       noLaneEvidence: false,
       noLaneEvidenceReason: null,
     });
@@ -104,6 +105,7 @@ describe('review convergence stats', () => {
       failingHeads: null,
       blockingEntries: null,
       firstReviewClean: null,
+      rounds: null,
       noLaneEvidence: true,
       noLaneEvidenceReason: 'No trusted QUBE lane review metadata was found.',
     });
@@ -226,7 +228,7 @@ describe('review convergence stats', () => {
     const result = await runReviewStatsWithProvider(fixture.provider, { window: 1 });
     const human = formatReviewStats(result);
 
-    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| yes \| present/);
+    assert.match(human, /#300 \| Visible stats \| 1 \| 0 \| 0 \| yes \| 1\/0\/0 \| present/);
     assert.match(human, /Pull requests: 1/);
     assert.match(human, /Reviewed pull requests: 1/);
     assert.match(human, /First-review-clean: 1\/1 \(100\.0%\)/);
@@ -295,7 +297,33 @@ describe('review convergence stats', () => {
 
     assert.equal(result.pullRequests[0].noLaneEvidence, true);
     assert.equal(result.pullRequests[0].firstReviewClean, null);
-    assert.match(result.pullRequests[0].noLaneEvidenceReason, /missing expected lane.*issue-compliance/);
+    assert.match(result.pullRequests[0].noLaneEvidenceReason, /No complete review round was published at any head \(1 in progress, 0 abandoned\)/);
+    assert.deepEqual(result.pullRequests[0].rounds, { complete: 0, inProgress: 1, abandoned: 0 });
+  });
+
+  it('classifies abandoned partial rounds without degrading the complete-round history', () => {
+    // Head a: a complete blocking round. Head b: a partial round abandoned
+    // when the head advanced. Head c: a complete approve round. The abandoned
+    // round neither degrades the PR nor counts as a reviewed head, and its
+    // published blocking findings still count as real rework.
+    const result = computeReviewStats([{
+      number: 309,
+      title: 'Multi-round with abandonment',
+      trustedLaneReviews: [
+        lane({ head: 'a', lane: 'code-quality', expectedLanes: ['code-quality', 'security'], recommendation: 'request-changes', status: 'failed', blockingFindingCount: 2, publishedAt: '2026-03-01T00:00:00Z' }),
+        lane({ head: 'a', lane: 'security', expectedLanes: ['code-quality', 'security'], publishedAt: '2026-03-01T00:05:00Z' }),
+        lane({ head: 'b', lane: 'code-quality', expectedLanes: ['code-quality', 'security'], recommendation: 'request-changes', status: 'needs-work', blockingFindingCount: 1, publishedAt: '2026-03-02T00:00:00Z' }),
+        lane({ head: 'c', lane: 'code-quality', expectedLanes: ['code-quality', 'security'], publishedAt: '2026-03-03T00:00:00Z' }),
+        lane({ head: 'c', lane: 'security', expectedLanes: ['code-quality', 'security'], publishedAt: '2026-03-03T00:05:00Z' }),
+      ],
+    }]);
+
+    const pr = result.pullRequests[0];
+    assert.equal(pr.noLaneEvidence, false);
+    assert.equal(pr.reviewedHeads, 2);
+    assert.equal(pr.blockingEntries, 3);
+    assert.equal(pr.firstReviewClean, false);
+    assert.deepEqual(pr.rounds, { complete: 2, inProgress: 0, abandoned: 1 });
   });
 
   it('rejects observed lanes outside the declared expected lane set', () => {
