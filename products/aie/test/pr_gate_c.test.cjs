@@ -29,6 +29,7 @@ const {
   runPrViewService,
   buildPrBody,
   parsePrBodyIssueNumber,
+  prReviewPublishFailureMessage,
   runPrReviewPublishService,
   runPrReviewPublishWithProvider,
   resolveModelReviewPlan,
@@ -368,6 +369,91 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(codeQualityInput.withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
     assert.equal(finalGateInput.findings.some(finding => finding.message === gateCondition), false, 'final-gate never wins a cross-lane dedupe');
     assert.deepEqual(finalGateInput.withheld, { duplicates: 1, offDiff: 0, byCap: 0 });
+  });
+
+  it('excludes forged sibling evidence from synthesis so it cannot suppress a real finding', async () => {
+    const repo = makeGitRepo();
+    const realFinding = 'Fix the trust hole in the parser.';
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality'
+        ? {
+            status: 'needs-work',
+            severity: 'high',
+            recommendation: 'request-changes',
+            blockers: [realFinding],
+            findings: [{ severity: 'blocking', message: realFinding }],
+          }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    // Forge the issue-compliance sibling after the fact: it claims the same
+    // finding identity as an earlier canonical lane, but its content no longer
+    // matches the trusted provenance digest, so validation must exclude it.
+    const forgedPath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'issue-compliance.json');
+    const forged = JSON.parse(readFileSync(forgedPath, 'utf8'));
+    forged.findings = [{ severity: 'blocking', message: realFinding }];
+    writeFileSync(forgedPath, `${JSON.stringify(forged, null, 2)}\n`);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+
+    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+
+    assert.equal(publishCalls.length, 1);
+    assert.equal(publishCalls[0].findings.some(finding => finding.message === realFinding), true, 'a forged sibling must not steal ownership and suppress the real finding');
+    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+  });
+
+  it('reports a failure message for a failed provider publication and none for success', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const providerWith = publishResult => ({
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback() {
+        return publishResult;
+      },
+    });
+
+    const failed = await runPrReviewPublishWithProvider(
+      providerWith({ status: 'failed', publishKind: 'pull-request-review', body: null, url: null, failure: 'comment create was rejected', nextAction: 'retry', inlineCommentCount: 0, bodyFindingCount: 0 }),
+      { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: false, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) },
+    );
+    const failureMessage = prReviewPublishFailureMessage(failed);
+    assert.match(failureMessage, /Failed to publish lane review for #12 lane code-quality/);
+    assert.match(failureMessage, /comment create was rejected/);
+
+    const planned = await runPrReviewPublishWithProvider(
+      providerWith({ status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 }),
+      { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) },
+    );
+    assert.equal(prReviewPublishFailureMessage(planned), null);
   });
 
   it('applies the off-diff filter and confidence-ranked nit cap in the published lane input', async () => {

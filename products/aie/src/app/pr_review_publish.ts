@@ -1,7 +1,7 @@
 import type { Config } from '../config/index.js';
 import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
-import { normalizeReviewFinding, type ReviewFinding } from '@tjalve/qube-core';
+import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -168,47 +168,19 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
   return relativePath.replace(/\\/g, '/');
 }
 
-// Sibling lane evidence feeds cross-lane synthesis only; a missing or
-// unparseable file (or an individually malformed finding) is simply absent
-// from the synthesis input rather than a publish failure.
-function readSynthesisFindings(value: unknown): ReviewFinding[] {
-  if (!Array.isArray(value)) return [];
-  const findings: ReviewFinding[] = [];
-  for (const item of value) {
-    if (!isRecord(item)) continue;
-    try {
-      const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
-        ? {
-            path: item.location.path,
-            ...(typeof item.location.line === 'number' ? { line: item.location.line } : {}),
-            ...(typeof item.location.endLine === 'number' ? { endLine: item.location.endLine } : {}),
-            side: item.location.side === 'source' ? 'source' as const : 'destination' as const,
-          }
-        : undefined;
-      findings.push(normalizeReviewFinding({
-        id: typeof item.id === 'string' ? item.id : undefined,
-        severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
-        message: typeof item.message === 'string' ? item.message : '',
-        ...(location ? { location } : {}),
-        ...(typeof item.suggestion === 'string' ? { suggestion: item.suggestion } : {}),
-        ...(typeof item.confidence === 'number' ? { confidence: item.confidence } : {}),
-      }));
-    } catch {
-      continue;
-    }
-  }
-  return findings;
-}
-
+// Sibling lane evidence feeds cross-lane synthesis only when it passes the
+// same full current-head validation as the publishing lane (identity,
+// status/recommendation consistency, artifact contract, trusted provenance).
+// An unvalidated sibling must never claim ownership of a finding identity,
+// because dedupe would then withhold the real lane's finding from the
+// provider; invalid or missing siblings are simply absent from synthesis.
 function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId): SynthesisLaneInput[] {
   const siblings: SynthesisLaneInput[] = [];
   for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
     if (laneId === excludeLane) continue;
-    const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, laneId);
     try {
-      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-      if (!isRecord(parsed)) continue;
-      siblings.push({ laneId, findings: readSynthesisFindings(parsed.findings) });
+      const sibling = validateLaneEvidence(repoRoot, issueNumber, prNumber, headSha, laneId);
+      siblings.push({ laneId, findings: sibling.findings });
     } catch {
       continue;
     }
@@ -475,6 +447,14 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
     changedPaths: options.changedPaths ?? changedPaths ?? undefined,
     nitCap: options.nitCap ?? config.reviewNitCap,
   });
+}
+
+// The CLI must not report a failed provider publication as success; the
+// runtime handler turns a non-null message into a failing command result.
+export function prReviewPublishFailureMessage(result: PrReviewPublishResult): string | null {
+  if (result.publish.status !== 'failed') return null;
+  const cause = result.publish.failure ?? result.publish.nextAction ?? 'provider publication failed';
+  return `Failed to publish lane review for #${result.prNumber} lane ${result.lane}. Likely cause: ${cause}.`;
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {

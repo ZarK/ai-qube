@@ -570,6 +570,10 @@ function findingDigest(findings: readonly ReviewFinding[], completeness: string 
         location: finding.location ?? null,
         message: sanitizePublishedText(finding.message),
         suggestion: finding.suggestion ? sanitizePublishedText(finding.suggestion) : null,
+        // Confidence renders in the published body, so a confidence-only
+        // rescore must change the digest or republish-skip would leave the
+        // stale display on the current head.
+        confidence: typeof finding.confidence === 'number' ? finding.confidence : null,
       })),
       completeness: completeness && completeness.trim() !== '' ? sanitizePublishedText(completeness) : null,
     }))

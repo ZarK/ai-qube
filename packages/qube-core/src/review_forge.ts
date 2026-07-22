@@ -185,6 +185,8 @@ export interface ReviewLaneReviewPublishInput {
   readonly findings: readonly (ReviewFinding | string)[];
   readonly completeness: string | null;
   readonly evidencePath: string | null;
+  /** Cross-lane synthesis withheld counts for this lane; informational only, never part of the marker digest. */
+  readonly withheld?: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
 }
 
 export interface ReviewLaneReviewPublishResult {

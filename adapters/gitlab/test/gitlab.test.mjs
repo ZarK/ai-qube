@@ -524,6 +524,53 @@ describe("GitLab review forge adapter", () => {
     assert.equal(plan.actions[0].status, "planned");
   });
 
+  it("renders the synthesis withheld note in lane feedback only when findings were withheld", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const baseInput = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, withheld: { duplicates: 2, offDiff: 1, byCap: 3 } });
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, lane: "security", withheld: { duplicates: 0, offDiff: 0, byCap: 0 } });
+
+    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 cross-lane duplicate\(s\), 1 outside the current diff, 3 beyond the advisory cap/);
+    assert.doesNotMatch(notes[1].body, /Synthesis withheld/);
+  });
+
   it("publishes lane review feedback as GitLab merge request notes and observes the published lane", async () => {
     const notes = [];
     const client = {

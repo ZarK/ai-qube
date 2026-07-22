@@ -4,7 +4,7 @@ import { buildPrBodyService, formatPrBody, parsePrBodyIssueNumber } from './app/
 import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_verify.js';
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
-import { formatPrReviewPublish, runPrReviewPublishService } from './app/pr_review_publish.js';
+import { formatPrReviewPublish, prReviewPublishFailureMessage, runPrReviewPublishService } from './app/pr_review_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
@@ -643,6 +643,10 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
       dryRun: readBooleanFlag(context, 'dry-run'),
       repoRoot: loaded.root,
     });
+    const failureMessage = prReviewPublishFailureMessage(result);
+    if (failureMessage) {
+      return commandFailure(context, { ok: false, command: 'pr review publish', pr: prNumber, lane: laneId, publish: result.publish, error: failureMessage }, failureMessage);
+    }
     return commandResult(context, result, formatPrReviewPublish(result));
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);

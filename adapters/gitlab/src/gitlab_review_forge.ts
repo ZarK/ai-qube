@@ -288,11 +288,16 @@ function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: 
     inlineCommentCount: 0,
     findingDigest,
   };
+  const withheld = input.withheld;
+  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
   const body = [
     metadataLine(metadata),
     `QUBE ${redact(input.lane)} review: ${input.recommendation}`,
     summary,
     ...findings.map(finding => `- ${finding}`),
+    withheldTotal > 0
+      ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld!.duplicates} cross-lane duplicate(s), ${withheld!.offDiff} outside the current diff, ${withheld!.byCap} beyond the advisory cap; see local evidence.`
+      : "",
     input.completeness && input.completeness.trim() !== "" ? `Completeness self-check: ${truncatePublishedCompleteness(input.completeness)}` : "",
     input.evidencePath ? `Evidence: ${redact(input.evidencePath)}` : "",
   ].filter(line => line !== "").join("\n");

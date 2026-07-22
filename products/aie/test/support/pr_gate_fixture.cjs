@@ -25,7 +25,7 @@ try {
 }
 const { parsePrNumber, runPrGate, runPrViewService } = require('../../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../../dist/app/pr_body.js');
-const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
+const { prReviewPublishFailureMessage, runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
 const { resolveModelReviewPlan, reviewRouteKey } = require('../../dist/app/local_review_runner.js');
 const { runPrThreadResolveService } = require('../../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../../dist/runtime_result.js');
@@ -743,6 +743,7 @@ module.exports = {
   buildPrBody,
   parsePrBodyIssueNumber,
   runPrReviewPublishService,
+  prReviewPublishFailureMessage,
   runPrReviewPublishWithProvider,
   resolveModelReviewPlan,
   reviewRouteKey,
