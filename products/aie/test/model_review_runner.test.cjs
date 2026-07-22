@@ -192,7 +192,8 @@ describe('model review runner', () => {
         assert.equal(schema.properties.issueNumber.type, 'integer');
         assert.equal(schema.properties.lane.const, 'code-quality');
         assert.equal(schema.properties.lane.type, 'string');
-        assert.deepEqual(schema.properties.findings.items.required, ['id', 'severity', 'message', 'suggestion', 'location']);
+        assert.deepEqual(schema.properties.findings.items.required, ['id', 'severity', 'message', 'suggestion', 'location', 'confidence']);
+        assert.deepEqual(schema.properties.findings.items.properties.confidence, { anyOf: [{ type: 'number', minimum: 0, maximum: 1 }, { type: 'null' }] });
         assert.deepEqual(schema.properties.artifacts.items.required, ['kind', 'path', 'sha256']);
         assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], invocation.schemaPath);
         return {
@@ -294,6 +295,46 @@ describe('model review runner', () => {
     for (const token of tokens) assert.doesNotMatch(serialized, new RegExp(token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
     assert.doesNotMatch(serialized, /lowercase-secret-value|private-key-material/);
     assert.match(serialized, /\[REDACTED\]/);
+  });
+
+  it('accepts a confidence-bearing advisory and preserves confidence into routed evidence', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-confidence-'));
+    const body = laneResult();
+    body.status = 'needs-work';
+    body.severity = 'high';
+    body.recommendation = 'request-changes';
+    body.blockers = ['Fix the unchecked parser bound.'];
+    body.findings = [
+      { severity: 'blocking', message: 'Fix the unchecked parser bound.', location: { path: 'src/parser.ts', line: 12 }, confidence: 0.8 },
+      { severity: 'advisory', message: 'Prefer the shared helper.', location: { path: 'src/parser.ts', line: 20 }, confidence: 0.3 },
+    ];
+    body.coverage = [{ area: 'code-quality', status: 'finding' }];
+
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'confidence' }) }),
+    });
+
+    assert.equal(result.error, null);
+    assert.ok(result.evidence, 'a confidence-bearing result must be accepted, not rejected whole');
+    const byMessage = Object.fromEntries(result.evidence.findings.map(finding => [finding.message, finding.confidence]));
+    assert.equal(byMessage['Fix the unchecked parser bound.'], 0.8, 'confidence must survive into routed evidence for the confidence-ranked cap');
+    assert.equal(byMessage['Prefer the shared helper.'], 0.3);
+  });
+
+  it('rejects an out-of-range confidence without discarding the lane silently', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-model-route-confidence-bad-'));
+    const body = laneResult();
+    body.findings = [{ severity: 'advisory', message: 'Out-of-range confidence.', location: { path: 'src/parser.ts', line: 4 }, confidence: 1.5 }];
+
+    const result = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({ exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true, stdout: JSON.stringify({ text: JSON.stringify(body), sessionId: 'bad-confidence' }) }),
+    });
+
+    assert.equal(result.evidence, null, 'an out-of-range confidence must fail the lane closed, not coerce silently');
   });
 
   it('fails closed on malformed or incomplete routed output', async () => {

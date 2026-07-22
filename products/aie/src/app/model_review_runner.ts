@@ -217,12 +217,13 @@ function reviewResultSchema(input: ModelReviewRunInput): string {
         items: {
           type: 'object',
           additionalProperties: false,
-          required: ['id', 'severity', 'message', 'suggestion', 'location'],
+          required: ['id', 'severity', 'message', 'suggestion', 'location', 'confidence'],
           properties: {
             id: { anyOf: [{ type: 'string' }, { type: 'null' }] },
             severity: { type: 'string', enum: ['blocking', 'advisory'] },
             message: { type: 'string', minLength: 1 },
             suggestion: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+            confidence: { anyOf: [{ type: 'number', minimum: 0, maximum: 1 }, { type: 'null' }] },
             location: {
               anyOf: [{ type: 'null' }, {
                 type: 'object',
@@ -366,11 +367,12 @@ function strictRoutedLane(value: unknown, input: ModelReviewRunInput, provenance
   if (typeof value.summary !== 'string' || value.summary.trim() === '' || typeof value.completeness !== 'string' || value.completeness.trim() === '') return null;
   if (!isStringArray(value.blockers) || !isStringArray(value.commands) || !isStringArray(value.surfaces) || !isStringArray(value.toolsUsed) || !isStringArray(value.preconditions)) return null;
   if (!Array.isArray(value.findings) || !value.findings.every(item => isRecord(item)
-    && hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location'])
+    && hasExactKeys(item, ['severity', 'message'], ['id', 'suggestion', 'location', 'confidence'])
     && typeof item.severity === 'string' && FINDING_SEVERITY_VALUES.has(item.severity)
     && typeof item.message === 'string' && item.message.trim() !== ''
     && (item.id === undefined || typeof item.id === 'string')
     && (item.suggestion === undefined || typeof item.suggestion === 'string')
+    && (item.confidence === undefined || (typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1))
     && (item.location === undefined || (isRecord(item.location)
       && hasExactKeys(item.location, ['path'], ['line', 'endLine', 'side'])
       && typeof item.location.path === 'string' && item.location.path.trim() !== ''
@@ -421,6 +423,7 @@ function normalizeSchemaOptionals(value: unknown): unknown {
       const normalized = { ...finding };
       if (normalized.id === null) delete normalized.id;
       if (normalized.suggestion === null) delete normalized.suggestion;
+      if (normalized.confidence === null) delete normalized.confidence;
       if (normalized.location === null) delete normalized.location;
       else if (isRecord(normalized.location)) {
         const location = { ...normalized.location };
