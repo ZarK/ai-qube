@@ -1730,11 +1730,16 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       repositoryName = repository.nameWithOwner;
       comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
       const rawPr = await this.getPullRequest(input.prNumber);
-      // Lane feedback must bind to the PR's current head: a caller-supplied
-      // head that the PR has advanced past must fail instead of publishing
-      // review state against an obsolete commit.
-      if (typeof rawPr.headRefOid === 'string' && rawPr.headRefOid !== '' && rawPr.headRefOid !== input.headSha) {
-        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${rawPr.headRefOid}; rerun pr gate for the current PR head.`);
+      // Lane feedback must bind to the PR's current head: an unobservable
+      // head cannot prove freshness, and a caller-supplied head the PR has
+      // advanced past must fail instead of publishing review state against
+      // an obsolete commit.
+      const observedHead = typeof rawPr.headRefOid === 'string' ? rawPr.headRefOid : '';
+      if (observedHead === '') {
+        throw new Error(`pull request #${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitHub reports the current head.`);
+      }
+      if (observedHead !== input.headSha) {
+        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${observedHead}; rerun pr gate for the current PR head.`);
       }
       laneReviews = laneMarkerReviews(rawPr);
       const prAuthorLogin = rawPr.author?.login ?? null;

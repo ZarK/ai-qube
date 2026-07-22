@@ -599,6 +599,26 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('fails GitHub lane publication closed when the PR reports no head SHA', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: '' })] });
+
+    const result = await runPrReviewPublishService(localHostConfig(null), { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
+
+    assert.equal(result.publish.status, 'failed');
+    assert.match(String(result.publish.failure), /did not report a head SHA/);
+  });
+
   it('rejects duplicate, unknown, and self-omitting expected lane sets', async () => {
     const repo = makeGitRepo();
     const evidence = localEvidence();
