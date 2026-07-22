@@ -213,6 +213,41 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(plans[0].withheldOffDiff, 0);
   });
 
+  it('reports no visible obligation when the owner drops a duplicate off-diff', () => {
+    const shared = finding({ severity: 'advisory', message: 'Shared advisory.', location: { path: 'src/untouched.ts', line: 4 } });
+    const plans = planFindingPublication(
+      [
+        { laneId: 'issue-compliance', findings: [shared] },
+        { laneId: 'code-quality', findings: [shared] },
+      ],
+      { changedPaths: ['src/parser.ts'], nitCap: 10 },
+    );
+    const owner = plans.find(plan => plan.laneId === 'issue-compliance');
+    const later = plans.find(plan => plan.laneId === 'code-quality');
+
+    assert.equal(owner.published.length, 0, 'the owner withholds it off-diff');
+    assert.equal(later.published.length, 0, 'the later lane withholds it as a duplicate');
+    assert.equal(owner.hasVisibleObligation, false);
+    assert.equal(later.hasVisibleObligation, false, 'the shared identity survived onto no marker');
+  });
+
+  it('reports a visible obligation for a withheld duplicate the owner still publishes', () => {
+    const shared = finding({ severity: 'blocking', message: 'Shared blocker.', location: { path: 'src/anywhere.ts', line: 2 } });
+    const plans = planFindingPublication(
+      [
+        { laneId: 'code-quality', findings: [shared] },
+        { laneId: 'final-gate', findings: [shared] },
+      ],
+      { changedPaths: ['src/other.ts'], nitCap: 10 },
+    );
+    const owner = plans.find(plan => plan.laneId === 'code-quality');
+    const later = plans.find(plan => plan.laneId === 'final-gate');
+
+    assert.equal(owner.published.length, 1, 'a blocking finding always publishes at the owner');
+    assert.equal(later.published.length, 0);
+    assert.equal(later.hasVisibleObligation, true, 'the identity is visible on the owner marker');
+  });
+
   it('throws a plain Error for an invalid nitCap', () => {
     for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       assert.throws(

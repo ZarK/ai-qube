@@ -535,13 +535,14 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   if (!synthesisPlan) {
     throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis returned no plan for lane ${options.lane}. Next action: rerun the lane review for the current head.`);
   }
-  // A request-changes lane whose entire finding set was withheld would show
-  // the provider an obligation-free rejection. Cross-lane duplicates stay
-  // visible at their owning lane, so only off-diff or cap withholding makes
-  // an obligation invisible; that combination fails closed so the reviewer
-  // re-anchors findings or policy raises the advisory cap.
-  if (synthesisPlan.published.length === 0 && evidence.recommendation === 'request-changes' && synthesisPlan.withheldOffDiff + synthesisPlan.withheldByCap > 0) {
-    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis withheld every ${options.lane} finding (${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap) while the lane recommendation is request-changes, leaving no provider-visible obligation. Next action: rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.`);
+  // A request-changes lane must leave at least one provider-visible
+  // obligation. Synthesis reports whether any of this lane's findings survived
+  // onto some marker (this lane or the identity owner); a duplicate this lane
+  // withheld can still vanish if the owner dropped it off-diff or by the cap,
+  // so the guard fails closed on the union-visibility signal, not on which
+  // withhold bucket was hit.
+  if (synthesisPlan.published.length === 0 && evidence.recommendation === 'request-changes' && !synthesisPlan.hasVisibleObligation) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis left no provider-visible obligation for the request-changes lane ${options.lane} (${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap), and no other lane published the withheld identities. Next action: rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.`);
   }
   const publishInput = {
     dryRun: options.dryRun ?? false,

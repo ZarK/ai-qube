@@ -537,6 +537,50 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('fails a request-changes lane closed when its only finding is a duplicate the owner dropped off-diff', async () => {
+    const repo = makeGitRepo();
+    // The shared advisory is anchored off the observed diff. The earlier
+    // canonical owner (issue-compliance) withholds it as off-diff; the later
+    // request-changes lane (code-quality) withholds it as a duplicate. It
+    // therefore appears on no marker, so the rejection has no visible
+    // obligation and must fail closed.
+    const sharedAdvisory = { severity: 'advisory', message: 'Prefer the shared parser helper.', location: { path: 'src/untouched.ts', line: 4 } };
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'issue-compliance' ? { findings: [{ ...sharedAdvisory }] } : {}),
+      ...(lane.id === 'code-quality'
+        ? {
+            status: 'needs-work',
+            severity: 'high',
+            recommendation: 'request-changes',
+            blockers: ['Prefer the shared parser helper.'],
+            findings: [{ ...sharedAdvisory }],
+          }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('an obligation-free rejection must not reach the provider');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), changedPaths: ['src/parser.ts'] }),
+      /no provider-visible obligation/,
+    );
+  });
+
   it('fails publish closed when synthesis withholds every finding of a request-changes lane', async () => {
     const repo = makeGitRepo();
     const cappedAdvisory = 'Prefer the shared helper for parsing.';
@@ -571,7 +615,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     await assert.rejects(
       () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), changedPaths: ['src/parser.ts'] }),
-      /synthesis withheld every code-quality finding/,
+      /no provider-visible obligation/,
     );
   });
 

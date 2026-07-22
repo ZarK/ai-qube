@@ -24,6 +24,14 @@ export interface LanePublicationPlan {
   readonly withheldDuplicates: number;
   readonly withheldOffDiff: number;
   readonly withheldByCap: number;
+  /**
+   * True when at least one of this lane's original findings is published on
+   * some lane's marker (this lane or the identity owner). A request-changes
+   * lane with no visible obligation must fail publication closed, because a
+   * duplicate it withheld may have been dropped off-diff or by the cap at the
+   * owning lane and therefore appears on no marker at all.
+   */
+  readonly hasVisibleObligation: boolean;
 }
 
 interface WorkingFinding {
@@ -145,7 +153,8 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
   });
   const keptAdvisories = new Set(rankedAdvisories.slice(0, options.nitCap));
 
-  return lanes.map(lane => {
+  const publishedByLane = new Map<LocalReviewLaneId, { published: ReviewFinding[]; withheldByCap: number }>();
+  for (const lane of lanes) {
     const surviving = survivingByLane.get(lane.laneId) ?? [];
     // Published order is part of the contract: blocking findings first in
     // evidence order, then capped advisories in the same confidence-ranked
@@ -162,12 +171,28 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         withheldByCap += 1;
       }
     }
+    publishedByLane.set(lane.laneId, { published, withheldByCap });
+  }
+
+  // An obligation is visible only if it survived to some lane's published set.
+  // A duplicate that this lane withheld can still vanish entirely if the owner
+  // also dropped it off-diff or by the cap, so visibility is judged against
+  // the union of everything actually published, not against ownership alone.
+  const publishedIdentities = new Set<string>();
+  for (const plan of publishedByLane.values()) {
+    for (const finding of plan.published) publishedIdentities.add(findingIdentity(finding));
+  }
+
+  return lanes.map(lane => {
+    const plan = publishedByLane.get(lane.laneId)!;
+    const hasVisibleObligation = lane.findings.some(finding => publishedIdentities.has(findingIdentity(finding)));
     return {
       laneId: lane.laneId,
-      published,
+      published: plan.published,
       withheldDuplicates: withheldDuplicatesByLane.get(lane.laneId) ?? 0,
       withheldOffDiff: withheldOffDiffByLane.get(lane.laneId) ?? 0,
-      withheldByCap,
+      withheldByCap: plan.withheldByCap,
+      hasVisibleObligation,
     };
   });
 }
