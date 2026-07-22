@@ -26,6 +26,12 @@ export interface PrReviewPublishOptions {
   carryForwardScope?: CarryForwardScope;
   expectedLanes?: readonly LocalReviewLaneId[];
   /**
+   * Expected lanes whose current-head evidence is a trusted-provider reuse
+   * marker with no local evidence file. Synthesis treats them as approved,
+   * finding-free siblings instead of failing the mixed head closed.
+   */
+  providerReuseLanes?: readonly LocalReviewLaneId[];
+  /**
    * Paths changed by this PR head. Undefined or empty disables only the
    * synthesis off-diff advisory filter (never dedupe or the nit cap);
    * null records a failed delta observation and fails publication closed.
@@ -220,7 +226,7 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
 // partial sibling view would make dedupe ownership and the global advisory
 // cap depend on publish order, so missing or invalid siblings fail the
 // publish closed instead of being silently absent.
-function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId, expectedLanes: readonly LocalReviewLaneId[]): { siblings: SynthesisLaneInput[]; missing: LocalReviewLaneId[] } {
+function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId, expectedLanes: readonly LocalReviewLaneId[], providerReuseLanes: ReadonlySet<LocalReviewLaneId>): { siblings: SynthesisLaneInput[]; missing: LocalReviewLaneId[] } {
   const siblings: SynthesisLaneInput[] = [];
   const missing: LocalReviewLaneId[] = [];
   for (const laneId of expectedLanes) {
@@ -228,8 +234,17 @@ function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumb
     try {
       const sibling = validateLaneEvidence(repoRoot, issueNumber, prNumber, headSha, laneId);
       siblings.push({ laneId, findings: sibling.findings });
-    } catch {
-      missing.push(laneId);
+    } catch (error) {
+      // A trusted-provider-reuse sibling is an already-approved lane whose
+      // evidence lives only on its provider marker, so it has no local file
+      // and contributes no findings to synthesis; it must not fail the mixed
+      // head closed. Any other local-origin sibling that fails validation is
+      // genuinely missing and fails publication closed.
+      if (providerReuseLanes.has(laneId)) {
+        siblings.push({ laneId, findings: [] });
+      } else {
+        missing.push(laneId);
+      }
     }
   }
   return { siblings, missing };
@@ -501,7 +516,8 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   if (!expectedLaneIds.includes(options.lane)) {
     throw new Error(`publish lane review failed. Likely cause: the expected lane set (${expectedLaneIds.join(', ')}) does not name the publishing lane ${options.lane}. Next action: include the publishing lane in the expected set.`);
   }
-  const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds);
+  const providerReuseLaneSet = new Set<LocalReviewLaneId>(options.providerReuseLanes ?? []);
+  const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds, providerReuseLaneSet);
   if (missing.length > 0) {
     throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis requires validated current-head evidence for every expected lane, and ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid at ${headSha}. Next action: complete the remaining lane reviews at this head, then rerun publish or the PR gate.`);
   }

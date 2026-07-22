@@ -419,7 +419,54 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
-  it('rejects synthesis publish while an expected sibling lane has no evidence at the head', async () => {
+  it('publishes a fresh lane on a mixed head where a sibling is a trusted-provider reuse', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    const withContext = lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    });
+    evidence.lanes = evidence.lanes.map(withContext);
+    writeLocalEvidence(repo, evidence);
+    // Remove the sibling's local evidence entirely: it exists only as a
+    // trusted-provider reuse marker at this head, with no local file.
+    const reuseLane = 'issue-compliance';
+    rmSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', `${reuseLane}.json`));
+    const trustedProvenance = join(repo, '.git', 'qube', 'aie', 'host-provenance', '93', '12', 'abc123', `${reuseLane}.json`);
+    if (existsSync(trustedProvenance)) rmSync(trustedProvenance);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      },
+    };
+
+    const result = await runPrReviewPublishWithProvider(provider, {
+      prNumber: 12,
+      issueNumber: 93,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      dryRun: true,
+      repoRoot: repo,
+      expectedLanes: evidence.lanes.map(lane => lane.id),
+      providerReuseLanes: [reuseLane],
+    });
+
+    assert.equal(result.publish.status, 'planned', 'the fresh lane must publish despite a reuse-only sibling');
+    assert.equal(publishCalls.length, 1);
+    assert.deepEqual(publishCalls[0].expectedLanes, evidence.lanes.map(lane => lane.id), 'the marker still declares the complete lane set');
+  });
+
+  it('still fails closed when a non-reuse expected sibling lane has no evidence at the head', async () => {
     const repo = makeGitRepo();
     const evidence = localEvidence();
     evidence.lanes = evidence.lanes.map(lane => ({
