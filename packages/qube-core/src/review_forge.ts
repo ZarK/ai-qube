@@ -90,6 +90,7 @@ export interface ReviewFinding {
   readonly location?: ReviewFindingLocation;
   readonly message: string;
   readonly suggestion?: string;
+  readonly confidence?: number;
 }
 
 export interface ReviewDiffIndex {
@@ -127,6 +128,10 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }
 
+function validConfidence(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
 export function normalizeReviewFinding(input: Omit<ReviewFinding, "id"> & { readonly id?: string }): ReviewFinding {
   const message = nonEmpty(input.message, "message");
   const severity = input.severity === "blocking" ? "blocking" : "advisory";
@@ -139,12 +144,14 @@ export function normalizeReviewFinding(input: Omit<ReviewFinding, "id"> & { read
     location = { path, ...(line ? { line } : {}), ...(endLine ? { endLine } : {}), side };
   }
   const suggestion = typeof input.suggestion === "string" && input.suggestion.trim() !== "" ? input.suggestion.trim() : undefined;
+  const confidence = validConfidence(input.confidence) ? input.confidence : undefined;
   return {
     id: typeof input.id === "string" && input.id.trim() !== "" ? input.id.trim() : stableFindingId({ severity, location, message, suggestion }),
     severity,
     ...(location ? { location } : {}),
     message,
     ...(suggestion ? { suggestion } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
   };
 }
 
@@ -178,6 +185,8 @@ export interface ReviewLaneReviewPublishInput {
   readonly findings: readonly (ReviewFinding | string)[];
   readonly completeness: string | null;
   readonly evidencePath: string | null;
+  /** Cross-lane synthesis withheld counts for this lane; rendered in provider bodies and included in idempotency digests so stale accounting republishes. */
+  readonly withheld?: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
 }
 
 export interface ReviewLaneReviewPublishResult {

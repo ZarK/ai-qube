@@ -19,7 +19,7 @@ import {
   type ReviewParticipantRollup,
 } from '../core/review_participant.js';
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
-import { buildFixBatch, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
+import { buildFixBatch, gitDeltaPathsSync, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewRunResult } from './local_review_runner.js';
@@ -28,7 +28,7 @@ import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProces
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
-import { runPrReviewPublishWithProvider } from './pr_review_publish.js';
+import { prReviewPublishFailureMessage, runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
@@ -926,6 +926,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         } else {
           actions = await applyReviewPlan(provider, firstPlan);
           actions.push(waitAction(policy.reviews.waitMinutes, 'skipped'));
+          // The synthesis filter must see only the committed base-to-head
+          // delta: local HEAD was just verified equal to the provider head,
+          // and working-tree or index paths must never count as part of the
+          // pushed PR. A null observation fails publication closed downstream.
+          const publishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
           const publishedUrls: string[] = [];
           for (const evidence of localReview.evidence.filter(entry => entry.issueNumber !== null)) {
             for (const lane of evidence.lanes.filter(entry => routedFocuses.includes(entry.id) && entry.carriedForward === null && freshRoutedLaneKeys.has(`${evidence.issueNumber} ${entry.id}`))) {
@@ -934,8 +939,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
                 // The expected set names every lane carrying validated evidence at
                 // this head, so all markers on the head agree and stats can prove
                 // completeness; publishing only runs once the whole batch validates.
-                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
-                if (published.publish.url) publishedUrls.push(published.publish.url);
+                const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap });
+                const publishFailure = prReviewPublishFailureMessage(published);
+                if (publishFailure) {
+                  publishUnavailable.push(`${lane.id}: ${publishFailure}`);
+                } else if (published.publish.url) {
+                  publishedUrls.push(published.publish.url);
+                }
               } catch (error: unknown) {
                 publishUnavailable.push(`${lane.id}: routed lane publish failed (${error instanceof Error ? error.message : String(error)}).`);
               }
@@ -954,11 +964,18 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     : null;
   const publishedCarriedLanes: string[] = [];
   if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
+    // Same committed-delta rule as the fresh-lane publish loop above.
+    const carriedPublishDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
     for (const evidence of localReview.evidence.filter(entry => entry.status === 'passed' && entry.issueNumber !== null)) {
       for (const lane of evidence.lanes.filter(entry => entry.carriedForward !== null && entry.status === 'passed' && entry.recommendation === 'approve')) {
         try {
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope });
-          if (published.publish.status === 'published' || published.publish.status === 'skipped') publishedCarriedLanes.push(lane.id);
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: evidence.lanes.map(entry => entry.id), providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap });
+          const carriedFailure = prReviewPublishFailureMessage(published);
+          if (carriedFailure) {
+            publishUnavailable.push(`${lane.id}: ${carriedFailure}`);
+          } else if (published.publish.status === 'published' || published.publish.status === 'skipped') {
+            publishedCarriedLanes.push(lane.id);
+          }
         } catch (error: unknown) {
           publishUnavailable.push(`${lane.id}: carried-forward note publish failed (${error instanceof Error ? error.message : String(error)}); publish the lane manually and rerun the PR gate.`);
         }

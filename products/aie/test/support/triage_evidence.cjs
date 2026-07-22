@@ -41,7 +41,7 @@ function laneEvidenceBody(repo, lane, findings, { issueNumber, prNumber, headSha
     summary: `${lane} reviewed`,
     blockers: [],
     findings,
-    artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/${lane}.json`, sha256: 'test-hash' }],
+    artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/${lane}.json`, sha256: null }],
     commands: [`qube aie view ${issueNumber}`],
     surfaces: ['PR'],
     contextReviewed: [

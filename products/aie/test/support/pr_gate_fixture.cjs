@@ -9,7 +9,7 @@ const { basename, join } = require('node:path');
 
 const { getDefaults } = require('../../dist/config/index.js');
 const { renderAgentPrompt } = require('../../dist/agent_descriptors.js');
-const { laneContextLines, promptStack, hash: promptTextHashFromLines } = require('../../dist/app/local_review_runner_support.js');
+const { laneContextLines, promptStack, hash: promptTextHashFromLines, readRouteFaults } = require('../../dist/app/local_review_runner_support.js');
 const { buildFixBatch, localReviewEvidenceSha256 } = require('../../dist/local_review_evidence.js');
 let createGitHubReviewForgeProvider;
 try {
@@ -25,7 +25,7 @@ try {
 }
 const { parsePrNumber, runPrGate, runPrViewService } = require('../../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../../dist/app/pr_body.js');
-const { runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
+const { prReviewPublishFailureMessage, runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
 const { resolveModelReviewPlan, reviewRouteKey } = require('../../dist/app/local_review_runner.js');
 const { runPrThreadResolveService } = require('../../dist/app/pr_thread_resolve.js');
 const { stringListFlag } = require('../../dist/runtime_result.js');
@@ -720,6 +720,7 @@ module.exports = {
   execFileSync,
   spawnSync,
   copyFileSync,
+  cpSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -733,6 +734,7 @@ module.exports = {
   getDefaults,
   renderAgentPrompt,
   laneContextLines,
+  readRouteFaults,
   promptStack,
   promptTextHashFromLines,
   buildFixBatch,
@@ -743,6 +745,7 @@ module.exports = {
   buildPrBody,
   parsePrBodyIssueNumber,
   runPrReviewPublishService,
+  prReviewPublishFailureMessage,
   runPrReviewPublishWithProvider,
   resolveModelReviewPlan,
   reviewRouteKey,

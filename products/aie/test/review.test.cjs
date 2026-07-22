@@ -30,6 +30,12 @@ function cleanConfig() {
 function writeLocalReview(repo, issueNumber, status = 'passed') {
   const directory = join(repo, '.qube', 'aie', 'pr-reviews', `issue-${issueNumber}`, 'pr-12');
   mkdirSync(directory, { recursive: true });
+  const artifactDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
+  mkdirSync(artifactDirectory, { recursive: true });
+  for (const artifactName of ['task-record-compliance.json', 'issue-compliance.json', 'code-quality.txt', 'tests-quality.txt', 'manual-qa.txt', 'final-gate.json']) {
+    writeFileSync(join(artifactDirectory, artifactName), `${artifactName} fixture artifact
+`);
+  }
   writeFileSync(join(directory, 'abc123.json'), JSON.stringify({
     version: 1,
     issueNumber,
@@ -43,12 +49,12 @@ function writeLocalReview(repo, issueNumber, status = 'passed') {
     promptStack: [{ id: 'builtin:review-profile:local-standard', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }],
     recordedAt: '2026-06-22T00:00:00.000Z',
     lanes: [
-      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/task-record-compliance.json', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:task-record-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/issue-compliance.json', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:issue-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'code-quality', status, severity: 'none', recommendation: status === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/code-quality.txt', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:code-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:tests-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:manual-qa', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
-      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: 'test-hash' }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:final-gate', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'task-record-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'task record reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/task-record-compliance.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:task-record-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'issue-compliance', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'issue reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/issue-compliance.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:issue-compliance', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'code-quality', status, severity: 'none', recommendation: status === 'passed' ? 'approve' : 'request-changes', summary: 'code quality reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/code-quality.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:code-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'test-output', path: '.qube/aie/reviews/93/12/abc123/tests-quality.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:tests-quality', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'terminal-log', path: '.qube/aie/reviews/93/12/abc123/manual-qa.txt', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:manual-qa', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
+      { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: '.qube/aie/reviews/93/12/abc123/final-gate.json', sha256: null }], commands: [], surfaces: [], promptStack: [{ id: 'builtin:final-gate', source: 'builtin', path: null, sha256: 'test-hash', trust: 'policy' }] },
     ],
   }, null, 2));
 }
@@ -72,7 +78,7 @@ function writeLocalLaneReview(repo, issueNumber) {
       recommendation: 'approve',
       summary: `${lane} reviewed`,
       blockers: [],
-      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/12/abc123/${lane}.json`, sha256: 'test-hash' }],
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/12/abc123/${lane}.json`, sha256: null }],
       commands: ['local review fixture'],
       surfaces: ['PR'],
       contextReviewed: [{ kind: 'diff', source: 'pr:12:diff', trust: 'untrusted-task-input', freshness: 'current' }],

@@ -524,6 +524,136 @@ describe("GitLab review forge adapter", () => {
     assert.equal(plan.actions[0].status, "planned");
   });
 
+  it("renders the synthesis withheld note in lane feedback only when findings were withheld", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const snapshot = await provider.loadPullRequestReview(12);
+    const baseInput = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, withheld: { duplicates: 2, offDiff: 1, byCap: 3 } });
+    await provider.publishLaneReviewFeedback(snapshot.item, { ...baseInput, lane: "security", withheld: { duplicates: 0, offDiff: 0, byCap: 0 } });
+
+    assert.match(notes[0].body, /Synthesis withheld 6 finding\(s\): 2 cross-lane duplicate\(s\), 1 outside the current diff, 3 beyond the advisory cap/);
+    assert.doesNotMatch(notes[1].body, /Synthesis withheld/);
+  });
+
+  it("fails legacy lane publication when the merge request head advanced past the input head", async () => {
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ sha: "advanced-head" });
+      },
+      async listMergeRequestNotes() {
+        return [];
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote() {
+        throw new Error("no note may be created for a stale head");
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const result = await provider.publishLaneReviewFeedback(snapshot.item, {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /head changed from head-sha to advanced-head/);
+  });
+
+  it("fails lane publication when the merge request head advanced past the input head", async () => {
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ sha: "advanced-head" });
+      },
+      async listMergeRequestNotes() {
+        throw new Error("notes must not be read for a stale head");
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote() {
+        throw new Error("no note may be created for a stale head");
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /head changed from head-sha to advanced-head/);
+  });
+
   it("publishes lane review feedback as GitLab merge request notes and observes the published lane", async () => {
     const notes = [];
     const client = {
@@ -573,13 +703,62 @@ describe("GitLab review forge adapter", () => {
     assert.match(updated.item.trustedMetadata.trustedLaneReviews[0].findingDigest, /^[a-f0-9]{16}$/);
   });
 
-  it("publishes lane review feedback without loading full merge request review state", async () => {
-    const notes = [];
+  it("fails lane publication closed when the merge request reports no head SHA", async () => {
+    const mergeRequest = makeGitLabMergeRequest({ reviewers: [] });
+    delete mergeRequest.sha;
     const provider = createGitLabReviewForgeProvider({
       projectId: "acme/qube",
       client: {
         async getMergeRequest() {
-          throw new Error("full merge request read should not run");
+          return mergeRequest;
+        },
+        async listMergeRequestNotes() {
+          throw new Error("notes must not be read for an unverifiable head");
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("no note may be created for an unverifiable head");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const result = await provider.publishLaneReviewFeedbackForPullRequest({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      profile: "focused",
+      status: "complete",
+      recommendation: "approve",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Review passed.",
+      findings: [],
+      completeness: "Inspected the full diff.",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    });
+
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /did not report a head SHA/);
+  });
+
+  it("publishes lane review feedback with only a light head check and no discussion reads", async () => {
+    const notes = [];
+    let mergeRequestReads = 0;
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          // A single light read verifies the current head before mutation;
+          // full review state (discussions) must still stay unread.
+          mergeRequestReads += 1;
+          return makeGitLabMergeRequest({ reviewers: [] });
         },
         async listMergeRequestNotes() {
           return notes;

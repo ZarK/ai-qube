@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
 import { changedPathUnderSignal } from '../repo/layout.js';
@@ -82,25 +82,48 @@ export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNu
 
 export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  // Chain verification runs before the existence probe so a relocated
+  // ancestor cannot make recorded faults read as legitimately absent.
+  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
+  // The ledger is a trusted store that steers configured-versus-failover
+  // routing, so reads apply the same containment contract as writes: an
+  // absent ledger means no faults, but a symlinked ledger file or a
+  // relocated ancestor chain fails the read closed instead of feeding
+  // attacker-controlled route state into the runner.
+  let ledgerStats;
   try {
-    const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
-    if (isRecord(parsed) && parsed.version === 1 && isRecord(parsed.lanes)) {
-      const lanes: Record<string, RouteFaultRecord> = {};
-      for (const [lane, record] of Object.entries(parsed.lanes)) {
-        if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
-        lanes[lane] = {
-          count: Number(record.count),
-          routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
-          lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
-          lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
-        };
-      }
-      return { version: 1, lanes };
-    }
-  } catch {
-    // A missing or malformed ledger means no recorded faults.
+    ledgerStats = lstatSync(path);
+  } catch (err: unknown) {
+    // Only a confirmed missing ledger means no recorded faults; any other
+    // observation failure must not silently erase fault state and re-enable
+    // a faulted route.
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, lanes: {} };
+    throw new Error(`Refusing to treat an unreadable route-fault ledger as empty: ${path}. Fix filesystem access, then rerun.`);
   }
-  return { version: 1, lanes: {} };
+  if (!ledgerStats.isFile()) {
+    throw new Error(`Refusing to read the route-fault ledger through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
+  }
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(readFileSync(path, 'utf8'));
+  } catch {
+    throw new Error(`Refusing to treat an unreadable route-fault ledger as empty: ${path}. Inspect or remove the ledger, then rerun.`);
+  }
+  if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.lanes)) {
+    throw new Error(`Refusing to treat a malformed route-fault ledger as empty: ${path}. Inspect or remove the ledger, then rerun.`);
+  }
+  const lanes: Record<string, RouteFaultRecord> = {};
+  for (const [lane, record] of Object.entries(parsed.lanes)) {
+    if (!isRecord(record) || !Number.isSafeInteger(record.count) || Number(record.count) < 1) continue;
+    lanes[lane] = {
+      count: Number(record.count),
+      routeKey: typeof record.routeKey === 'string' ? record.routeKey : '',
+      lastReasonCode: typeof record.lastReasonCode === 'string' ? record.lastReasonCode : 'unknown',
+      lastAt: typeof record.lastAt === 'string' ? record.lastAt : '',
+    };
+  }
+  return { version: 1, lanes };
 }
 
 const ROUTE_FAULT_LOCK_STALE_MS = 30_000;
@@ -131,7 +154,7 @@ function lockHolderAlive(lockDir: string): boolean | null {
 // instead of an unbounded hang.
 function withRouteFaultLock<T>(repoRoot: string, path: string, update: () => T): T {
   const lockDir = `${path}.lock`;
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
   // The lock directory and its holder record share the ledger's parent chain;
   // a symlinked route-faults descendant must refuse the lock write too.
   verifyReviewWriteContainment(path, { repoRoot, subtree: ['.git', 'qube', 'aie'] });
@@ -203,7 +226,7 @@ interface ReviewWriteContainment {
 // resolve inside that subtree with every descendant segment literal, so a
 // symlinked issue, PR, or head directory cannot redirect a write into another
 // head's evidence or outside the repository.
-function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
+export function verifyReviewWriteContainment(path: string, containment: ReviewWriteContainment): void {
   try {
     const repoReal = realpathSync(containment.repoRoot);
     const containReal = realpathSync(join(containment.repoRoot, ...containment.subtree));
@@ -225,7 +248,15 @@ function verifyReviewWriteContainment(path: string, containment: ReviewWriteCont
   }
 }
 
-function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
+// Create a trusted-store directory only after verifying its literal ancestor
+// chain, so recursive mkdir can never materialize directories through an
+// existing symlinked or junctioned ancestor before the containment guard runs.
+export function mkdirTrustedStoreSync(directory: string, containment: ReviewWriteContainment): void {
+  verifyTrustedStoreChain(containment.repoRoot, containment.subtree, directory);
+  mkdirSync(directory, { recursive: true });
+}
+
+export function writeReviewFileGuarded(path: string, content: string, containment?: ReviewWriteContainment): void {
   let symlink = false;
   try {
     symlink = lstatSync(path).isSymbolicLink();
@@ -239,21 +270,35 @@ function writeReviewFileGuarded(path: string, content: string, containment?: Rev
   // Write to an unguessable temp name with exclusive create and rename over the
   // destination: rename replaces a symlink entry instead of following it, and
   // the exclusive create fails rather than following anything pre-planted even
-  // at the temp name.
+  // at the temp name. The ancestor chain is revalidated at the last moment
+  // before the mutation so a directory swapped for a junction after the
+  // containment check still fails closed.
   const tempPath = `${path}.${randomUUID()}.tmp`;
+  // The chain is revalidated immediately before EACH filesystem mutation, not
+  // just once: a concurrent junction swap of the destination parent between
+  // the temp write and the rename could otherwise redirect the final entry
+  // outside the trusted store.
+  const revalidate = (): void => {
+    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, path);
+  };
   try {
+    if (containment) verifyTrustedStoreChain(containment.repoRoot, containment.subtree, tempPath);
     writeFileSync(tempPath, content, { flag: 'wx' });
     try {
+      revalidate();
       renameSync(tempPath, path);
     } catch {
       // Windows can refuse to replace a locked destination; clear it and retry.
+      revalidate();
       rmSync(path, { force: true });
       try {
+        revalidate();
         renameSync(tempPath, path);
       } catch {
         // Final fallback: the destination entry was just removed, so recreate it
         // with exclusive create (no replacement symlink can be followed) and
         // only then discard the temp copy — content is never silently lost.
+        revalidate();
         writeFileSync(path, content, { flag: 'wx' });
         rmSync(tempPath, { force: true });
       }
@@ -411,7 +456,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
       recordedAt: new Date().toISOString(),
     };
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     return path;
   } catch {
@@ -466,14 +511,15 @@ function processAlive(pid: number): boolean {
 // the loser observes the winner's fresh lock and skips lane execution.
 export function acquireReviewSessionLock(repoRoot: string, issueNumber: number, prNumber: number, headSha: string): { held: boolean; activeLock: ReviewSessionLockReport | null } {
   const path = reviewSessionLockPath(repoRoot, issueNumber, prNumber, headSha);
-  mkdirSync(dirname(path), { recursive: true });
   try {
-    // The full parent chain must resolve literally: a symlinked issue, PR, or
-    // head directory could otherwise redirect the lock write outside the
-    // repository or into another head's evidence.
+    // The full parent chain must resolve literally before directory creation
+    // and again through containment: a symlinked issue, PR, or head directory
+    // could otherwise redirect the lock write outside the repository or into
+    // another head's evidence. Fail closed so lanes skip an untrustworthy lock.
+    mkdirTrustedStoreSync(dirname(path), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   } catch {
-    return { held: false, activeLock: null }; // Fail closed: lanes skip when the lock location is untrustworthy.
+    return { held: false, activeLock: null };
   }
   const record = `${JSON.stringify({ version: 1, issueNumber, prNumber, headSha, pid: process.pid, createdAt: new Date().toISOString() }, null, 2)}\n`;
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -763,7 +809,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `Record the resulting local-host evidence JSON at this exact issue evidence path: ${primaryEvidencePath}.`,
     `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, preconditions, runnerProvenance, and recordedAt.`,
     LANE_ARTIFACT_REQUIREMENT,
-    'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, and location.path plus location.line when the finding can be anchored to the PR diff.',
+    'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, location.path plus location.line when the finding can be anchored to the PR diff, and an optional confidence number from 0 to 1. Advisory findings compete for a global cross-lane publication cap ordered by confidence; blocking findings always publish.',
     'Report the complete finding set for this lane at this head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
@@ -920,6 +966,18 @@ function readStringArray(value: unknown): string[] {
     : [];
 }
 
+function readFindingConfidence(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1 ? value : undefined;
+}
+
+// An omitted severity defaults to advisory, but a present value that is not
+// exactly 'advisory' or 'blocking' fails closed to blocking rather than
+// silently downgrading a real defect below the advisory cap.
+function readFindingSeverity(value: unknown): ReviewFinding['severity'] {
+  if (value === undefined || value === null) return 'advisory';
+  return value === 'advisory' ? 'advisory' : 'blocking';
+}
+
 function readFindings(value: unknown): ReviewFinding[] {
   if (!Array.isArray(value)) return [];
   const findings: ReviewFinding[] = [];
@@ -937,12 +995,17 @@ function readFindings(value: unknown): ReviewFinding[] {
               : {}),
         }
       : undefined;
+    const confidence = readFindingConfidence(item.confidence);
     findings.push({
       id: typeof item.id === 'string' && item.id.trim() !== '' ? redact(item.id.trim()) : `finding-${findings.length + 1}`,
-      severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+      // Never silently downgrade a set severity: a present but unrecognized
+      // value fails closed to blocking so a typo cannot slip a real defect
+      // past the advisory nit cap. Only an omitted severity defaults advisory.
+      severity: readFindingSeverity(item.severity),
       ...(location ? { location } : {}),
       message: redact(item.message.trim()),
       ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: redact(item.suggestion.trim()) } : {}),
+      ...(confidence !== undefined ? { confidence } : {}),
     });
   }
   return findings;
@@ -1112,7 +1175,7 @@ function writeReviewBundle(input: {
   evidencePath: string;
 }): string {
   const path = reviewBundlePath(input.repoRoot, input.issueNumber, input.prNumber, input.headSha, input.lane);
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: input.repoRoot, subtree: ['.git', 'qube', 'aie'] });
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber: input.issueNumber,
@@ -1185,7 +1248,7 @@ export async function runExternalLane(command: string, lane: LocalReviewLaneId, 
 
 export function writeLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, lane: LaneEvidence, adapter: 'local-command' | 'local-host'): string {
   const directory = laneEvidenceDirectory(repoRoot, issueNumber, prNumber, headSha);
-  mkdirSync(directory, { recursive: true });
+  mkdirTrustedStoreSync(directory, { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
   const reviewerId = adapter === 'local-host' ? lane.runnerProvenance?.host ?? 'codex' : 'local-command';
   const reviewerName = reviewerId === 'codex' ? 'Codex' : reviewerId === 'grok' ? 'Grok' : reviewerId;
@@ -1213,7 +1276,7 @@ export function writeTrustedRoutedProvenance(repoRoot: string, issueNumber: numb
   const evidence: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
   if (!isRecord(evidence)) return null;
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane.id);
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.git', 'qube', 'aie'] });
   writeReviewFileGuarded(path, `${JSON.stringify({
     version: 1,
     issueNumber,

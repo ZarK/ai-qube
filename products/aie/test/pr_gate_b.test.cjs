@@ -629,6 +629,33 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Fix the parser crash.').length, 1);
   });
 
+  it('keeps the fix batch content hash stable when only confidence changes between heads', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const priorEvidence = localEvidence({ headSha: 'aaa111' });
+    priorEvidence.lanes = priorEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Tighten the null check.'], findings: [
+          { id: 'finding-a', severity: 'advisory', message: 'Tighten the null check.', location: { path: 'src/parser.ts', line: 10 }, confidence: 0.2 },
+        ], recordedAt: '2026-06-20T00:00:00.000Z' }
+      : lane);
+    writeLocalEvidence(repo, priorEvidence);
+    const currentEvidence = localEvidence();
+    currentEvidence.lanes = currentEvidence.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, status: 'needs-work', recommendation: 'request-changes', severity: 'high', blockers: ['Tighten the null check.'], findings: [
+          { id: 'finding-a', severity: 'advisory', message: 'Tighten the null check.', location: { path: 'src/parser.ts', line: 10 }, confidence: 0.9 },
+        ] }
+      : lane);
+    writeLocalEvidence(repo, currentEvidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec });
+
+    const nullCheckFindings = result.fixBatch.findings.filter(finding => finding.message === 'Tighten the null check.');
+    assert.equal(nullCheckFindings.length, 1);
+    assert.equal(nullCheckFindings[0].classification, 'persisting', 'content hash must not vary with confidence alone');
+    assert.equal(result.fixBatch.resolved.filter(entry => entry.message === 'Tighten the null check.').length, 0, 're-scored confidence must not read as resolved-plus-new');
+  });
+
   it('resolves prior findings only for issues with completed current evidence', () => {
     const repo = makeGitRepo();
     const priorFirstIssue = localEvidence({ headSha: 'aaa111' });
@@ -1526,7 +1553,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     writeLocalEvidence(repo, evidence);
     const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'planned');
     assert.equal(result.publish.publishKind, 'pull-request-review');

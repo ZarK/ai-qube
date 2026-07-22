@@ -301,6 +301,37 @@ describe("qube core contracts", () => {
   });
 });
 
+describe("review finding confidence", () => {
+  it("keeps a valid confidence in range and drops invalid values", () => {
+    const withValid = core.normalizeReviewFinding({ severity: "advisory", message: "Tighten the null check.", confidence: 0.5 });
+    assert.equal(withValid.confidence, 0.5);
+
+    const atLowerBound = core.normalizeReviewFinding({ severity: "advisory", message: "Boundary low.", confidence: 0 });
+    assert.equal(atLowerBound.confidence, 0);
+
+    const atUpperBound = core.normalizeReviewFinding({ severity: "advisory", message: "Boundary high.", confidence: 1 });
+    assert.equal(atUpperBound.confidence, 1);
+
+    const missing = core.normalizeReviewFinding({ severity: "advisory", message: "No confidence supplied." });
+    assert.equal(missing.confidence, undefined);
+    assert.ok(!("confidence" in missing));
+
+    for (const invalid of [-0.01, 1.01, Number.NaN, Number.POSITIVE_INFINITY, "0.5", null, {}]) {
+      const normalized = core.normalizeReviewFinding({ severity: "advisory", message: "Invalid confidence must be dropped.", confidence: invalid });
+      assert.equal(normalized.confidence, undefined, `confidence ${String(invalid)} must be dropped, not preserved`);
+    }
+  });
+
+  it("keeps the derived finding id stable across differing confidence", () => {
+    const lowConfidence = core.normalizeReviewFinding({ severity: "advisory", message: "Same finding, different confidence.", location: { path: "src/a.ts", line: 4 }, confidence: 0.1 });
+    const highConfidence = core.normalizeReviewFinding({ severity: "advisory", message: "Same finding, different confidence.", location: { path: "src/a.ts", line: 4 }, confidence: 0.9 });
+    const noConfidence = core.normalizeReviewFinding({ severity: "advisory", message: "Same finding, different confidence.", location: { path: "src/a.ts", line: 4 } });
+
+    assert.equal(lowConfidence.id, highConfidence.id);
+    assert.equal(lowConfidence.id, noConfidence.id);
+  });
+});
+
 function readRepoDoc(relativePath) {
   return readFileSync(fileURLToPath(new URL(`../../../${relativePath}`, import.meta.url)), "utf8");
 }

@@ -173,6 +173,8 @@ export interface GitHubLaneReviewPublishInput {
   findings: Array<ReviewFinding | string>;
   completeness: string | null;
   evidencePath: string | null;
+  /** Cross-lane synthesis withheld counts for this lane; rendered in the body and part of the finding digest so stale accounting republishes. */
+  withheld?: { duplicates: number; offDiff: number; byCap: number };
 }
 
 export interface GitHubLaneReviewPublishResult {
@@ -559,7 +561,7 @@ function normalizeLaneFindings(input: GitHubLaneReviewPublishInput): ReviewFindi
     : normalizeReviewFinding(finding));
 }
 
-function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined): string {
+function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined, withheld: GitHubLaneReviewPublishInput['withheld']): string {
   return createHash('sha256')
     .update(JSON.stringify({
       findings: findings.map(finding => ({
@@ -568,8 +570,15 @@ function findingDigest(findings: readonly ReviewFinding[], completeness: string 
         location: finding.location ?? null,
         message: sanitizePublishedText(finding.message),
         suggestion: finding.suggestion ? sanitizePublishedText(finding.suggestion) : null,
+        // Confidence renders in the published body, so a confidence-only
+        // rescore must change the digest or republish-skip would leave the
+        // stale display on the current head.
+        confidence: typeof finding.confidence === 'number' ? finding.confidence : null,
       })),
       completeness: completeness && completeness.trim() !== '' ? sanitizePublishedText(completeness) : null,
+      // Withheld counts render in the published body, so a synthesis change
+      // that only moves counts must republish instead of skip-matching.
+      withheld: withheld ?? null,
     }))
     .digest('hex')
     .slice(0, 16);
@@ -584,7 +593,7 @@ function laneReviewBody(
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
-  const digest = findingDigest(allFindings, input.completeness);
+  const digest = findingDigest(allFindings, input.completeness, input.withheld);
   const bodyFindings = bodyFindingsInput ?? allFindings;
   const inline = publishKind === 'issue-comment' ? 'issue-comment' : 'review-api';
   const metadata: LaneReviewMetadata = {
@@ -608,6 +617,11 @@ function laneReviewBody(
   };
   const marker = laneReviewMarker(metadata);
   const findings = bodyFindings.length === 0 ? ['- None recorded in the review body.'] : bodyFindings.map(item => `- ${findingBodyText(item, input.evidencePath)}`);
+  const withheld = input.withheld;
+  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
+  const withheldNote = withheldTotal > 0
+    ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld!.duplicates} cross-lane duplicate(s), ${withheld!.offDiff} outside the current diff, ${withheld!.byCap} beyond the advisory cap; see local evidence.`
+    : null;
   const body = [
     marker,
     '',
@@ -619,6 +633,7 @@ function laneReviewBody(
     'Findings:',
     ...findings,
     inlineCount > 0 ? `- ${inlineCount} finding(s) were published as inline review comments on the PR diff.` : '- Inline findings: none.',
+    ...(withheldNote ? ['', withheldNote] : []),
     '',
     'Completeness self-check:',
     input.completeness && input.completeness.trim() !== '' ? truncatePublishedFinding(input.completeness, input.evidencePath) : '- Not recorded.',
@@ -640,7 +655,7 @@ function laneReviewBody(
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
-  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness);
+  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness, input.withheld);
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
@@ -747,8 +762,9 @@ function findingBodyText(finding: ReviewFinding, evidencePath: string | null): s
   const location = finding.location
     ? ` (${redact(finding.location.path)}${finding.location.line ? `:${finding.location.line}` : ''})`
     : '';
+  const confidence = typeof finding.confidence === 'number' ? ` (confidence ${finding.confidence.toFixed(2)})` : '';
   const suggestion = finding.suggestion ? ` Suggestion: ${finding.suggestion}` : '';
-  return truncatePublishedFinding(`${finding.severity}${location}: ${finding.message}${suggestion}`, evidencePath);
+  return truncatePublishedFinding(`${finding.severity}${location}: ${finding.message}${suggestion}${confidence}`, evidencePath);
 }
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
@@ -1714,6 +1730,17 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       repositoryName = repository.nameWithOwner;
       comments = await this.getIssueComments(repository.nameWithOwner, input.prNumber);
       const rawPr = await this.getPullRequest(input.prNumber);
+      // Lane feedback must bind to the PR's current head: an unobservable
+      // head cannot prove freshness, and a caller-supplied head the PR has
+      // advanced past must fail instead of publishing review state against
+      // an obsolete commit.
+      const observedHead = typeof rawPr.headRefOid === 'string' ? rawPr.headRefOid : '';
+      if (observedHead === '') {
+        throw new Error(`pull request #${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitHub reports the current head.`);
+      }
+      if (observedHead !== input.headSha) {
+        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${observedHead}; rerun pr gate for the current PR head.`);
+      }
       laneReviews = laneMarkerReviews(rawPr);
       const prAuthorLogin = rawPr.author?.login ?? null;
       publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
@@ -1773,10 +1800,25 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
     const publishToken = publisher.accessToken;
     const ghOptions = { ...this.options, token: publishToken ?? undefined };
 
+    // Revalidate the PR head immediately before each mutation. All the async
+    // prep above (identity resolution, diff fetch, payload build) and any
+    // retry widens the window in which the PR can advance, so the check must
+    // run as the last step before every create/POST, not once upfront.
+    const assertHeadUnchanged = async (): Promise<void> => {
+      const freshPr = await this.getPullRequest(input.prNumber);
+      const freshHead = typeof freshPr.headRefOid === 'string' ? freshPr.headRefOid : '';
+      if (freshHead === '' || freshHead !== input.headSha) {
+        throw new Error(freshHead === ''
+          ? `pull request #${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+          : `pull request #${input.prNumber} head changed from ${input.headSha} to ${freshHead} before publication; rerun pr gate for the current PR head.`);
+      }
+    };
+
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
       const { body, marker, runId, bodyFindingCount } = laneReviewBody(input, allFindings, 0, 'issue-comment');
       try {
+        await assertHeadUnchanged();
         const commentResult = await runGh(['pr', 'comment', String(input.prNumber), '--body', body], ghOptions);
         if (commentResult.exitCode !== 0) {
           return localReviewPublishResult({
@@ -1838,6 +1880,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       const args = ['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST'];
       const payloadPath = reviewPayloadPath(payload);
       try {
+        // The head is revalidated inside submitReview so the diff fetch above
+        // and every retry re-check freshness immediately before the POST.
+        await assertHeadUnchanged();
         return await runGh([...args, '--input', payloadPath], ghOptions);
       } catch (error: unknown) {
         return {

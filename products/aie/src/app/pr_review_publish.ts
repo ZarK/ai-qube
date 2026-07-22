@@ -1,12 +1,18 @@
 import type { Config } from '../config/index.js';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
+import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
+import { verifyReviewWriteContainment, writeReviewFileGuarded } from './local_review_runner_support.js';
 import type { PrGateExec } from './pr_gate.js';
+
+// The default advisory publication cap when neither the caller nor config
+// resolves an explicit value; kept in sync with the config schema default.
+const DEFAULT_REVIEW_NIT_CAP = 10;
 
 export interface PrReviewPublishOptions {
   prNumber: number;
@@ -19,6 +25,28 @@ export interface PrReviewPublishOptions {
   carryForwardPublish?: 'note' | 'none';
   carryForwardScope?: CarryForwardScope;
   expectedLanes?: readonly LocalReviewLaneId[];
+  /**
+   * Expected lanes whose current-head evidence is a trusted-provider reuse
+   * marker with no local evidence file. Synthesis treats them as approved,
+   * finding-free siblings instead of failing the mixed head closed.
+   */
+  providerReuseLanes?: readonly LocalReviewLaneId[];
+  /**
+   * Paths changed by this PR head. Undefined disables only the synthesis
+   * off-diff advisory filter (the delta was not observed); an empty array is
+   * a genuine observation of an empty diff and withholds anchored advisories;
+   * null records a failed delta observation and fails publication closed.
+   * Dedupe and the nit cap always apply.
+   */
+  changedPaths?: readonly string[] | null;
+  /**
+   * Base ref for computing the changed-path delta against the RESOLVED
+   * publish head when the caller did not observe changedPaths itself; the
+   * delta must never bind to a possibly stale local HEAD.
+   */
+  deltaBaseRef?: string;
+  /** Global advisory publication cap for cross-lane synthesis; defaults to DEFAULT_REVIEW_NIT_CAP. */
+  nitCap?: number;
 }
 
 export interface PrReviewPublishResult {
@@ -42,7 +70,23 @@ function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: numb
   return join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber), safeHead, 'fallback-snapshot-cache.json');
 }
 
-function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+// Cache reads apply the same trust rules as cache writes: an absent file is
+// a miss, but a symlinked cache file or a relocated ancestor chain fails
+// the read closed instead of feeding redirected snapshot state into
+// publication decisions.
+function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
+  let cacheStats;
+  try {
+    cacheStats = lstatSync(path);
+  } catch (err: unknown) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+    throw new Error(`Refusing to treat an unreadable snapshot cache as a miss: ${path}. Fix filesystem access, then rerun.`);
+  }
+  if (!cacheStats.isFile()) {
+    throw new Error(`Refusing to read the snapshot cache through a non-regular file: ${path}. Remove the symlink or junction, then rerun.`);
+  }
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -54,10 +98,29 @@ function cachedSnapshotFromFile(path: string, prNumber: number, headSha: string)
   return parsed as unknown as ReviewForgeSnapshot;
 }
 
-function writeSnapshotCache(path: string, snapshot: ReviewForgeSnapshot): void {
+// The fallback snapshot cache lives inside the review evidence subtree and
+// gets the same containment and symlink guards as evidence writes: a
+// symlinked descendant must not redirect the temp file or the final rename
+// outside the repository.
+function writeSnapshotCache(repoRoot: string, path: string, snapshot: ReviewForgeSnapshot): void {
+  // Chain verification runs before directory creation so mkdir can never
+  // materialize directories through an existing symlinked ancestor.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
   mkdirSync(dirname(path), { recursive: true });
+  verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
-  writeFileSync(tempPath, JSON.stringify(snapshot), 'utf8');
+  writeReviewFileGuarded(tempPath, JSON.stringify(snapshot), { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new Error(`Refusing to replace a symlinked snapshot cache: ${path}. Remove the symlink, then rerun.`);
+    }
+  } catch (err: unknown) {
+    if (err instanceof Error && err.message.startsWith('Refusing to replace')) throw err;
+    // A missing cache file is the normal first-write case.
+  }
+  // Revalidate the chain immediately before the rename: a concurrent junction
+  // swap of a parent between the temp write and this rename must fail closed.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
   renameSync(tempPath, path);
 }
 
@@ -84,27 +147,27 @@ function sleep(milliseconds: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
-async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string): Promise<ReviewForgeSnapshot> {
-  const cachedFile = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string, repoRoot: string): Promise<ReviewForgeSnapshot> {
+  const cachedFile = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
   if (cachedFile) return cachedFile;
   const lockPath = snapshotCacheLockPath(cachePath);
   const deadline = Date.now() + SNAPSHOT_CACHE_LOCK_TIMEOUT_MS;
   while (true) {
     if (tryAcquireSnapshotCacheLock(lockPath)) {
       try {
-        const cachedAfterLock = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+        const cachedAfterLock = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
         if (cachedAfterLock) return cachedAfterLock;
         const snapshot = await provider.loadPullRequestReview(prNumber);
         if (snapshot.pr.headRefOid !== headSha) {
           throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
         }
-        writeSnapshotCache(cachePath, snapshot);
+        writeSnapshotCache(repoRoot, cachePath, snapshot);
         return snapshot;
       } finally {
         releaseSnapshotCacheLock(lockPath);
       }
     }
-    const cachedWhileWaiting = cachedSnapshotFromFile(cachePath, prNumber, headSha);
+    const cachedWhileWaiting = cachedSnapshotFromFile(repoRoot, cachePath, prNumber, headSha);
     if (cachedWhileWaiting) return cachedWhileWaiting;
     if (Date.now() >= deadline) {
       throw new Error(`publish lane review failed. Likely cause: fallback snapshot cache for pull request #${prNumber} head ${headSha} stayed locked. Next action: remove stale cache lock ${relativeEvidencePath(process.cwd(), lockPath) ?? lockPath}, rerun pr gate for the current PR head, then retry lane publish.`);
@@ -113,11 +176,11 @@ async function loadSnapshotWithFileCache(provider: ReviewForgeProvider, prNumber
   }
 }
 
-async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath?: string): Promise<ReviewForgeSnapshot> {
+async function loadCachedSnapshot(provider: ReviewForgeProvider, prNumber: number, headSha: string, cachePath: string | undefined, repoRoot: string): Promise<ReviewForgeSnapshot> {
   const key = snapshotCacheKey(prNumber, headSha, cachePath);
   const cached = snapshotCacheByHead.get(key);
   if (cached) return cached;
-  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath) : provider.loadPullRequestReview(prNumber).then(snapshot => {
+  const loaded = (cachePath ? loadSnapshotWithFileCache(provider, prNumber, headSha, cachePath, repoRoot) : provider.loadPullRequestReview(prNumber).then(snapshot => {
     if (snapshot.pr.headRefOid !== headSha) {
       snapshotCacheByHead.delete(key);
       throw new Error(`publish lane review failed. Likely cause: pull request #${prNumber} head changed from ${headSha} to ${snapshot.pr.headRefOid}. Next action: rerun pr gate for the current PR head.`);
@@ -159,12 +222,62 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
   return relativePath.replace(/\\/g, '/');
 }
 
+// Sibling lane evidence feeds cross-lane synthesis only when it passes the
+// same full current-head validation as the publishing lane (identity,
+// status/recommendation consistency, artifact contract, trusted provenance).
+// An unvalidated sibling must never claim ownership of a finding identity,
+// because dedupe would then withhold the real lane's finding from the
+// provider. Synthesis also requires the complete expected lane set: a
+// partial sibling view would make dedupe ownership and the global advisory
+// cap depend on publish order, so missing or invalid siblings fail the
+// publish closed instead of being silently absent.
+function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId, expectedLanes: readonly LocalReviewLaneId[], providerReuseLanes: ReadonlySet<LocalReviewLaneId>): { siblings: SynthesisLaneInput[]; missing: LocalReviewLaneId[] } {
+  const siblings: SynthesisLaneInput[] = [];
+  const missing: LocalReviewLaneId[] = [];
+  for (const laneId of expectedLanes) {
+    if (laneId === excludeLane) continue;
+    try {
+      const sibling = validateLaneEvidence(repoRoot, issueNumber, prNumber, headSha, laneId);
+      siblings.push({ laneId, findings: sibling.findings });
+    } catch (error) {
+      // A trusted-provider-reuse sibling is an already-approved lane whose
+      // evidence lives only on its provider marker, so it has no local file
+      // and contributes no findings to synthesis; it must not fail the mixed
+      // head closed. Any other local-origin sibling that fails validation is
+      // genuinely missing and fails publication closed.
+      if (providerReuseLanes.has(laneId)) {
+        siblings.push({ laneId, findings: [] });
+      } else {
+        missing.push(laneId);
+      }
+    }
+  }
+  return { siblings, missing };
+}
+
 function laneEvidenceFailure(path: string, detail: string): Error {
   return new Error(`required local review lane evidence is missing or invalid at ${relativeEvidencePath(process.cwd(), path) ?? path}: ${detail}`);
 }
 
+// Profile and host serialize verbatim into provider-visible marker metadata,
+// so they must stay short fixed-charset identifiers: free text here could
+// leak paths or secrets and break out of the marker comment.
+function validPublishIdentifier(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
+}
+
 function loadLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { path: string; raw: Record<string, unknown> } {
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  // Evidence reads go through the verified literal chain and must land on a
+  // regular file: a planted symlink or junction can never redirect the gate
+  // to forged evidence outside the store.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
+  try {
+    if (!lstatSync(path).isFile()) throw laneEvidenceFailure(path, 'evidence must be a regular file, not a symlink or directory.');
+  } catch (error: unknown) {
+    if (error instanceof Error && error.message.startsWith('required local review lane evidence')) throw error;
+    throw laneEvidenceFailure(path, 'evidence file is missing or unreadable.');
+  }
   try {
     const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
     if (!isRecord(parsed)) throw laneEvidenceFailure(path, 'JSON root must be an object.');
@@ -196,6 +309,9 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
     if (isRecord(item.location) && item.location.line !== undefined && !(typeof item.location.line === 'number' && Number.isSafeInteger(item.location.line) && item.location.line > 0)) throw laneEvidenceFailure(path, `${label}.location.line must be a positive integer when present.`);
     if (isRecord(item.location) && item.location.endLine !== undefined && !(typeof item.location.endLine === 'number' && Number.isSafeInteger(item.location.endLine) && item.location.endLine > 0)) throw laneEvidenceFailure(path, `${label}.location.endLine must be a positive integer when present.`);
     if (item.severity !== undefined && item.severity !== 'blocking' && item.severity !== 'advisory') throw laneEvidenceFailure(path, `${label}.severity must be blocking or advisory when present.`);
+    if (item.confidence !== undefined && !(typeof item.confidence === 'number' && Number.isFinite(item.confidence) && item.confidence >= 0 && item.confidence <= 1)) {
+      throw laneEvidenceFailure(path, `${label}.confidence must be a number between 0 and 1 when present.`);
+    }
     const location = isRecord(item.location) && typeof item.location.path === 'string' && item.location.path.trim() !== ''
       ? {
           path: item.location.path.trim(),
@@ -210,6 +326,7 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
       ...(location ? { location } : {}),
       message: item.message.trim(),
       ...(typeof item.suggestion === 'string' && item.suggestion.trim() !== '' ? { suggestion: item.suggestion.trim() } : {}),
+      ...(typeof item.confidence === 'number' ? { confidence: item.confidence } : {}),
     });
   }
   return findings;
@@ -217,6 +334,7 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
 
 function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, evidence: Record<string, unknown>, evidencePath: string, provenance: Record<string, unknown>): void {
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));
@@ -241,7 +359,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: Array<ReviewFinding | string>; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
@@ -252,6 +370,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (summary === '') throw laneEvidenceFailure(path, 'summary must be a non-empty string.');
   const profile = stringField(raw, 'profile');
   if (profile === '') throw laneEvidenceFailure(path, 'profile must be a non-empty string.');
+  if (!validPublishIdentifier(profile)) throw laneEvidenceFailure(path, 'profile must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
   {
     const artifactViolation = laneArtifactViolation(lane, String(raw.status), raw.artifacts, repoRoot);
     if (artifactViolation) throw laneEvidenceFailure(path, `${artifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
@@ -302,10 +421,15 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (!validRecommendationStatus(recommendation, raw.status as LocalReviewStatus)) {
     throw laneEvidenceFailure(path, `recommendation ${recommendation} is not valid with status ${raw.status}; ${recommendationStatusRule()}.`);
   }
+  if (recommendation === 'request-changes' && structuredFindings.length === 0) {
+    throw laneEvidenceFailure(path, 'request-changes evidence must include at least one structured findings[] entry; a rejection without findings publishes no provider-visible obligation.');
+  }
   if (structuredFindings.some(finding => finding.severity === 'blocking')
     && (raw.status === 'passed' || recommendation !== 'request-changes')) {
     throw laneEvidenceFailure(path, `recorded blocking structured findings but claimed status ${raw.status} with recommendation ${recommendation}.`);
   }
+  const host = stringField(provenance, 'host') || 'local-review';
+  if (!validPublishIdentifier(host)) throw laneEvidenceFailure(path, 'runnerProvenance host must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
   return {
     evidence: raw,
     path,
@@ -315,7 +439,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     findings: structuredFindings,
     completeness,
     profile,
-    host: stringField(provenance, 'host') || 'local-review',
+    host,
     recommendation,
   };
 }
@@ -363,34 +487,118 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
       throw new Error(`publish lane review failed. Likely cause: the head delta touches the ${options.lane} lane scope or review context, so carried-forward evidence is invalid. Next action: rerun the lane review for the current head.`);
     }
   }
+  // Synthesis is the last mile before publication: it dedupes this lane's
+  // findings against every other expected lane at the same head (so a
+  // gate-level restatement never republishes), drops advisory findings
+  // outside the diff, and enforces the global advisory nit cap exactly once.
+  // The delta binds to the resolved publish head, never to local HEAD: a
+  // stale checkout must not classify current-head findings as off-diff.
+  const changedPaths = options.changedPaths !== undefined
+    ? options.changedPaths
+    : options.deltaBaseRef
+      ? gitDeltaPathsSync(repoRoot, options.deltaBaseRef, headSha)
+      : undefined;
+  if (changedPaths === null) {
+    throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch and the PR head, then rerun publish.');
+  }
+  // One canonical expected lane set drives sibling synthesis and provider
+  // metadata: it must name the publishing lane exactly once and contain
+  // only known lane ids, or markers could disown their own lane and
+  // duplicated entries would double-count findings during synthesis.
+  if (!options.expectedLanes || options.expectedLanes.length === 0) {
+    throw new Error('publish lane review failed. Likely cause: no expected lane set was provided; a single-lane default would hide the head\'s other active lanes and corrupt convergence stats. Next action: pass the complete validated lane set for this head.');
+  }
+  const providedLaneIds = options.expectedLanes;
+  const expectedLaneIds = [...new Set(providedLaneIds)];
+  if (expectedLaneIds.length !== providedLaneIds.length) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set contains duplicate lane ids (${providedLaneIds.join(', ')}). Next action: pass each expected lane exactly once.`);
+  }
+  const knownLaneIds = new Set<string>(COMPREHENSIVE_LOCAL_REVIEW_LANES);
+  const unknownLaneIds = expectedLaneIds.filter(laneId => !knownLaneIds.has(laneId));
+  if (unknownLaneIds.length > 0) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set names unknown lane id(s) ${unknownLaneIds.join(', ')}. Next action: pass only configured review lane ids.`);
+  }
+  if (!expectedLaneIds.includes(options.lane)) {
+    throw new Error(`publish lane review failed. Likely cause: the expected lane set (${expectedLaneIds.join(', ')}) does not name the publishing lane ${options.lane}. Next action: include the publishing lane in the expected set.`);
+  }
+  const providerReuseLaneSet = new Set<LocalReviewLaneId>(options.providerReuseLanes ?? []);
+  const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds, providerReuseLaneSet);
+  if (missing.length > 0) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis requires validated current-head evidence for every expected lane, and ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid at ${headSha}. Next action: complete the remaining lane reviews at this head, then rerun publish or the PR gate.`);
+  }
+  const synthesisLanes: SynthesisLaneInput[] = [
+    { laneId: options.lane, findings: evidence.findings },
+    ...siblings,
+  ];
+  const synthesisPlan = planFindingPublication(synthesisLanes, {
+    changedPaths,
+    nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
+  }).find(plan => plan.laneId === options.lane);
+  if (!synthesisPlan) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis returned no plan for lane ${options.lane}. Next action: rerun the lane review for the current head.`);
+  }
+  // A request-changes lane must leave at least one provider-visible
+  // obligation. Synthesis reports whether any of this lane's findings survived
+  // onto some marker (this lane or the identity owner); a duplicate this lane
+  // withheld can still vanish if the owner dropped it off-diff or by the cap,
+  // so the guard fails closed on the union-visibility signal, not on which
+  // withhold bucket was hit.
+  if (synthesisPlan.published.length === 0 && evidence.recommendation === 'request-changes' && !synthesisPlan.hasVisibleObligation) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis left no provider-visible obligation for the request-changes lane ${options.lane} (${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap), and no other lane published the withheld identities. Next action: rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.`);
+  }
   const publishInput = {
     dryRun: options.dryRun ?? false,
     prNumber: options.prNumber,
     headSha,
     lane: options.lane,
-    expectedLanes: [...options.expectedLanes],
+    expectedLanes: expectedLaneIds,
     profile: evidence.profile,
     status: evidence.status,
     recommendation: evidence.recommendation,
     host: evidence.host,
     issueNumber,
     summary: evidence.summary,
-    findings: evidence.findings,
+    findings: synthesisPlan.published,
     completeness: evidence.completeness,
     evidencePath: relativeEvidencePath(repoRoot, evidence.path),
+    withheld: { duplicates: synthesisPlan.withheldDuplicates, offDiff: synthesisPlan.withheldOffDiff, byCap: synthesisPlan.withheldByCap },
   };
+  // Both publish paths verify the provider still points at the head being
+  // published: the adapter's ForPullRequest path rejects a stale input head
+  // against the PR it loads, and the legacy path goes through
+  // loadCachedSnapshot, which throws on a head change.
   const publish = provider.publishLaneReviewFeedbackForPullRequest
     ? await provider.publishLaneReviewFeedbackForPullRequest(publishInput)
-    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha))).item, publishInput);
+    : await provider.publishLaneReviewFeedback((loadedSnapshot?.pr.headRefOid === headSha ? loadedSnapshot : await loadCachedSnapshot(provider, options.prNumber, headSha, snapshotCachePath(repoRoot, issueNumber, options.prNumber, headSha), repoRoot)).item, publishInput);
   return { ok: true, command: 'pr review publish', prNumber: options.prNumber, lane: options.lane, publish };
 }
 
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
-  const changedPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
-  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
-  return runPrReviewPublishWithProvider(provider, { ...options, repoRoot, expectedLanes, carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish });
+  // Lane activation may look at the local delta, but the synthesis filter
+  // itself binds to the resolved publish head inside the provider run via
+  // deltaBaseRef; a failed observation there fails publication closed after
+  // own-lane evidence validation has raised its more actionable errors.
+  const laneActivationPaths = options.changedPaths ?? gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD') ?? undefined;
+  const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, laneActivationPaths);
+  return runPrReviewPublishWithProvider(provider, {
+    ...options,
+    repoRoot,
+    expectedLanes,
+    carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish,
+    changedPaths: options.changedPaths,
+    deltaBaseRef: options.deltaBaseRef ?? `${config.baseRemote}/${config.baseBranch}`,
+    nitCap: options.nitCap ?? config.reviewNitCap,
+  });
+}
+
+// The CLI must not report a failed provider publication as success; the
+// runtime handler turns a non-null message into a failing command result.
+export function prReviewPublishFailureMessage(result: PrReviewPublishResult): string | null {
+  if (result.publish.status !== 'failed') return null;
+  const cause = result.publish.failure ?? result.publish.nextAction ?? 'provider publication failed';
+  return `Failed to publish lane review for #${result.prNumber} lane ${result.lane}. Likely cause: ${cause}.`;
 }
 
 export function formatPrReviewPublish(result: PrReviewPublishResult): string {
