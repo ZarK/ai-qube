@@ -431,6 +431,34 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     return results;
   }
 
+  // One provider marker per lane per round: a same-round republish with
+  // changed content updates the existing note in place when the client
+  // supports note updates. Clients without update support fall back to a
+  // superseding note, which every read path already collapses latest-first.
+  private async findSameRoundNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput): Promise<GitLabNote | undefined> {
+    if (!this.client.updateMergeRequestNote) return undefined;
+    const trustedAuthor = await this.trustedMarkerAuthor();
+    const candidates = notes ?? await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
+    return candidates.find(note => {
+      if (note.id === undefined || note.id === null) return false;
+      const parsed = trustedMetadataNote(note, trustedAuthor);
+      return parsed?.kind === "lane-review"
+        && parsed.head === input.headSha
+        && parsed.lane === input.lane
+        && (parsed.prNumber ?? input.prNumber) === input.prNumber
+        && (parsed.round ?? null) === input.round;
+    });
+  }
+
+  private async createOrUpdateLaneNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput, body: string): Promise<{ note: GitLabNote; updated: boolean }> {
+    const existingRoundNote = await this.findSameRoundNote(notes, input);
+    if (existingRoundNote) {
+      const note = await this.client.updateMergeRequestNote!({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existingRoundNote.id), body });
+      return { note, updated: true };
+    }
+    return { note: await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body }), updated: false };
+  }
+
   async publishLaneReviewFeedback(item: ReviewItem, input: ReviewLaneReviewPublishInput): Promise<ReviewLaneReviewPublishResult> {
     const planned = laneBody(input);
     if (this.hasMatchingLaneReview(item, input, planned.runId)) {
@@ -461,8 +489,8 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
           ? `merge request !${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
           : `merge request !${input.prNumber} head changed from ${input.headSha} to ${latestHead} before publication; rerun pr gate for the current head.`);
       }
-      const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
-      return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
+      const { note, updated } = await this.createOrUpdateLaneNote(null, input, planned.body);
+      return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: updated ? `Provider-visible GitLab note feedback for ${input.lane} was updated in place for its round; rerun MR view/gate to inspect provider state.` : `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
     } catch (error) {
       return { status: "failed", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: error instanceof Error ? error.message : String(error), nextAction: `Fix GitLab note permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.` };
     }
@@ -510,8 +538,8 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
           ? `merge request !${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
           : `merge request !${input.prNumber} head changed from ${input.headSha} to ${latestHead} before publication; rerun pr gate for the current head.`);
       }
-      const note = await this.client.createMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), body: planned.body });
-      return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
+      const { note, updated } = await this.createOrUpdateLaneNote(notes, input, planned.body);
+      return { status: "published", runId: planned.runId, marker: planned.marker, body: planned.body, url: note.web_url ?? null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: null, nextAction: updated ? `Provider-visible GitLab note feedback for ${input.lane} was updated in place for its round; rerun MR view/gate to inspect provider state.` : `Provider-visible GitLab note feedback for ${input.lane} was published; rerun MR view/gate to inspect provider state.` };
     } catch (error) {
       return { status: "failed", runId: planned.runId, marker: planned.marker, body: planned.body, url: null, publishKind: "issue-comment", inlineCommentCount: 0, bodyFindingCount: planned.bodyFindingCount, failure: error instanceof Error ? error.message : String(error), nextAction: `Fix GitLab note permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`.` };
     }

@@ -1,0 +1,357 @@
+{
+  "version": 1,
+  "issueNumber": 455,
+  "prNumber": 470,
+  "headSha": "b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+  "profile": "local-focused",
+  "adapter": "local-host",
+  "reviewer": {
+    "id": "grok",
+    "name": "Grok",
+    "adapterKind": "local"
+  },
+  "lane": "api-contract-compatibility",
+  "id": "api-contract-compatibility",
+  "status": "passed",
+  "severity": "none",
+  "recommendation": "approve",
+  "summary": "API and provider-marker contracts for round-grouped per-lane publish are backwards-compatible on read and fail-closed for incomplete or ungroupable rounds. Required write-side `round` is minted deterministically; GitHub and GitLab forge paths, reuse, and review stats stay aligned; no breaking field removals or false-success mappings were found at this head.",
+  "blockers": [],
+  "findings": [],
+  "artifacts": [
+    {
+      "kind": "review-round-contract",
+      "path": "products/aie/src/review_round.ts",
+      "sha256": null
+    },
+    {
+      "kind": "publish-input-contract",
+      "path": "packages/qube-core/src/review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "provider-reuse-contract",
+      "path": "products/aie/src/provider_lane_evidence.ts",
+      "sha256": null
+    },
+    {
+      "kind": "review-stats-contract",
+      "path": "products/aie/src/app/review_stats.ts",
+      "sha256": null
+    },
+    {
+      "kind": "publish-path",
+      "path": "products/aie/src/app/pr_review_publish.ts",
+      "sha256": null
+    },
+    {
+      "kind": "gate-publish-selection",
+      "path": "products/aie/src/app/pr_gate.ts",
+      "sha256": null
+    },
+    {
+      "kind": "github-marker-schema",
+      "path": "adapters/github/src/github_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "gitlab-marker-schema",
+      "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "aie-publish-types",
+      "path": "products/aie/src/providers/review_provider.ts",
+      "sha256": null
+    },
+    {
+      "kind": "testkit-conformance",
+      "path": "packages/qube-testkit/src/review-suite.ts",
+      "sha256": null
+    },
+    {
+      "kind": "reuse-oracle-tests",
+      "path": "products/aie/test/provider_lane_evidence.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "stats-oracle-tests",
+      "path": "products/aie/test/review_stats.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "gate-publish-tests",
+      "path": "products/aie/test/pr_gate_a.test.cjs",
+      "sha256": null
+    }
+  ],
+  "commands": [],
+  "surfaces": [
+    "ReviewLaneReviewPublishInput.round",
+    "qube-pr-review marker metadata (version 1 + optional round)",
+    "TrustedProviderLane.round",
+    "ReviewStatsPullRequest.rounds",
+    "provider lane reuse completeness",
+    "GitHub/GitLab publish and skip-match",
+    "pr gate per-lane terminal publish"
+  ],
+  "contextReviewed": [
+    {
+      "kind": "issue-body",
+      "source": "bundle:#455",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-body",
+      "source": "bundle:PR#470 criterion-to-proof",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/review_round.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "packages/qube-core/src/review_forge.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/provider_lane_evidence.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/app/review_stats.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/app/pr_review_publish.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/app/pr_gate.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "adapters/github/src/github_review_forge.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/src/providers/review_provider.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "packages/qube-testkit/src/review-suite.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/test/provider_lane_evidence.test.cjs",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/test/review_stats.test.cjs",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "products/aie/test/pr_gate_a.test.cjs",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "ci",
+      "source": "bundle checks core=pending-current-head-run aiq=skipped-current-head-run",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    }
+  ],
+  "promptStack": [
+    {
+      "id": "safety/repository-policy",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/repository-policy.md",
+      "sha256": "af70c8a6da1229995ec330e96aab1b38e15ae1d5ebd7ce4188c016436b20c791",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/prompt-injection",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/prompt-injection.md",
+      "sha256": "96f0225190549900b0e3331544d402e46d68350d02e2a70c840ac4a9ceb53f60",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/review-output-untrusted",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/review-output-untrusted.md",
+      "sha256": "a7813b758cdb75de11c6efc25658906ecd3fc368cd599965592286a690c66297",
+      "trust": "policy"
+    },
+    {
+      "id": "hosts/codex",
+      "source": "builtin",
+      "sourceCategory": "host",
+      "path": "prompts/hosts/codex.md",
+      "sha256": "5f96508482344c32708750ef2bf43dbf65773de44be8a61e4bc15172d493ff45",
+      "trust": "policy"
+    },
+    {
+      "id": "descriptors/qa-reviewer",
+      "source": "builtin",
+      "sourceCategory": "descriptor",
+      "path": "prompts/descriptors/qa-reviewer.md",
+      "sha256": "7703c13f9f113ba9d8f8c3ea972a81c4df0a401de9ccb0300e9e70922c4a366f",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/issue-compliance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/issue-compliance.md",
+      "sha256": "ee5d60f40eecf6b6528b833e86f77fa204151c88cdcecbb68d30381e578fcdb3",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/code-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/code-quality.md",
+      "sha256": "51a9c087571d1b36cd38688547f17b00a1f639ce565cd079c05a78fab02bf629",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/tests-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/tests-quality.md",
+      "sha256": "74f776c3f085188500f0e1a89d55dbf914b614374f5e4b2b4e16c34a4b85681a",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/security",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/security.md",
+      "sha256": "8dc8f872b42fe224355aa4185cf95867a506befc4857062f3024cc8a8fc37e17",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/final-gate",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/final-gate.md",
+      "sha256": "5c5ebf42ce5d9c70e86491883e929137322a9fa6ce8c14f98c6e2b276452aace",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/api-contract-compatibility",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/api-contract-compatibility.md",
+      "sha256": "582d818625774a87a5d3ae6e401f930c21d701d7fd817fad2235a8d3ef7b4c81",
+      "trust": "policy"
+    },
+    {
+      "id": "command-supplied:f0beb54f2c7b",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "f0beb54f2c7b4e60792e6af1e121368468c4cd9684202de1e4028d78c7bbde68",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c349956ca10d",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c349956ca10dd68ff9d6cdda9aea07f697ab2272464e33fd28cfe33cfe683aea",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:44e2425485d8",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "44e2425485d86d2de03ba4be4ece2c2a0c8b562dfe3a486893501e8f445ee03b",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:242fc28afc33",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "242fc28afc33dda42449acfbda8354ede8037d5226013e0ab43082bbfaa1a5a1",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c7e8f261d787",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c7e8f261d78744e57b8a04a16f88739182d601e7cdc27a3011acb42a3eb0bd50",
+      "trust": "untrusted-task-input"
+    }
+  ],
+  "toolsUsed": [
+    "read_file",
+    "grep",
+    "list_dir"
+  ],
+  "completeness": "Inspected round id minting, publish input/result shapes in qube-core and aie review_provider, GitHub/GitLab marker parse/emit and skip-match, provider reuse fail-closed completeness, review stats rounds/reviewedHeads/firstReviewClean semantics, pr_gate terminal per-lane publish selection, shipReady interaction, evidence path containment, and negative tests for incomplete/disagreeing/ungroupable rounds. Shell was denied so digests and live test execution were not run. Did not re-audit unrelated public CLI surfaces outside the review-publish/stats/forge path, and did not exhaust every historical fixture variant beyond the new oracle coverage.",
+  "preconditions": [
+    "local branch issue/455-publish-every-validated-review-round-to- and origin ref resolve to b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+    "shell/bash denied by host policy; no git diff command or file sha256 computation",
+    "bundle CI: core pending-current-head-run; aiq skipped-current-head-run",
+    "issue #455 checklist reported 0/4 checked in bundle (task-record, not this lane)",
+    "shell-denied prevented live test suite execution; judgment is static contract inspection plus test source review"
+  ],
+  "runnerProvenance": {
+    "runnerKind": "local-host",
+    "host": "grok",
+    "freshContext": true,
+    "promptOnly": false,
+    "taskId": "2742a36f-af40-48e9-a5a3-e23cfee5d0ec",
+    "sessionId": "019f89de-42e0-7911-b0ed-192aaef98312",
+    "threadId": null,
+    "promptStackHash": "a0af86f11b646cd5b6f655d8cae27b08ba79fb98e22fa8eec3927e470891e0ad",
+    "headSha": "b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+    "providerPublishStatus": null,
+    "model": "grok-4.5",
+    "effort": null,
+    "isolation": "read-only",
+    "invocationId": "2742a36f-af40-48e9-a5a3-e23cfee5d0ec",
+    "routeSource": "configured"
+  },
+  "recordedAt": "2026-07-22T12:51:14.342Z"
+}

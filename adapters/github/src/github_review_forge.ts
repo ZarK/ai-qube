@@ -658,6 +658,22 @@ function laneReviewBody(
   return { body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount, blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length };
 }
 
+// A marker belongs to the same round when head, lane, PR, and round id all
+// match; such a marker is updated in place on republish so one round never
+// accumulates more than one marker per lane.
+function sameRoundLaneMetadata(metadata: LaneReviewMetadata | null, input: GitHubLaneReviewPublishInput): boolean {
+  return metadata !== null
+    && metadata.head === input.headSha
+    && metadata.lane === input.lane
+    && metadata.prNumber === input.prNumber
+    && (metadata.round ?? null) === input.round;
+}
+
+function issueCommentIdFromUrl(url: string | null | undefined): string | null {
+  const match = (url ?? '').match(/#issuecomment-(\d+)$/);
+  return match ? match[1] : null;
+}
+
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
@@ -1821,6 +1837,88 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
           : `pull request #${input.prNumber} head changed from ${input.headSha} to ${freshHead} before publication; rerun pr gate for the current PR head.`);
       }
     };
+
+    // One provider marker per lane per round: a same-round republish with
+    // changed content updates the existing marker in place instead of
+    // appending a second one (exact duplicates already skip-matched above).
+    // An update failure fails closed rather than creating round noise.
+    const existingRoundReview = (await this.getPullRequestReviews(repositoryName, input.prNumber).catch(() => [] as RawReview[]))
+      .find(review => review.id !== undefined && review.id !== null
+        && authorIsTrusted(reviewAuthor(review), trustedMarkerAuthor)
+        && sameRoundLaneMetadata(parseLaneReviewMetadata(review.body), input));
+    if (existingRoundReview) {
+      const updateBody = laneReviewBody(input, allFindings, 0);
+      const payloadPath = reviewPayloadPath({ body: updateBody.body });
+      try {
+        await assertHeadUnchanged();
+        const updateResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', payloadPath], ghOptions);
+        if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api pull request review update failed');
+        const reviewUrl = publishedReviewUrl(updateResult) ?? (existingRoundReview.url ? redact(String(existingRoundReview.url)) : null);
+        return localReviewPublishResult({
+          status: 'published',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          url: reviewUrl,
+          reviewUrl,
+          publishKind: 'pull-request-review',
+          inlineCommentCount: 0,
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          nextAction: `Provider-visible lane review for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
+        });
+      } catch (error: unknown) {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          publishKind: 'pull-request-review',
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+        });
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
+    const existingRoundComment = comments
+      .map(comment => ({ commentId: issueCommentIdFromUrl(comment.url), metadata: trustedLaneReviewComment(comment, trustedMarkerAuthor) }))
+      .find(entry => entry.commentId !== null && sameRoundLaneMetadata(entry.metadata, input));
+    if (existingRoundComment) {
+      const updateBody = laneReviewBody(input, allFindings, 0, 'issue-comment');
+      const payloadPath = reviewPayloadPath({ body: updateBody.body });
+      try {
+        await assertHeadUnchanged();
+        const updateResult = await runGh(['api', `repos/${repositoryName}/issues/comments/${existingRoundComment.commentId}`, '--method', 'PATCH', '--input', payloadPath], ghOptions);
+        if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api issue comment update failed');
+        return localReviewPublishResult({
+          status: 'published',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          publishKind: 'issue-comment',
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          nextAction: `Provider-visible comment-state lane feedback for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
+        });
+      } catch (error: unknown) {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          publishKind: 'issue-comment',
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub comment update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+        });
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
 
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {

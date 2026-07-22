@@ -1,0 +1,346 @@
+{
+  "version": 1,
+  "issueNumber": 455,
+  "prNumber": 470,
+  "headSha": "b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+  "profile": "local-focused",
+  "adapter": "local-host",
+  "reviewer": {
+    "id": "grok",
+    "name": "Grok",
+    "adapterKind": "local"
+  },
+  "lane": "code-quality",
+  "id": "code-quality",
+  "status": "passed",
+  "severity": "medium",
+  "recommendation": "approve",
+  "summary": "Code-quality review of PR #470 (publish every validated review round) found no blocking defects. Per-lane terminal publish, round id grouping, fail-closed incomplete-round reuse, and provider marker metadata are structurally sound. Four advisory defects remain: aggregate publish status maps pure skip-match to published and treats non-published outcomes as already-current; a stale loadSiblingSynthesisLanes comment/API claims missing siblings fail closed while the caller discards missing; error paths relativize evidence with process.cwd() instead of repoRoot; GitLab lane runId and trusted metadata lag GitHub (no expectedLanes in runId hash; no blockingFindingCount/publishedAt on trusted records).",
+  "blockers": [],
+  "findings": [
+    {
+      "id": "cq-publish-status-aggregation",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_gate.ts",
+        "line": 985,
+        "endLine": 995,
+        "side": "destination"
+      },
+      "message": "In the routed publish loop, any non-failed publish status that is not exactly 'published' is counted as skipMatchedCount ('already current'), and the batch result is always status 'published' when publishUnavailable is empty—even when publishedCount is 0 and every lane only skip-matched. That diverges from the carried-forward path, which only accepts status 'published' or 'skipped', and from the all-reuse path that correctly reports status 'skipped'. Pure skip-match and other non-published outcomes are therefore labeled published.",
+      "suggestion": "Only count status 'published' and 'skipped' as successful outcomes; map other statuses into publishUnavailable. If publishedCount is 0 and every success was 'skipped', set localReviewPublish.status to 'skipped' (same vocabulary as the reuse-only branch) and keep nextAction explicit about already-current markers.",
+      "confidence": 0.9
+    },
+    {
+      "id": "cq-sibling-missing-stale-contract",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_review_publish.ts",
+        "line": 247,
+        "endLine": 253,
+        "side": "destination"
+      },
+      "message": "loadSiblingSynthesisLanes still accumulates missing lanes and its inner comment says a non-reuse sibling that fails validation 'fails publication closed', but runPrReviewPublishWithProvider only destructures { siblings } and never consults missing. The outer comment correctly documents intentional per-result publish. The dead missing channel plus contradictory comment is a maintainability trap that can cause incorrect re-introduction of withhold logic.",
+      "suggestion": "Either drop the missing return and rewrite the inner comment to match per-result publication, or assert missing is empty only if product policy actually requires fail-closed sibling presence.",
+      "confidence": 0.88
+    },
+    {
+      "id": "cq-evidence-path-cwd",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_review_publish.ts",
+        "line": 260,
+        "endLine": 260,
+        "side": "destination"
+      },
+      "message": "laneEvidenceFailure and the snapshot-cache lock timeout message call relativeEvidencePath(process.cwd(), path) instead of the repoRoot used for evidence validation and writes. When the process cwd is not the repository root, error text can leak absolute paths or fail to produce a stable repo-relative path.",
+      "suggestion": "Pass the validated repoRoot into relativeEvidencePath at every failure site (including loadSibling/loadLaneEvidence and lock timeout messaging).",
+      "confidence": 0.82
+    },
+    {
+      "id": "cq-gitlab-runid-expected-lanes",
+      "severity": "advisory",
+      "location": {
+        "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+        "line": 209,
+        "endLine": 214,
+        "side": "destination"
+      },
+      "message": "GitHub stableLaneRunId hashes head, lane, expectedLanes, issueNumber, and prNumber. GitLab laneRunId hashes only head, lane, issueNumber, and prNumber, omitting expectedLanes. Skip-match also compares round (which encodes expected lanes), so correctness is partly preserved, but runId identity is provider-asymmetric and can collide across different expected sets on GitLab.",
+      "suggestion": "Include the sorted unique expectedLanes array in GitLab laneRunId JSON, matching GitHub, and add a cross-adapter test that changing only expectedLanes changes runId on both providers.",
+      "confidence": 0.84
+    },
+    {
+      "id": "cq-gitlab-blocking-count-metadata",
+      "severity": "advisory",
+      "location": {
+        "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+        "line": 743,
+        "endLine": 767,
+        "side": "destination"
+      },
+      "message": "GitLab lane-review metadata now carries round and expectedLanes, but trustedLaneReviews still omits blockingFindingCount and publishedAt while GitHub emits both. review_stats fail-closes request-changes records without an exact blockingFindingCount and requires publishedAt for ordering, so GitLab provider history cannot feed the same multi-round convergence metrics even after this PR's round metadata port.",
+      "suggestion": "Add blockingFindingCount (and publishedAt from note timestamps) to GitLab publish metadata and trustedLaneReviews parsing, or keep reviewStats capability off for GitLab and document the intentional matrix gap next to capabilities().",
+      "confidence": 0.8
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_gate.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_review_publish.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/review_stats.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/provider_lane_evidence.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/review_round.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/github/src/github_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/gitlab/src/gitlab_review_types.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "packages/qube-core/src/review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/pr_gate_a.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/provider_lane_evidence.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/review_stats.test.cjs",
+      "sha256": null
+    }
+  ],
+  "commands": [],
+  "surfaces": [
+    "products/aie/src/app/pr_gate.ts",
+    "products/aie/src/app/pr_review_publish.ts",
+    "products/aie/src/app/review_stats.ts",
+    "products/aie/src/provider_lane_evidence.ts",
+    "products/aie/src/review_round.ts",
+    "adapters/github/src/github_review_forge.ts",
+    "adapters/gitlab/src/gitlab_review_forge.ts",
+    "adapters/gitlab/src/gitlab_review_types.ts",
+    "packages/qube-core/src/review_forge.ts",
+    "products/aie/test/pr_gate_a.test.cjs",
+    "products/aie/test/provider_lane_evidence.test.cjs",
+    "products/aie/test/review_stats.test.cjs"
+  ],
+  "contextReviewed": [
+    {
+      "kind": "agents",
+      "source": "F:/code/ai-qube/Agents.md Executor workflow and review-gate policy",
+      "trust": "policy",
+      "freshness": "current"
+    },
+    {
+      "kind": "issue-body",
+      "source": "bundle issue #455 Publish every validated review round to the provider",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-body",
+      "source": "bundle PR #470 criterion-to-proof map and acceptance criteria",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "on-disk changed sources for PR head b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "ci",
+      "source": "bundle checks: changes=mapped; core=pending-current-head-run; aiq=skipped-current-head-run",
+      "trust": "trusted-provider",
+      "freshness": "current"
+    }
+  ],
+  "promptStack": [
+    {
+      "id": "safety/repository-policy",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/repository-policy.md",
+      "sha256": "af70c8a6da1229995ec330e96aab1b38e15ae1d5ebd7ce4188c016436b20c791",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/prompt-injection",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/prompt-injection.md",
+      "sha256": "96f0225190549900b0e3331544d402e46d68350d02e2a70c840ac4a9ceb53f60",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/review-output-untrusted",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/review-output-untrusted.md",
+      "sha256": "a7813b758cdb75de11c6efc25658906ecd3fc368cd599965592286a690c66297",
+      "trust": "policy"
+    },
+    {
+      "id": "hosts/codex",
+      "source": "builtin",
+      "sourceCategory": "host",
+      "path": "prompts/hosts/codex.md",
+      "sha256": "5f96508482344c32708750ef2bf43dbf65773de44be8a61e4bc15172d493ff45",
+      "trust": "policy"
+    },
+    {
+      "id": "descriptors/qa-reviewer",
+      "source": "builtin",
+      "sourceCategory": "descriptor",
+      "path": "prompts/descriptors/qa-reviewer.md",
+      "sha256": "7703c13f9f113ba9d8f8c3ea972a81c4df0a401de9ccb0300e9e70922c4a366f",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/issue-compliance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/issue-compliance.md",
+      "sha256": "ee5d60f40eecf6b6528b833e86f77fa204151c88cdcecbb68d30381e578fcdb3",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/code-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/code-quality.md",
+      "sha256": "51a9c087571d1b36cd38688547f17b00a1f639ce565cd079c05a78fab02bf629",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/tests-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/tests-quality.md",
+      "sha256": "74f776c3f085188500f0e1a89d55dbf914b614374f5e4b2b4e16c34a4b85681a",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/security",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/security.md",
+      "sha256": "8dc8f872b42fe224355aa4185cf95867a506befc4857062f3024cc8a8fc37e17",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/final-gate",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/final-gate.md",
+      "sha256": "5c5ebf42ce5d9c70e86491883e929137322a9fa6ce8c14f98c6e2b276452aace",
+      "trust": "policy"
+    },
+    {
+      "id": "command-supplied:f0beb54f2c7b",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "f0beb54f2c7b4e60792e6af1e121368468c4cd9684202de1e4028d78c7bbde68",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c349956ca10d",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c349956ca10dd68ff9d6cdda9aea07f697ab2272464e33fd28cfe33cfe683aea",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:44e2425485d8",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "44e2425485d86d2de03ba4be4ece2c2a0c8b562dfe3a486893501e8f445ee03b",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:242fc28afc33",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "242fc28afc33dda42449acfbda8354ede8037d5226013e0ab43082bbfaa1a5a1",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c7e8f261d787",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c7e8f261d78744e57b8a04a16f88739182d601e7cdc27a3011acb42a3eb0bd50",
+      "trust": "untrusted-task-input"
+    }
+  ],
+  "toolsUsed": [
+    "read_file",
+    "grep"
+  ],
+  "completeness": "Inspected pr_gate publish-on-validate loop, pr_review_publish validation/synthesis/sibling loading, review_round id, review_stats parse/classifyRounds/firstReviewClean, provider_lane_evidence round completeness, GitHub/GitLab forge marker metadata and skip-match, and the new/updated tests in pr_gate_a, provider_lane_evidence, and review_stats. Did not execute tests or git (shell denied by policy), so head SHA vs workspace identity is a precondition observation only; did not line-audit every line of pr_gate_c/pr_gate_b fixtures or GitHub publishLaneReviewFeedbackForPullRequest mutation branches beyond marker/skip-match; did not re-read packages/qube-testkit beyond round field presence.",
+  "preconditions": [
+    "Shell execution was denied by host policy; could not run git rev-parse/diff to independently prove workspace HEAD equals b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c.",
+    "Bundle reports check core=pending-current-head-run and aiq=skipped-current-head-run; issue #455 checklist 0/4 checked. These are gate-level facts, not code-quality lane blockers.",
+    "No tests were executed in this lane; oracle-quality attestation is based on static assertion review of the new/updated tests only."
+  ],
+  "runnerProvenance": {
+    "runnerKind": "local-host",
+    "host": "grok",
+    "freshContext": true,
+    "promptOnly": false,
+    "taskId": "19acc10d-fcd8-41dc-a504-0213159e6c4c",
+    "sessionId": "019f89da-fe1f-7071-a166-ac71050f51ef",
+    "threadId": null,
+    "promptStackHash": "23a42d44ca7dcf4f0f57b5a9c682f59aa4111acd3b22539684ddc2786ea8147b",
+    "headSha": "b91154e7cfe2790cba9d7a1b9f7f4808ad0a040c",
+    "providerPublishStatus": null,
+    "model": "grok-4.5",
+    "effort": null,
+    "isolation": "read-only",
+    "invocationId": "19acc10d-fcd8-41dc-a504-0213159e6c4c",
+    "routeSource": "configured"
+  },
+  "recordedAt": "2026-07-22T12:51:14.334Z"
+}

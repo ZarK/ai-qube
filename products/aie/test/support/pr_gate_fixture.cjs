@@ -605,6 +605,25 @@ function makePrExec(options = {}) {
     if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
       return { args, exitCode: 0, stdout: '', stderr: '' };
     }
+    if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PUT') {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ update: args[1], ...payload });
+      const reviewId = Number(args[1].split('/').at(-1));
+      currentPr = {
+        ...currentPr,
+        reviews: (currentPr.reviews || []).map(review => review.id === reviewId ? { ...review, body: payload.body } : review),
+        latestReviews: (currentPr.latestReviews || []).map(review => review.id === reviewId ? { ...review, body: payload.body } : review),
+      };
+      if (prViews.length > 0) prViews[0] = currentPr;
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: reviewId, html_url: `https://github.com/example/repo/pull/12#pullrequestreview-${reviewId}` }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/issues\/comments\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PATCH') {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ update: args[1], ...payload });
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: Number(args[1].split('/').at(-1)) }), stderr: '' };
+    }
     if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
       return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };
     }

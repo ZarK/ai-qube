@@ -801,7 +801,7 @@ describe("GitLab review forge adapter", () => {
     assert.equal(notes.length, 1);
   });
 
-  it("publishes updated GitLab lane feedback when the same head has changed findings", async () => {
+  it("updates the existing GitLab note in place when the same round has changed findings", async () => {
     const notes = [];
     const client = {
       async getMergeRequest() {
@@ -816,6 +816,11 @@ describe("GitLab review forge adapter", () => {
       async createMergeRequestNote({ body }) {
         const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
         notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const note = notes.find(candidate => String(candidate.id) === String(noteId));
+        note.body = body;
         return note;
       },
       async getCurrentUser() {
@@ -853,9 +858,13 @@ describe("GitLab review forge adapter", () => {
     });
 
     assert.equal(first.status, "published");
+    // Changed evidence within one round updates the existing note in place:
+    // one provider marker per lane per round, never a second note.
     assert.equal(second.status, "published");
+    assert.match(second.nextAction, /updated in place for its round/);
     assert.equal(duplicate.status, "skipped");
-    assert.equal(notes.length, 2);
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].body, /Second review\./);
   });
 
   it("resolves unresolved GitLab merge request discussions", async () => {

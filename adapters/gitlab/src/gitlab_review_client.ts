@@ -89,6 +89,10 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     return this.post(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes`, { body: input.body });
   }
 
+  async updateMergeRequestNote(input: { projectId: string; iid: string; noteId: string; body: string }): Promise<GitLabNote> {
+    return this.put(`/projects/${encodeProjectId(input.projectId)}/merge_requests/${encodeURIComponent(normalizeMergeRequestIid(input.iid))}/notes/${encodeURIComponent(input.noteId)}`, { body: input.body });
+  }
+
   async getCurrentUser(): Promise<GitLabUser> {
     return this.get("/user");
   }

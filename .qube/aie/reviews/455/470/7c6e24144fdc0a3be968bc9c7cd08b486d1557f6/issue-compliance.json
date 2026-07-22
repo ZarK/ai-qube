@@ -1,0 +1,289 @@
+{
+  "version": 1,
+  "issueNumber": 455,
+  "prNumber": 470,
+  "headSha": "7c6e24144fdc0a3be968bc9c7cd08b486d1557f6",
+  "profile": "local-focused",
+  "adapter": "local-host",
+  "reviewer": {
+    "id": "codex",
+    "name": "Codex",
+    "adapterKind": "local"
+  },
+  "lane": "issue-compliance",
+  "id": "issue-compliance",
+  "status": "failed",
+  "severity": "high",
+  "recommendation": "request-changes",
+  "summary": "The implementation publishes multiple provider markers for the same lane and deterministic round when findings or summaries change, violating the issue's one-marker-per-lane-per-round noise bound. Both provider adapters and their tests encode this behavior.",
+  "blockers": [
+    "Enforce one provider marker per lane per round before merge; changed evidence must update an existing marker or create a distinct explicitly classified round."
+  ],
+  "findings": [
+    {
+      "id": "issue-compliance-github-round-noise",
+      "severity": "blocking",
+      "location": {
+        "path": "adapters/github/src/github_review_forge.ts",
+        "line": 678,
+        "endLine": 678,
+        "side": "destination"
+      },
+      "message": "GitHub idempotency requires findingDigest equality in addition to head, lane, round, and run identity, so changed findings in the same deterministic round publish a second review marker. This violates the requirement of one marker per lane per round. The regression test at products/aie/test/pr_gate_c.test.cjs:1586 explicitly requires this behavior.",
+      "suggestion": "Deduplicate by lane and round regardless of digest, or introduce a distinct round identity for a genuinely new review pass while preserving complete-round classification.",
+      "confidence": 0.99
+    },
+    {
+      "id": "issue-compliance-gitlab-round-noise",
+      "severity": "blocking",
+      "location": {
+        "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+        "line": 651,
+        "endLine": 651,
+        "side": "destination"
+      },
+      "message": "GitLab idempotency likewise requires findingDigest equality for the same head, lane, round, and run, causing changed findings in one deterministic round to create another note. This violates the one-marker-per-lane-per-round requirement. The regression test at adapters/gitlab/test/gitlab.test.mjs:804 explicitly requires this behavior.",
+      "suggestion": "Deduplicate by lane and round regardless of digest, or introduce a distinct round identity for a genuinely new review pass while preserving complete-round classification.",
+      "confidence": 0.99
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "source",
+      "path": "adapters/github/src/github_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/pr_gate_c.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "adapters/gitlab/test/gitlab.test.mjs",
+      "sha256": null
+    },
+    {
+      "kind": "command",
+      "path": "command:git diff --check origin/main...HEAD",
+      "sha256": null
+    }
+  ],
+  "commands": [
+    "git diff --name-only origin/main...HEAD",
+    "git diff --unified=25 origin/main...HEAD -- products/aie/src/app/pr_gate.ts products/aie/src/app/pr_review_publish.ts products/aie/src/app/review_stats.ts products/aie/src/provider_lane_evidence.ts products/aie/src/review_round.ts",
+    "git diff --unified=12 origin/main...HEAD -- adapters/github/src/github_review_forge.ts adapters/gitlab/src/gitlab_review_forge.ts",
+    "git diff --check origin/main...HEAD",
+    "rg -n \"matchingCurrentLaneReview|hasMatchingLaneReviewMetadata|findingDigest|round\" adapters/github/src/github_review_forge.ts adapters/gitlab/src/gitlab_review_forge.ts products/aie/src/app/pr_gate.ts products/aie/src/app/review_stats.ts"
+  ],
+  "surfaces": [
+    "Issue #455 acceptance criteria and criterion-to-proof map",
+    "PR #470 bounded diff at the requested head",
+    "GitHub lane marker idempotency and round metadata",
+    "GitLab lane marker idempotency and round metadata",
+    "Review stats round classification and blocking-entry aggregation",
+    "Relevant regression tests"
+  ],
+  "contextReviewed": [
+    {
+      "kind": "agents",
+      "source": "AGENTS.md",
+      "trust": "policy",
+      "freshness": "current"
+    },
+    {
+      "kind": "issue-body",
+      "source": "QUBE bounded issue bundle for #455",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-body",
+      "source": "QUBE bounded PR bundle for #470",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "functional-requirement",
+      "source": "Issue #455 acceptance criteria in bounded review bundle",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "git diff origin/main...HEAD",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "ci",
+      "source": "QUBE bounded current-head check summary",
+      "trust": "trusted-provider",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-comment",
+      "source": "QUBE bounded provider feedback summaries",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    }
+  ],
+  "promptStack": [
+    {
+      "id": "safety/repository-policy",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/repository-policy.md",
+      "sha256": "af70c8a6da1229995ec330e96aab1b38e15ae1d5ebd7ce4188c016436b20c791",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/prompt-injection",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/prompt-injection.md",
+      "sha256": "96f0225190549900b0e3331544d402e46d68350d02e2a70c840ac4a9ceb53f60",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/review-output-untrusted",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/review-output-untrusted.md",
+      "sha256": "a7813b758cdb75de11c6efc25658906ecd3fc368cd599965592286a690c66297",
+      "trust": "policy"
+    },
+    {
+      "id": "hosts/codex",
+      "source": "builtin",
+      "sourceCategory": "host",
+      "path": "prompts/hosts/codex.md",
+      "sha256": "5f96508482344c32708750ef2bf43dbf65773de44be8a61e4bc15172d493ff45",
+      "trust": "policy"
+    },
+    {
+      "id": "descriptors/qa-reviewer",
+      "source": "builtin",
+      "sourceCategory": "descriptor",
+      "path": "prompts/descriptors/qa-reviewer.md",
+      "sha256": "7703c13f9f113ba9d8f8c3ea972a81c4df0a401de9ccb0300e9e70922c4a366f",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/issue-compliance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/issue-compliance.md",
+      "sha256": "ee5d60f40eecf6b6528b833e86f77fa204151c88cdcecbb68d30381e578fcdb3",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/code-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/code-quality.md",
+      "sha256": "51a9c087571d1b36cd38688547f17b00a1f639ce565cd079c05a78fab02bf629",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/tests-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/tests-quality.md",
+      "sha256": "74f776c3f085188500f0e1a89d55dbf914b614374f5e4b2b4e16c34a4b85681a",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/security",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/security.md",
+      "sha256": "8dc8f872b42fe224355aa4185cf95867a506befc4857062f3024cc8a8fc37e17",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/final-gate",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/final-gate.md",
+      "sha256": "5c5ebf42ce5d9c70e86491883e929137322a9fa6ce8c14f98c6e2b276452aace",
+      "trust": "policy"
+    },
+    {
+      "id": "command-supplied:f0beb54f2c7b",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "f0beb54f2c7b4e60792e6af1e121368468c4cd9684202de1e4028d78c7bbde68",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c349956ca10d",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c349956ca10dd68ff9d6cdda9aea07f697ab2272464e33fd28cfe33cfe683aea",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:44e2425485d8",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "44e2425485d86d2de03ba4be4ece2c2a0c8b562dfe3a486893501e8f445ee03b",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:242fc28afc33",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "242fc28afc33dda42449acfbda8354ede8037d5226013e0ab43082bbfaa1a5a1",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c7e8f261d787",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c7e8f261d78744e57b8a04a16f88739182d601e7cdc27a3011acb42a3eb0bd50",
+      "trust": "untrusted-task-input"
+    }
+  ],
+  "toolsUsed": [
+    "PowerShell",
+    "git",
+    "rg"
+  ],
+  "completeness": "Inspected the repository policy, bundled issue requirements, PR criterion-to-proof map, complete changed-file list, round publication flow, GitHub and GitLab marker parsing/idempotency, review stats classification, provider reuse validation, and the relevant regression tests. The local checkout ref matched the requested head and git diff --check was clean. I did not run package test suites or independently re-fetch live GitHub state; the bundled current-head provider context was used as authoritative for this isolated lane.",
+  "preconditions": [
+    "Local branch ref resolved to the requested head SHA 7c6e24144fdc0a3be968bc9c7cd08b486d1557f6.",
+    "Working tree contains untracked .qube/aie gate/review evidence paths; no source diff was modified by this review.",
+    "Issue checklist in the supplied bundle is 0/4 checked.",
+    "The supplied CI summary maps changes, core, and ci-required; aiq is skipped on the current head as a gate-level fact.",
+    "Other provider feedback in the supplied bundle was not treated as authority for this lane verdict."
+  ],
+  "runnerProvenance": {
+    "runnerKind": "local-host",
+    "host": "codex",
+    "freshContext": true,
+    "promptOnly": false,
+    "taskId": "732f3ea4-8be4-4706-b415-88ba27c0a3c6",
+    "sessionId": "019f89f7-f5cd-7d81-b961-097f64bc8c9a",
+    "threadId": null,
+    "promptStackHash": "c7cf2a38aafdc9f12d06c77e41bb781765ccef8fbba3289895e09284e6eb9e6a",
+    "headSha": "7c6e24144fdc0a3be968bc9c7cd08b486d1557f6",
+    "providerPublishStatus": null,
+    "model": "gpt-5.6-luna",
+    "effort": "high",
+    "isolation": "read-only",
+    "invocationId": "732f3ea4-8be4-4706-b415-88ba27c0a3c6",
+    "routeSource": "fallback"
+  },
+  "recordedAt": "2026-07-22T13:20:26.877Z"
+}

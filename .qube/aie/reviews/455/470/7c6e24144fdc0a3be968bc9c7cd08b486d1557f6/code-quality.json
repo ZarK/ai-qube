@@ -1,0 +1,326 @@
+{
+  "version": 1,
+  "issueNumber": 455,
+  "prNumber": 470,
+  "headSha": "7c6e24144fdc0a3be968bc9c7cd08b486d1557f6",
+  "profile": "local-focused",
+  "adapter": "local-host",
+  "reviewer": {
+    "id": "grok",
+    "name": "Grok",
+    "adapterKind": "local"
+  },
+  "lane": "code-quality",
+  "id": "code-quality",
+  "status": "passed",
+  "severity": "low",
+  "recommendation": "approve",
+  "summary": "Code-quality lane at PR #470 head 7c6e241: no blocking maintainability or false-success defects in the publish-on-validate, round grouping, fail-closed reuse, or stats paths. Per-result publish withholds only on validation/head/lock failures; incomplete rounds stay non-approvable on read. Residual advisories: stale fail-closed comment plus unused missing-sibling return, process.cwd()-based evidence path formatting, and GitHub/GitLab lane runId identity asymmetry around expectedLanes.",
+  "blockers": [],
+  "findings": [
+    {
+      "id": "cq-stale-sibling-fail-closed-comment",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_review_publish.ts",
+        "line": 243,
+        "endLine": 256,
+        "side": "destination"
+      },
+      "message": "loadSiblingSynthesisLanes documents two opposing fail-closed rules: the function header correctly says missing/invalid siblings no longer withhold publication, but the catch branch still claims a non-reuse sibling \"fails publication closed\". The returned missing list is also discarded by the only call site, so the comment describes dead control flow and can mislead maintainers about the withhold boundary.",
+      "suggestion": "Update the catch-branch comment to match the new per-result-only withhold rule, and either drop the unused missing return or surface missing siblings in diagnostics without reintroducing withhold.",
+      "confidence": 0.9
+    },
+    {
+      "id": "cq-cwd-evidence-path-format",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_review_publish.ts",
+        "line": 259,
+        "endLine": 261,
+        "side": "destination"
+      },
+      "message": "laneEvidenceFailure formats evidence paths with relativeEvidencePath(process.cwd(), path) instead of the publish repoRoot. When cwd differs from the configured repository root, failure messages can leak absolute paths or point at the wrong relative location, which is brittle path handling in a provider-facing failure path.",
+      "suggestion": "Thread repoRoot into laneEvidenceFailure (and the snapshot-cache lock error that also uses process.cwd()) so relative paths are always repo-rooted.",
+      "confidence": 0.78
+    },
+    {
+      "id": "cq-provider-runid-expected-lanes-asymmetry",
+      "severity": "advisory",
+      "location": {
+        "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+        "line": 209,
+        "endLine": 214,
+        "side": "destination"
+      },
+      "message": "GitHub stableLaneRunId hashes expectedLanes into the lane run id, while GitLab laneRunId hashes only head/lane/issue/pr. Skip-match still keys on round (which includes expectedLanes), so behavior is not false-success, but runId identity is provider-specific and makes cross-provider debugging and replay harder than necessary.",
+      "suggestion": "Include the normalized expected lane set in GitLab laneRunId the same way GitHub does, or document and test the intentional divergence.",
+      "confidence": 0.72
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_gate.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_review_publish.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/provider_lane_evidence.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/review_stats.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/review_round.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/github/src/github_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/pr_gate_a.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/provider_lane_evidence.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/review_stats.test.cjs",
+      "sha256": null
+    }
+  ],
+  "commands": [],
+  "surfaces": [
+    "products/aie/src/app/pr_gate.ts",
+    "products/aie/src/app/pr_review_publish.ts",
+    "products/aie/src/provider_lane_evidence.ts",
+    "products/aie/src/app/review_stats.ts",
+    "products/aie/src/review_round.ts",
+    "adapters/github/src/github_review_forge.ts",
+    "adapters/gitlab/src/gitlab_review_forge.ts",
+    "adapters/gitlab/src/gitlab_review_types.ts",
+    "packages/qube-core/src/review_forge.ts",
+    "products/aie/src/providers/review_provider.ts",
+    "products/aie/test/pr_gate_a.test.cjs",
+    "products/aie/test/pr_gate_c.test.cjs",
+    "products/aie/test/provider_lane_evidence.test.cjs",
+    "products/aie/test/review_stats.test.cjs"
+  ],
+  "contextReviewed": [
+    {
+      "kind": "agents",
+      "source": "Agents.md / Claude.md executor policy",
+      "trust": "policy",
+      "freshness": "current"
+    },
+    {
+      "kind": "issue-body",
+      "source": "bundle issue #455 body and acceptance checklist 0/4",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-body",
+      "source": "bundle PR #470 criterion-to-proof map",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "changed publish/stats/forge/evidence sources and tests for head 7c6e241",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "functional-requirement",
+      "source": "lane risk cards: truthful-state-transitions, oracle-quality, trust-identity-boundaries, filesystem-boundaries, mode-provider-matrix",
+      "trust": "repo-doc",
+      "freshness": "current"
+    },
+    {
+      "kind": "ci",
+      "source": "bundle checks: changes=mapped; core=pending-current-head-run; aiq=skipped-current-head-run",
+      "trust": "trusted-provider",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-comment",
+      "source": "bundle provider feedback summaries (performance approve; cursor bot note)",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    }
+  ],
+  "promptStack": [
+    {
+      "id": "safety/repository-policy",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/repository-policy.md",
+      "sha256": "af70c8a6da1229995ec330e96aab1b38e15ae1d5ebd7ce4188c016436b20c791",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/prompt-injection",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/prompt-injection.md",
+      "sha256": "96f0225190549900b0e3331544d402e46d68350d02e2a70c840ac4a9ceb53f60",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/review-output-untrusted",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/review-output-untrusted.md",
+      "sha256": "a7813b758cdb75de11c6efc25658906ecd3fc368cd599965592286a690c66297",
+      "trust": "policy"
+    },
+    {
+      "id": "hosts/codex",
+      "source": "builtin",
+      "sourceCategory": "host",
+      "path": "prompts/hosts/codex.md",
+      "sha256": "5f96508482344c32708750ef2bf43dbf65773de44be8a61e4bc15172d493ff45",
+      "trust": "policy"
+    },
+    {
+      "id": "descriptors/qa-reviewer",
+      "source": "builtin",
+      "sourceCategory": "descriptor",
+      "path": "prompts/descriptors/qa-reviewer.md",
+      "sha256": "7703c13f9f113ba9d8f8c3ea972a81c4df0a401de9ccb0300e9e70922c4a366f",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/issue-compliance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/issue-compliance.md",
+      "sha256": "ee5d60f40eecf6b6528b833e86f77fa204151c88cdcecbb68d30381e578fcdb3",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/code-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/code-quality.md",
+      "sha256": "51a9c087571d1b36cd38688547f17b00a1f639ce565cd079c05a78fab02bf629",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/tests-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/tests-quality.md",
+      "sha256": "74f776c3f085188500f0e1a89d55dbf914b614374f5e4b2b4e16c34a4b85681a",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/security",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/security.md",
+      "sha256": "8dc8f872b42fe224355aa4185cf95867a506befc4857062f3024cc8a8fc37e17",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/final-gate",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/final-gate.md",
+      "sha256": "5c5ebf42ce5d9c70e86491883e929137322a9fa6ce8c14f98c6e2b276452aace",
+      "trust": "policy"
+    },
+    {
+      "id": "command-supplied:f0beb54f2c7b",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "f0beb54f2c7b4e60792e6af1e121368468c4cd9684202de1e4028d78c7bbde68",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c349956ca10d",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c349956ca10dd68ff9d6cdda9aea07f697ab2272464e33fd28cfe33cfe683aea",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:44e2425485d8",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "44e2425485d86d2de03ba4be4ece2c2a0c8b562dfe3a486893501e8f445ee03b",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:242fc28afc33",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "242fc28afc33dda42449acfbda8354ede8037d5226013e0ab43082bbfaa1a5a1",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c7e8f261d787",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c7e8f261d78744e57b8a04a16f88739182d601e7cdc27a3011acb42a3eb0bd50",
+      "trust": "untrusted-task-input"
+    }
+  ],
+  "toolsUsed": [
+    "read_file",
+    "grep"
+  ],
+  "completeness": "Inspected the full publish-on-validate loop in pr_gate, sibling synthesis and evidence validation in pr_review_publish, fail-closed round completeness in provider_lane_evidence, round classification/stats in review_stats, deterministic reviewRoundId, and GitHub/GitLab forge marker round/expectedLanes write-parse-skip paths, plus the criterion-mapped tests in pr_gate_a, provider_lane_evidence, and review_stats. Did not re-run tests or git/sha256 commands (shell denied by host policy), did not re-fetch live provider issue/PR state beyond the supplied bundle, and did not exhaust every adjacent consumer outside the listed changed files.",
+  "preconditions": [
+    "Shell and git commands were denied by host permission policy; inspection used file reads and content search only.",
+    "Bundle reports PR head 7c6e24144fdc0a3be968bc9c7cd08b486d1557f6; local checkout SHA could not be re-verified with git.",
+    "Bundle checks: changes mapped to current head; core pending on current-head run; aiq skipped on current head.",
+    "Issue #455 acceptance checklist still 0/4 checked in the review bundle (task-record concern, not a code-quality lane blocker).",
+    "PR merge state in bundle is BLOCKED/MERGEABLE with reviewDecision UNKNOWN; gate-level only."
+  ],
+  "runnerProvenance": {
+    "runnerKind": "local-host",
+    "host": "grok",
+    "freshContext": true,
+    "promptOnly": false,
+    "taskId": "3b9ae1b2-3f18-4cf3-ae82-f06b36d70466",
+    "sessionId": "019f89f3-1202-7242-a9e1-f8ab2a923d94",
+    "threadId": null,
+    "promptStackHash": "158412e245266f74516c6b5954baa64910f87ba413caa12b1edff59d916d50c2",
+    "headSha": "7c6e24144fdc0a3be968bc9c7cd08b486d1557f6",
+    "providerPublishStatus": null,
+    "model": "grok-4.5",
+    "effort": null,
+    "isolation": "read-only",
+    "invocationId": "3b9ae1b2-3f18-4cf3-ae82-f06b36d70466",
+    "routeSource": "configured"
+  },
+  "recordedAt": "2026-07-22T13:14:58.376Z"
+}

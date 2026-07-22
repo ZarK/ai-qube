@@ -1,0 +1,345 @@
+{
+  "version": 1,
+  "issueNumber": 455,
+  "prNumber": 470,
+  "headSha": "06fa4e3a6976c778b01769894f2357de7332e03f",
+  "profile": "local-focused",
+  "adapter": "local-host",
+  "reviewer": {
+    "id": "grok",
+    "name": "Grok",
+    "adapterKind": "local"
+  },
+  "lane": "performance",
+  "id": "performance",
+  "status": "passed",
+  "severity": "low",
+  "recommendation": "approve",
+  "summary": "Performance lane at head 06fa4e3a6976c778b01769894f2357de7332e03f finds no blocking hot-path defects. Round classification and reuse stay linear for bounded history (window ≤50, history ≤100, load concurrency 4). Publish-on-validate correctly emits terminal results only, fails closed on incomplete rounds for ship-ready/reuse, and keeps dry-run as planned. Residual advisories: sequential per-lane full provider reloads (amplified by publishing every terminal lane), denser multi-round markers press the 100-record history bound sooner, and the gate rollup labels pure skip-match batches as status published.",
+  "blockers": [],
+  "findings": [
+    {
+      "id": "perf-sequential-lane-publish-reloads",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_gate.ts",
+        "line": 973,
+        "endLine": 996,
+        "side": "destination"
+      },
+      "message": "The new publish-every-terminal-lane path walks publishableLanes sequentially and each runPrReviewPublishWithProvider call reloads repository identity, issue comments, PR head, publisher identity, and re-validates every sibling evidence file for synthesis. With a comprehensive active set (~15 lanes) this is tens of sequential provider API round-trips plus O(lanes²) evidence validation per gate, without a shared per-head snapshot across the batch. Correctness (per-lane head recheck, skip-match) requires fresheness checks, but comments/PR loads and sibling evidence could be reused once per head within the batch.",
+      "suggestion": "Cache one current-head PR/comment snapshot and validated sibling evidence map for the duration of the publishableLanes loop; still re-assert head immediately before each provider mutation.",
+      "confidence": 0.88
+    },
+    {
+      "id": "perf-lane-history-density",
+      "severity": "advisory",
+      "location": {
+        "path": "adapters/github/src/github_review_forge.ts",
+        "line": 68,
+        "endLine": 68,
+        "side": "destination"
+      },
+      "message": "Publishing blocking and partial terminal rounds increases marker density to O(lanes × rounds). loadLaneReviewHistory hard-caps comments and reviews at MAX_LANE_HISTORY_RECORDS (100) and fail-closes the whole PR to no-lane-evidence when pageInfo.hasNextPage. Under a 15-lane profile, roughly seven multi-lane rounds can exhaust the bound and erase convergence stats for high-rework PRs—the exact scenario this issue wants stats to measure.",
+      "suggestion": "Paginate or filter lane-marker history (e.g., only qube-pr-review markers, or raise/segment the bound) so multi-round stats remain available after denser publish-on-validate traffic.",
+      "confidence": 0.72
+    },
+    {
+      "id": "truthful-publish-rollup-skip-match",
+      "severity": "advisory",
+      "location": {
+        "path": "products/aie/src/app/pr_gate.ts",
+        "line": 993,
+        "endLine": 995,
+        "side": "destination"
+      },
+      "message": "When every lane skip-matches and publishedCount stays 0, localReviewPublish.status is still set to published rather than skipped. nextAction text mentions already-current lanes, but the status field maps a no-mutation outcome to published, which weakens truthful state for callers that key only on status.",
+      "suggestion": "If publishedCount === 0 and skipMatchedCount > 0 with no failures, set status to skipped (mirror the trusted-provider-reuse branch) while keeping the explanatory nextAction.",
+      "confidence": 0.78
+    }
+  ],
+  "artifacts": [
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_gate.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/pr_review_publish.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/app/review_stats.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/provider_lane_evidence.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "products/aie/src/review_round.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/github/src/github_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "source",
+      "path": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/pr_gate_a.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/review_stats.test.cjs",
+      "sha256": null
+    },
+    {
+      "kind": "test",
+      "path": "products/aie/test/provider_lane_evidence.test.cjs",
+      "sha256": null
+    }
+  ],
+  "commands": [],
+  "surfaces": [
+    "pr_gate.publishableLanes",
+    "pr_review_publish.loadSiblingSynthesisLanes",
+    "review_stats.classifyRounds",
+    "provider_lane_evidence.readTrustedProviderLanes",
+    "github.loadLaneReviewHistory",
+    "gitlab.laneBody.round",
+    "review_round.reviewRoundId"
+  ],
+  "contextReviewed": [
+    {
+      "kind": "issue-body",
+      "source": "bundle-issue-455",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "pr-body",
+      "source": "bundle-pr-470-criterion-to-proof",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "diff",
+      "source": "bundle-changed-files-16",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "ci",
+      "source": "bundle-checks-core-ci-required-failed",
+      "trust": "untrusted-task-input",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "products/aie/src/app/review_stats.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "products/aie/src/provider_lane_evidence.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "products/aie/src/app/pr_gate.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "products/aie/src/app/pr_review_publish.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "adapters/github/src/github_review_forge.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    },
+    {
+      "kind": "doc",
+      "source": "adapters/gitlab/src/gitlab_review_forge.ts",
+      "trust": "local-evidence",
+      "freshness": "current"
+    }
+  ],
+  "promptStack": [
+    {
+      "id": "safety/repository-policy",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/repository-policy.md",
+      "sha256": "af70c8a6da1229995ec330e96aab1b38e15ae1d5ebd7ce4188c016436b20c791",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/prompt-injection",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/prompt-injection.md",
+      "sha256": "96f0225190549900b0e3331544d402e46d68350d02e2a70c840ac4a9ceb53f60",
+      "trust": "policy"
+    },
+    {
+      "id": "safety/review-output-untrusted",
+      "source": "builtin",
+      "sourceCategory": "policy",
+      "path": "prompts/safety/review-output-untrusted.md",
+      "sha256": "a7813b758cdb75de11c6efc25658906ecd3fc368cd599965592286a690c66297",
+      "trust": "policy"
+    },
+    {
+      "id": "hosts/codex",
+      "source": "builtin",
+      "sourceCategory": "host",
+      "path": "prompts/hosts/codex.md",
+      "sha256": "5f96508482344c32708750ef2bf43dbf65773de44be8a61e4bc15172d493ff45",
+      "trust": "policy"
+    },
+    {
+      "id": "descriptors/qa-reviewer",
+      "source": "builtin",
+      "sourceCategory": "descriptor",
+      "path": "prompts/descriptors/qa-reviewer.md",
+      "sha256": "7703c13f9f113ba9d8f8c3ea972a81c4df0a401de9ccb0300e9e70922c4a366f",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/issue-compliance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/issue-compliance.md",
+      "sha256": "ee5d60f40eecf6b6528b833e86f77fa204151c88cdcecbb68d30381e578fcdb3",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/code-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/code-quality.md",
+      "sha256": "51a9c087571d1b36cd38688547f17b00a1f639ce565cd079c05a78fab02bf629",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/tests-quality",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/tests-quality.md",
+      "sha256": "74f776c3f085188500f0e1a89d55dbf914b614374f5e4b2b4e16c34a4b85681a",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/security",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/security.md",
+      "sha256": "8dc8f872b42fe224355aa4185cf95867a506befc4857062f3024cc8a8fc37e17",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/final-gate",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/final-gate.md",
+      "sha256": "5c5ebf42ce5d9c70e86491883e929137322a9fa6ce8c14f98c6e2b276452aace",
+      "trust": "policy"
+    },
+    {
+      "id": "review-lanes/performance",
+      "source": "builtin",
+      "sourceCategory": "lane",
+      "path": "prompts/review-lanes/performance.md",
+      "sha256": "4c4a83f3a4e33e5254ba5c8301f0cae29b3463c23cee50adcbf95f065855d833",
+      "trust": "policy"
+    },
+    {
+      "id": "command-supplied:f0beb54f2c7b",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "f0beb54f2c7b4e60792e6af1e121368468c4cd9684202de1e4028d78c7bbde68",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c349956ca10d",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c349956ca10dd68ff9d6cdda9aea07f697ab2272464e33fd28cfe33cfe683aea",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:44e2425485d8",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "44e2425485d86d2de03ba4be4ece2c2a0c8b562dfe3a486893501e8f445ee03b",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:242fc28afc33",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "242fc28afc33dda42449acfbda8354ede8037d5226013e0ab43082bbfaa1a5a1",
+      "trust": "untrusted-task-input"
+    },
+    {
+      "id": "command-supplied:c7e8f261d787",
+      "source": "command-supplied",
+      "sourceCategory": "command",
+      "path": null,
+      "sha256": "c7e8f261d78744e57b8a04a16f88739182d601e7cdc27a3011acb42a3eb0bd50",
+      "trust": "untrusted-task-input"
+    }
+  ],
+  "toolsUsed": [
+    "read_file",
+    "grep",
+    "list_dir"
+  ],
+  "completeness": "Inspected changed publish/stats/reuse/round paths and the GitHub/GitLab marker surfaces for performance, truthful transitions, oracle tests, trust, FS guards on evidence/snapshot cache, and dual-provider round fields. Read terminal-publish and incomplete-round tests. Did not run tests or git (shell denied), did not re-fetch live provider state, did not benchmark realistic multi-lane publish latency, and did not re-trace every pre-existing call site outside the changed batch.",
+  "preconditions": [
+    "Bundle reports PR head 06fa4e3a6976c778b01769894f2357de7332e03f; local git rev-parse was unavailable under host shell deny policy, so checkout/head equality was not independently verified.",
+    "Bundle CI: core and ci-required failed on current-head runs; aiq skipped; recorded as gate-level facts only.",
+    "Issue #455 checklist reported 0/4 checked in the review bundle.",
+    "Gate-level mergeState BLOCKED / reviewDecision UNKNOWN from bundle; not treated as this lane's blockers."
+  ],
+  "runnerProvenance": {
+    "runnerKind": "local-host",
+    "host": "grok",
+    "freshContext": true,
+    "promptOnly": false,
+    "taskId": "ffa24d27-4866-4e3f-827d-42be47a7f5b4",
+    "sessionId": "019f89cf-a27f-7961-874e-ecea6e91e637",
+    "threadId": null,
+    "promptStackHash": "28633f56627c4a99c8b7138cef8bf9b33d3c464cb49ba53008cd7943146cdb38",
+    "headSha": "06fa4e3a6976c778b01769894f2357de7332e03f",
+    "providerPublishStatus": null,
+    "model": "grok-4.5",
+    "effort": null,
+    "isolation": "read-only",
+    "invocationId": "ffa24d27-4866-4e3f-827d-42be47a7f5b4",
+    "routeSource": "configured"
+  },
+  "recordedAt": "2026-07-22T12:36:59.770Z"
+}

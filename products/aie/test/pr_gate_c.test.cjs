@@ -1567,7 +1567,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       findings: ['Fix the blocker.'],
     };
     const changed = await provider.publishLaneReviewFeedback(snapshot.item, changedInput);
-    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-lane' }] })] });
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-777' }] })] });
     const publishedProvider = createGitHubReviewForgeProvider({ exec: fixture.exec });
     const publishedSnapshot = await publishedProvider.loadPullRequestReview(12);
     const superseding = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...changedInput, dryRun: false });
@@ -1576,11 +1576,15 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(first.status, 'planned');
     assert.equal(changed.status, 'planned');
     assert.equal(first.runId, changed.runId);
+    // Changed evidence within one round updates the existing marker in place:
+    // one provider marker per lane per round, never a second one.
     assert.equal(superseding.status, 'published');
-    assert.equal(superseding.publishKind, 'pull-request-review');
+    assert.equal(superseding.publishKind, 'issue-comment');
     assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
+    assert.match(superseding.nextAction ?? '', /updated in place for its round/);
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/issues/comments/777' && call[call.indexOf('--method') + 1] === 'PATCH'), 'the same-round marker must be updated, not recreated');
+    assert.equal(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST'), false, 'no new marker may be created for an existing round');
     assert.equal(exactDuplicate.status, 'skipped');
-    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'));
   });
 
   it('publishes updated lane feedback when only structured findings change', async () => {
@@ -1727,7 +1731,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const snapshot = await provider.loadPullRequestReview(12);
 
     const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
-    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST');
 
     assert.equal(result.status, 'published');
     assert.equal(result.publishKind, 'pull-request-review');
@@ -1767,7 +1771,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const snapshot = await provider.loadPullRequestReview(12);
 
     const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
-    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST');
 
     assert.equal(result.status, 'published');
     assert.equal(result.publishKind, 'pull-request-review');

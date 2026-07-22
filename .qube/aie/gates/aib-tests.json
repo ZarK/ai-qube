@@ -1,0 +1,13 @@
+{
+    "version":  1,
+    "name":  "aib-tests",
+    "result":  "passed",
+    "trust":  "agent-reported",
+    "reasonCode":  "agent-reported-result",
+    "command":  "pnpm --dir products/aib --config.verify-deps-before-run=false run test",
+    "summary":  "71/71 passed.",
+    "recordedAt":  "2026-07-22T13:04:46.000Z",
+    "metadata":  {
+                     "headCommit":  "7c6e241"
+                 }
+}

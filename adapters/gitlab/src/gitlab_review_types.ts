@@ -62,6 +62,7 @@ export interface GitLabReviewRestClient {
   listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]>;
   resolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote>;
+  updateMergeRequestNote?(input: { projectId: string; iid: string; noteId: string; body: string }): Promise<GitLabNote>;
   getCurrentUser?(): Promise<GitLabUser>;
 }
 
