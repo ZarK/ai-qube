@@ -1066,6 +1066,47 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(laneArtifactViolation('code-quality', 'passed', normalized.artifacts, repo), null);
   });
 
+  it('requires the sha256 property on every artifact and a null digest for command observations', () => {
+    const { laneArtifactViolation } = require('../dist/local_review_evidence.js');
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'README.md'), 'fixture readme\n');
+    // The routed validator requires the sha256 key on every artifact; local
+    // gate aggregation and publish enforce the same shape.
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'source', path: 'README.md' }], repo), /omits the sha256 property/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff' }], repo), /omits the sha256 property/);
+    assert.match(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff', sha256: 'a'.repeat(64) }], repo), /cannot be content-digested/);
+    assert.equal(laneArtifactViolation('code-quality', 'passed', [{ kind: 'command', path: 'command:git diff', sha256: null }], repo), null);
+  });
+
+  it('refuses carry-forward approval from a prior record that violates the lane contract', () => {
+    const { readApprovedLaneEvidenceAt } = require('../dist/local_review_evidence.js');
+    const repo = makeGitRepo();
+    const priorHead = 'aaa111';
+    writeLocalEvidence(repo, localEvidence({ headSha: priorHead }));
+    assert.ok(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), 'a clean approved prior record must seed carry-forward approval');
+    // A passed prior record citing a phantom artifact can never seed approval at a new head.
+    const phantom = localEvidence({ headSha: priorHead });
+    phantom.lanes = phantom.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, artifacts: [{ kind: 'source', path: 'docs/milestones/nonexistent.md', sha256: null }] }
+      : lane);
+    writeLocalEvidence(repo, phantom);
+    assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
+    // An artifact that omits the sha256 property fails the same contract.
+    const missingDigest = localEvidence({ headSha: priorHead });
+    missingDigest.lanes = missingDigest.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json` }] }
+      : lane);
+    writeLocalEvidence(repo, missingDigest);
+    assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
+    // A passed record carrying blocking findings is not an approvable source.
+    const blockingFinding = localEvidence({ headSha: priorHead });
+    blockingFinding.lanes = blockingFinding.lanes.map(lane => lane.id === 'code-quality'
+      ? { ...lane, findings: [{ id: 'cq-1', severity: 'blocking', message: 'Latent defect.', location: { path: 'src/review.ts', line: 3 } }] }
+      : lane);
+    writeLocalEvidence(repo, blockingFinding);
+    assert.equal(readApprovedLaneEvidenceAt(repo, 93, 12, priorHead, 'code-quality'), null);
+  });
+
   it('fails an unrecognized finding severity closed to blocking instead of downgrading to advisory', () => {
     const { normalizeExternalLane } = require('../dist/app/local_review_runner_support.js');
     const normalized = normalizeExternalLane({
