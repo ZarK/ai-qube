@@ -401,22 +401,71 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     forged.findings = [{ severity: 'blocking', message: realFinding }];
     writeFileSync(forgedPath, `${JSON.stringify(forged, null, 2)}\n`);
     const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
-    const publishCalls = [];
     const provider = {
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback(item, input) {
-        publishCalls.push(input);
-        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
+      async publishLaneReviewFeedback() {
+        throw new Error('publish must not run against a forged sibling set');
       },
     };
 
-    await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
+      /issue-compliance is missing or invalid/,
+      'a forged sibling must fail the publish closed, never steal finding ownership',
+    );
+  });
 
-    assert.equal(publishCalls.length, 1);
-    assert.equal(publishCalls[0].findings.some(finding => finding.message === realFinding), true, 'a forged sibling must not steal ownership and suppress the real finding');
-    assert.deepEqual(publishCalls[0].withheld, { duplicates: 0, offDiff: 0, byCap: 0 });
+  it('rejects synthesis publish while an expected sibling lane has no evidence at the head', async () => {
+    const repo = makeGitRepo();
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    rmSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'final-gate.json'));
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('publish must not run against an incomplete lane set');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
+      /final-gate is missing or invalid/,
+    );
+  });
+
+  it('fails lane publish closed when the changed-path delta cannot be observed', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    execFileSync('git', ['update-ref', '-d', 'refs/remotes/origin/main'], { cwd: repo, stdio: 'ignore' });
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec }),
+      /changed-path delta for this head could not be observed/,
+    );
   });
 
   it('reports a failure message for a failed provider publication and none for success', async () => {
@@ -880,7 +929,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     writeLocalEvidence(repo, evidence);
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'published');
     assert.equal(result.publish.publishKind, 'pull-request-review');
@@ -911,7 +960,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       reviewApiResults: [{ exitCode: 1, stderr: pendingError }],
     });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
 
     assert.equal(result.publish.status, 'published');
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call.includes('--input')).length, 2);
@@ -941,7 +990,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       reviewApiResults: [{ exitCode: 1, stderr: pendingError }, { exitCode: 1, stderr: pendingError }, { exitCode: 1, stderr: pendingError }],
     });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
 
     assert.equal(result.publish.status, 'failed');
     assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
@@ -1339,7 +1388,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const before = readFileSync(lanePath, 'utf8');
     const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
     const body = result.publish.body ?? '';
 
     assert.equal(result.publish.status, 'planned');

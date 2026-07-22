@@ -24,8 +24,12 @@ export interface PrReviewPublishOptions {
   carryForwardPublish?: 'note' | 'none';
   carryForwardScope?: CarryForwardScope;
   expectedLanes?: readonly LocalReviewLaneId[];
-  /** Paths changed by this PR head; undefined disables only the synthesis off-diff advisory filter, never dedupe or the nit cap. */
-  changedPaths?: readonly string[];
+  /**
+   * Paths changed by this PR head. Undefined or empty disables only the
+   * synthesis off-diff advisory filter (never dedupe or the nit cap);
+   * null records a failed delta observation and fails publication closed.
+   */
+  changedPaths?: readonly string[] | null;
   /** Global advisory publication cap for cross-lane synthesis; defaults to DEFAULT_REVIEW_NIT_CAP. */
   nitCap?: number;
 }
@@ -173,19 +177,23 @@ function relativeEvidencePath(repoRoot: string, path: string): string | null {
 // status/recommendation consistency, artifact contract, trusted provenance).
 // An unvalidated sibling must never claim ownership of a finding identity,
 // because dedupe would then withhold the real lane's finding from the
-// provider; invalid or missing siblings are simply absent from synthesis.
-function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId): SynthesisLaneInput[] {
+// provider. Synthesis also requires the complete expected lane set: a
+// partial sibling view would make dedupe ownership and the global advisory
+// cap depend on publish order, so missing or invalid siblings fail the
+// publish closed instead of being silently absent.
+function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, excludeLane: LocalReviewLaneId, expectedLanes: readonly LocalReviewLaneId[]): { siblings: SynthesisLaneInput[]; missing: LocalReviewLaneId[] } {
   const siblings: SynthesisLaneInput[] = [];
-  for (const laneId of COMPREHENSIVE_LOCAL_REVIEW_LANES) {
+  const missing: LocalReviewLaneId[] = [];
+  for (const laneId of expectedLanes) {
     if (laneId === excludeLane) continue;
     try {
       const sibling = validateLaneEvidence(repoRoot, issueNumber, prNumber, headSha, laneId);
       siblings.push({ laneId, findings: sibling.findings });
     } catch {
-      continue;
+      missing.push(laneId);
     }
   }
-  return siblings;
+  return { siblings, missing };
 }
 
 function laneEvidenceFailure(path: string, detail: string): Error {
@@ -397,15 +405,23 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
     }
   }
   // Synthesis is the last mile before publication: it dedupes this lane's
-  // findings against every other comprehensive lane at the same head (so a
+  // findings against every other expected lane at the same head (so a
   // gate-level restatement never republishes), drops advisory findings
   // outside the diff, and enforces the global advisory nit cap exactly once.
+  if (options.changedPaths === null) {
+    throw new Error('publish lane review failed. Likely cause: the changed-path delta for this head could not be observed with git, so off-diff synthesis filtering cannot run truthfully. Next action: fetch the configured base branch, then rerun publish.');
+  }
+  const expectedLaneIds = options.expectedLanes && options.expectedLanes.length > 0 ? options.expectedLanes : [options.lane];
+  const { siblings, missing } = loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane, expectedLaneIds);
+  if (missing.length > 0) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis requires validated current-head evidence for every expected lane, and ${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing or invalid at ${headSha}. Next action: complete the remaining lane reviews at this head, then rerun publish or the PR gate.`);
+  }
   const synthesisLanes: SynthesisLaneInput[] = [
     { laneId: options.lane, findings: evidence.findings },
-    ...loadSiblingSynthesisLanes(repoRoot, issueNumber, options.prNumber, headSha, options.lane),
+    ...siblings,
   ];
   const synthesisPlan = planFindingPublication(synthesisLanes, {
-    changedPaths: options.changedPaths,
+    changedPaths: options.changedPaths ?? undefined,
     nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
   }).find(plan => plan.laneId === options.lane);
   if (!synthesisPlan) {
@@ -437,14 +453,20 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
 export async function runPrReviewPublishService(config: Config, options: PrReviewPublishOptions): Promise<PrReviewPublishResult> {
   const repoRoot = options.repoRoot ?? process.cwd();
   const provider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
-  const changedPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
+  // A null delta means the observation itself failed; it flows through so
+  // publication fails closed at the synthesis step instead of silently
+  // disabling the off-diff filter, after own-lane evidence validation has
+  // had the chance to raise its more actionable errors first.
+  const changedPaths = options.changedPaths !== undefined
+    ? options.changedPaths
+    : gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, options.headSha ?? 'HEAD');
   const expectedLanes = options.expectedLanes ?? activeLocalReviewFocusesForConfig(config, changedPaths ?? undefined);
   return runPrReviewPublishWithProvider(provider, {
     ...options,
     repoRoot,
     expectedLanes,
     carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish,
-    changedPaths: options.changedPaths ?? changedPaths ?? undefined,
+    changedPaths,
     nitCap: options.nitCap ?? config.reviewNitCap,
   });
 }

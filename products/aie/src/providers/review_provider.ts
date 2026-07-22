@@ -26,7 +26,7 @@ export interface ReviewLaneReviewPublishInput {
   completeness: string | null;
   evidencePath: string | null;
   expectedLanes: readonly string[];
-  /** Cross-lane synthesis withheld counts for this lane; informational only, never part of the marker digest. */
+  /** Cross-lane synthesis withheld counts for this lane; rendered in provider bodies and included in idempotency digests so stale accounting republishes. */
   withheld?: { duplicates: number; offDiff: number; byCap: number };
 }
 

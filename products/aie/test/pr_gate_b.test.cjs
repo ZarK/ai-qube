@@ -1553,7 +1553,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     writeLocalEvidence(repo, evidence);
     const { exec, calls } = makePrExec({ prViews: [cleanLocalPr()] });
 
-    const result = await runPrReviewPublishService(config, { prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
+    const result = await runPrReviewPublishService(config, { changedPaths: [], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: true, repoRoot: repo, exec });
 
     assert.equal(result.publish.status, 'planned');
     assert.equal(result.publish.publishKind, 'pull-request-review');

@@ -7,7 +7,12 @@ export interface SynthesisLaneInput {
 }
 
 export interface SynthesisPlanOptions {
-  /** Paths changed by this PR head; undefined disables only the off-diff advisory filter, never dedupe or the nit cap. */
+  /**
+   * Paths changed by this PR head. Undefined or empty disables only the
+   * off-diff advisory filter, never dedupe or the nit cap: a PR head always
+   * changes at least one path, so an empty set means the observation failed
+   * and withholding on it would suppress real findings.
+   */
   readonly changedPaths?: readonly string[];
   readonly nitCap: number;
 }
@@ -42,8 +47,18 @@ function normalizeComparablePath(path: string): string {
   return path.replace(/\\/g, '/');
 }
 
+// Identity must carry the full anchor: findings with identical wording at
+// different lines, ranges, or sides are distinct and must never collapse.
 function findingIdentity(finding: ReviewFinding): string {
-  return [finding.severity, finding.message.trim(), finding.location?.path ?? ''].join('\0');
+  const location = finding.location;
+  return [
+    finding.severity,
+    finding.message.trim(),
+    location ? normalizeComparablePath(location.path) : '',
+    location?.line ?? '',
+    location?.endLine ?? '',
+    location?.side ?? '',
+  ].join('\0');
 }
 
 function confidenceRank(finding: ReviewFinding): number {
@@ -55,7 +70,7 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
     throw new Error('planFindingPublication requires nitCap to be a positive safe integer.');
   }
   const priorityOrder = canonicalLanePriority();
-  const changedPaths = options.changedPaths ? new Set(options.changedPaths.map(normalizeComparablePath)) : null;
+  const changedPaths = options.changedPaths && options.changedPaths.length > 0 ? new Set(options.changedPaths.map(normalizeComparablePath)) : null;
 
   // Cross-lane dedupe: the earliest canonical lane to report a finding
   // identity owns it; every later lane withholds its own copy.

@@ -263,11 +263,19 @@ function truncatePublishedCompleteness(value: string): string {
 }
 
 function laneBody(input: ReviewLaneReviewPublishInput): { body: string; marker: string; runId: string; bodyFindingCount: number } {
-  const findings = input.findings.map(finding => redact(typeof finding === "string" ? finding : normalizeReviewFinding(finding).message));
+  const findings = input.findings.map(finding => {
+    if (typeof finding === "string") return redact(finding);
+    const normalized = normalizeReviewFinding(finding);
+    const confidence = typeof normalized.confidence === "number" ? ` (confidence ${normalized.confidence.toFixed(2)})` : "";
+    return `${redact(normalized.message)}${confidence}`;
+  });
   const runId = laneRunId(input);
   const summary = redact(input.summary);
+  // The digest covers the rendered finding text (including confidence) and
+  // the withheld counts, so a rescore or synthesis-accounting change
+  // republishes instead of skip-matching on stale note content.
   const findingDigest = createHash("sha256")
-    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null }))
+    .update(JSON.stringify({ summary, findings, completeness: input.completeness && input.completeness.trim() !== "" ? redact(input.completeness) : null, withheld: input.withheld ?? null }))
     .digest("hex")
     .slice(0, 16);
   const metadata: GitLabMetadata = {

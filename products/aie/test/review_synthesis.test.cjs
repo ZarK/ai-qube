@@ -84,6 +84,35 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(plans[0].withheldOffDiff, 0);
   });
 
+  it('keeps same-message findings at different lines distinct across lanes', () => {
+    const earlyLine = finding({ id: 'early', severity: 'blocking', message: 'Validate the header before use.', location: { path: 'src/parser.ts', line: 4 } });
+    const lateLine = finding({ id: 'late', severity: 'blocking', message: 'Validate the header before use.', location: { path: 'src/parser.ts', line: 42 } });
+    const plans = planFindingPublication(
+      [
+        { laneId: 'code-quality', findings: [earlyLine] },
+        { laneId: 'security', findings: [lateLine] },
+      ],
+      { nitCap: 10 },
+    );
+    const codeQuality = plans.find(plan => plan.laneId === 'code-quality');
+    const security = plans.find(plan => plan.laneId === 'security');
+
+    assert.equal(codeQuality.published.length, 1);
+    assert.equal(security.published.length, 1, 'a distinct line anchor must never be withheld as a duplicate');
+    assert.equal(security.withheldDuplicates, 0);
+  });
+
+  it('treats an empty changed-path set as a failed observation and keeps location-based advisories', () => {
+    const anchored = finding({ severity: 'advisory', message: 'Anchored advisory.', location: { path: 'src/anywhere.ts', line: 3 } });
+    const plans = planFindingPublication(
+      [{ laneId: 'code-quality', findings: [anchored] }],
+      { changedPaths: [], nitCap: 10 },
+    );
+
+    assert.equal(plans[0].published.length, 1, 'an empty changed-path set must not withhold anything');
+    assert.equal(plans[0].withheldOffDiff, 0);
+  });
+
   it('ranks advisory findings by confidence descending, ranking missing confidence last', () => {
     const high = finding({ id: 'high', message: 'High confidence finding.', confidence: 0.9 });
     const low = finding({ id: 'low', message: 'Low confidence finding.', confidence: 0.1 });

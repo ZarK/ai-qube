@@ -173,7 +173,7 @@ export interface GitHubLaneReviewPublishInput {
   findings: Array<ReviewFinding | string>;
   completeness: string | null;
   evidencePath: string | null;
-  /** Cross-lane synthesis withheld counts for this lane; informational only, never part of the marker digest. */
+  /** Cross-lane synthesis withheld counts for this lane; rendered in the body and part of the finding digest so stale accounting republishes. */
   withheld?: { duplicates: number; offDiff: number; byCap: number };
 }
 
@@ -561,7 +561,7 @@ function normalizeLaneFindings(input: GitHubLaneReviewPublishInput): ReviewFindi
     : normalizeReviewFinding(finding));
 }
 
-function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined): string {
+function findingDigest(findings: readonly ReviewFinding[], completeness: string | null | undefined, withheld: GitHubLaneReviewPublishInput['withheld']): string {
   return createHash('sha256')
     .update(JSON.stringify({
       findings: findings.map(finding => ({
@@ -576,6 +576,9 @@ function findingDigest(findings: readonly ReviewFinding[], completeness: string 
         confidence: typeof finding.confidence === 'number' ? finding.confidence : null,
       })),
       completeness: completeness && completeness.trim() !== '' ? sanitizePublishedText(completeness) : null,
+      // Withheld counts render in the published body, so a synthesis change
+      // that only moves counts must republish instead of skip-matching.
+      withheld: withheld ?? null,
     }))
     .digest('hex')
     .slice(0, 16);
@@ -590,7 +593,7 @@ function laneReviewBody(
   const runId = stableLaneRunId(input);
   const summary = sanitizePublishedText(input.summary);
   const allFindings = normalizeLaneFindings(input);
-  const digest = findingDigest(allFindings, input.completeness);
+  const digest = findingDigest(allFindings, input.completeness, input.withheld);
   const bodyFindings = bodyFindingsInput ?? allFindings;
   const inline = publishKind === 'issue-comment' ? 'issue-comment' : 'review-api';
   const metadata: LaneReviewMetadata = {
@@ -652,7 +655,7 @@ function laneReviewBody(
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
-  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness);
+  const expectedFindingDigest = findingDigest(normalizeLaneFindings(input), input.completeness, input.withheld);
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
