@@ -1093,6 +1093,30 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.ok(contextLines.includes(LANE_ARTIFACT_REQUIREMENT), 'the lane spawn prompt must state the same artifact contract the publisher enforces');
   });
 
+  it('forbids citing non-repository reference paths as artifacts in the contract text', () => {
+    const { LANE_ARTIFACT_REQUIREMENT } = require('../dist/local_review_evidence.js');
+    assert.match(LANE_ARTIFACT_REQUIREMENT, /never cite a non-repository reference path quoted in the issue body/i);
+    assert.match(LANE_ARTIFACT_REQUIREMENT, /file you actually opened in this repository checkout/i);
+  });
+
+  it('rejects a non-repository reference path artifact at gate aggregation', () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const evidence = localEvidence();
+    // A milestone/design doc named in the issue body but absent from the repo,
+    // the exact phantom-artifact citation that must fail closed.
+    evidence.lanes = evidence.lanes.map(lane => lane.id === 'issue-compliance'
+      ? { ...lane, artifacts: [{ kind: 'source', path: 'docs/milestones/nonexistent.md', sha256: null }] }
+      : lane);
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    return runPrGate(config, { prNumber: 12, repoRoot: repo, exec }).then(result => {
+      assert.notEqual(result.localReview.status, 'passed');
+      assert.match(JSON.stringify(result.localReview), /does not exist in the repository/);
+    });
+  });
+
   it('advertises the economy delegation catalog in the lane spawn prompt', () => {
     const { ECONOMY_REVIEW_CATALOG } = require('../dist/review_catalog.js');
     const contextLines = laneContextLines('code-quality', [93], 12, 'abc123', ['.qube/aie/reviews/93/12/abc123/code-quality.json'], [], process.cwd(), 'aie pr review publish 12 --lane code-quality --issue 93');

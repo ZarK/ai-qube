@@ -110,6 +110,23 @@ describe('agent descriptors and prompt registry', () => {
     assert.match(rendered.text, /release, CI, and supply-chain/);
   });
 
+  it('instructs the issue-compliance lane to attest from the bounded bundle without live re-fetch', async () => {
+    const { renderAgentPrompt } = await import('../dist/agent_descriptors.js');
+
+    const rendered = renderAgentPrompt({
+      hostId: 'codex',
+      descriptorId: 'qa-reviewer',
+      categoryId: 'review',
+      laneIds: ['issue-compliance'],
+      contextLines: ['Review PR #463.'],
+    });
+
+    assert.ok(rendered.orderedFragmentIds.includes('review-lanes/issue-compliance'));
+    assert.match(rendered.text, /authoritative acceptance context/i);
+    assert.match(rendered.text, /Do NOT return `inconclusive` solely because you could not independently re-fetch/);
+    assert.match(rendered.text, /name the exact missing element rather than giving a blanket inconclusive/i);
+  });
+
   it('gives every review-lane fragment a heuristic checklist with all five sections', async () => {
     const { renderAgentPrompt, listPromptFragmentDefinitions } = await import('../dist/agent_descriptors.js');
     const laneFragments = listPromptFragmentDefinitions().filter(fragment => fragment.sourceCategory === 'lane');

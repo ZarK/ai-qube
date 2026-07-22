@@ -500,7 +500,7 @@ function canonicalJson(value: unknown): string {
 
 // One contract statement feeds both the lane spawn prompts and the publish
 // validator so the required artifact forms can never drift between them.
-export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null.';
+export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null. Every artifact path must be a file you actually opened in this repository checkout or a command you ran; never cite a non-repository reference path quoted in the issue body or requirements (for example an external milestone, design, or spec document) as an artifact.';
 
 export function laneArtifactViolation(lane: string, status: string, artifacts: unknown, repoRoot?: string): string | null {
   if (!Array.isArray(artifacts)) return `${lane} artifacts must be an array.`;
