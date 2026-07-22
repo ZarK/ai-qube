@@ -124,7 +124,8 @@ describe('agent descriptors and prompt registry', () => {
     assert.ok(rendered.orderedFragmentIds.includes('review-lanes/issue-compliance'));
     assert.match(rendered.text, /authoritative acceptance context/i);
     assert.match(rendered.text, /Do NOT return `inconclusive` solely because you could not independently re-fetch/);
-    assert.match(rendered.text, /name the exact missing element rather than giving a blanket inconclusive/i);
+    assert.match(rendered.text, /name the exact missing element in your summary and completeness self-check/i);
+    assert.match(rendered.text, /Keep `blockers` empty on an `inconclusive` result/);
   });
 
   it('gives every review-lane fragment a heuristic checklist with all five sections', async () => {

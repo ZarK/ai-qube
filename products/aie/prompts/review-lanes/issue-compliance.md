@@ -19,7 +19,7 @@ Evidence to demand:
 Authoritative context:
 - The bundle provided to you — the issue body, acceptance criteria, and checklist state rendered into this prompt, plus the current-head repository checkout and its tests — is the authoritative acceptance context. Verify the code against it directly.
 - You run read-only and cannot re-fetch live provider state; do not treat that as missing context. Return `passed` when there is no blocking issue-compliance defect and the bundle covers every acceptance criterion. Do NOT return `inconclusive` solely because you could not independently re-fetch the live issue, comments, or PR body.
-- Return `inconclusive` only when a specific acceptance criterion cannot be judged from the bundle plus the code, and name the exact missing element rather than giving a blanket inconclusive.
+- Return `inconclusive` only when a specific acceptance criterion cannot be judged from the bundle plus the code, and name the exact missing element in your summary and completeness self-check rather than giving a blanket inconclusive. Keep `blockers` empty on an `inconclusive` result; blockers are reserved for `failed` or `needs-work` verdicts.
 
 Out of lane (ignore):
 - Durable record bookkeeping (checklists, closing keywords) — task-record-compliance lane.

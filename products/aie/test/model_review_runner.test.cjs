@@ -163,6 +163,12 @@ describe('model review runner', () => {
     assert.equal(invocation.stdin, prompt);
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);
+    // The prompt must state the exact verdict-consistency and progress-snapshot
+    // rules the strict validator enforces, or hosts fail on rules they never saw.
+    assert.match(prompt, /Verdict consistency is validated after generation/);
+    assert.match(prompt, /passed maps to approve/);
+    assert.match(prompt, /keep blockers empty and severity below high/);
+    assert.match(prompt, /progress snapshot and must report status "pending", recommendation "pending", severity "none"/);
     assert.equal(invocation.args.includes(prompt), false);
     assert.deepEqual(invocation.args.slice(-2), ['--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
