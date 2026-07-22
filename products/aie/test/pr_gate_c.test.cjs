@@ -594,8 +594,21 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.throws(
       () => readRouteFaults(repo, 93, 12),
-      /Refusing to (read|write)/,
+      /Refusing to (access|read|write)/,
       'a relocated ledger chain must fail the read closed instead of feeding forged route state',
+    );
+  });
+
+  it('fails route-fault ledger reads closed for a relocated ancestor even when the ledger is absent', () => {
+    const repo = makeGitRepo();
+    const emptyStore = join(repo, '.git', 'qube-empty');
+    mkdirSync(emptyStore, { recursive: true });
+    symlinkSync(emptyStore, join(repo, '.git', 'qube'), 'junction');
+
+    assert.throws(
+      () => readRouteFaults(repo, 93, 12),
+      /Refusing to access the trusted store through a symlink or junction/,
+      'absence behind a relocated ancestor must not read as an empty ledger',
     );
   });
 

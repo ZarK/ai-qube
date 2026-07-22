@@ -2,7 +2,7 @@ import type { Config } from '../config/index.js';
 import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
@@ -67,6 +67,7 @@ function snapshotCachePath(repoRoot: string, issueNumber: number, prNumber: numb
 // the read closed instead of feeding redirected snapshot state into
 // publication decisions.
 function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number, headSha: string): ReviewForgeSnapshot | null {
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
   let cacheStats;
   try {
     cacheStats = lstatSync(path);
@@ -94,6 +95,9 @@ function cachedSnapshotFromFile(repoRoot: string, path: string, prNumber: number
 // symlinked descendant must not redirect the temp file or the final rename
 // outside the repository.
 function writeSnapshotCache(repoRoot: string, path: string, snapshot: ReviewForgeSnapshot): void {
+  // Chain verification runs before directory creation so mkdir can never
+  // materialize directories through an existing symlinked ancestor.
+  verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
   mkdirSync(dirname(path), { recursive: true });
   verifyReviewWriteContainment(path, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
   const tempPath = `${path}.${process.pid}.${Date.now()}.tmp`;
@@ -300,6 +304,7 @@ function readStructuredFindings(value: unknown, path: string): ReviewFinding[] {
 
 function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, evidence: Record<string, unknown>, evidencePath: string, provenance: Record<string, unknown>): void {
   const path = trustedLocalHostProvenancePath(repoRoot, issueNumber, prNumber, headSha, lane);
+  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, 'utf8'));

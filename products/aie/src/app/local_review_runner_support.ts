@@ -6,7 +6,7 @@ import { promisify } from 'node:util';
 import { renderAgentPrompt } from '../agent_descriptors.js';
 import { redact } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
 import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
 import { changedPathUnderSignal } from '../repo/layout.js';
@@ -82,6 +82,9 @@ export function routeFaultLedgerPath(repoRoot: string, issueNumber: number, prNu
 
 export function readRouteFaults(repoRoot: string, issueNumber: number, prNumber: number): RouteFaultLedger {
   const path = routeFaultLedgerPath(repoRoot, issueNumber, prNumber);
+  // Chain verification runs before the existence probe so a relocated
+  // ancestor cannot make recorded faults read as legitimately absent.
+  verifyTrustedStoreChain(repoRoot, ['.git', 'qube', 'aie'], path);
   // The ledger is a trusted store that steers configured-versus-failover
   // routing, so reads apply the same containment contract as writes: an
   // absent ledger means no faults, but a symlinked ledger file or a
