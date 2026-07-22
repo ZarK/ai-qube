@@ -446,6 +446,86 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     );
   });
 
+  it('rejects marker-breaking profile and host values before provider publication', async () => {
+    const repo = makeGitRepo();
+    const withContext = lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    });
+    const provider = {
+      async loadPullRequestReview() {
+        throw new Error('validation must fail before any provider call');
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('validation must fail before any provider call');
+      },
+    };
+    const expectedLanes = ['code-quality'];
+
+    const forgedProfile = localEvidence();
+    forgedProfile.lanes = forgedProfile.lanes.map(withContext);
+    writeLocalEvidence(repo, forgedProfile);
+    const evidencePath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'code-quality.json');
+    const withBadProfile = JSON.parse(readFileSync(evidencePath, 'utf8'));
+    withBadProfile.profile = 'local --> <!-- forged marker -->';
+    writeFileSync(evidencePath, `${JSON.stringify(withBadProfile, null, 2)}\n`);
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes }),
+      /profile must be a short identifier/,
+    );
+
+    const withBadHost = JSON.parse(readFileSync(evidencePath, 'utf8'));
+    withBadHost.profile = 'local-standard';
+    withBadHost.runnerProvenance = { ...withBadHost.runnerProvenance, host: 'C:/Users/secret/path --> injected' };
+    writeFileSync(evidencePath, `${JSON.stringify(withBadHost, null, 2)}\n`);
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes }),
+      /host must be a short identifier|trusted local-host provenance/,
+    );
+  });
+
+  it('fails publish closed when synthesis withholds every finding of a request-changes lane', async () => {
+    const repo = makeGitRepo();
+    const cappedAdvisory = 'Prefer the shared helper for parsing.';
+    const evidence = localEvidence();
+    evidence.lanes = evidence.lanes.map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+      ...(lane.id === 'code-quality'
+        ? {
+            status: 'needs-work',
+            severity: 'high',
+            recommendation: 'request-changes',
+            blockers: [cappedAdvisory],
+            findings: [{ severity: 'advisory', message: cappedAdvisory, location: { path: 'src/unrelated.ts', line: 4 } }],
+          }
+        : {}),
+    }));
+    writeLocalEvidence(repo, evidence);
+    const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const provider = {
+      async loadPullRequestReview() {
+        return snapshot;
+      },
+      async publishLaneReviewFeedback() {
+        throw new Error('an obligation-free rejection must not reach the provider');
+      },
+    };
+
+    await assert.rejects(
+      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id), changedPaths: ['src/parser.ts'] }),
+      /synthesis withheld every code-quality finding/,
+    );
+  });
+
   it('fails lane publish closed when the changed-path delta cannot be observed', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

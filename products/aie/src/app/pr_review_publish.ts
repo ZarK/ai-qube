@@ -200,6 +200,13 @@ function laneEvidenceFailure(path: string, detail: string): Error {
   return new Error(`required local review lane evidence is missing or invalid at ${relativeEvidencePath(process.cwd(), path) ?? path}: ${detail}`);
 }
 
+// Profile and host serialize verbatim into provider-visible marker metadata,
+// so they must stay short fixed-charset identifiers: free text here could
+// leak paths or secrets and break out of the marker comment.
+function validPublishIdentifier(value: string): boolean {
+  return /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(value);
+}
+
 function loadLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { path: string; raw: Record<string, unknown> } {
   const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
   try {
@@ -293,6 +300,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   if (summary === '') throw laneEvidenceFailure(path, 'summary must be a non-empty string.');
   const profile = stringField(raw, 'profile');
   if (profile === '') throw laneEvidenceFailure(path, 'profile must be a non-empty string.');
+  if (!validPublishIdentifier(profile)) throw laneEvidenceFailure(path, 'profile must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
   {
     const artifactViolation = laneArtifactViolation(lane, String(raw.status), raw.artifacts, repoRoot);
     if (artifactViolation) throw laneEvidenceFailure(path, `${artifactViolation} ${LANE_ARTIFACT_REQUIREMENT}`);
@@ -347,6 +355,8 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     && (raw.status === 'passed' || recommendation !== 'request-changes')) {
     throw laneEvidenceFailure(path, `recorded blocking structured findings but claimed status ${raw.status} with recommendation ${recommendation}.`);
   }
+  const host = stringField(provenance, 'host') || 'local-review';
+  if (!validPublishIdentifier(host)) throw laneEvidenceFailure(path, 'runnerProvenance host must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
   return {
     evidence: raw,
     path,
@@ -356,7 +366,7 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     findings: structuredFindings,
     completeness,
     profile,
-    host: stringField(provenance, 'host') || 'local-review',
+    host,
     recommendation,
   };
 }
@@ -426,6 +436,14 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   }).find(plan => plan.laneId === options.lane);
   if (!synthesisPlan) {
     throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis returned no plan for lane ${options.lane}. Next action: rerun the lane review for the current head.`);
+  }
+  // A request-changes lane whose entire finding set was withheld would show
+  // the provider an obligation-free rejection. Cross-lane duplicates stay
+  // visible at their owning lane, so only off-diff or cap withholding makes
+  // an obligation invisible; that combination fails closed so the reviewer
+  // re-anchors findings or policy raises the advisory cap.
+  if (synthesisPlan.published.length === 0 && evidence.recommendation === 'request-changes' && synthesisPlan.withheldOffDiff + synthesisPlan.withheldByCap > 0) {
+    throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis withheld every ${options.lane} finding (${synthesisPlan.withheldDuplicates} duplicate(s), ${synthesisPlan.withheldOffDiff} off-diff, ${synthesisPlan.withheldByCap} beyond the cap) while the lane recommendation is request-changes, leaving no provider-visible obligation. Next action: rerun the lane review with anchored findings for this head, or raise policy.reviews.nitCap.`);
   }
   const publishInput = {
     dryRun: options.dryRun ?? false,
