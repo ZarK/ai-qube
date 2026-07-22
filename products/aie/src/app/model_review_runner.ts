@@ -162,6 +162,8 @@ function reviewResultContract(input: ModelReviewRunInput): string {
     'Return exactly one JSON object and no Markdown or commentary.',
     `The object must contain issueNumber ${input.issueNumber}, prNumber ${input.prNumber}, headSha "${input.headSha}", lane "${input.lane}", status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, toolsUsed, completeness, coverage, and preconditions.`,
     `Attest coverage for exactly these areas: ${areas.join(', ')}. Each coverage entry is {"area":"...","status":"clear"|"finding"|"not-inspected"} with one entry per area. Use "finding" for every area where you report findings, "clear" only after genuinely inspecting the area's complete scope at this head, and "not-inspected" whenever you ran out of capacity — a "not-inspected" attestation makes the lane inconclusive instead of approved, and a false "clear" is a contract violation. Enumerate the complete finding set before attesting.`,
+    'Verdict consistency is validated after generation: recommendation derives from status (passed maps to approve; failed and needs-work map to request-changes; pending, missing, and stale map to pending; inconclusive maps to inconclusive). blockers entries, blocking-severity findings, and severity high or critical are valid only on a failed or needs-work result, which must carry severity high or critical and at least one blockers entry. A passed or inconclusive result must keep blockers empty and severity below high; name what an inconclusive result is missing in summary and completeness, never in blockers.',
+    'Any JSON you emit before your final turn is treated as a progress snapshot and must report status "pending", recommendation "pending", severity "none", and empty blockers and findings; only your final result carries the real verdict.',
     LANE_ARTIFACT_REQUIREMENT,
     'Artifact file paths must be existing repository-relative paths with no traversal. Command observations use kind "command" and a path beginning "command:". If sha256 is present, it must be the real lowercase SHA-256 digest of that file.',
     'contextReviewed.kind must be one of agents, issue-body, issue-comment, milestone, functional-requirement, linked-issue, pr-body, pr-comment, review-thread, doc, diff, ci, or manual-qa; trust and freshness must use the QUBE contract values.',
@@ -301,7 +303,10 @@ function isStringArray(value: unknown): value is string[] {
 
 function safeArtifactPath(repoRoot: string, kind: string, path: string): boolean {
   if (path.trim() === '' || path.includes('\0')) return false;
-  if (/^(command|terminal|test-output):/i.test(path)) return /command|terminal|test/i.test(kind);
+  // The shared lane artifact contract accepts exactly one non-file shape:
+  // kind "command" with a "command:" path. Routed acceptance holds the same
+  // line so model evidence can never pass here and then fail gate or publish.
+  if (/^(command|terminal|test-output):/i.test(path)) return path.startsWith('command:') && kind === 'command';
   if (isAbsolute(path)) return false;
   try {
     const resolvedRoot = realpathSync(repoRoot);
@@ -319,9 +324,11 @@ function safeArtifactPath(repoRoot: string, kind: string, path: string): boolean
 
 function validArtifactDigest(repoRoot: string, path: string, sha256: unknown): boolean {
   if (sha256 === null) return true;
-  if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/i.test(sha256) || /^(command|terminal|test-output):/i.test(path)) return false;
+  // Lowercase-only, matching laneArtifactViolation: a digest the gate and
+  // publish validators would reject must not be accepted at the routed layer.
+  if (typeof sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(sha256) || path.startsWith('command:')) return false;
   try {
-    return createHash('sha256').update(readFileSync(resolve(repoRoot, path))).digest('hex') === sha256.toLowerCase();
+    return createHash('sha256').update(readFileSync(resolve(repoRoot, path))).digest('hex') === sha256;
   } catch {
     return false;
   }
@@ -709,14 +716,10 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       }
     }
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD changed during isolated review execution.' };
+    // strictRoutedLane already rejects empty completeness, contextReviewed,
+    // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
-    // Non-terminal results (inconclusive, pending) may honestly lack artifacts
-    // per the shared lane artifact contract; terminal verdicts must cite one.
-    const terminalResult = evidence.status === 'passed' || evidence.status === 'failed' || evidence.status === 'needs-work';
-    if (evidence.completeness === '' || evidence.contextReviewed.length === 0 || (terminalResult && evidence.artifacts.length === 0)) {
-      return { evidence: null, reasonCode: 'model-route-incomplete-evidence', error: 'Model review result omitted required completeness, contextReviewed, or artifacts evidence.' };
-    }
     return { evidence, reasonCode: null, error: null };
   } catch (error: unknown) {
     return { evidence: null, reasonCode: 'model-route-unavailable', error: sanitizedDiagnostic(error instanceof Error ? error.message : String(error)) };

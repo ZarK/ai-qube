@@ -328,6 +328,37 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
+  it('renders issue bodies and the PR criterion-to-proof map into the bounded review bundle', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const prBody = '## Summary\nDetails.\n\n## Criterion-to-proof map\n### Criterion 1: Bundled acceptance context reaches the reviewer.\n- Proven by: `products/aie/test/pr_gate_b.test.cjs`.\n\n## Notes\nOutside the map.';
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr({ body: prBody })],
+      issueBodies: { 93: 'Issue acceptance context body.\n\n- [ ] Bundled criterion.' },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+
+    const promptText = result.localReviewRunner.lanes[0].promptText;
+    assert.match(promptText, /Bundle issue body #93: Issue acceptance context body\./);
+    assert.match(promptText, /Bundle PR criterion-to-proof map: ## Criterion-to-proof map/);
+    assert.match(promptText, /Criterion 1: Bundled acceptance context reaches the reviewer\./);
+    assert.doesNotMatch(promptText, /Outside the map/);
+    assert.match(promptText, /items=\[ \] #1 Bundled criterion\./);
+  });
+
+  it('names a genuinely missing bundle element instead of omitting it silently', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ body: 'No criterion map in this body.' })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+
+    const promptText = result.localReviewRunner.lanes[0].promptText;
+    assert.match(promptText, /Bundle issue body #93: MISSING - the work provider supplied no issue body/);
+    assert.match(promptText, /Bundle PR criterion-to-proof map: MISSING - the PR body contains no Criterion-to-proof section/);
+  });
+
   it('folds changed-file AIQ findings into local review spawn prompts for verification', async () => {
     const repo = makeGitRepo();
     const sourcePath = join(repo, 'src', 'changed.ts');

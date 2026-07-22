@@ -500,7 +500,7 @@ function canonicalJson(value: unknown): string {
 
 // One contract statement feeds both the lane spawn prompts and the publish
 // validator so the required artifact forms can never drift between them.
-export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null.';
+export const LANE_ARTIFACT_REQUIREMENT = 'Terminal lane results (passed, failed, needs-work) must include at least one artifact reference. Accepted artifact shapes: {"kind":"...","path":"...","sha256":...} where kind names the inspected surface, path is an existing repository-relative file path (or begins with "command:" for kind "command" observations), and sha256 is the lowercase SHA-256 digest of that file or null. Every artifact path must be a file you actually opened in this repository checkout or a command you ran; never cite a non-repository reference path quoted in the issue body or requirements (for example an external milestone, design, or spec document) as an artifact.';
 
 export function laneArtifactViolation(lane: string, status: string, artifacts: unknown, repoRoot?: string): string | null {
   if (!Array.isArray(artifacts)) return `${lane} artifacts must be an array.`;
@@ -509,8 +509,17 @@ export function laneArtifactViolation(lane: string, status: string, artifacts: u
       return `${lane} artifacts contains an entry without a non-empty kind and path.`;
     }
     const path = entry.path;
+    // The routed model validator requires the sha256 property on every artifact;
+    // gate aggregation and publish hold the same shape so no execution mode
+    // accepts an artifact object another mode rejects.
+    if (entry.sha256 === undefined) {
+      return `${lane} artifacts entry ${path} omits the sha256 property; record the lowercase SHA-256 digest of the file or null.`;
+    }
     if (entry.kind === 'command') {
       if (!path.startsWith('command:')) return `${lane} artifacts contains a command entry whose path does not begin with "command:".`;
+      if (entry.sha256 !== null) {
+        return `${lane} artifacts contains a non-null sha256 for command observation ${path}; command observations cannot be content-digested, use null.`;
+      }
     } else if (path.startsWith('command:')) {
       return `${lane} artifacts contains a "command:" path under kind ${entry.kind}; command observations must use kind "command".`;
     } else {
@@ -542,7 +551,7 @@ export function laneArtifactViolation(lane: string, status: string, artifacts: u
           return `${lane} artifacts references a file that could not be resolved inside the repository: ${path}.`;
         }
       }
-      if (entry.sha256 !== null && entry.sha256 !== undefined) {
+      if (entry.sha256 !== null) {
         if (typeof entry.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(entry.sha256)) {
           return `${lane} artifacts contains an invalid sha256 for ${path}; use the lowercase SHA-256 digest of the file or null.`;
         }
@@ -1066,6 +1075,14 @@ export function readApprovedLaneEvidenceAt(repoRoot: string, issueNumber: number
   if (!parsed) return null;
   if (parsed.lane.id !== laneId || parsed.lane.status !== 'passed' || parsed.lane.recommendation !== 'approve') return null;
   if (parsed.lane.carriedForward) return null;
+  // Carry-forward approval holds the prior record to the same lane contract as
+  // current-head evidence: a passed record with blocking findings, contract-
+  // violating artifacts, or missing promptStack/preconditions coverage can
+  // never seed approval at a new head, matching the publish-side validation.
+  if (parsed.lane.findings.some(finding => finding.severity === 'blocking')) return null;
+  if (parsed.lane.blockers.length > 0 || parsed.lane.severity === 'high' || parsed.lane.severity === 'critical') return null;
+  if (parsed.lane.promptStack.length === 0 || parsed.lane.preconditions === null) return null;
+  if (laneArtifactViolation(laneId, parsed.lane.status, parsed.lane.artifactsRaw, repoRoot) !== null) return null;
   return { evidenceSha256: parsed.evidenceSha256 };
 }
 

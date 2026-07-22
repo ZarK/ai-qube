@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { createHash } = require('node:crypto');
 const { existsSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { mkdtempSync } = require('node:fs');
 const { tmpdir } = require('node:os');
@@ -163,6 +164,12 @@ describe('model review runner', () => {
     assert.equal(invocation.stdin, prompt);
     assert.match(prompt, /at most 8 turns/);
     assert.match(prompt, /reserve the final turn/);
+    // The prompt must state the exact verdict-consistency and progress-snapshot
+    // rules the strict validator enforces, or hosts fail on rules they never saw.
+    assert.match(prompt, /Verdict consistency is validated after generation/);
+    assert.match(prompt, /passed maps to approve/);
+    assert.match(prompt, /keep blockers empty and severity below high/);
+    assert.match(prompt, /progress snapshot and must report status "pending", recommendation "pending", severity "none"/);
     assert.equal(invocation.args.includes(prompt), false);
     assert.deepEqual(invocation.args.slice(-2), ['--json', '-']);
     assert.ok(invocation.args.includes('read-only'));
@@ -173,6 +180,38 @@ describe('model review runner', () => {
     assert.ok(invocation.args.includes('mcp_servers={}'));
     assert.ok(invocation.args.includes('web_search="disabled"'));
     assert.equal(invocation.args[invocation.args.indexOf('--output-schema') + 1], schemaPath);
+  });
+
+  it('rejects routed artifacts that the gate and publish contract would reject', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-routed-artifact-'));
+    writeFileSync(join(repoRoot, 'README.md'), 'routed artifact fixture\n');
+    const codexRun = result => runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0, stderr: '', timedOut: false, stdinDelivered: true,
+        stdout: `${JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' })}\n${JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(result) } })}\n`,
+      }),
+    });
+    return (async () => {
+      // terminal:/test-output: pseudo-paths are outside the shared artifact contract.
+      const terminalArtifact = await codexRun({ ...laneResult(), artifacts: [{ kind: 'terminal', path: 'terminal:test run', sha256: null }] });
+      assert.equal(terminalArtifact.evidence, null);
+      assert.equal(terminalArtifact.reasonCode, 'model-route-contract-mismatch');
+      // Uppercase digests are rejected exactly as laneArtifactViolation rejects them.
+      const digest = createHash('sha256').update(readFileSync(join(repoRoot, 'README.md'))).digest('hex');
+      const uppercaseDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest.toUpperCase() }] });
+      assert.equal(uppercaseDigest.evidence, null);
+      assert.equal(uppercaseDigest.reasonCode, 'model-route-contract-mismatch');
+      // A command observation can never carry a content digest.
+      const digestedCommand = await codexRun({ ...laneResult(), artifacts: [{ kind: 'command', path: 'command:git diff --check', sha256: digest }] });
+      assert.equal(digestedCommand.evidence, null);
+      assert.equal(digestedCommand.reasonCode, 'model-route-contract-mismatch');
+      // The exact lowercase digest still passes.
+      const validDigest = await codexRun({ ...laneResult(), artifacts: [{ kind: 'source', path: 'README.md', sha256: digest }] });
+      assert.notEqual(validDigest.evidence, null);
+      assert.equal(validDigest.reasonCode, null);
+    })();
   });
 
   it('routes Codex through a private strict schema file and removes it after execution', async () => {
