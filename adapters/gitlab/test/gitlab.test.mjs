@@ -781,6 +781,8 @@ describe("GitLab review forge adapter", () => {
       prNumber: 12,
       headSha: "head-sha",
       lane: "performance",
+      expectedLanes: ["performance"],
+      round: "round-performance-1",
       profile: "focused",
       status: "complete",
       recommendation: "approve",
@@ -799,7 +801,172 @@ describe("GitLab review forge adapter", () => {
     assert.equal(notes.length, 1);
   });
 
-  it("publishes updated GitLab lane feedback when the same head has changed findings", async () => {
+  it("updates the existing GitLab note in place when the same round has changed findings", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const note = notes.find(candidate => String(candidate.id) === String(noteId));
+        note.body = body;
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      round: "round-code-quality-1",
+      profile: "focused",
+      status: "complete",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "First review.",
+      findings: ["Fix the first issue."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    const first = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const second = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      summary: "Second review.",
+      findings: ["Fix the second issue."],
+    });
+    const duplicate = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      summary: "Second review.",
+      findings: ["Fix the second issue."],
+    });
+
+    assert.equal(first.status, "published");
+    // Changed evidence within one round updates the existing note in place:
+    // one provider marker per lane per round, never a second note.
+    assert.equal(second.status, "published");
+    assert.match(second.nextAction, /updated in place for its round/);
+    assert.equal(duplicate.status, "skipped");
+    assert.equal(notes.length, 1);
+    assert.match(notes[0].body, /Second review\./);
+  });
+
+  it("never attributes a foreign merge request's marker to this one", async () => {
+    const foreignMarker = { version: 1, kind: "lane-review", head: "head-sha", lane: "code-quality", expectedLanes: ["code-quality"], round: "round-foreign", profile: "focused", runId: "foreign-run", issueNumber: 185, prNumber: 99, host: "codex", recommendation: "approve", status: "complete", summary: "Foreign MR review.", inline: "gitlab-note" };
+    const ownMarker = { ...foreignMarker, round: "round-own", runId: "own-run", prNumber: 12, summary: "Own MR review." };
+    const notes = [
+      { id: 1, body: `QUBE_REVIEW_METADATA ${JSON.stringify(foreignMarker)}\nForeign marker.`, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" },
+      { id: 2, body: `QUBE_REVIEW_METADATA ${JSON.stringify(ownMarker)}\nOwn marker.`, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/2" },
+    ];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const records = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(records.length, 1, "a marker bound to another merge request must never appear in this one's history");
+    assert.equal(records[0].runId, "own-run");
+  });
+
+  it("preserves a superseded verdict when a GitLab round verdict flips", async () => {
+    const notes = [];
+    const client = {
+      async getMergeRequest() {
+        return makeGitLabMergeRequest({ reviewers: [] });
+      },
+      async listMergeRequestNotes() {
+        return notes;
+      },
+      async listMergeRequestDiscussions() {
+        return [];
+      },
+      async createMergeRequestNote({ body }) {
+        const note = { id: notes.length + 1, body, author: { username: "executor" }, web_url: `https://gitlab.example.com/note/${notes.length + 1}` };
+        notes.push(note);
+        return note;
+      },
+      async updateMergeRequestNote({ noteId, body }) {
+        const note = notes.find(candidate => String(candidate.id) === String(noteId));
+        note.body = body;
+        return note;
+      },
+      async getCurrentUser() {
+        return { username: "executor" };
+      },
+    };
+    const provider = createGitLabReviewForgeProvider({ projectId: "acme/qube", client });
+    const input = {
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "code-quality",
+      expectedLanes: ["code-quality"],
+      round: "round-flip-gl-1",
+      profile: "focused",
+      status: "failed",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Blocking review.",
+      findings: ["Fix the blocker."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+    };
+
+    const blocking = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
+    const flipped = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+      ...input,
+      status: "complete",
+      recommendation: "approve",
+      summary: "Review passed after fixes.",
+      findings: [],
+    });
+
+    assert.equal(blocking.status, "published");
+    assert.equal(flipped.status, "published");
+    // The old note becomes a superseded tombstone preserving the replaced
+    // verdict for history readers; one fresh live note carries the new one.
+    assert.equal(notes.length, 2);
+    assert.match(notes[0].body, /"superseded":true/);
+    assert.match(notes[0].body, /"recommendation":"request-changes"/);
+    assert.match(notes[1].body, /"recommendation":"approve"/);
+    assert.doesNotMatch(notes[1].body, /"superseded":true/);
+  });
+
+  it("fails a same-round republish closed when the client cannot update notes", async () => {
     const notes = [];
     const client = {
       async getMergeRequest() {
@@ -825,7 +992,9 @@ describe("GitLab review forge adapter", () => {
       dryRun: false,
       prNumber: 12,
       headSha: "head-sha",
-      lane: "code-quality",
+      lane: "security",
+      expectedLanes: ["security"],
+      round: "round-security-1",
       profile: "focused",
       status: "complete",
       recommendation: "request-changes",
@@ -833,25 +1002,22 @@ describe("GitLab review forge adapter", () => {
       issueNumber: 185,
       summary: "First review.",
       findings: ["Fix the first issue."],
-      evidencePath: ".qube/aie/reviews/185/12/head-sha/code-quality.json",
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/security.json",
     };
 
     const first = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, input);
-    const second = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
+    const changed = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
       ...input,
-      summary: "Second review.",
-      findings: ["Fix the second issue."],
-    });
-    const duplicate = await provider.publishLaneReviewFeedback((await provider.loadPullRequestReview(12)).item, {
-      ...input,
-      summary: "Second review.",
-      findings: ["Fix the second issue."],
+      summary: "Changed review.",
+      findings: ["Fix the changed issue."],
     });
 
     assert.equal(first.status, "published");
-    assert.equal(second.status, "published");
-    assert.equal(duplicate.status, "skipped");
-    assert.equal(notes.length, 2);
+    // Without note-update support the publish fails closed: a second live
+    // same-round marker is never created.
+    assert.equal(changed.status, "failed");
+    assert.match(changed.failure, /failing closed instead of creating a second same-round marker/);
+    assert.equal(notes.length, 1);
   });
 
   it("resolves unresolved GitLab merge request discussions", async () => {

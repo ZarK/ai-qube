@@ -157,11 +157,12 @@ function localReviewComment({ head = 'abc123', recommendation = 'approve', statu
   };
 }
 
-function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount } = {}) {
+function laneReviewComment({ head = 'abc123', lane = 'code-quality', recommendation = 'approve', status = 'passed', runId = 'lane-run-1', summary = 'lane review summary', findings = '- None recorded.', profile = 'local-standard', issueNumber = 93, prNumber = 12, inline, inlineCommentCount, bodyFindingCount, expectedLanes = [lane] } = {}) {
   const metadata = {
     version: 1,
     head,
     lane,
+    expectedLanes,
     profile,
     runId,
     issueNumber,
@@ -217,7 +218,7 @@ function promptForLane(id, contextLines = [`Run local review lane ${id}.`]) {
     categoryId: 'review',
     laneIds: [id],
     contextLines,
-    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
 
@@ -603,6 +604,25 @@ function makePrExec(options = {}) {
     }
     if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'DELETE') {
       return { args, exitCode: 0, stdout: '', stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/pulls\/12\/reviews\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PUT') {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ update: args[1], ...payload });
+      const reviewId = Number(args[1].split('/').at(-1));
+      currentPr = {
+        ...currentPr,
+        reviews: (currentPr.reviews || []).map(review => review.id === reviewId ? { ...review, body: payload.body } : review),
+        latestReviews: (currentPr.latestReviews || []).map(review => review.id === reviewId ? { ...review, body: payload.body } : review),
+      };
+      if (prViews.length > 0) prViews[0] = currentPr;
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: reviewId, html_url: `https://github.com/example/repo/pull/12#pullrequestreview-${reviewId}` }), stderr: '' };
+    }
+    if (args[0] === 'api' && /^repos\/example\/repo\/issues\/comments\/\d+$/.test(args[1]) && args.includes('--method') && args[args.indexOf('--method') + 1] === 'PATCH') {
+      const inputIndex = args.indexOf('--input');
+      const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+      reviewPayloads.push({ update: args[1], ...payload });
+      return { args, exitCode: 0, stdout: JSON.stringify({ id: Number(args[1].split('/').at(-1)) }), stderr: '' };
     }
     if (args[0] === 'api' && /^repos\/example\/repo\/commits\/[^/]+\/check-runs$/.test(args[1])) {
       return { args, exitCode: 0, stdout: JSON.stringify({ check_runs: checkRuns }), stderr: '' };

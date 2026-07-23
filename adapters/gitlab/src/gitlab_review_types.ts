@@ -62,6 +62,7 @@ export interface GitLabReviewRestClient {
   listMergeRequestDiscussions(input: { projectId: string; iid: string }): Promise<GitLabDiscussion[]>;
   resolveMergeRequestDiscussion?(input: { projectId: string; iid: string; discussionId: string }): Promise<GitLabDiscussion>;
   createMergeRequestNote(input: { projectId: string; iid: string; body: string }): Promise<GitLabNote>;
+  updateMergeRequestNote?(input: { projectId: string; iid: string; noteId: string; body: string }): Promise<GitLabNote>;
   getCurrentUser?(): Promise<GitLabUser>;
 }
 
@@ -124,6 +125,10 @@ export interface GitLabMetadata {
   readonly head: string;
   readonly reviewerId?: string;
   readonly lane?: string;
+  readonly expectedLanes?: readonly string[];
+  readonly round?: string;
+  /** A superseded marker preserves a replaced verdict for history readers; live read paths ignore it. */
+  readonly superseded?: boolean;
   readonly profile?: string;
   readonly runId?: string;
   readonly issueNumber?: number;

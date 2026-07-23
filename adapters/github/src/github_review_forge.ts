@@ -133,6 +133,9 @@ interface LaneReviewMetadata {
   head: string;
   lane: string;
   expectedLanes?: string[];
+  round?: string;
+  /** A superseded marker preserves a replaced verdict for history readers; live read paths ignore it. */
+  superseded?: boolean;
   profile: string;
   runId: string;
   issueNumber: number;
@@ -164,6 +167,8 @@ export interface GitHubLaneReviewPublishInput {
   headSha: string;
   lane: string;
   expectedLanes: readonly string[];
+  /** Deterministic round grouping id carried into the marker so round completeness is decidable from the provider record alone. */
+  round: string;
   profile: string;
   status: string;
   recommendation: GitHubLocalReviewRecommendation;
@@ -412,6 +417,8 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       && parsed.expectedLanes.every(lane => typeof lane === 'string' && lane.trim() !== '')
       ? [...new Set(parsed.expectedLanes.map(lane => redact(String(lane).trim())))].sort()
       : undefined;
+    const round = typeof parsed.round === 'string' && parsed.round.trim() !== '' ? redact(parsed.round.trim()) : undefined;
+    const superseded = parsed.superseded === true ? true : undefined;
     if (typeof parsed.profile !== 'string' || parsed.profile.trim() === '') return null;
     if (typeof parsed.runId !== 'string' || parsed.runId.trim() === '') return null;
     const issueNumber = parsed.issueNumber;
@@ -428,6 +435,8 @@ function parseLaneReviewMetadata(body: string | undefined): LaneReviewMetadata |
       head: redact(parsed.head),
       lane: redact(parsed.lane),
       expectedLanes,
+      round,
+      superseded,
       profile: redact(parsed.profile),
       runId: redact(parsed.runId),
       issueNumber,
@@ -519,9 +528,14 @@ function chronologicalLaneReviewRecords(input: { comments: RawComment[]; latestR
 
 function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawReview[]; trustedMarkerAuthor: TrustedAuthorInput; headSha: string; prNumber: number }): LaneReviewComment[] {
   const latest = new Map<string, LaneReviewComment>();
-  const records = chronologicalLaneReviewRecords(input);
+  // Superseded markers are history, not current state: they stay visible to
+  // chronological readers (stats) but never represent a live lane verdict.
+  const records = chronologicalLaneReviewRecords(input).filter(record => record.metadata.superseded !== true);
   for (const record of records) {
-    const key = `${record.metadata.head}\0${record.metadata.lane}`;
+    // Per-issue identity: a PR closing multiple issues publishes the same
+    // lane once per issue, and one issue's marker must never overwrite
+    // another's on the latest-per-key read.
+    const key = `${record.metadata.head}\0${record.metadata.lane}\0${record.metadata.issueNumber}`;
     const existing = latest.get(key);
     if (!existing || (Date.parse(record.publishedAt ?? '') || 0) >= (Date.parse(existing.publishedAt ?? '') || 0)) latest.set(key, record);
   }
@@ -601,6 +615,7 @@ function laneReviewBody(
     head: input.headSha,
     lane: input.lane,
     expectedLanes: expectedLaneNames(input),
+    round: input.round,
     profile: input.profile,
     runId,
     issueNumber: input.issueNumber,
@@ -652,6 +667,23 @@ function laneReviewBody(
   return { body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount, blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length };
 }
 
+// A marker belongs to the same round when head, lane, PR, and round id all
+// match; such a marker is updated in place on republish so one round never
+// accumulates more than one marker per lane.
+function sameRoundLaneMetadata(metadata: LaneReviewMetadata | null, input: GitHubLaneReviewPublishInput): boolean {
+  return metadata !== null
+    && metadata.superseded !== true
+    && metadata.head === input.headSha
+    && metadata.lane === input.lane
+    && metadata.prNumber === input.prNumber
+    && (metadata.round ?? null) === input.round;
+}
+
+function issueCommentIdFromUrl(url: string | null | undefined): string | null {
+  const match = (url ?? '').match(/#issuecomment-(\d+)$/);
+  return match ? match[1] : null;
+}
+
 function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPublishInput, runId: string): boolean {
   const value = item.trustedMetadata.trustedLaneReviews;
   if (!Array.isArray(value)) return false;
@@ -659,11 +691,13 @@ function matchingCurrentLaneReview(item: ReviewItem, input: GitHubLaneReviewPubl
   return value.some(review => {
     if (!isRecord(review)) return false;
     if (review.stale === true) return false;
+    if (review.superseded === true) return false;
     if (review.inline !== 'review-api' && review.inline !== 'issue-comment') return false;
     return review.head === input.headSha
       && review.lane === input.lane
       && Array.isArray(review.expectedLanes)
       && JSON.stringify([...review.expectedLanes].sort()) === JSON.stringify(expectedLaneNames(input))
+      && review.round === input.round
       && review.runId === runId
       && review.recommendation === input.recommendation
       && review.status === input.status
@@ -682,6 +716,8 @@ function laneReviewMetadata(comments: RawComment[], latestReviews: RawReview[], 
       head: metadata.head,
       lane: metadata.lane,
       expectedLanes: metadata.expectedLanes ?? null,
+      round: metadata.round ?? null,
+      superseded: metadata.superseded === true,
       profile: metadata.profile,
       runId: metadata.runId,
       issueNumber: metadata.issueNumber,
@@ -1814,6 +1850,127 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       }
     };
 
+    // One provider marker per lane per round: a same-round republish with
+    // changed content updates the existing marker in place instead of
+    // appending a second one (exact duplicates already skip-matched above).
+    // An update failure fails closed rather than creating round noise.
+    const existingRoundReview = (await this.getPullRequestReviews(repositoryName, input.prNumber).catch(() => [] as RawReview[]))
+      .find(review => review.id !== undefined && review.id !== null
+        && authorIsTrusted(reviewAuthor(review), trustedMarkerAuthor)
+        && sameRoundLaneMetadata(parseLaneReviewMetadata(review.body), input));
+    if (existingRoundReview) {
+      const existingMetadata = parseLaneReviewMetadata(existingRoundReview.body);
+      const verdictUnchanged = existingMetadata !== null
+        && existingMetadata.recommendation === input.recommendation
+        && existingMetadata.status === input.status;
+      if (verdictUnchanged) {
+        const updateBody = laneReviewBody(input, allFindings, 0);
+        const payloadPath = reviewPayloadPath({ body: updateBody.body });
+        try {
+          await assertHeadUnchanged();
+          const updateResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', payloadPath], ghOptions);
+          if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api pull request review update failed');
+          const reviewUrl = publishedReviewUrl(updateResult) ?? (existingRoundReview.url ? redact(String(existingRoundReview.url)) : null);
+          return localReviewPublishResult({
+            status: 'published',
+            runId: updateBody.runId,
+            marker: updateBody.marker,
+            body: updateBody.body,
+            url: reviewUrl,
+            reviewUrl,
+            publishKind: 'pull-request-review',
+            inlineCommentCount: 0,
+            bodyFindingCount: updateBody.bodyFindingCount,
+            publisher: publisher.identity,
+            nextAction: `Provider-visible lane review for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
+          });
+        } catch (error: unknown) {
+          return localReviewPublishResult({
+            status: 'failed',
+            runId: updateBody.runId,
+            marker: updateBody.marker,
+            body: updateBody.body,
+            publishKind: 'pull-request-review',
+            bodyFindingCount: updateBody.bodyFindingCount,
+            publisher: publisher.identity,
+            failure: redact(error instanceof Error ? error.message : String(error)),
+            nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+          });
+        } finally {
+          cleanupReviewPayload(payloadPath);
+        }
+      }
+      // The verdict changed within the round: a body PUT cannot change the
+      // formal review event, so the old review is tombstoned and a fresh
+      // review with the correct event is created below. The tombstone keeps
+      // a superseded marker preserving the replaced verdict - history readers
+      // (convergence stats) still see the original blocking evidence while
+      // live read paths ignore it - so the round ends with exactly one live
+      // marker and no rework history is destroyed. A tombstone failure fails
+      // closed.
+      const tombstone = [
+        laneReviewMarker({ ...existingMetadata as LaneReviewMetadata, superseded: true }),
+        '',
+        `This ${input.lane} review was superseded within its review round by an updated verdict; its inline comments may reference superseded findings. See the latest QUBE ${input.lane} review for this round.`,
+      ].join('\n');
+      const tombstonePath = reviewPayloadPath({ body: tombstone });
+      try {
+        await assertHeadUnchanged();
+        const tombstoneResult = await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(existingRoundReview.id)}`, '--method', 'PUT', '--input', tombstonePath], ghOptions);
+        if (tombstoneResult.exitCode !== 0) throw new Error(tombstoneResult.stderr || tombstoneResult.stdout || 'gh api pull request review tombstone failed');
+      } catch (error: unknown) {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: plannedBody.runId,
+          marker: plannedBody.marker,
+          body: plannedBody.body,
+          publishKind: 'pull-request-review',
+          bodyFindingCount: plannedBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub review update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second live same-round marker is never created.`,
+        });
+      } finally {
+        cleanupReviewPayload(tombstonePath);
+      }
+    }
+    const existingRoundComment = comments
+      .map(comment => ({ commentId: issueCommentIdFromUrl(comment.url), metadata: trustedLaneReviewComment(comment, trustedMarkerAuthor) }))
+      .find(entry => entry.commentId !== null && sameRoundLaneMetadata(entry.metadata, input));
+    if (existingRoundComment) {
+      const updateBody = laneReviewBody(input, allFindings, 0, 'issue-comment');
+      const payloadPath = reviewPayloadPath({ body: updateBody.body });
+      try {
+        await assertHeadUnchanged();
+        const updateResult = await runGh(['api', `repos/${repositoryName}/issues/comments/${existingRoundComment.commentId}`, '--method', 'PATCH', '--input', payloadPath], ghOptions);
+        if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api issue comment update failed');
+        return localReviewPublishResult({
+          status: 'published',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          publishKind: 'issue-comment',
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          nextAction: `Provider-visible comment-state lane feedback for ${input.lane} was updated in place for its round; rerun PR view/gate to inspect provider state.`,
+        });
+      } catch (error: unknown) {
+        return localReviewPublishResult({
+          status: 'failed',
+          runId: updateBody.runId,
+          marker: updateBody.marker,
+          body: updateBody.body,
+          publishKind: 'issue-comment',
+          bodyFindingCount: updateBody.bodyFindingCount,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub comment update permissions or connectivity, then rerun \`aie pr review publish ${input.prNumber} --lane ${input.lane}\`; a second same-round marker is never created.`,
+        });
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
+
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
       const { body, marker, runId, bodyFindingCount } = laneReviewBody(input, allFindings, 0, 'issue-comment');
@@ -2178,10 +2335,13 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   }
 
   private async getPullRequestReviews(repoName: string, prNumber: number): Promise<RawReview[]> {
-    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews`, '--method', 'GET', '-F', 'per_page=100'], this.options);
+    // Paginated like getReviewComments: the same-round marker search must see
+    // every review, or a PR past 100 reviews would miss its existing marker
+    // and create a second one for the round.
+    const result = await runGh(['api', `repos/${repoName}/pulls/${prNumber}/reviews`, '--method', 'GET', '-F', 'per_page=100', '--paginate', '--slurp'], this.options);
     ensureGhSuccess(`gh api pull reviews for PR ${prNumber}`, result);
-    const parsed = parseGhJson<RawReview[]>(result.stdout, `gh api pull reviews for PR ${prNumber}`, value => Array.isArray(value));
-    return parsed.map(review => ({
+    const parsed = parseGhJson<RawReview[] | RawReview[][]>(result.stdout, `gh api pull reviews for PR ${prNumber}`, value => Array.isArray(value));
+    return parsed.flat().map(review => ({
       ...review,
       author: review.author ?? review.user ?? null,
       url: review.url ?? review.html_url,

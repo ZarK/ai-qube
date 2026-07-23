@@ -176,6 +176,8 @@ export interface ReviewLaneReviewPublishInput {
   readonly headSha: string;
   readonly lane: string;
   readonly expectedLanes: readonly string[];
+  /** Deterministic round grouping id for this head-level review pass; carried in the marker so round completeness is decidable from the provider record alone. */
+  readonly round: string;
   readonly profile: string;
   readonly status: string;
   readonly recommendation: "approve" | "request-changes" | "pending" | "inconclusive";

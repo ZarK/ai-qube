@@ -105,6 +105,8 @@ interface LocalReviewRunnerInput {
   routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
   providerLaneReuse?: ProviderLaneReuse;
   layoutInspector?: typeof inspectAffected;
+  /** Invoked as each routed lane's evidence lands (serialized in completion order), so the caller can publish a validated lane before slower siblings finish. */
+  onLaneValidated?: (lane: LocalReviewLaneRun) => Promise<void>;
 }
 
 function effectiveProfile(config: Config, required: boolean, shadow: boolean): LocalReviewProfile {
@@ -352,11 +354,16 @@ const PER_HOST_ROUTE_LIMIT = 2;
 
 type RoutedOutcome = Awaited<ReturnType<typeof runModelReview>>;
 
-async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => Promise<RoutedOutcome> }>, globalLimit: number): Promise<Array<RoutedOutcome | null>> {
+async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => Promise<RoutedOutcome> }>, globalLimit: number, onOutcome?: (index: number, outcome: RoutedOutcome | null) => Promise<void> | void): Promise<Array<RoutedOutcome | null>> {
   const results: Array<RoutedOutcome | null> = new Array(jobs.length).fill(null);
   const queue = jobs.map((job, index) => ({ job, index }));
   const hostActive = new Map<string, number>();
   let active = 0;
+  // Outcome handling is serialized in completion order so evidence and
+  // provenance writes - and prompt per-lane publication - never interleave,
+  // while a completed lane's outcome is handled as soon as it lands instead
+  // of after the whole batch.
+  let completionChain: Promise<void> = Promise.resolve();
   await new Promise<void>(resolveAll => {
     const maybeStart = (): void => {
       for (let position = 0; position < queue.length;) {
@@ -373,6 +380,7 @@ async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => 
           .then(outcome => { results[index] = outcome; })
           .catch((error: unknown) => { results[index] = { evidence: null, reasonCode: 'model-route-unavailable', error: error instanceof Error ? error.message : String(error) } as RoutedOutcome; })
           .finally(() => {
+            if (onOutcome) completionChain = completionChain.then(() => onOutcome(index, results[index])).catch(() => {});
             active -= 1;
             hostActive.set(job.host, (hostActive.get(job.host) ?? 1) - 1);
             maybeStart();
@@ -382,6 +390,7 @@ async function executeRoutedJobs(jobs: ReadonlyArray<{ host: string; run: () => 
     };
     maybeStart();
   });
+  await completionChain;
   return results;
 }
 
@@ -691,11 +700,12 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     }
   }
   if (runnableJobs.length > 0) {
-    const outcomes = await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3);
-    // Serial completion phase: evidence and provenance writes happen one at a
-    // time in planning order, regardless of concurrent completion order.
-    runnableJobs.forEach((job, jobIndex) => {
-      const routed = outcomes[jobIndex];
+    // Streamed completion: each routed outcome writes its evidence and
+    // provenance as soon as it lands (serialized in completion order), and a
+    // validated lane is handed to the caller's per-lane hook immediately, so
+    // a blocking lane becomes provider-visible while slower siblings run.
+    await executeRoutedJobs(runnableJobs.map(job => ({ host: job.host, run: job.run })), config.reviewConcurrency ?? 3, async (jobIndex, routed) => {
+      const job = runnableJobs[jobIndex];
       if (!routed || !routed.evidence) {
         failed = true;
         const reasonCode = routed?.reasonCode ?? 'invalid model route output';
@@ -716,6 +726,13 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
       lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+      if (input.onLaneValidated) {
+        try {
+          await input.onLaneValidated(lanes[job.laneSlot]);
+        } catch {
+          // The hook owns its failure reporting; a hook error never fails the lane run.
+        }
+      }
     });
   }
 

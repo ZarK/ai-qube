@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const { describe, it } = require('node:test');
 const {
@@ -403,20 +403,25 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     forged.findings = [{ severity: 'blocking', message: realFinding }];
     writeFileSync(forgedPath, `${JSON.stringify(forged, null, 2)}\n`);
     const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
     const provider = {
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback() {
-        throw new Error('publish must not run against a forged sibling set');
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     };
 
-    await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
-      /issue-compliance is missing or invalid/,
-      'a forged sibling must fail the publish closed, never steal finding ownership',
-    );
+    // The forged sibling fails validation and is excluded from synthesis
+    // entirely: it can neither withhold this lane's publication nor claim
+    // the finding identity, so the real lane still publishes its finding.
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.equal(publishCalls.length, 1);
+    assert.ok(publishCalls[0].findings.some(finding => (typeof finding === 'string' ? finding : finding.message) === realFinding), 'the forged sibling must never steal the real finding identity');
   });
 
   it('publishes a fresh lane on a mixed head where a sibling is a trusted-provider reuse', async () => {
@@ -466,7 +471,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.deepEqual(publishCalls[0].expectedLanes, evidence.lanes.map(lane => lane.id), 'the marker still declares the complete lane set');
   });
 
-  it('still fails closed when a non-reuse expected sibling lane has no evidence at the head', async () => {
+  it('publishes with partial sibling synthesis when a non-reuse expected sibling lane has no evidence at the head', async () => {
     const repo = makeGitRepo();
     const evidence = localEvidence();
     evidence.lanes = evidence.lanes.map(lane => ({
@@ -480,19 +485,28 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     writeLocalEvidence(repo, evidence);
     rmSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123', 'final-gate.json'));
     const snapshot = { item: { id: 'review:12' }, pr: cleanLocalPr(), closingIssueNumbers: [93], ciDiagnostics: [], reviewRequests: [], commentsCount: 0, reviewsCount: 0, reviewCommentsCount: 0, unresolvedThreadsCount: 0, unavailable: [] };
+    const publishCalls = [];
     const provider = {
       async loadPullRequestReview() {
         return snapshot;
       },
-      async publishLaneReviewFeedback() {
-        throw new Error('publish must not run against an incomplete lane set');
+      async publishLaneReviewFeedback(item, input) {
+        publishCalls.push(input);
+        return { status: 'planned', publishKind: 'pull-request-review', body: '', url: null, failure: null, nextAction: 'planned', inlineCommentCount: 0, bodyFindingCount: 0 };
       },
     };
 
-    await assert.rejects(
-      () => runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) }),
-      /final-gate is missing or invalid/,
-    );
+    // A missing sibling no longer withholds this lane: per-result validation
+    // is the only withhold reason, and the marker keeps declaring the full
+    // expected set with its round so the incomplete round stays readable as
+    // incomplete on the provider record.
+    const result = await runPrReviewPublishWithProvider(provider, { prNumber: 12, issueNumber: 93, headSha: 'abc123', lane: 'code-quality', dryRun: true, repoRoot: repo, expectedLanes: evidence.lanes.map(lane => lane.id) });
+
+    assert.equal(result.publish.status, 'planned');
+    assert.equal(publishCalls.length, 1);
+    assert.deepEqual(publishCalls[0].expectedLanes, evidence.lanes.map(lane => lane.id), 'the marker still declares the complete expected lane set including the missing sibling');
+    assert.equal(typeof publishCalls[0].round, 'string');
+    assert.ok(publishCalls[0].round.length > 0, 'every published marker carries its round grouping id');
   });
 
   it('rejects marker-breaking profile and host values before provider publication', async () => {
@@ -1469,7 +1483,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
 
     assert.equal(result.publish.status, 'published');
     assert.equal(fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call.includes('--input')).length, 2);
-    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100 --paginate --slurp'));
     assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/comments --method GET -F per_page=100 --paginate --slurp'));
     assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews/456 --method DELETE'));
   });
@@ -1498,7 +1512,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const result = await runPrReviewPublishService(config, { changedPaths: [], expectedLanes: ['code-quality'], prNumber: 12, issueNumber: 93, lane: 'code-quality', dryRun: false, repoRoot: repo, exec: fixture.exec });
 
     assert.equal(result.publish.status, 'failed');
-    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100'));
+    assert.ok(fixture.calls.some(call => call.join(' ') === 'api repos/example/repo/pulls/12/reviews --method GET -F per_page=100 --paginate --slurp'));
     assert.equal(fixture.calls.some(call => /^api repos\/example\/repo\/pulls\/12\/reviews\/456 --method DELETE$/.test(call.join(' '))), false);
   });
 
@@ -1531,6 +1545,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       headSha: 'abc123',
       lane: 'code-quality',
       expectedLanes: ['issue-compliance', 'code-quality', 'performance'],
+      round: 'round-abc123-1',
       profile: 'local-standard',
       status: 'passed',
       recommendation: 'approve',
@@ -1552,7 +1567,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
       findings: ['Fix the blocker.'],
     };
     const changed = await provider.publishLaneReviewFeedback(snapshot.item, changedInput);
-    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-lane' }] })] });
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ comments: [{ author: { login: 'executor' }, body: first.body, url: 'https://github.com/example/repo/pull/12#issuecomment-777' }] })] });
     const publishedProvider = createGitHubReviewForgeProvider({ exec: fixture.exec });
     const publishedSnapshot = await publishedProvider.loadPullRequestReview(12);
     const superseding = await publishedProvider.publishLaneReviewFeedback(publishedSnapshot.item, { ...changedInput, dryRun: false });
@@ -1561,11 +1576,97 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(first.status, 'planned');
     assert.equal(changed.status, 'planned');
     assert.equal(first.runId, changed.runId);
+    // Changed evidence within one round updates the existing marker in place:
+    // one provider marker per lane per round, never a second one.
     assert.equal(superseding.status, 'published');
-    assert.equal(superseding.publishKind, 'pull-request-review');
+    assert.equal(superseding.publishKind, 'issue-comment');
     assert.match(superseding.body ?? '', /QUBE review \(code-quality\): request-changes/);
+    assert.match(superseding.nextAction ?? '', /updated in place for its round/);
+    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/issues/comments/777' && call[call.indexOf('--method') + 1] === 'PATCH'), 'the same-round marker must be updated, not recreated');
+    assert.equal(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST'), false, 'no new marker may be created for an existing round');
     assert.equal(exactDuplicate.status, 'skipped');
-    assert.ok(fixture.calls.some(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews'));
+  });
+
+  it('keeps one current lane marker per linked issue on a multi-issue head', async () => {
+    // A PR closing two issues publishes the same lane once per issue; the
+    // latest-per-key read must keep both instead of letting the later
+    // issue's marker overwrite the earlier one.
+    const comments = [
+      laneReviewComment({ lane: 'code-quality', issueNumber: 93, runId: 'multi-93' }),
+      laneReviewComment({ lane: 'code-quality', issueNumber: 94, runId: 'multi-94' }),
+    ];
+    const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr({ comments, closingIssuesReferences: [{ number: 93 }, { number: 94 }] })] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const records = snapshot.item.trustedMetadata.trustedLaneReviews.filter(record => record.lane === 'code-quality' && record.stale !== true);
+    assert.deepEqual(records.map(record => record.issueNumber).sort(), [93, 94]);
+  });
+
+  it('tombstones the old review and posts a fresh event when the verdict flips within a round', async () => {
+    const approveInput = {
+      dryRun: true,
+      prNumber: 12,
+      headSha: 'abc123',
+      lane: 'code-quality',
+      expectedLanes: ['code-quality'],
+      round: 'round-flip-1',
+      profile: 'local-standard',
+      status: 'passed',
+      recommendation: 'approve',
+      host: 'codex',
+      issueNumber: 93,
+      summary: 'code review passed',
+      findings: [],
+      evidencePath: '.qube/aie/reviews/93/12/abc123/code-quality.json',
+    };
+    const draftProvider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
+    const approveDraft = await draftProvider.publishLaneReviewFeedback((await draftProvider.loadPullRequestReview(12)).item, approveInput);
+    const existingReview = { id: 555, author: { login: 'executor' }, body: approveDraft.body, state: 'APPROVED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({ prViews: [cleanLocalPr({ reviews: [existingReview], latestReviews: [existingReview] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const flipped = await provider.publishLaneReviewFeedback(snapshot.item, {
+      ...approveInput,
+      dryRun: false,
+      status: 'failed',
+      recommendation: 'request-changes',
+      summary: 'code review found a blocker',
+      findings: [{ severity: 'blocking', message: 'Fix the regression.', location: { path: 'src/review.ts', line: 2 } }],
+    });
+
+    // A body PUT cannot change the formal review event, so a verdict flip
+    // tombstones the old marker and creates one fresh review with the right
+    // event: the round still ends with exactly one live marker, and the
+    // tombstone preserves the replaced verdict for history readers.
+    assert.equal(flipped.status, 'published');
+    const tombstonePut = fixture.reviewPayloads.find(payload => payload.update === 'repos/example/repo/pulls/12/reviews/555');
+    assert.ok(tombstonePut, 'the superseded review must be tombstoned in place');
+    assert.match(tombstonePut.body, /"superseded":true/, 'the tombstone must preserve the replaced verdict as a superseded history marker');
+    assert.match(tombstonePut.body, /"recommendation":"approve"/, 'the superseded marker must keep the original verdict');
+    const freshReview = fixture.reviewPayloads.find(payload => payload.event === 'REQUEST_CHANGES');
+    assert.ok(freshReview, 'the verdict flip must publish a fresh review with the correct formal event');
+  });
+
+  it('counts a superseded same-round verdict once in provider-derived stats', () => {
+    const { computeReviewStats } = require('../dist/app/review_stats.js');
+    // The provider record after a same-round verdict flip: a superseded
+    // request-changes marker plus the live approve marker. History keeps the
+    // blocking evidence exactly once and the head never reads first-clean.
+    const result = computeReviewStats([{
+      number: 400,
+      title: 'Same-round verdict flip',
+      trustedLaneReviews: [
+        { head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], round: 'round-1', superseded: true, recommendation: 'request-changes', status: 'failed', bodyFindingCount: 2, blockingFindingCount: 2, publishedAt: '2026-03-01T00:00:00Z', issueNumber: 93 },
+        { head: 'a', lane: 'code-quality', expectedLanes: ['code-quality'], round: 'round-1', recommendation: 'approve', status: 'passed', bodyFindingCount: 0, blockingFindingCount: 0, publishedAt: '2026-03-01T00:10:00Z', issueNumber: 93 },
+      ],
+    }]);
+
+    const pr = result.pullRequests[0];
+    assert.equal(pr.noLaneEvidence, false);
+    assert.equal(pr.blockingEntries, 2, 'the superseded blocking verdict stays in history exactly once');
+    assert.equal(pr.firstReviewClean, false, 'a head with superseded blocking evidence never reads first-review-clean');
+    assert.deepEqual(pr.rounds, { complete: 1, inProgress: 0, abandoned: 0 });
   });
 
   it('publishes updated lane feedback when only structured findings change', async () => {
@@ -1712,7 +1813,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const snapshot = await provider.loadPullRequestReview(12);
 
     const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
-    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST');
 
     assert.equal(result.status, 'published');
     assert.equal(result.publishKind, 'pull-request-review');
@@ -1752,7 +1853,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     const snapshot = await provider.loadPullRequestReview(12);
 
     const result = await provider.publishLaneReviewFeedback(snapshot.item, input);
-    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews');
+    const reviewPosts = fixture.calls.filter(call => call[0] === 'api' && call[1] === 'repos/example/repo/pulls/12/reviews' && call[call.indexOf('--method') + 1] === 'POST');
 
     assert.equal(result.status, 'published');
     assert.equal(result.publishKind, 'pull-request-review');

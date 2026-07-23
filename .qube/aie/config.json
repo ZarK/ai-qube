@@ -216,7 +216,7 @@
         "review": {
           "codex": {
             "model": "gpt-5.6-luna",
-            "effort": "high"
+            "effort": "medium"
           },
           "grok": {
             "model": "grok-4.5",
@@ -227,15 +227,15 @@
         "synthesis": {}
       },
       "route": {
-        "host": "grok",
+        "host": "codex",
         "tier": "review",
         "timeoutSeconds": 900,
-        "maxTurns": 16
+        "maxTurns": 8
       },
       "failover": {
-        "faults": 2,
+        "faults": 1,
         "route": {
-          "host": "codex",
+          "host": "grok",
           "tier": "review",
           "timeoutSeconds": 900,
           "maxTurns": 16

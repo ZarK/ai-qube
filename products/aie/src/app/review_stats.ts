@@ -3,6 +3,7 @@ import { createCliError, isCliError, renderCliErrorText, type CliErrorShape } fr
 import { supportsReviewStats } from '@tjalve/qube-core';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgePullRequest } from '../providers/review_forge_provider.js';
+import { reviewRoundId } from '../review_round.js';
 
 export const DEFAULT_REVIEW_STATS_WINDOW = 20;
 export const MAX_REVIEW_STATS_WINDOW = 50;
@@ -13,10 +14,17 @@ type LaneRecommendation = 'approve' | 'request-changes' | 'pending' | 'inconclus
 interface LaneReviewRecord {
   head: string;
   lane: string;
+  round: string;
   recommendation: LaneRecommendation;
   blockingFindingCount: number;
   expectedLanes: string[];
   publishedAt: number;
+}
+
+export interface ReviewStatsRounds {
+  complete: number;
+  inProgress: number;
+  abandoned: number;
 }
 
 export interface ReviewStatsInput {
@@ -34,6 +42,7 @@ export interface ReviewStatsPullRequest {
   failingHeads: number | null;
   blockingEntries: number | null;
   firstReviewClean: boolean | null;
+  rounds: ReviewStatsRounds | null;
   noLaneEvidence: boolean;
   noLaneEvidenceReason: string | null;
 }
@@ -143,7 +152,7 @@ function laneNames(value: unknown): string[] | null {
   return lanes.sort();
 }
 
-function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
+function parseLaneReviews(value: unknown, prNumber: number): { records: LaneReviewRecord[]; reason: null } | { records: null; reason: string } {
   if (value === undefined || value === null) {
     return { records: null, reason: 'No trusted QUBE lane review metadata was found.' };
   }
@@ -193,9 +202,18 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
     if (candidate.recommendation !== 'request-changes' && exactCount !== null && exactCount > 0) {
       return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} contradicted its recommendation with a positive blocking finding count.` };
     }
+    // Round membership: an explicit round id wins; markers that predate the
+    // round field derive the deterministic id the publisher would have
+    // minted from their declared expected lane set.
+    const explicitRound = nonEmptyString(candidate.round) ? candidate.round.trim() : null;
+    const issueNumber = typeof candidate.issueNumber === 'number' && Number.isSafeInteger(candidate.issueNumber) && candidate.issueNumber > 0 ? candidate.issueNumber : null;
+    if (explicitRound === null && issueNumber === null) {
+      return { records: null, reason: `Trusted QUBE lane review metadata record ${index + 1} carries neither a round id nor the issue number needed to derive one.` };
+    }
     records.push({
       head: candidate.head,
       lane: candidate.lane,
+      round: explicitRound ?? reviewRoundId({ prNumber, headSha: candidate.head, expectedLanes, issueNumber: issueNumber as number }),
       recommendation: candidate.recommendation,
       blockingFindingCount: candidate.recommendation === 'request-changes' ? exactCount ?? 0 : 0,
       expectedLanes,
@@ -215,22 +233,50 @@ function parseLaneReviews(value: unknown): { records: LaneReviewRecord[]; reason
   return { records, reason: null };
 }
 
-function incompleteLaneReason(records: readonly LaneReviewRecord[]): string | null {
-  for (const head of new Set(records.map(record => record.head))) {
-    const headRecords = records.filter(record => record.head === head);
-    const expectedSets = new Set(headRecords.map(record => record.expectedLanes.join('\0')));
-    if (expectedSets.size !== 1) return `Trusted QUBE lane review metadata for head ${head} declared inconsistent expected lane sets.`;
-    const expected = headRecords[0].expectedLanes;
-    const observed = new Set(headRecords.map(record => record.lane));
-    const missing = expected.filter(lane => !observed.has(lane));
-    if (missing.length > 0) return `Trusted QUBE lane review metadata for head ${head} was incomplete; missing expected lane(s): ${missing.join(', ')}.`;
-    const unexpected = [...observed].filter(lane => !expected.includes(lane));
-    if (unexpected.length > 0) return `Trusted QUBE lane review metadata for head ${head} contained unexpected lane(s): ${unexpected.join(', ')}.`;
+// Rounds group the records that belong to one head-level review pass. A
+// complete round observed every lane it declared; an incomplete round at the
+// latest observed head is in progress, and one at a superseded head was
+// abandoned when the head advanced. Only intra-round contradictions degrade
+// the pull request - incomplete rounds are a legitimate provider state under
+// per-lane publishing and are classified, not treated as corruption.
+function classifyRounds(records: readonly LaneReviewRecord[]): { reason: string } | { reason: null; rounds: ReviewStatsRounds; completeRoundKeys: Set<string> } {
+  const groups = new Map<string, LaneReviewRecord[]>();
+  for (const record of records) {
+    const key = `${record.head}\0${record.round}`;
+    groups.set(key, [...groups.get(key) ?? [], record]);
   }
-  return null;
+  // Head advancement - not marker arrival time - decides abandonment: the
+  // latest head is the last NEW head in chronological first-appearance order,
+  // so a delayed marker for an older head never reclassifies rounds.
+  const headOrder: string[] = [];
+  for (const record of records) {
+    if (!headOrder.includes(record.head)) headOrder.push(record.head);
+  }
+  const latestHead = headOrder[headOrder.length - 1];
+  const completeRoundKeys = new Set<string>();
+  const rounds: ReviewStatsRounds = { complete: 0, inProgress: 0, abandoned: 0 };
+  for (const [key, group] of groups) {
+    const head = group[0].head;
+    const expectedSets = new Set(group.map(record => record.expectedLanes.join('\0')));
+    if (expectedSets.size !== 1) return { reason: `Trusted QUBE lane review metadata for head ${head} declared inconsistent expected lane sets within one round.` };
+    const expected = group[0].expectedLanes;
+    const observed = new Set(group.map(record => record.lane));
+    const unexpected = [...observed].filter(lane => !expected.includes(lane));
+    if (unexpected.length > 0) return { reason: `Trusted QUBE lane review metadata for head ${head} contained unexpected lane(s): ${unexpected.join(', ')}.` };
+    const missing = expected.filter(lane => !observed.has(lane));
+    if (missing.length === 0) {
+      completeRoundKeys.add(key);
+      rounds.complete += 1;
+    } else if (head === latestHead) {
+      rounds.inProgress += 1;
+    } else {
+      rounds.abandoned += 1;
+    }
+  }
+  return { reason: null, rounds, completeRoundKeys };
 }
 
-function noLaneEvidence(input: ReviewStatsInput, reason: string): ReviewStatsPullRequest {
+function noLaneEvidence(input: ReviewStatsInput, reason: string, rounds: ReviewStatsRounds | null = null): ReviewStatsPullRequest {
   return {
     number: input.number,
     title: input.title,
@@ -238,6 +284,7 @@ function noLaneEvidence(input: ReviewStatsInput, reason: string): ReviewStatsPul
     failingHeads: null,
     blockingEntries: null,
     firstReviewClean: null,
+    rounds,
     noLaneEvidence: true,
     noLaneEvidenceReason: reason,
   };
@@ -251,27 +298,52 @@ function summarizePullRequest(input: ReviewStatsInput): {
   if (input.unavailableReason) {
     return { pullRequest: noLaneEvidence(input, input.unavailableReason), blockingAfterFirstHead: 0, laneCounts: new Map() };
   }
-  const parsed = parseLaneReviews(input.trustedLaneReviews);
+  const parsed = parseLaneReviews(input.trustedLaneReviews, input.number);
   if (!parsed.records) {
     return { pullRequest: noLaneEvidence(input, parsed.reason), blockingAfterFirstHead: 0, laneCounts: new Map() };
   }
-  const incompleteReason = incompleteLaneReason(parsed.records);
-  if (incompleteReason) {
-    return { pullRequest: noLaneEvidence(input, incompleteReason), blockingAfterFirstHead: 0, laneCounts: new Map() };
+  const classified = classifyRounds(parsed.records);
+  if (classified.reason !== null) {
+    return { pullRequest: noLaneEvidence(input, classified.reason), blockingAfterFirstHead: 0, laneCounts: new Map() };
   }
 
-  const reviewedHeads = [...new Set(parsed.records.map(record => record.head))];
-  const firstHead = reviewedHeads[0];
+  // A head counts as reviewed only through a complete round: partial rounds
+  // are classified, and their published blocking findings still count as
+  // real rework, but they can never prove a head was fully reviewed.
+  const reviewedHeads = [...new Set(parsed.records
+    .filter(record => classified.completeRoundKeys.has(`${record.head}\0${record.round}`))
+    .map(record => record.head))];
+  const firstHead = parsed.records[0].head;
   const firstHeadRecords = parsed.records.filter(record => record.head === firstHead);
+  const firstHeadHasCompleteRound = reviewedHeads.includes(firstHead);
   const failingHeads = new Set(parsed.records.filter(record => record.recommendation === 'request-changes').map(record => record.head));
-  const blockingRecords = parsed.records.filter(record => record.recommendation === 'request-changes');
+  // A changed-digest rerun republishes a superseding marker within the same
+  // round; counting every historical marker would double-count the same
+  // rework. Per (head, round, lane), only the latest request-changes record
+  // counts - a verdict transition (failed then approve) still counts its
+  // blocking record exactly once.
+  const latestBlockingByRoundLane = new Map<string, LaneReviewRecord>();
+  for (const record of parsed.records.filter(record => record.recommendation === 'request-changes')) {
+    const key = `${record.head}\0${record.round}\0${record.lane}`;
+    const existing = latestBlockingByRoundLane.get(key);
+    if (!existing || record.publishedAt >= existing.publishedAt) latestBlockingByRoundLane.set(key, record);
+  }
   const laneCounts = new Map<string, number>();
   let blockingEntries = 0;
   let blockingAfterFirstHead = 0;
-  for (const record of blockingRecords) {
+  for (const record of latestBlockingByRoundLane.values()) {
     blockingEntries += record.blockingFindingCount;
     if (record.head !== firstHead) blockingAfterFirstHead += record.blockingFindingCount;
     if (record.blockingFindingCount > 0) laneCounts.set(record.lane, (laneCounts.get(record.lane) ?? 0) + record.blockingFindingCount);
+  }
+  if (reviewedHeads.length === 0) {
+    // The whole PR degrades: partial-round blocking counts stay out of the
+    // rolling summary so its ratios never mix proven and unproven data.
+    return {
+      pullRequest: noLaneEvidence(input, `No complete review round was published at any head (${classified.rounds.inProgress} in progress, ${classified.rounds.abandoned} abandoned); a partial round is never read as a reviewed head.`, classified.rounds),
+      blockingAfterFirstHead: 0,
+      laneCounts: new Map(),
+    };
   }
 
   return {
@@ -281,7 +353,11 @@ function summarizePullRequest(input: ReviewStatsInput): {
       reviewedHeads: reviewedHeads.length,
       failingHeads: failingHeads.size,
       blockingEntries,
-      firstReviewClean: firstHeadRecords.every(record => record.recommendation === 'approve'),
+      // Clean means proven clean: the first head must carry a complete round
+      // and every record on it must approve. An incomplete first head can
+      // never read as clean.
+      firstReviewClean: firstHeadHasCompleteRound && firstHeadRecords.every(record => record.recommendation === 'approve'),
+      rounds: classified.rounds,
       noLaneEvidence: false,
       noLaneEvidenceReason: null,
     },
@@ -431,9 +507,10 @@ function tableCell(value: string): string {
 
 export function formatReviewStats(result: ReviewStatsResult): string {
   const lines = [`Review convergence stats (latest ${result.window} merged or closed PRs; provider=${result.provider})`];
-  lines.push('PR | Title | Reviewed heads | Failing heads | Blocking entries | First review clean | Lane evidence');
+  lines.push('PR | Title | Reviewed heads | Failing heads | Blocking entries | First review clean | Rounds (complete/in-progress/abandoned) | Lane evidence');
   for (const pr of result.pullRequests) {
-    lines.push(`#${pr.number} | ${tableCell(pr.title)} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.firstReviewClean)} | ${pr.noLaneEvidence ? `none: ${tableCell(pr.noLaneEvidenceReason ?? 'unknown')}` : 'present'}`);
+    const rounds = pr.rounds ? `${pr.rounds.complete}/${pr.rounds.inProgress}/${pr.rounds.abandoned}` : '-';
+    lines.push(`#${pr.number} | ${tableCell(pr.title)} | ${cell(pr.reviewedHeads)} | ${cell(pr.failingHeads)} | ${cell(pr.blockingEntries)} | ${cell(pr.firstReviewClean)} | ${rounds} | ${pr.noLaneEvidence ? `none: ${tableCell(pr.noLaneEvidenceReason ?? 'unknown')}` : 'present'}`);
   }
   lines.push('', 'Rolling summary:');
   lines.push(`- Pull requests: ${result.summary.pullRequests}`);
