@@ -810,7 +810,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     `The evidence JSON must include issueNumber ${primaryIssue}, prNumber ${prNumber}, headSha ${headSha}, lane ${lane}, profile, adapter local-host, status, severity, recommendation, summary, blockers, findings, artifacts, commands, surfaces, contextReviewed, promptStack, toolsUsed, completeness, preconditions, runnerProvenance, and recordedAt.`,
     LANE_ARTIFACT_REQUIREMENT,
     'When you identify code defects, include structured findings[] entries with severity blocking or advisory, message, location.path plus location.line when the finding can be anchored to the PR diff, and an optional confidence number from 0 to 1. Advisory findings compete for a global cross-lane publication cap ordered by confidence; blocking findings always publish.',
-    'Report the complete finding set for this lane at this head in one pass: every blocking finding first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round.',
+    'Report the admissible blocking findings for this lane at this head, then at most a few high-confidence advisories. A blocker must name a violated acceptance criterion with a concrete failing scenario or a defect introduced by this diff with a concrete wrong outcome; pre-existing adjacent code and speculative hardening are advisory at most.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
     'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
@@ -839,7 +839,7 @@ export function promptStack(
     laneIds: [lane],
     contextLines,
     commandFragments: riskCardFragments,
-    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
 

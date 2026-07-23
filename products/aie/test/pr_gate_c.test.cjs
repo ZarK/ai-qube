@@ -1587,6 +1587,21 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(exactDuplicate.status, 'skipped');
   });
 
+  it('keeps one current lane marker per linked issue on a multi-issue head', async () => {
+    // A PR closing two issues publishes the same lane once per issue; the
+    // latest-per-key read must keep both instead of letting the later
+    // issue's marker overwrite the earlier one.
+    const comments = [
+      laneReviewComment({ lane: 'code-quality', issueNumber: 93, runId: 'multi-93' }),
+      laneReviewComment({ lane: 'code-quality', issueNumber: 94, runId: 'multi-94' }),
+    ];
+    const provider = createGitHubReviewForgeProvider({ exec: makePrExec({ prViews: [cleanLocalPr({ comments, closingIssuesReferences: [{ number: 93 }, { number: 94 }] })] }).exec });
+    const snapshot = await provider.loadPullRequestReview(12);
+
+    const records = snapshot.item.trustedMetadata.trustedLaneReviews.filter(record => record.lane === 'code-quality' && record.stale !== true);
+    assert.deepEqual(records.map(record => record.issueNumber).sort(), [93, 94]);
+  });
+
   it('tombstones the old review and posts a fresh event when the verdict flips within a round', async () => {
     const approveInput = {
       dryRun: true,

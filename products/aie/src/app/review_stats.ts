@@ -245,7 +245,14 @@ function classifyRounds(records: readonly LaneReviewRecord[]): { reason: string 
     const key = `${record.head}\0${record.round}`;
     groups.set(key, [...groups.get(key) ?? [], record]);
   }
-  const latestHead = records.reduce((latest, record) => record.publishedAt >= latest.publishedAt ? record : latest, records[0]).head;
+  // Head advancement - not marker arrival time - decides abandonment: the
+  // latest head is the last NEW head in chronological first-appearance order,
+  // so a delayed marker for an older head never reclassifies rounds.
+  const headOrder: string[] = [];
+  for (const record of records) {
+    if (!headOrder.includes(record.head)) headOrder.push(record.head);
+  }
+  const latestHead = headOrder[headOrder.length - 1];
   const completeRoundKeys = new Set<string>();
   const rounds: ReviewStatsRounds = { complete: 0, inProgress: 0, abandoned: 0 };
   for (const [key, group] of groups) {

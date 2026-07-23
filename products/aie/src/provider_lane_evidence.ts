@@ -183,6 +183,14 @@ export function readTrustedProviderLanes(trustedLaneReviews: unknown, input: {
         rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} belongs to an incomplete review round (${bucket.lanes.size} of ${bucket.expectedLanes.length} declared lanes published at this head; missing: ${missingRoundLanes.join(', ')}); a partial round is never read as approved.` });
         continue;
       }
+      // The round's declared lane set must equal the currently required set:
+      // an under- or over-declared round was reviewed under a different lane
+      // configuration and can never stand in for the active one.
+      const requiredSet = normalizedRoundLanes(input.requiredLanes as readonly string[]);
+      if (bucket.expectedLanes.join('\0') !== requiredSet.join('\0')) {
+        rejected.push({ lane: laneId, issueNumber: gateIssueNumber, reason: `Trusted provider review for ${laneLabel} belongs to a round declaring lanes [${bucket.expectedLanes.join(', ')}], which does not equal the required lane set [${requiredSet.join(', ')}]; the lane must rerun under the active configuration.` });
+        continue;
+      }
       accepted.push({
         head: input.headSha,
         lane: laneId,

@@ -792,6 +792,9 @@ function trustedLaneReviews(input: { notes: GitLabNote[]; trustedMarkerAuthor: s
   return input.notes.flatMap(note => {
     const parsed = trustedMetadataNote(note, input.trustedMarkerAuthor);
     if (parsed?.kind !== "lane-review" || !parsed.lane || !parsed.runId || !parsed.recommendation || !parsed.status || !parsed.summary) return [];
+    // A marker must bind to this merge request: a foreign or missing PR
+    // number can never be consumed as this merge request's review history.
+    if (parsed.prNumber !== input.prNumber) return [];
     return [{
       head: parsed.head,
       lane: parsed.lane,

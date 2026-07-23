@@ -1272,7 +1272,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
     assert.ok(laneIds.length > 0);
-    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `reuse-${lane}` }));
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `reuse-${lane}` }));
     const fixture = makePrExec({ prViews: [cleanLocalPr({ comments, reviewDecision: 'APPROVED' })] });
 
     const result = await runPrGate(config, {
@@ -1300,7 +1300,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     assert.equal(fixture.calls.some(args => args[0] === 'api' && args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST'), false);
   });
 
-  it('reruns only the lane missing from trusted provider current-head reviews', async () => {
+  it('reruns every lane when the trusted provider round is missing one', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     applyRoutedReviewFixture(repo);
@@ -1314,14 +1314,16 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
     assert.ok(laneIds.length > 1);
     const uncoveredLane = laneIds[0];
-    const comments = laneIds.slice(1).map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `reuse-${lane}` }));
+    const comments = laneIds.slice(1).map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `reuse-${lane}` }));
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
 
-    const uncovered = result.localReviewRunner.lanes.filter(lane => lane.lane === uncoveredLane);
-    const covered = result.localReviewRunner.lanes.filter(lane => lane.lane !== uncoveredLane);
-    assert.ok(uncovered.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
-    assert.ok(covered.every(lane => lane.status === 'skipped' && lane.evidenceSource === 'trusted-provider'));
+    // Fail-closed round completeness: a round missing one declared lane is
+    // never read as approved, so no lane from it is reused and every lane
+    // plans a fresh run.
+    assert.ok(result.localReviewRunner.lanes.every(lane => lane.status === 'planned' && lane.evidenceSource === 'fresh-run'));
+    assert.equal((result.localReview.providerReuse?.accepted ?? []).length, 0);
+    assert.ok(result.localReview.providerReuse.rejected.some(entry => entry.lane !== uncoveredLane && /incomplete review round/.test(entry.reason)));
   });
 
   it('never reuses lane review markers from untrusted authors', async () => {
@@ -1360,7 +1362,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const plan = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr()] }).exec });
     const profile = plan.localReview.profile;
     const laneIds = [...new Set(plan.localReviewRunner.lanes.map(lane => lane.lane))];
-    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'def456', issueNumber: 93, prNumber: 12, runId: `stale-${lane}` }));
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'def456', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `stale-${lane}` }));
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
 
@@ -1394,6 +1396,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
       head: 'abc123',
       issueNumber: 93,
       prNumber: 12,
+      expectedLanes: laneIds,
       runId: `mixed-${lane}`,
     }));
 
@@ -1487,7 +1490,7 @@ describe('PR gate service: planning and evidence', { concurrency: 4 }, () => {
     const laneDirectory = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'abc123');
     mkdirSync(laneDirectory, { recursive: true });
     writeFileSync(join(laneDirectory, `${nonTerminalLane}.json`), `${JSON.stringify({ version: 1, issueNumber: 93, prNumber: 12, headSha: 'abc123', lane: nonTerminalLane, status: 'unavailable', summary: 'host fault before verdict' })}\n`);
-    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, runId: `mixed-source-${lane}` }));
+    const comments = laneIds.map(lane => laneReviewComment({ lane, profile, head: 'abc123', issueNumber: 93, prNumber: 12, expectedLanes: laneIds, runId: `mixed-source-${lane}` }));
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec: makePrExec({ prViews: [cleanLocalPr({ comments })] }).exec });
 

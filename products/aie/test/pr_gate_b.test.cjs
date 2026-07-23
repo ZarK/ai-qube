@@ -301,7 +301,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(result.localReviewRunner.lanes[0].spawnContract.promptStackHash, result.localReviewRunner.lanes[0].promptStackHash);
     assert.match(result.localReviewRunner.lanes[0].spawnPrompt, new RegExp(`Prompt stack hash for runnerProvenance\\.promptStackHash: ${result.localReviewRunner.lanes[0].promptStackHash}\\.`));
     assert.match(result.localReviewRunner.lanes[0].promptText, /Host safety prefix for Codex/);
-    assert.match(result.localReviewRunner.lanes[0].promptText, /deeply critical PR review agent/);
+    assert.match(result.localReviewRunner.lanes[0].promptText, /independent production PR review agent/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /security and trust boundaries/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Review context source policy/);
     assert.match(result.localReviewRunner.lanes[0].promptText, /Bounded review bundle/);
@@ -474,8 +474,8 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.ok(lane.artifacts.some(artifact => typeof artifact.path === 'string' && artifact.path.endsWith('issue-compliance.raw-output.json')));
     assert.match(bundle.promptText, /Run local review lane issue-compliance/);
     assert.match(bundle.outputContract, /Return JSON local review lane evidence/);
-    assert.match(bundle.outputContract, /Enumerate the complete finding set for the lane scope at the current PR head in one pass/);
-    assert.match(bundle.outputContract, /Do not stop after the first blocker/);
+    assert.match(bundle.outputContract, /Report admissible blocking findings first/);
+    assert.match(bundle.outputContract, /a blocker must cite a violated acceptance criterion or a defect introduced by this diff/);
     assert.match(bundle.outputContract, /completeness self-check/);
     assert.match(bundle.promptText, /Your verdict is scoped to this lane/);
     assert.match(bundle.promptText, /as preconditions entries/);

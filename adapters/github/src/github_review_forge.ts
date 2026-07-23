@@ -532,7 +532,10 @@ function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawRe
   // chronological readers (stats) but never represent a live lane verdict.
   const records = chronologicalLaneReviewRecords(input).filter(record => record.metadata.superseded !== true);
   for (const record of records) {
-    const key = `${record.metadata.head}\0${record.metadata.lane}`;
+    // Per-issue identity: a PR closing multiple issues publishes the same
+    // lane once per issue, and one issue's marker must never overwrite
+    // another's on the latest-per-key read.
+    const key = `${record.metadata.head}\0${record.metadata.lane}\0${record.metadata.issueNumber}`;
     const existing = latest.get(key);
     if (!existing || (Date.parse(record.publishedAt ?? '') || 0) >= (Date.parse(existing.publishedAt ?? '') || 0)) latest.set(key, record);
   }

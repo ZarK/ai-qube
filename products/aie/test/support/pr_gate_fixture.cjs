@@ -218,7 +218,7 @@ function promptForLane(id, contextLines = [`Run local review lane ${id}.`]) {
     categoryId: 'review',
     laneIds: [id],
     contextLines,
-    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Enumerate the complete finding set for the lane scope at the current PR head in one pass: all blocking findings first, then advisory findings, ranked by severity and confidence. Do not stop after the first blocker; the implementer fixes everything you report before the next round. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
+    outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
 }
 

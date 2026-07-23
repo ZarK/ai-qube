@@ -867,6 +867,41 @@ describe("GitLab review forge adapter", () => {
     assert.match(notes[0].body, /Second review\./);
   });
 
+  it("never attributes a foreign merge request's marker to this one", async () => {
+    const foreignMarker = { version: 1, kind: "lane-review", head: "head-sha", lane: "code-quality", expectedLanes: ["code-quality"], round: "round-foreign", profile: "focused", runId: "foreign-run", issueNumber: 185, prNumber: 99, host: "codex", recommendation: "approve", status: "complete", summary: "Foreign MR review.", inline: "gitlab-note" };
+    const ownMarker = { ...foreignMarker, round: "round-own", runId: "own-run", prNumber: 12, summary: "Own MR review." };
+    const notes = [
+      { id: 1, body: `QUBE_REVIEW_METADATA ${JSON.stringify(foreignMarker)}\nForeign marker.`, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" },
+      { id: 2, body: `QUBE_REVIEW_METADATA ${JSON.stringify(ownMarker)}\nOwn marker.`, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/2" },
+    ];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ reviewers: [] });
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote() {
+          throw new Error("not used");
+        },
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+
+    const snapshot = await provider.loadPullRequestReview(12);
+    const records = snapshot.item.trustedMetadata.trustedLaneReviews;
+
+    assert.equal(records.length, 1, "a marker bound to another merge request must never appear in this one's history");
+    assert.equal(records[0].runId, "own-run");
+  });
+
   it("preserves a superseded verdict when a GitLab round verdict flips", async () => {
     const notes = [];
     const client = {
