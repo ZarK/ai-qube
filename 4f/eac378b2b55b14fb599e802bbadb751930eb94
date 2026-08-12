@@ -1,0 +1,42 @@
+products/aie/src/init_content.ts
+  s_4b43975b4f2e9b::t_20162cc9ff98c2 95
+  s_4b43975b4f2e9b::t_d8e83b275597c5 403-411
+  s_4b43975b4f2e9b::t_d7211e4bbc53a3 355
+  s_4b43975b4f2e9b::t_a292af7ee3a094 475-478
+AGENTS.md
+  s_4b43975b4f2e9b::t_f13d34ae1d86d7 5,24
+  s_4b43975b4f2e9b::t_3e2856cfb4f117 10,25,35,39-45,55,57,67,80-81
+products/aie/src/command_catalog.ts
+  s_4b43975b4f2e9b::t_7bb38ecf6805de 383
+  s_4b43975b4f2e9b::t_d6b6a5764cb909 441,443-444,446,449
+products/aie/src/app/pr_gate.ts
+  s_4b43975b4f2e9b::t_1de10d3482067b 1175
+CLAUDE.md
+  s_4b43975b4f2e9b::t_f13d34ae1d86d7 3,22
+  s_4b43975b4f2e9b::t_6780eca25c6b85 8,21,23,33,37-43,53,55
+products/aie/src/runtime_handlers.ts
+  s_4b43975b4f2e9b::t_2d2e0aa3960c8e 578,584,588-589,594,598
+  s_4b43975b4f2e9b::t_34d349effc0bea 806
+products/aie/src/app/pr_batch.ts
+  s_4b43975b4f2e9b::t_faa1605edc40f3 99
+products/aie/prompts/descriptors/qa-reviewer.md
+  s_4b43975b4f2e9b::t_fc4574c2c32339 15
+products/aie/src/app/pr_triage.ts
+  s_4b43975b4f2e9b::t_e1661a2a1f06c3 18,79,91,131,140,161,191-194,198,214,216,218-219,222,227,232
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "4feac378b2b55b14fb599e802bbadb751930eb94",
+  "prompts": {},
+  "sessions": {
+    "s_4b43975b4f2e9b": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d0cb6548-4e9e-4721-b6ec-79d5df86cff6",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
