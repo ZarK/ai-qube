@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "inputs": {
+    "ignore": [
+      "node_modules/**",
+      ".git/**",
+      ".venv/**",
+      "dist/**",
+      "build/**",
+      ".qube/**",
+      "products/aiq/test-projects/**"
+    ]
+  },
+  "surfaces": {
+    "cli": {
+      "profile": "fast"
+    }
+  }
+}

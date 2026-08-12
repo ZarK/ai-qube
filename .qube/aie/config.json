@@ -322,10 +322,21 @@
           "workingDirectory": ".",
           "env": {},
           "externalService": false
+        },
+        {
+          "name": "aiq",
+          "kind": "aiq",
+          "command": "node products/aiq/packages/cli/dist/bin/aiq.js run",
+          "stage": "pre-pr",
+          "required": true,
+          "timeoutSeconds": 1200,
+          "workingDirectory": ".",
+          "env": {},
+          "externalService": false
         }
       ],
       "qualityGates": [],
-      "qualityControl": false
+      "qualityControl": true
     },
     "audit": {
       "manualUiAudit": true,
