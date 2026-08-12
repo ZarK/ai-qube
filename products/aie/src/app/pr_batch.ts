@@ -96,7 +96,7 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
       ?? (batch.findings.some(finding => finding.severity === 'blocking')
         ? 'Apply every blocking fix from this batch in one commit, then run one re-review round with `aie pr gate <pr>`.'
         : batch.findings.length > 0
-          ? 'Only advisory findings remain; when the gate reports ship-ready, file them with `aie pr triage <pr>` instead of new commits.'
+          ? 'Only advisory findings remain; fix cheap ones now or drop them and fold anything real into already-queued Ready work — never open a new issue. Run `aie pr triage <pr>` for the disposition report, then merge when the gate reports ship-ready.'
           : 'No open findings at the current head; run `aie pr gate <pr>` for merge readiness.'),
   };
 }

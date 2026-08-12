@@ -332,10 +332,10 @@ describe('init service', () => {
     assert.match(agents, /Configured routed local review executes through/);
     assert.match(agents, /complete lane batch in fresh read-only model sessions/);
     assert.match(agents, /Do not spawn native review subagents for routed lanes/);
-    assert.match(agents, /convert residual advisory findings to follow-up issues with .*pr triage <pr>/);
+    assert.match(agents, /pr triage <pr>` for the disposition report/);
     assert.match(agents, /read the aggregated batch with .*pr batch <pr>/);
     assert.match(agents, /apply all blocking fixes in one commit, then run one re-review round/);
-    assert.match(agents, /instead of committing advisory-only fixes to the approved head/);
+    assert.match(agents, /never open a new issue for a residual advisory/);
     assert.match(agents, /QUBE owns exact prompt execution, evidence, and provider publication from the main process/);
     assert.doesNotMatch(agents, /spawn one independent Codex subagent per (?:lane|active focus)/i);
     assert.doesNotMatch(agents, /spawn independent Codex subagents for local PR review focuses/i);
