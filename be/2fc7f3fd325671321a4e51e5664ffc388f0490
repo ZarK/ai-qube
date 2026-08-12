@@ -1,0 +1,28 @@
+products/aie/src/config/load.ts
+  s_3adbbed452d95a::t_f163c32e9f130e 12-38,100
+  s_3adbbed452d95a::t_851ef67fa39703 62,64-65,68-74,76-83,85-88,91-99,101
+products/aie/test/config.test.cjs
+  s_3adbbed452d95a::t_058d8742192f70 655-727
+  s_3adbbed452d95a::t_fd2ddfc92cb72b 2,6
+.gitignore
+  s_3adbbed452d95a::t_5fe756ffd3f7e8 6-9
+products/aie/src/review_setup.ts
+  s_3adbbed452d95a::t_1bd54643bd214a 97
+  s_3adbbed452d95a::t_2c1d0513c51fb6 99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "be2fc7f3fd325671321a4e51e5664ffc388f0490",
+  "prompts": {},
+  "sessions": {
+    "s_3adbbed452d95a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d22854f4-e41c-4865-8d0d-d1b7d0b78145",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
