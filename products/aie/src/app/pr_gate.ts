@@ -28,6 +28,7 @@ import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProces
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { evaluateReviewSourceContract, resolveReviewSources, type ReviewSourceContract } from '../review_source.js';
 import { prReviewPublishFailureMessage, runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
@@ -167,6 +168,7 @@ export interface PrGateResult {
   reviewPublisher: import('../providers/review_forge_provider.js').ReviewForgePublisherIdentity | null;
   reviewParticipants: ReviewParticipantObservation[];
   reviewParticipantRollup: ReviewParticipantRollup | null;
+  reviewSourceContract: ReviewSourceContract;
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
@@ -1072,6 +1074,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
+  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const reviewSourceContract = evaluateReviewSourceContract(reviewSources, finalSnapshot.item, finalSnapshot.pr.headRefOid, carriedForwardLanes);
+  const unsatisfiedBlockingSources = reviewSourceContract.sources.filter(source => source.blocking && !source.satisfied);
   const feedback = prFeedback(finalSnapshot.item);
   const mergeBlockers = prMergeBlockers(finalSnapshot.item);
   const conversations = prConversations(finalSnapshot.item);
@@ -1090,7 +1095,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  const gateDecisionStatus = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  // The configured review-source contract is a generic, kind-agnostic overlay:
+  // any unsatisfied blocking source holds the gate at pending regardless of
+  // which sources are configured or how many kinds they mix.
+  const status: PrGateStatus = gateDecisionStatus === 'complete' && unsatisfiedBlockingSources.length > 0 ? 'pending' : gateDecisionStatus;
   const selfCheck = dryRun
     ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: bundlePrBody, repoRoot })
     : null;
@@ -1103,6 +1112,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
   if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);
   if (localReviewPublish.status === 'failed' || localReviewPublish.status === 'pending') shipReadyReasons.push(`Local review publishing is ${localReviewPublish.status}; provider-visible lane state is incomplete.`);
+  for (const source of unsatisfiedBlockingSources) {
+    shipReadyReasons.push(`Review source "${source.id}" is not satisfied at the current head${source.missing.length > 0 ? ` (missing: ${source.missing.join(', ')})` : ''}.`);
+  }
   // shipReady is the authoritative merge-readiness contract; its nextAction and the
   // top-level nextAction always agree so automation cannot read two different plans.
   const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
@@ -1141,6 +1153,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     reviewPublisher,
     reviewParticipants: reviewParticipantObservations,
     reviewParticipantRollup,
+    reviewSourceContract,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
@@ -1215,6 +1228,12 @@ export function formatPrGate(result: PrGateResult): string {
     lines.push(`Provider review participants: received=${result.reviewParticipantRollup.receivedCount}/${result.reviewParticipantRollup.expectedCount}; host lanes=${result.reviewParticipantRollup.hostLaneReceived}/${result.reviewParticipantRollup.hostLaneExpected}.`);
     for (const participant of result.reviewParticipants) {
       lines.push(`- ${participant.participant.handle}: kind=${participant.participant.kind}; received=${participant.received ? 'yes' : 'no'}; pending=${participant.pending ? 'yes' : 'no'}; stale=${participant.stale ? 'yes' : 'no'}`);
+    }
+  }
+  if (result.reviewSourceContract.sources.length > 0) {
+    lines.push(`Review sources: allSatisfied=${result.reviewSourceContract.allSatisfied ? 'yes' : 'no'}.`);
+    for (const source of result.reviewSourceContract.sources) {
+      lines.push(`- ${source.id} (${source.identity}/${source.markers}${source.blocking ? '' : ', advisory'}): satisfied=${source.satisfied ? 'yes' : 'no'}; missing=${source.missing.join(', ') || 'none'}`);
     }
   }
   if (result.feedback.length > 0) {
