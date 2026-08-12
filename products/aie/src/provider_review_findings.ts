@@ -32,6 +32,19 @@ function trustFor(source: ReviewSourceConfig): ProviderFindingTrust {
   return source.markers === 'trusted' ? 'trusted-provider' : 'untrusted';
 }
 
+const MAX_FINDING_MESSAGE_LENGTH = 2000;
+
+// External reviewer text is untrusted task input: collapsing it to a single
+// line strips any multi-line prompt structure (fake headers, code fences,
+// role markers) an author could shape to look like instructions, and bounding
+// its length keeps one oversized comment from dominating the fix batch or a
+// downstream prompt. The text itself is never parsed for directives; it is
+// carried through as opaque finding data.
+function sanitizeFindingMessage(value: string): string {
+  const collapsed = value.replace(/\s+/g, ' ').trim();
+  return collapsed.length > MAX_FINDING_MESSAGE_LENGTH ? `${collapsed.slice(0, MAX_FINDING_MESSAGE_LENGTH)}...` : collapsed;
+}
+
 /**
  * Reads provider-visible feedback from configured `identity: 'reviewer'`
  * review sources at the current head into normalized findings for fix-batch
@@ -65,7 +78,7 @@ export function ingestProviderReviewFindings(item: ReviewItem, sources: readonly
       reviewerHandle: entry.author,
       trust: trustFor(source),
       severity,
-      message: entry.summary,
+      message: sanitizeFindingMessage(entry.summary),
       location: null,
       url: entry.url,
     }, `${source.id}|${severity}|${entry.summary}|${entry.url ?? ''}`);
@@ -80,7 +93,7 @@ export function ingestProviderReviewFindings(item: ReviewItem, sources: readonly
       reviewerHandle: conversation.author,
       trust: trustFor(source),
       severity: 'blocking',
-      message: conversation.summary,
+      message: sanitizeFindingMessage(conversation.summary),
       location: conversation.path ? { path: conversation.path, line: conversation.line } : null,
       url: conversation.url,
     }, `${source.id}|blocking|${conversation.summary}|${conversation.path ?? ''}|${conversation.line ?? ''}`);
