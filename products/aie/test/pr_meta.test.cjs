@@ -25,6 +25,7 @@ const {
   parsePrNumber,
   runPrGate,
   runPrViewService,
+  formatPrView,
   buildPrBody,
   parsePrBodyIssueNumber,
   runPrReviewPublishService,
@@ -236,6 +237,19 @@ describe('PR body service', { concurrency: 4 }, () => {
     assert.equal(result.laneReviews[0].inlineCommentCount, 2);
     assert.equal(result.laneReviews[0].bodyFindingCount, 1);
     assert.equal(result.laneReviews[0].reviewUrl, 'https://github.com/example/repo/pull/12#pullrequestreview-2');
+  });
+
+  it('surfaces the current provider-visible round summary pointer in PR view JSON and text', async () => {
+    const marker = `<!-- qube-pr-review-summary:${JSON.stringify({ version: 1, head: 'abc123', round: 'round-1', prNumber: 12, findingDigest: 'digest1' })} -->`;
+    const pr = basePr({
+      comments: [{ author: { login: 'executor' }, body: `${marker}\n\n# QUBE review round summary: approve`, url: 'https://github.com/example/repo/pull/12#issuecomment-9', createdAt: '2026-01-01T00:00:00Z' }],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrViewService({ prNumber: 12, exec });
+
+    assert.deepEqual(result.roundSummary, { head: 'abc123', round: 'round-1', url: 'https://github.com/example/repo/pull/12#issuecomment-9', stale: false });
+    assert.match(formatPrView(result), /Round summary: head=abc123; round=round-1; stale=no; https:\/\/github\.com\/example\/repo\/pull\/12#issuecomment-9/);
   });
 
   it('drafts issue-closing PR text with gate, UI audit, review, and readiness state', async () => {

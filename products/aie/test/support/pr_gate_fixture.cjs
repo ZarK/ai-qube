@@ -23,7 +23,7 @@ try {
 } catch {
   ({ observeReviewParticipants } = require('../../../../packages/qube-core/dist/index.js'));
 }
-const { parsePrNumber, runPrGate, runPrViewService } = require('../../dist/pr/index.js');
+const { parsePrNumber, runPrGate, runPrViewService, formatPrView } = require('../../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../../dist/app/pr_body.js');
 const { prReviewPublishFailureMessage, runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
 const { resolveModelReviewPlan, reviewRouteKey } = require('../../dist/app/local_review_runner.js');
@@ -777,6 +777,7 @@ module.exports = {
   parsePrNumber,
   runPrGate,
   runPrViewService,
+  formatPrView,
   buildPrBody,
   parsePrBodyIssueNumber,
   runPrReviewPublishService,
