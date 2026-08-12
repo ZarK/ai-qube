@@ -1,0 +1,21 @@
+products/aie/test/review_setup.test.cjs
+  s_3adbbed452d95a::t_57652b24f1ac86 494-517
+  s_3adbbed452d95a::t_53c40016dcf835 3,8
+  s_3adbbed452d95a::t_1663ea86545fba 518
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c730bfc13bcb3e50882ee8f4f3d71dd0b396a82d",
+  "prompts": {},
+  "sessions": {
+    "s_3adbbed452d95a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d22854f4-e41c-4865-8d0d-d1b7d0b78145",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
