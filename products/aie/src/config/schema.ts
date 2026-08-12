@@ -1,4 +1,5 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
+import { isRegisteredReviewHost, listReviewHostIds } from '../app/review_host_adapters.js';
 import { defaultCarryForwardContext } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
@@ -316,8 +317,8 @@ function readReviewRoute(value: unknown, path: string, errors: ValidationError[]
     return null;
   }
   rejectUnknownKeys(value, ['host', 'tier', 'timeoutSeconds', 'maxTurns'], path, errors);
-  const host = value.host === 'codex' || value.host === 'grok' ? value.host : null;
-  if (!host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must be "codex" or "grok"` });
+  const host = isRegisteredReviewHost(value.host) ? value.host : null;
+  if (!host) errors.push({ kind: 'invalid', path: `${path}.host`, message: `${path}.host must name a registered review host adapter, got ${JSON.stringify(value.host)} (registered: ${listReviewHostIds().join(', ')})` });
   const tier = value.tier === 'review' || value.tier === 'economy' || value.tier === 'synthesis' ? value.tier : null;
   if (!tier) errors.push({ kind: 'invalid', path: `${path}.tier`, message: `${path}.tier must be "review", "economy", or "synthesis"` });
   const timeoutSeconds = readBoundedInteger(value, 'timeoutSeconds', 600, 30, 3600, path, errors);

@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { homedir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { execFile, execFileSync } from 'node:child_process';
@@ -9,6 +8,9 @@ import type { ReviewModelEffort, ReviewModelTierId, RoutedReviewHostId } from '.
 import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRunnerProvenance } from '../local_review_evidence.js';
 import { redact } from '../redact.js';
 import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_support.js';
+import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
+
+export type { ModelHostExecutable } from './review_host_adapters.js';
 
 const execFileAsync = promisify(execFile);
 const MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
@@ -40,8 +42,6 @@ export interface ModelRouteInvocation {
   schemaPath: string | null;
   timeoutMs: number;
 }
-
-export type ModelHostExecutable = string | { executable: string; prefixArgs: string[] };
 
 export interface ModelRouteProcessResult {
   exitCode: number;
@@ -128,26 +128,25 @@ export async function resolveWindowsNodeShim(shim: string): Promise<ModelHostExe
 // synchronous core so a probe verdict always reflects the executable that
 // routed execution would actually spawn.
 export function resolveModelHostExecutableSync(host: RoutedReviewHostId): ModelHostExecutable {
+  const adapter = getReviewHostAdapter(host);
   if (process.platform === 'win32') {
     const shim = findOnPathSync(`${host}.cmd`);
     if (shim) {
       const resolvedShim = resolveWindowsNodeShimSync(shim);
       if (resolvedShim) return resolvedShim;
-      if (host === 'codex') {
-        const script = join(dirname(shim), 'node_modules', '@openai', 'codex', 'bin', 'codex.js');
+      const script = adapter.windowsNodeModulesScriptPath(dirname(shim));
+      if (script) {
         const node = findOnPathSync('node.exe');
         if (node && existsSync(script)) return { executable: node, prefixArgs: [script] };
       }
     }
   }
-  const names = process.platform === 'win32'
-    ? host === 'codex' ? ['codex.exe'] : ['grok.exe']
-    : [host];
+  const names = process.platform === 'win32' ? adapter.windowsExecutableNames : [host];
   for (const name of names) {
     const resolved = findOnPathSync(name);
     if (resolved) return resolved;
   }
-  const fallback = process.platform === 'win32' && host === 'grok' ? join(homedir(), '.grok', 'bin', 'grok.exe') : null;
+  const fallback = process.platform === 'win32' ? adapter.windowsFallbackExecutablePath() : null;
   if (fallback && existsSync(fallback)) return fallback;
   throw new Error(`${host} review route is unavailable. Expose the authenticated ${host} CLI on PATH; QUBE does not install or authenticate model hosts.`);
 }
@@ -447,45 +446,21 @@ function normalizeSchemaOptionals(value: unknown): unknown {
 }
 
 export function buildModelRouteInvocation(input: ModelReviewRunInput, executable: ModelHostExecutable, prompt: string, promptPath: string | null, schemaPath: string | null = null): ModelRouteInvocation {
+  const adapter = getReviewHostAdapter(input.plan.host);
   const executablePath = typeof executable === 'string' ? executable : executable.executable;
-  const args: string[] = typeof executable === 'string' ? [] : [...executable.prefixArgs];
-  let stdin: string | null = null;
-  if (input.plan.host === 'codex') {
-    if (!schemaPath) throw new Error('Codex review routing requires a private output schema file.');
-    args.push('exec');
-    if (input.plan.model) args.push('--model', input.plan.model);
-    if (input.plan.effort) args.push('--config', `model_reasoning_effort="${input.plan.effort}"`);
-    args.push(
-      '--ignore-user-config', '--strict-config', '--config', 'mcp_servers={}', '--config', 'web_search="disabled"',
-      '--disable', 'apps', '--disable', 'browser_use', '--disable', 'browser_use_external', '--disable', 'computer_use',
-      '--disable', 'in_app_browser', '--disable', 'standalone_web_search', '--disable', 'multi_agent', '--disable', 'hooks', '--disable', 'plugins',
-      '--sandbox', 'read-only', '--cd', input.repoRoot, '--skip-git-repo-check', '--ephemeral', '--output-schema', schemaPath, '--json', '-',
-    );
-    stdin = prompt;
-  } else {
-    if (!promptPath) throw new Error('Grok review routing requires a private prompt file.');
-    args.push(
-      '--cwd', input.repoRoot,
-      '--permission-mode', 'dontAsk',
-      '--sandbox', 'strict',
-      '--allow', 'Read',
-      '--allow', 'Grep',
-      '--deny', 'Bash(*)',
-      '--deny', 'Edit',
-      '--deny', 'WebFetch',
-      '--deny', 'MCPTool(*)',
-      '--no-plan',
-      '--no-subagents',
-      '--disable-web-search',
-      '--no-memory',
-      '--max-turns', String(input.plan.maxTurns),
-      '--json-schema', reviewResultSchema(input),
-    );
-    if (input.plan.effort) args.push('--reasoning-effort', input.plan.effort);
-    if (input.plan.model) args.push('--model', input.plan.model);
-    args.push('--verbatim', '--prompt-file', promptPath);
-  }
-  return { executable: executablePath, args, cwd: input.repoRoot, stdin, promptPath, schemaPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
+  const prefixArgs = typeof executable === 'string' ? [] : [...executable.prefixArgs];
+  const context: ReviewHostInvocationContext = {
+    repoRoot: input.repoRoot,
+    model: input.plan.model,
+    effort: input.plan.effort,
+    maxTurns: input.plan.maxTurns,
+    prompt,
+    promptPath,
+    schemaPath,
+    schemaJson: reviewResultSchema(input),
+  };
+  const built = adapter.buildInvocation(context, executable);
+  return { executable: executablePath, args: [...prefixArgs, ...built.args], cwd: input.repoRoot, stdin: built.stdin, promptPath, schemaPath, timeoutMs: input.plan.timeoutSeconds * 1000 };
 }
 
 export async function runModelRouteProcess(invocation: ModelRouteInvocation): Promise<ModelRouteProcessResult> {
@@ -560,78 +535,6 @@ export async function runModelRouteProcess(invocation: ModelRouteInvocation): Pr
   });
 }
 
-function parseCodexOutput(stdout: string): { text: string; sessionId: string | null } | null {
-  const messages: string[] = [];
-  let sessionId: string | null = null;
-  for (const line of stdout.split(/\r?\n/).filter(line => line.trim() !== '')) {
-    let event: unknown;
-    try { event = JSON.parse(line); } catch { continue; }
-    if (!event || typeof event !== 'object' || Array.isArray(event)) continue;
-    const record = event as Record<string, unknown>;
-    if (record.type === 'thread.started' && typeof record.thread_id === 'string') sessionId = record.thread_id;
-    if (record.type === 'item.completed' && record.item && typeof record.item === 'object' && !Array.isArray(record.item)) {
-      const item = record.item as Record<string, unknown>;
-      if (item.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
-    }
-  }
-  return messages.length === 1 ? { text: messages[0], sessionId } : null;
-}
-
-function jsonObjectSequence(text: string): string[] | null {
-  let index = 0;
-  const objects: string[] = [];
-  while (index < text.length) {
-    while (index < text.length && /\s/.test(text[index])) index += 1;
-    if (index >= text.length) break;
-    if (text[index] !== '{') return null;
-    const start = index;
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-    for (; index < text.length; index += 1) {
-      const character = text[index];
-      if (inString) {
-        if (escaped) escaped = false;
-        else if (character === '\\') escaped = true;
-        else if (character === '"') inString = false;
-        continue;
-      }
-      if (character === '"') inString = true;
-      else if (character === '{') depth += 1;
-      else if (character === '}') {
-        depth -= 1;
-        if (depth === 0) {
-          index += 1;
-          break;
-        }
-      }
-    }
-    if (depth !== 0 || inString) return null;
-    const candidate = text.slice(start, index);
-    try {
-      const parsed: unknown = JSON.parse(candidate);
-      if (!isRecord(parsed)) return null;
-    } catch {
-      return null;
-    }
-    objects.push(candidate);
-  }
-  return objects.length > 0 ? objects : null;
-}
-
-function parseGrokOutput(stdout: string): { text: string; priorTexts: string[]; sessionId: string | null } | null {
-  try {
-    const value: unknown = JSON.parse(stdout);
-    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
-    const record = value as Record<string, unknown>;
-    if (typeof record.text !== 'string') return null;
-    const objects = jsonObjectSequence(record.text);
-    return objects ? { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId: typeof record.sessionId === 'string' ? record.sessionId : null } : null;
-  } catch {
-    return null;
-  }
-}
-
 function failureReason(result: ModelRouteProcessResult): { reasonCode: string; error: string } {
   if (result.timedOut) return { reasonCode: 'model-route-timeout', error: 'Model review route exceeded its configured timeout and was terminated.' };
   const diagnostic = sanitizedDiagnostic(result.stderr);
@@ -653,13 +556,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
   try {
     const resolveHead = input.resolveHead ?? resolveModelReviewHead;
     if (await resolveHead(input.repoRoot) !== input.headSha) return { evidence: null, reasonCode: 'model-route-checkout-mismatch', error: 'Local checkout HEAD does not match the requested pull request head.' };
+    const adapter = getReviewHostAdapter(input.plan.host);
     const executable = await (input.resolveExecutable ?? resolveModelHostExecutable)(input.plan.host);
     const routeDirectory = join(input.repoRoot, '.git', 'qube', 'aie', 'model-route');
     mkdirSync(routeDirectory, { recursive: true });
-    if (input.plan.host === 'grok') {
+    if (adapter.requiresPromptFile) {
       promptPath = join(routeDirectory, `${invocationId}.prompt`);
       writeFileSync(promptPath, prompt, { encoding: 'utf8', mode: 0o600 });
-    } else {
+    }
+    if (adapter.requiresSchemaFile) {
       schemaPath = join(routeDirectory, `${invocationId}.schema.json`);
       writeFileSync(schemaPath, reviewResultSchema(input), { encoding: 'utf8', mode: 0o600 });
     }
@@ -670,7 +575,7 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
       return { evidence: null, ...failure };
     }
     if (!result.stdinDelivered) return { evidence: null, reasonCode: 'model-route-prompt-delivery', error: 'Model review route did not confirm complete prompt delivery.' };
-    const parsedHostOutput = input.plan.host === 'codex' ? parseCodexOutput(result.stdout) : parseGrokOutput(result.stdout);
+    const parsedHostOutput = adapter.parseEnvelope(result.stdout);
     if (!parsedHostOutput) return { evidence: null, reasonCode: 'model-route-output-envelope', error: 'Model review route returned no supported final-response envelope.' };
     let modelResult: unknown;
     try { modelResult = JSON.parse(parsedHostOutput.text); } catch {

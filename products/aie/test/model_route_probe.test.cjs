@@ -3,6 +3,7 @@
 const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { parseGrokModelCatalog, probeModelRoute, sanitizeProbeText } = require('../dist/app/model_route_probe.js');
+const { registerReviewHostAdapterForTests, resetReviewHostAdaptersForTests } = require('../dist/app/review_host_adapters.js');
 
 const GROK_MODELS_OUTPUT = [
   'You are logged in with grok.com.',
@@ -99,6 +100,36 @@ describe('model route probe', () => {
     const check = probeModelRoute('grok', 'grok-4.5', () => '\n\n', () => 'grok-cli');
     assert.equal(check.status, 'blocked');
     assert.match(check.diagnostic, /empty version/);
+  });
+
+  it('fails closed when a registered host declares a required capability as unmet', () => {
+    registerReviewHostAdapterForTests({
+      id: 'capability-gap-host',
+      capabilities: { structuredOutput: false, readOnlySandbox: true },
+      requiredCapabilities: ['structured-output', 'read-only-sandbox'],
+      requiresPromptFile: false,
+      requiresSchemaFile: false,
+      windowsExecutableNames: [],
+      windowsNodeModulesScriptPath: () => null,
+      windowsFallbackExecutablePath: () => null,
+      buildInvocation: () => ({ args: [], stdin: null }),
+      parseEnvelope: () => null,
+      probeAfterVersion: () => ({ status: 'ready', modelListed: null, diagnostic: null }),
+    });
+    try {
+      const check = probeModelRoute(
+        'capability-gap-host',
+        null,
+        () => { throw new Error('must not run a command for a capability-gapped host'); },
+        () => { throw new Error('must not resolve an executable for a capability-gapped host'); },
+      );
+      assert.equal(check.status, 'blocked');
+      assert.equal(check.executable, null);
+      assert.match(check.diagnostic, /structured-output/);
+      assert.match(check.diagnostic, /capability-gap-host/);
+    } finally {
+      resetReviewHostAdaptersForTests();
+    }
   });
 
   it('probes codex through the shared shim-aware resolution with version only', () => {
