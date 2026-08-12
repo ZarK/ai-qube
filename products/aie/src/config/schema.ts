@@ -4,7 +4,7 @@ import { defaultCarryForwardContext } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
 import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
-import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
+import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -308,6 +308,59 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
     });
   });
   return lanes;
+}
+
+function readReviewSourceIdentity(value: unknown, path: string, errors: ValidationError[]): ReviewSourceIdentity | undefined {
+  if (value === 'lane' || value === 'reviewer') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "lane" or "reviewer"` });
+  return undefined;
+}
+
+function readReviewSourceMarkers(value: unknown, defaultValue: ReviewSourceMarkers, path: string, errors: ValidationError[]): ReviewSourceMarkers {
+  if (value === undefined) return defaultValue;
+  if (value === 'trusted' || value === 'provider') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "trusted" or "provider"` });
+  return defaultValue;
+}
+
+function readReviewSources(value: unknown, defaultValue: ReviewSourceConfig[], path: string, errors: ValidationError[]): ReviewSourceConfig[] {
+  if (value === undefined) return defaultValue.map(source => ({ ...source, expected: [...source.expected] }));
+  if (!Array.isArray(value)) {
+    errors.push({ kind: 'invalid', path, message: `${path} must be an array of review source objects` });
+    return defaultValue.map(source => ({ ...source, expected: [...source.expected] }));
+  }
+  const sources: ReviewSourceConfig[] = [];
+  const seenIds = new Set<string>();
+  value.forEach((entry, index) => {
+    const sourcePath = `${path}[${index}]`;
+    if (!isPlainObject(entry)) {
+      errors.push({ kind: 'invalid', path: sourcePath, message: `${sourcePath} must be an object` });
+      return;
+    }
+    rejectUnknownKeys(entry, ['id', 'identity', 'expected', 'blocking', 'markers', 'enabled'], sourcePath, errors);
+    const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
+    if (!id) {
+      errors.push({ kind: 'invalid', path: `${sourcePath}.id`, message: `${sourcePath}.id must be a non-empty string` });
+      return;
+    }
+    if (seenIds.has(id)) {
+      errors.push({ kind: 'duplicate', path: `${sourcePath}.id`, message: `${sourcePath}.id duplicates review source id ${id}` });
+      return;
+    }
+    const identity = readReviewSourceIdentity(entry.identity, `${sourcePath}.identity`, errors);
+    const expected = readStringArray(entry, 'expected', [], sourcePath, errors);
+    if (expected.length === 0) {
+      errors.push({ kind: 'invalid', path: `${sourcePath}.expected`, message: `${sourcePath}.expected must list at least one lane id or reviewer identity` });
+      return;
+    }
+    if (!identity) return;
+    const blocking = readBoolean(entry, 'blocking', true, sourcePath, errors);
+    const markers = readReviewSourceMarkers(entry.markers, identity === 'lane' ? 'trusted' : 'provider', `${sourcePath}.markers`, errors);
+    const enabled = readBoolean(entry, 'enabled', true, sourcePath, errors);
+    seenIds.add(id);
+    sources.push({ id, identity, expected, blocking, markers, enabled });
+  });
+  return sources;
 }
 
 function readReviewRoute(value: unknown, path: string, errors: ValidationError[]): ReviewRoutePolicy | null {
@@ -855,6 +908,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
         reviewThreads: defaultValue.contextSources.reviewThreads,
       },
       lanes: defaultValue.lanes.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] })),
+      sources: defaultValue.sources.map(source => ({ ...source, expected: [...source.expected] })),
       agents: [...defaultValue.agents],
       localAgents: [...defaultValue.localAgents],
     };
@@ -883,11 +937,12 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
         reviewThreads: defaultValue.contextSources.reviewThreads,
       },
       lanes: defaultValue.lanes.map(lane => ({ ...lane, match: [...lane.match], prompt: [...lane.prompt], tools: [...lane.tools] })),
+      sources: defaultValue.sources.map(source => ({ ...source, expected: [...source.expected] })),
       agents: [...defaultValue.agents],
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'models', 'route', 'failover'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'models', 'route', 'failover'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -895,6 +950,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     promptFragments: readPromptFragments(value.promptFragments, defaultValue.promptFragments, 'policy.reviews.promptFragments', errors),
     contextSources: readContextSources(value.contextSources, defaultValue.contextSources, 'policy.reviews.contextSources', errors),
     lanes: readReviewLanes(value.lanes, defaultValue.lanes, 'policy.reviews.lanes', errors),
+    sources: readReviewSources(value.sources, defaultValue.sources, 'policy.reviews.sources', errors),
     agents: readStringArray(value, 'agents', defaultValue.agents, 'policy.reviews', errors),
     localAgents: readStringArray(value, 'localAgents', defaultValue.localAgents, 'policy.reviews', errors),
     waitMinutes: readBoundedInteger(value, 'waitMinutes', defaultValue.waitMinutes, 0, 120, 'policy.reviews', errors),

@@ -1,5 +1,7 @@
 import type { Config } from '../config/index.js';
 import type { InstructionStatus, PullRequestSummary } from '../repo/index.js';
+import { resolveReviewSources } from '../review_source.js';
+import type { ReviewSourceIdentity, ReviewSourceMarkers } from '../config/index.js';
 import type { DoctorReadinessStatus, GateReadinessDiagnostics, LifecycleDiagnostics } from './types.js';
 
 export type WorkflowStageStatus = 'ready' | 'blocked' | 'unconfigured' | 'fallback-only' | 'manual' | 'disabled' | 'needs-action' | 'unavailable';
@@ -16,6 +18,16 @@ export interface WorkflowStage {
 export type WorkflowReviewState = 'fallback-only' | 'provider-reviewers' | 'local-lanes' | 'evidence-ready';
 
 export type WorkflowEvidenceState = 'not-applicable' | 'missing' | 'present';
+
+export interface WorkflowReviewSourceReadiness {
+  id: string;
+  identity: ReviewSourceIdentity;
+  markers: ReviewSourceMarkers;
+  blocking: boolean;
+  expected: string[];
+  readiness: DoctorReadinessStatus;
+  detail: string;
+}
 
 export interface WorkflowReviewReadiness {
   state: WorkflowReviewState;
@@ -36,6 +48,7 @@ export interface WorkflowReviewReadiness {
     head: string | null;
     lanes: string[];
   };
+  sources: WorkflowReviewSourceReadiness[];
 }
 
 export interface WorkflowShippingReadiness {
@@ -194,6 +207,38 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
         ? 'provider-reviewers'
         : 'fallback-only';
   const publisher = input.config.providers.review.publisher;
+  // Doctor has no live provider record, so per-source readiness reads the
+  // same local signals every other doctor review check already reads: local
+  // runner readiness and recorded local evidence for lane sources, and
+  // configuredness for reviewer sources. This mirrors buildGateReadinessDiagnostics'
+  // reviewAgent readiness, just scoped to one configured source at a time.
+  const sources: WorkflowReviewSourceReadiness[] = resolveReviewSources(input.config).map(source => {
+    if (source.identity === 'lane') {
+      if (reviewAgent.localRunner.readiness !== 'ready') {
+        return { id: source.id, identity: source.identity, markers: source.markers, blocking: source.blocking, expected: [...source.expected], readiness: reviewAgent.localRunner.readiness, detail: `Local review lane runner readiness is ${reviewAgent.localRunner.readiness}.` };
+      }
+      const missing = source.expected.filter(laneId => !input.evidence.lanes.includes(laneId));
+      return {
+        id: source.id,
+        identity: source.identity,
+        markers: source.markers,
+        blocking: source.blocking,
+        expected: [...source.expected],
+        readiness: missing.length === 0 ? 'ready' : 'missing',
+        detail: missing.length === 0 ? `Current-head evidence covers all ${source.expected.length} expected lane(s).` : `Current-head evidence is missing: ${missing.join(', ')}.`,
+      };
+    }
+    const configured = source.expected.length > 0;
+    return {
+      id: source.id,
+      identity: source.identity,
+      markers: source.markers,
+      blocking: source.blocking,
+      expected: [...source.expected],
+      readiness: configured ? 'ready' : 'missing',
+      detail: configured ? `${source.expected.length} reviewer identity(ies) configured.` : 'No reviewer identities are configured for this source.',
+    };
+  });
   return {
     state,
     fallbackPromptAvailable: reviewAgent.fallbackPromptAvailable,
@@ -213,6 +258,7 @@ export function buildReviewReadiness(input: WorkflowReadinessInput): WorkflowRev
       head: input.evidence.head,
       lanes: evidenceLanes,
     },
+    sources,
   };
 }
 
