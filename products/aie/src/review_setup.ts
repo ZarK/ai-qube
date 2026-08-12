@@ -94,9 +94,9 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
     steps: [
       'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read-only repository permissions.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
-      'Generate a private key and keep it outside repository files. Configure only a local filesystem path or an environment variable name containing the PEM.',
+      'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
       'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',
-      'Apply local config with `review setup github-app --app-id <id> --installation-id <id> --private-key-env <ENV_NAME> --yes` (or use --private-key-path).',
+      'Apply local config with `review setup github-app --app-id <id> --installation-id <id> --private-key-env <ENV_NAME> --yes` (prefer --private-key-env over --private-key-path).',
       'Run `review doctor --json` for a read-only identity and permission probe. The probe mints only a short-lived installation token in memory.',
     ],
     limitation: null,

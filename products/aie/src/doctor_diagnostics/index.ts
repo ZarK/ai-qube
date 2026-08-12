@@ -17,7 +17,7 @@ export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorTo
 import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 export { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export { buildWorkflowReadiness, buildReviewReadiness, selectedAgentHosts } from './workflow_readiness.js';
-export type { WorkflowReadinessDiagnostics, WorkflowReadinessInput, WorkflowReviewReadiness, WorkflowReviewState, WorkflowStage, WorkflowStageId, WorkflowStageStatus, WorkflowEvidenceState, WorkflowDirtyState, WorkflowShippingReadiness } from './workflow_readiness.js';
+export type { WorkflowReadinessDiagnostics, WorkflowReadinessInput, WorkflowReviewReadiness, WorkflowReviewSourceReadiness, WorkflowReviewState, WorkflowStage, WorkflowStageId, WorkflowStageStatus, WorkflowEvidenceState, WorkflowDirtyState, WorkflowShippingReadiness } from './workflow_readiness.js';
 
 export function computeDoctorOk(input: DoctorOkInputs): boolean {
   const baseBranchReady = !(input.requireBaseBranchFreshness ?? true) || (input.baseRef.resolved && input.baseRef.upToDate);

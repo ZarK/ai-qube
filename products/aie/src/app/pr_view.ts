@@ -90,6 +90,13 @@ export interface PrViewLaneReview {
   author?: string;
 }
 
+export interface PrViewRoundSummary {
+  head: string;
+  round: string;
+  url: string | null;
+  stale: boolean;
+}
+
 export interface PrViewResult {
   ok: true;
   command: 'pr view';
@@ -102,6 +109,8 @@ export interface PrViewResult {
   mergeBlockers: PrViewMergeBlock[];
   reviewThreads: PrViewThread[];
   laneReviews: PrViewLaneReview[];
+  /** Pointer to the current provider-visible round summary, when the provider publishes one; null when none is discoverable. */
+  roundSummary: PrViewRoundSummary | null;
   checks: PrViewCheck[];
   ciDiagnostics: PrViewCheckDiagnostic[];
   counts: {
@@ -210,6 +219,15 @@ function prLaneReviews(item: ReviewItem): PrViewLaneReview[] {
   });
 }
 
+function prRoundSummary(item: ReviewItem): PrViewRoundSummary | null {
+  const value = item.trustedMetadata.trustedRoundSummary;
+  if (!isRecord(value)) return null;
+  const head = stringValue(value.head);
+  const round = stringValue(value.round);
+  if (!head || !round) return null;
+  return { head, round, url: stringValue(value.url) ?? null, stale: value.stale === true };
+}
+
 function stringArray(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
 }
@@ -285,6 +303,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
   const mergeBlockers = prMergeBlockers(snapshot.item);
   const reviewThreads = prReviewThreads(snapshot.item);
   const laneReviews = prLaneReviews(snapshot.item);
+  const roundSummary = prRoundSummary(snapshot.item);
   const checks = prChecks(snapshot.item);
   const reviewPublisher = provider.describeReviewPublisher
     ? await provider.describeReviewPublisher(snapshot.pr.authorLogin ?? null, { mint: false })
@@ -308,6 +327,7 @@ export async function runPrViewService(options: PrViewOptions): Promise<PrViewRe
     mergeBlockers,
     reviewThreads,
     laneReviews,
+    roundSummary,
     checks,
     ciDiagnostics: checks.map(check => check.diagnostic).filter((diagnostic): diagnostic is PrViewCheckDiagnostic => diagnostic !== undefined),
     counts: {
@@ -345,6 +365,9 @@ export function formatPrView(result: PrViewResult): string {
   if (result.laneReviews.length > 0) {
     lines.push('Lane reviews:');
     for (const item of result.laneReviews) lines.push(`- ${item.lane}: ${item.recommendation}; inline=${item.inline}; inlineComments=${item.inlineCommentCount}; bodyFindings=${item.bodyFindingCount ?? 'unknown'}${item.reviewUrl ? `; ${item.reviewUrl}` : ''}`);
+  }
+  if (result.roundSummary) {
+    lines.push(`Round summary: head=${result.roundSummary.head}; round=${result.roundSummary.round}; stale=${result.roundSummary.stale ? 'yes' : 'no'}${result.roundSummary.url ? `; ${result.roundSummary.url}` : ''}`);
   }
   if (result.checks.length > 0) {
     lines.push('Checks:');

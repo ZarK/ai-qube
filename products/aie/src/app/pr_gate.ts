@@ -28,7 +28,10 @@ import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProces
 import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { evaluateReviewSourceContract, resolveReviewSources, type ReviewSourceContract } from '../review_source.js';
+import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { prReviewPublishFailureMessage, runPrReviewPublishWithProvider } from './pr_review_publish.js';
+import { runPrReviewSummaryPublishWithProvider } from './pr_review_summary_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
 import type {
   ReviewForgeCiDiagnostic,
@@ -164,9 +167,12 @@ export interface PrGateResult {
   localReview: LocalReviewGate;
   fixBatch: FixBatch;
   localReviewPublish: ReviewForgeLocalReviewPublishResult;
+  /** Best-effort provider-native round summary; null when not attempted (dry run, session lock withheld, or no linked issue yet). */
+  roundSummary: import('../providers/review_forge_provider.js').ReviewForgeRoundSummaryPublishResult | null;
   reviewPublisher: import('../providers/review_forge_provider.js').ReviewForgePublisherIdentity | null;
   reviewParticipants: ReviewParticipantObservation[];
   reviewParticipantRollup: ReviewParticipantRollup | null;
+  reviewSourceContract: ReviewSourceContract;
   issueChecklists: IssueChecklistSummary[];
   pendingReviewers: string[];
   unavailable: string[];
@@ -944,7 +950,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     carryForwardScope,
     providerLaneReuse,
   });
-  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
+  // Resolved once and reused for both the fix batch (below) and the review
+  // source contract (further down): the same configured sources must drive
+  // both, or a source could satisfy the contract while its findings never
+  // reached the batch, or vice versa.
+  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
+  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
   const publishUnavailable: string[] = [];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   if (deferProviderMutation && sessionLockBlocksExecution) {
@@ -1038,6 +1050,44 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewPublisher = provider.describeReviewPublisher
     ? await provider.describeReviewPublisher(finalSnapshot.pr.authorLogin ?? null, { mint: false })
     : null;
+  // Best-effort provider-native round summary, attempted only right after this
+  // gate run itself freshly published lane review content; a skip-matched or
+  // fully trusted-provider-reused round has nothing new to summarize and a
+  // round summary for it, if warranted, was already attempted the round it
+  // published. A failure here never fails the gate, since per-lane provider
+  // markers remain authoritative.
+  let roundSummary: import('../providers/review_forge_provider.js').ReviewForgeRoundSummaryPublishResult | null = null;
+  if (!dryRun && !sessionLockBlocksExecution && localReviewPublish.status === 'published') {
+    const issueNumberForSummary = localReview.evidence.find(entry => entry.issueNumber !== null)?.issueNumber ?? null;
+    if (issueNumberForSummary !== null) {
+      try {
+        const providerReuseLanesForSummary = localReview.evidence.flatMap(evidence => evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id));
+        const summaryDeltaPaths = gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD');
+        const summaryPublished = await runPrReviewSummaryPublishWithProvider(provider, {
+          prNumber: options.prNumber,
+          issueNumber: issueNumberForSummary,
+          headSha: finalSnapshot.pr.headRefOid,
+          repoRoot,
+          exec: options.exec,
+          expectedLanes: activeFocuses,
+          providerReuseLanes: providerReuseLanesForSummary,
+          changedPaths: summaryDeltaPaths,
+          nitCap: config.reviewNitCap,
+        });
+        roundSummary = summaryPublished.publish;
+      } catch (error: unknown) {
+        roundSummary = {
+          status: 'failed',
+          runId: null,
+          marker: null,
+          body: null,
+          url: null,
+          failure: error instanceof Error ? error.message : String(error),
+          nextAction: 'Round summary publishing failed; per-lane provider markers remain the authoritative provider-visible state.',
+        };
+      }
+    }
+  }
   const publishedCarriedLanes: string[] = [];
   if (!dryRun && config.reviewCarryForwardPublish === 'note' && localReview.status === 'passed') {
     // Same committed-delta rule as the fresh-lane publish loop above.
@@ -1072,6 +1122,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
+  const reviewSourceContract = evaluateReviewSourceContract(reviewSources, finalSnapshot.item, finalSnapshot.pr.headRefOid, carriedForwardLanes);
+  const unsatisfiedBlockingSources = reviewSourceContract.sources.filter(source => source.blocking && !source.satisfied);
   const feedback = prFeedback(finalSnapshot.item);
   const mergeBlockers = prMergeBlockers(finalSnapshot.item);
   const conversations = prConversations(finalSnapshot.item);
@@ -1090,7 +1142,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   ];
   const providerStateUnavailable = remoteReviewEnabled(config) && finalSnapshot.unavailable.length > 0;
   const requiredLocalRunnerBlocked = localRequired && localReview.status === 'missing' && (localReviewRunner.status === 'failed' || localReviewRunner.status === 'unavailable');
-  const status = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  const gateDecisionStatus = gateStatus(finalSnapshot.item, reviewers, feedback, issueChecklists, localReview, config.reviewAdapter === 'local' || config.reviewAdapter === 'shadow', requiredLocalRunnerBlocked || publishUnavailable.length > 0 || providerStateUnavailable, reviewParticipantRollup);
+  // The configured review-source contract is a generic, kind-agnostic overlay:
+  // any unsatisfied blocking source holds the gate at pending regardless of
+  // which sources are configured or how many kinds they mix.
+  const status: PrGateStatus = gateDecisionStatus === 'complete' && unsatisfiedBlockingSources.length > 0 ? 'pending' : gateDecisionStatus;
   const selfCheck = dryRun
     ? buildImplementerSelfCheck({ config, changedPaths, issueChecklists, prBody: bundlePrBody, repoRoot })
     : null;
@@ -1103,6 +1159,9 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   for (const blocker of mergeBlockers) shipReadyReasons.push(`${blocker.reason}: ${blocker.summary}`);
   if (finalSnapshot.unresolvedThreadsCount > 0) shipReadyReasons.push(`${finalSnapshot.unresolvedThreadsCount} unresolved review thread(s) remain.`);
   if (localReviewPublish.status === 'failed' || localReviewPublish.status === 'pending') shipReadyReasons.push(`Local review publishing is ${localReviewPublish.status}; provider-visible lane state is incomplete.`);
+  for (const source of unsatisfiedBlockingSources) {
+    shipReadyReasons.push(`Review source "${source.id}" is not satisfied at the current head${source.missing.length > 0 ? ` (missing: ${source.missing.join(', ')})` : ''}.`);
+  }
   // shipReady is the authoritative merge-readiness contract; its nextAction and the
   // top-level nextAction always agree so automation cannot read two different plans.
   const legacyNextAction = nextAction(status, reviewers, dryRun, issueChecklists, checkDiagnostics, localReview, feedback, mergeBlockers, reviewParticipantRollup);
@@ -1113,7 +1172,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     nextAction: shipReadyReasons.length > 0
       ? legacyNextAction
       : advisoryCount > 0
-        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
+        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with ${advisoryCount} residual advisory finding(s). Fix cheap advisories now, or drop them and fold anything real into already-queued Ready work — never open a new issue; run \`aie pr triage ${options.prNumber}\` for the disposition report, then merge.`
         : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
           ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
           : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
@@ -1138,9 +1197,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     localReview,
     fixBatch,
     localReviewPublish,
+    roundSummary,
     reviewPublisher,
     reviewParticipants: reviewParticipantObservations,
     reviewParticipantRollup,
+    reviewSourceContract,
     issueChecklists,
     pendingReviewers: finalSnapshot.reviewRequests,
     unavailable,
@@ -1206,6 +1267,11 @@ export function formatPrGate(result: PrGateResult): string {
   }
   lines.push(`Local review publishing: ${result.localReviewPublish.status}; ${result.localReviewPublish.nextAction}`);
   if (result.localReviewPublish.failure) lines.push(`- failure: ${result.localReviewPublish.failure}`);
+  if (result.roundSummary) {
+    lines.push(`Round summary: ${result.roundSummary.status}; ${result.roundSummary.nextAction}`);
+    if (result.roundSummary.summaryUrl) lines.push(`- summary: ${result.roundSummary.summaryUrl}`);
+    if (result.roundSummary.failure) lines.push(`- failure: ${result.roundSummary.failure}`);
+  }
   if (result.reviewPublisher) {
     lines.push(`Review publisher: mode=${result.reviewPublisher.mode}; identity=${result.reviewPublisher.identityClass}; formalEvents=${result.reviewPublisher.formalEventCapability ? 'yes' : 'no'}; permission=${result.reviewPublisher.permissionStatus}.`);
     if (result.reviewPublisher.fallbackReason) lines.push(`- publisher fallback: ${result.reviewPublisher.fallbackReason}`);
@@ -1215,6 +1281,12 @@ export function formatPrGate(result: PrGateResult): string {
     lines.push(`Provider review participants: received=${result.reviewParticipantRollup.receivedCount}/${result.reviewParticipantRollup.expectedCount}; host lanes=${result.reviewParticipantRollup.hostLaneReceived}/${result.reviewParticipantRollup.hostLaneExpected}.`);
     for (const participant of result.reviewParticipants) {
       lines.push(`- ${participant.participant.handle}: kind=${participant.participant.kind}; received=${participant.received ? 'yes' : 'no'}; pending=${participant.pending ? 'yes' : 'no'}; stale=${participant.stale ? 'yes' : 'no'}`);
+    }
+  }
+  if (result.reviewSourceContract.sources.length > 0) {
+    lines.push(`Review sources: allSatisfied=${result.reviewSourceContract.allSatisfied ? 'yes' : 'no'}.`);
+    for (const source of result.reviewSourceContract.sources) {
+      lines.push(`- ${source.id} (${source.identity}/${source.markers}${source.blocking ? '' : ', advisory'}): satisfied=${source.satisfied ? 'yes' : 'no'}; missing=${source.missing.join(', ') || 'none'}`);
     }
   }
   if (result.feedback.length > 0) {

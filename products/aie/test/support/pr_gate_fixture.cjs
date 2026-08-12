@@ -23,7 +23,7 @@ try {
 } catch {
   ({ observeReviewParticipants } = require('../../../../packages/qube-core/dist/index.js'));
 }
-const { parsePrNumber, runPrGate, runPrViewService } = require('../../dist/pr/index.js');
+const { parsePrNumber, runPrGate, runPrViewService, formatPrView } = require('../../dist/pr/index.js');
 const { buildPrBody, parsePrBodyIssueNumber } = require('../../dist/app/pr_body.js');
 const { prReviewPublishFailureMessage, runPrReviewPublishService, runPrReviewPublishWithProvider } = require('../../dist/app/pr_review_publish.js');
 const { resolveModelReviewPlan, reviewRouteKey } = require('../../dist/app/local_review_runner.js');
@@ -564,13 +564,28 @@ function makePrExec(options = {}) {
     if (args.join(' ') === 'repo view --json nameWithOwner,url') {
       return { args, exitCode: 0, stdout: JSON.stringify({ nameWithOwner: 'example/repo', url: 'https://github.com/example/repo' }), stderr: '' };
     }
-    if (args.join(' ') === 'api user') {
-      return { args, exitCode: 0, stdout: JSON.stringify({ login: 'executor' }), stderr: '' };
+    if (args[0] === 'api' && args[1] === 'user') {
+      return { args, exitCode: 0, stdout: JSON.stringify({ login: options.currentLogin ?? 'executor' }), stderr: '' };
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/comments') {
       return { args, exitCode: 0, stdout: JSON.stringify(reviewComments), stderr: '' };
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/issues/12/comments') {
+      if (args.includes('--method') && args[args.indexOf('--method') + 1] === 'POST') {
+        const inputIndex = args.indexOf('--input');
+        const payload = inputIndex >= 0 ? JSON.parse(readFileSync(args[inputIndex + 1], 'utf8')) : {};
+        const commentId = 900000 + (currentPr.comments || []).length;
+        const url = `https://github.com/example/repo/pull/12#issuecomment-${commentId}`;
+        currentPr = {
+          ...currentPr,
+          comments: [
+            ...(currentPr.comments || []),
+            { author: { login: options.reviewAuthor ?? 'executor' }, body: payload.body, url, createdAt: new Date().toISOString() },
+          ],
+        };
+        if (prViews.length > 0) prViews[0] = currentPr;
+        return { args, exitCode: 0, stdout: JSON.stringify({ id: commentId, html_url: url }), stderr: '' };
+      }
       return { args, exitCode: 0, stdout: JSON.stringify(options.issueComments || issueCommentsFromPr(currentPr)), stderr: '' };
     }
     if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews') {
@@ -762,6 +777,7 @@ module.exports = {
   parsePrNumber,
   runPrGate,
   runPrViewService,
+  formatPrView,
   buildPrBody,
   parsePrBodyIssueNumber,
   runPrReviewPublishService,

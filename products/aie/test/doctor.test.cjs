@@ -864,6 +864,36 @@ describe('staged workflow readiness', () => {
     assert.equal(noHead.review.evidence.state, 'not-applicable');
   });
 
+  it('reports readiness for each configured review source independently, dropping disabled sources', () => {
+    const config = getDefaults();
+    config.reviewAdapter = 'local';
+    config.reviewProfile = 'local-focused';
+    config.reviewAgents = [];
+    config.reviewLanes = [
+      { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', command: 'claude --print' },
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', command: 'claude --print' },
+    ];
+    config.reviewSources = [
+      { id: 'local-lanes', identity: 'lane', expected: ['issue-compliance', 'code-quality'], blocking: true, markers: 'trusted', enabled: true },
+      { id: 'security-reviewer', identity: 'reviewer', expected: ['security-lead'], blocking: false, markers: 'provider', enabled: true },
+      { id: 'disabled-source', identity: 'reviewer', expected: ['someone'], blocking: true, markers: 'trusted', enabled: false },
+    ];
+    const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
+    const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness, {
+      evidence: { head: 'abc123', lanes: ['issue-compliance'] },
+    }));
+
+    assert.deepEqual(workflow.review.sources.map(source => source.id), ['local-lanes', 'security-reviewer']);
+    const laneSource = workflow.review.sources.find(source => source.id === 'local-lanes');
+    assert.equal(laneSource.identity, 'lane');
+    assert.equal(laneSource.readiness, 'missing');
+    assert.match(laneSource.detail, /code-quality/);
+    const reviewerSource = workflow.review.sources.find(source => source.id === 'security-reviewer');
+    assert.equal(reviewerSource.identity, 'reviewer');
+    assert.equal(reviewerSource.blocking, false);
+    assert.equal(reviewerSource.readiness, 'ready');
+  });
+
   it('reports issue start unavailable when the working tree cannot be observed', () => {
     const config = getDefaults();
     const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });

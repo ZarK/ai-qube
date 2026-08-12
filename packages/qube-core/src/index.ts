@@ -164,6 +164,9 @@ export type {
   ReviewLaneReviewPublishInput,
   ReviewLaneReviewPublishResult,
   ReviewRequestTrigger,
+  ReviewRoundSummaryFinding,
+  ReviewRoundSummaryPublishInput,
+  ReviewRoundSummaryPublishResult,
 } from "./review_forge.js";
 export { normalizeReviewFinding, partitionReviewFindings, supportsReviewStats } from "./review_forge.js";
 export type {

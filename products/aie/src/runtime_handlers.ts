@@ -5,6 +5,7 @@ import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_ver
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
 import { formatPrReviewPublish, prReviewPublishFailureMessage, runPrReviewPublishService } from './app/pr_review_publish.js';
+import { formatPrReviewSummaryPublish, prReviewSummaryPublishFailureMessage, runPrReviewSummaryPublishService } from './app/pr_review_summary_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
@@ -574,27 +575,27 @@ async function handlePrBatch(context: Parameters<RuntimeCommandHandler>[0]) {
 
 async function handlePrTriage(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
-  if (isHelpToken(pr)) return usageResult(context, 'pr triage', 'aie pr triage <pr> [--dry-run] [--json]', ['Usage: aie pr triage <pr> [--dry-run] [--json]', '', 'Convert residual advisory findings at an approved current head into deduplicated follow-up issues linked on the pull request.', 'Examples:', ...commandExamples('pr triage').map(example => `  ${example}`)]);
+  if (isHelpToken(pr)) return usageResult(context, 'pr triage', 'aie pr triage <pr> [--json]', ['Usage: aie pr triage <pr> [--json]', '', 'Report residual advisory findings at an approved current head for in-PR fix-or-drop disposition. Read-only; never files a follow-up issue.', 'Examples:', ...commandExamples('pr triage').map(example => `  ${example}`)]);
   let prNumber: number | null;
   try {
     prNumber = parsePrNumber(pr);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
-    const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie pr triage 12 --dry-run\` or \`aie pr triage --help\`.`;
+    const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie pr triage 12\` or \`aie pr triage --help\`.`;
     return commandFailure(context, { ok: false, command: 'pr triage', error: message }, message);
   }
   if (prNumber === null) {
-    const message = 'Failed to run `aie pr triage`: missing pull request number. Likely cause: no PR argument was provided. Next action: run `aie pr triage 12 --dry-run` or `aie pr triage --help`.';
-    return commandFailure(context, { ok: false, command: 'pr triage', error: message, usage: 'aie pr triage <pr> [--dry-run] [--json]', examples: commandExamples('pr triage') }, message);
+    const message = 'Failed to run `aie pr triage`: missing pull request number. Likely cause: no PR argument was provided. Next action: run `aie pr triage 12` or `aie pr triage --help`.';
+    return commandFailure(context, { ok: false, command: 'pr triage', error: message, usage: 'aie pr triage <pr> [--json]', examples: commandExamples('pr triage') }, message);
   }
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr triage', loaded, 'Fix the selected Executor config, then rerun advisory triage.');
   try {
-    const result = await runPrTriageService(loaded.config ?? getDefaults(), { prNumber, repoRoot: loaded.root, dryRun: readBooleanFlag(context, 'dry-run') });
+    const result = await runPrTriageService(loaded.config ?? getDefaults(), { prNumber, repoRoot: loaded.root });
     return commandResult(context, result, formatPrTriage(result), result.ok ? 0 : 1);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);
-    const message = `Failed to triage advisories for pull request #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication and local lane evidence, then rerun \`aie pr triage ${prNumber} --dry-run\`.`;
+    const message = `Failed to triage advisories for pull request #${prNumber}. Likely cause: ${cause}. Next action: verify GitHub CLI authentication and local lane evidence, then rerun \`aie pr triage ${prNumber}\`.`;
     return commandFailure(context, { ok: false, command: 'pr triage', pr: prNumber, error: message }, message);
   }
 }
@@ -652,6 +653,54 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
     const cause = err instanceof Error ? err.message : String(err);
     const message = `Failed to publish lane review for #${prNumber} lane ${laneId}. Likely cause: ${cause}.`;
     return commandFailure(context, { ok: false, command: 'pr review publish', pr: prNumber, lane: laneId, error: message }, message);
+  }
+}
+
+async function handlePrReviewPublishSummary(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  if (isHelpToken(pr)) {
+    return usageResult(context, 'pr review publish-summary', 'aie pr review publish-summary <pr> [--issue <n>] [--dry-run] [--json]', [
+      'Usage: aie pr review publish-summary <pr> [--issue <n>] [--dry-run] [--json]',
+      '',
+      'Publish one professional current-head round summary (verdict, ranked findings, lane rollup, collapsible lane details) to the configured review provider, superseding prior-head summaries.',
+      'Requires validated current-head evidence for every active review lane; run the lane reviews and `aie pr review publish` first.',
+      'Examples:',
+      '  aie pr review publish-summary 12',
+      '  aie pr review publish-summary 12 --issue 93 --json',
+    ]);
+  }
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', error: cause }, cause);
+  }
+  if (prNumber === null) {
+    const message = 'Failed to run `aie pr review publish-summary`: missing pull request number.';
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', error: message }, message);
+  }
+  const issueArg = stringFlag(context, 'issue');
+  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
+  const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr review publish-summary', loaded, 'Fix the selected Executor config, then rerun the round summary publish.');
+  try {
+    const result = await runPrReviewSummaryPublishService(loaded.config ?? getDefaults(), {
+      prNumber,
+      issueNumber,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      repoRoot: loaded.root,
+    });
+    const failureMessage = prReviewSummaryPublishFailureMessage(result);
+    if (failureMessage) {
+      return commandFailure(context, { ok: false, command: 'pr review publish-summary', pr: prNumber, publish: result.publish, error: failureMessage }, failureMessage);
+    }
+    return commandResult(context, result, formatPrReviewSummaryPublish(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to publish round review summary for #${prNumber}. Likely cause: ${cause}.`;
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', pr: prNumber, error: message }, message);
   }
 }
 
@@ -754,10 +803,11 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     const next = await getNextIssue();
     return commandResult(context, { ok: true, command: 'next', ...next }, next.issue ? lineOutput([`Next: ${workDisplayId(next.issue)} "${next.issue.title}" (${next.issue.state})`, `Reason: ${next.reason}`, ...(next.multipleInProgress ? ['WARNING: Multiple in-progress work items - fix before starting new work.'] : []), ...(next.driftCount > 0 ? [`Drift: ${next.driftCount} work item(s) - consider \`aie deps fix --dry-run\` then \`aie deps fix\`.`] : [])]) : `${next.reason}\n`);
   },
-  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr batch <pr>` after lane results land to fix every blocking finding in one commit before the next round.', 'Use `aie pr triage <pr>` when the gate reports ship-ready with residual advisories to file them as follow-up issues instead of new commits on the approved head.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
+  pr: topic(['Use `aie pr view <pr> --json` for concise PR state before reaching for raw GitHub CLI review data.', 'Use `aie pr body <issue>` to draft PR text and readiness guidance before opening a pull request.', 'Use `aie pr gate <pr> --dry-run`, `aie pr gate <pr> --json`, or `aie pr gate <pr>` before merge.', 'Use `aie pr batch <pr>` after lane results land to fix every blocking finding in one commit before the next round.', 'Use `aie pr triage <pr>` when the gate reports ship-ready with residual advisories for the disposition report; fix cheap ones now or drop them — never open a new issue.', 'Use `aie pr review publish <pr> --lane <lane> --issue <issue>` from host review subagents to post lane feedback as a provider pull request review.', 'Use `aie pr thread resolve <pr> --thread <id>` or `aie pr thread resolve <pr> --all` after addressed code conversation feedback should be marked resolved.', 'PR helpers coordinate body drafting, configured reviewer requests, review-state inspection, and addressed conversation resolution; they never merge pull requests for you.']),
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,
+  'pr review publish-summary': handlePrReviewPublishSummary,
   'pr batch': handlePrBatch,
   'pr triage': handlePrTriage,
   'pr thread resolve': handlePrThreadResolve,

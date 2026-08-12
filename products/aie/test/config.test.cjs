@@ -1,9 +1,9 @@
 const assert = require('node:assert/strict');
-const { writeFileSync, mkdtempSync } = require('node:fs');
+const { writeFileSync, mkdtempSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
-const { configToFileShape, getDefaults, loadConfig, loadConfigFile, validateConfig } = require('../dist/config/index.js');
+const { configToFileShape, getDefaults, loadConfig, loadConfigFile, mergeConfigOverlay, overlayConfigPath, validateConfig } = require('../dist/config/index.js');
 
 function defaultFile() {
   return configToFileShape(getDefaults());
@@ -252,6 +252,21 @@ describe('config validation', () => {
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.host'));
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.timeoutSeconds'));
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.maxTurns'));
+  });
+
+  it('rejects a review route host id that is not registered in the review host adapter registry, naming it', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'mystery-review-host', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    const hostError = result.errors.find(error => error.path === 'policy.reviews.route.host');
+    assert.ok(hostError, 'an unregistered review route host must fail with a named reason');
+    assert.match(hostError.message, /mystery-review-host/);
+    assert.match(hostError.message, /registered review host adapter/);
+    assert.match(hostError.message, /codex/);
+    assert.match(hostError.message, /grok/);
   });
 
   it('validates non-secret connection settings against the selected provider contract', () => {
@@ -636,5 +651,78 @@ describe('config validation', () => {
     assert.equal(result.ok, false);
     assert.equal(result.path, join(repo, 'aie.config.json'));
     assert.ok(result.errors.some((entry) => entry.path === 'aie.config.json' && entry.message.includes('Failed to read or parse aie.config.json')));
+  });
+
+  it('deep-merges a local overlay onto a base object without mutating either input', () => {
+    const base = { providers: { review: { kind: 'github' } }, version: 1 };
+    const overlay = { providers: { review: { publisher: { mode: 'github-app' } } } };
+
+    const merged = mergeConfigOverlay(base, overlay);
+
+    assert.deepEqual(merged, { providers: { review: { kind: 'github', publisher: { mode: 'github-app' } } }, version: 1 });
+    assert.equal(base.providers.review.publisher, undefined);
+  });
+
+  it('replaces arrays and non-object leaves wholesale instead of merging them', () => {
+    const base = { policy: { labels: { priorities: ['P1'] } }, kind: 'a' };
+    const overlay = { policy: { labels: { priorities: ['P9'] } }, kind: 'b' };
+
+    const merged = mergeConfigOverlay(base, overlay);
+
+    assert.deepEqual(merged.policy.labels.priorities, ['P9']);
+    assert.equal(merged.kind, 'b');
+  });
+
+  it('derives the local overlay filename by inserting .local before the extension', () => {
+    assert.equal(overlayConfigPath(join('repo', '.qube', 'aie', 'config.json')), join('repo', '.qube', 'aie', 'config.local.json'));
+    assert.equal(overlayConfigPath(join('repo', 'aie.config.json')), join('repo', 'aie.config.local.json'));
+  });
+
+  it('merges a working-tree publisher config from a local, never-committed overlay', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-overlay-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify({ version: 1, providers: { review: { kind: 'github' } } }, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), `${JSON.stringify({
+      providers: {
+        review: {
+          publisher: {
+            mode: 'github-app',
+            githubApp: { appId: '4573671', installationId: '153271303', privateKeyEnv: 'QUBE_REVIEW_PUBLISHER_PRIVATE_KEY' },
+          },
+        },
+      },
+    }, null, 2)}\n`);
+
+    const result = await loadConfigFile(repo);
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.providers.review.kind, 'github');
+    assert.deepEqual(result.config.providers.review.publisher, {
+      mode: 'github-app',
+      githubApp: { appId: '4573671', installationId: '153271303', privateKeyEnv: 'QUBE_REVIEW_PUBLISHER_PRIVATE_KEY' },
+    });
+  });
+
+  it('resolves config from the overlay alone when no committed config file is present', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-overlay-only-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), `${JSON.stringify({ version: 1, providers: { review: { kind: 'github', publisher: { mode: 'token', token: { env: 'QUBE_REVIEW_TOKEN' } } } } }, null, 2)}\n`);
+
+    const result = await loadConfigFile(repo);
+
+    assert.equal(result.ok, true, JSON.stringify(result.errors));
+    assert.equal(result.config.providers.review.publisher.mode, 'token');
+  });
+
+  it('reports parse errors against the local overlay path without discarding a valid base config', async () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-config-overlay-invalid-'));
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), '{ invalid json');
+
+    const result = await loadConfigFile(repo);
+
+    assert.equal(result.ok, false);
+    assert.ok(result.errors.some((entry) => entry.path.endsWith('config.local.json') && entry.message.includes('local overlay')));
   });
 });

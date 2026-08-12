@@ -142,6 +142,19 @@ export interface LifecycleConfig {
   commentOnStart: boolean;
 }
 
+/** A lane source expects trusted per-lane host review markers; a reviewer source expects provider reviewer state, either a trusted marker comment or a plain provider review. */
+export type ReviewSourceIdentity = 'lane' | 'reviewer';
+export type ReviewSourceMarkers = 'trusted' | 'provider';
+
+export interface ReviewSourceConfig {
+  id: string;
+  identity: ReviewSourceIdentity;
+  expected: string[];
+  blocking: boolean;
+  markers: ReviewSourceMarkers;
+  enabled: boolean;
+}
+
 export interface ReviewConfig {
   adapter: ReviewAdapterKind;
   profile: ReviewProfileKind;
@@ -149,6 +162,7 @@ export interface ReviewConfig {
   promptFragments: ReviewPromptFragments;
   contextSources: ReviewContextSources;
   lanes: ReviewLanePolicy[];
+  sources: ReviewSourceConfig[];
   agents: string[];
   localAgents: string[];
   waitMinutes: number;
@@ -238,6 +252,7 @@ export interface Config extends ConfigFileShape {
   reviewPromptFragments: ReviewPromptFragments;
   reviewContextSources: ReviewContextSources;
   reviewLanes: ReviewLanePolicy[];
+  reviewSources: ReviewSourceConfig[];
   localReviewAgents: string[];
   reviewWaitMinutes: number;
   reviewConcurrency: number;

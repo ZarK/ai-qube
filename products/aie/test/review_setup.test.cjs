@@ -1,10 +1,11 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { mkdtempSync, readFileSync } = require('node:fs');
+const { mkdtempSync, mkdirSync, readFileSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { describe, it } = require('node:test');
 require('./support/compile_cache.cjs');
+const { cloneGitRepo } = require('./support/git_fixture.cjs');
 
 const { getDefaults } = require('../dist/config/index.js');
 const {
@@ -489,5 +490,30 @@ describe('review publisher doctor', () => {
     const gate = binRun(['review', 'gate', '--help']);
     assert.equal(gate.status, 0, gate.stderr);
     assert.match(gate.stdout, /review-agent gate/i);
+  });
+
+  it('review doctor reads a working-tree publisher from a local, never-committed config overlay', () => {
+    const repo = cloneGitRepo('configured', 'aie-review-doctor-overlay-');
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'config.json'), `${JSON.stringify({ version: 1, providers: { review: { kind: 'github' } } }, null, 2)}\n`);
+    writeFileSync(join(repo, '.qube', 'aie', 'config.local.json'), `${JSON.stringify({
+      providers: {
+        review: {
+          publisher: {
+            mode: 'github-app',
+            githubApp: { appId: '4573671', installationId: '153271303', privateKeyEnv: 'QUBE_REVIEW_PUBLISHER_PRIVATE_KEY' },
+          },
+        },
+      },
+    }, null, 2)}\n`);
+
+    const result = binRun(['review', 'doctor', '--json', '--no-probe'], repo);
+    assert.equal(result.status, 0, result.stderr);
+    const doctor = JSON.parse(result.stdout);
+
+    assert.equal(doctor.mode, 'github-app');
+    assert.notEqual(doctor.readiness, 'unconfigured');
+    assert.deepEqual(doctor.missingFields, []);
+    assert.equal(doctor.secretReferences.privateKeyEnv, 'QUBE_REVIEW_PUBLISHER_PRIVATE_KEY');
   });
 });
