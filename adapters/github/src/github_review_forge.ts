@@ -198,6 +198,122 @@ export interface GitHubLaneReviewPublishResult {
   publisher?: import('./github_review_publisher.js').GitHubReviewPublisherIdentity;
 }
 
+const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';
+
+export interface GitHubRoundSummaryInlineFinding {
+  laneId: string;
+  finding: ReviewFinding;
+  commentBody: string;
+}
+
+export interface GitHubRoundSummaryPublishInput {
+  dryRun: boolean;
+  prNumber: number;
+  headSha: string;
+  round: string;
+  issueNumber: number;
+  expectedLanes: readonly string[];
+  verdict: GitHubLocalReviewRecommendation;
+  /** Fully rendered markdown body, including the embedded qube-pr-review-summary marker, ready to publish verbatim. */
+  body: string;
+  marker: string;
+  inlineFindings: readonly GitHubRoundSummaryInlineFinding[];
+  unanchoredFindingCount: number;
+  findingDigest: string;
+}
+
+export interface GitHubRoundSummaryPublishResult {
+  status: GitHubLocalReviewPublishStatus;
+  runId: string | null;
+  marker: string | null;
+  body: string | null;
+  url: string | null;
+  summaryUrl?: string | null;
+  publishKind?: 'issue-comment' | 'pull-request-review';
+  inlineCommentCount?: number;
+  unanchoredFindingCount?: number;
+  supersededPriorSummaries?: number;
+  publisherDowngradeReason?: string | null;
+  failure: string | null;
+  nextAction: string;
+  publisher?: import('./github_review_publisher.js').GitHubReviewPublisherIdentity;
+}
+
+/** Minimal fields needed to plan supersession and surface a read-path pointer; the full audit-trail metadata lives in the rendered body itself. */
+interface RoundSummaryMarkerRecord {
+  readonly id: string;
+  readonly kind: 'comment' | 'review';
+  readonly head: string;
+  readonly round: string;
+  readonly prNumber: number;
+  readonly findingDigest: string;
+  readonly superseded: boolean;
+  readonly url: string | null;
+  readonly publishedAt: string | null;
+}
+
+function parseRoundSummaryMarkerRecord(body: string | undefined): Pick<RoundSummaryMarkerRecord, 'head' | 'round' | 'prNumber' | 'findingDigest' | 'superseded'> | null {
+  const match = (body ?? '').match(/<!--\s*qube-pr-review-summary:(\{[\s\S]*?\})\s*-->/);
+  if (!match) return null;
+  try {
+    const parsed: unknown = JSON.parse(match[1]);
+    if (!isRecord(parsed)) return null;
+    if (parsed.version !== 1) return null;
+    if (typeof parsed.head !== 'string' || parsed.head.trim() === '') return null;
+    if (typeof parsed.round !== 'string' || parsed.round.trim() === '') return null;
+    if (typeof parsed.prNumber !== 'number' || !Number.isSafeInteger(parsed.prNumber) || parsed.prNumber <= 0) return null;
+    if (typeof parsed.findingDigest !== 'string' || parsed.findingDigest.trim() === '') return null;
+    return { head: parsed.head, round: parsed.round, prNumber: parsed.prNumber, findingDigest: parsed.findingDigest, superseded: parsed.superseded === true };
+  } catch {
+    return null;
+  }
+}
+
+function roundSummaryRecords(comments: RawComment[], reviews: RawReview[], trustedAuthor: TrustedAuthorInput): RoundSummaryMarkerRecord[] {
+  const records: RoundSummaryMarkerRecord[] = [];
+  for (const comment of comments) {
+    if (!authorIsTrusted(comment.author?.login, trustedAuthor)) continue;
+    const parsed = parseRoundSummaryMarkerRecord(comment.body);
+    const id = issueCommentIdFromUrl(comment.url);
+    if (parsed && id) records.push({ ...parsed, id, kind: 'comment', url: comment.url ? redact(comment.url) : null, publishedAt: comment.createdAt ?? null });
+  }
+  for (const review of reviews) {
+    if (!authorIsTrusted(reviewAuthor(review), trustedAuthor)) continue;
+    const parsed = parseRoundSummaryMarkerRecord(review.body);
+    if (parsed && review.id !== undefined && review.id !== null) {
+      records.push({ ...parsed, id: String(review.id), kind: 'review', url: review.url ? redact(String(review.url)) : null, publishedAt: review.submittedAt ?? review.submitted_at ?? null });
+    }
+  }
+  return records;
+}
+
+/** The single live (non-superseded) round summary for a PR, most recently published, for read-path discovery. */
+function currentRoundSummaryPointer(comments: RawComment[], reviews: RawReview[], trustedAuthor: TrustedAuthorInput, prNumber: number, headSha: string): JsonObject | null {
+  const live = roundSummaryRecords(comments, reviews, trustedAuthor).filter(record => record.superseded !== true && record.prNumber === prNumber);
+  if (live.length === 0) return null;
+  const latest = live.reduce((newest, record) => (Date.parse(record.publishedAt ?? '') || 0) >= (Date.parse(newest.publishedAt ?? '') || 0) ? record : newest);
+  return { head: latest.head, round: latest.round, url: latest.url, publishedAt: latest.publishedAt, stale: latest.head !== headSha };
+}
+
+function roundSummaryPublishResult(input: Partial<GitHubRoundSummaryPublishResult> & { status: GitHubLocalReviewPublishStatus; nextAction: string }): GitHubRoundSummaryPublishResult {
+  return {
+    runId: input.runId ?? null,
+    marker: input.marker ?? null,
+    body: input.body ?? null,
+    url: input.url ?? null,
+    ...(input.summaryUrl !== undefined ? { summaryUrl: input.summaryUrl } : {}),
+    ...(input.publishKind ? { publishKind: input.publishKind } : {}),
+    ...(typeof input.inlineCommentCount === 'number' ? { inlineCommentCount: input.inlineCommentCount } : {}),
+    ...(typeof input.unanchoredFindingCount === 'number' ? { unanchoredFindingCount: input.unanchoredFindingCount } : {}),
+    ...(typeof input.supersededPriorSummaries === 'number' ? { supersededPriorSummaries: input.supersededPriorSummaries } : {}),
+    ...(input.publisherDowngradeReason !== undefined ? { publisherDowngradeReason: input.publisherDowngradeReason } : {}),
+    ...(input.publisher ? { publisher: publicPublisherIdentity(input.publisher) } : {}),
+    failure: input.failure ?? null,
+    status: input.status,
+    nextAction: input.nextAction,
+  };
+}
+
 interface RawCheckRun { id?: number; name?: string; status?: string; conclusion?: string | null; html_url?: string; details_url?: string; check_suite?: { id?: number } | null }
 interface RawCheckRunsResponse { check_runs?: RawCheckRun[] }
 interface RawCheckSuite { id?: number; status?: string; conclusion?: string | null; head_sha?: string | null }
@@ -966,10 +1082,8 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
   };
 }
 
-function inlineReviewComment(finding: ReviewFinding, evidencePath: string | null): JsonObject | null {
-  const location = finding.location;
+function inlineFindingComment(location: ReviewFinding['location'], body: string): JsonObject | null {
   if (!location || typeof location.line !== 'number') return null;
-  const body = findingBodyText(finding, evidencePath);
   const side = location.side === 'source' ? 'LEFT' : 'RIGHT';
   const comment: Record<string, JsonValue> = {
     path: normalizeDiffPath(location.path),
@@ -982,6 +1096,14 @@ function inlineReviewComment(finding: ReviewFinding, evidencePath: string | null
     comment.start_side = side;
   }
   return comment;
+}
+
+function inlineReviewComment(finding: ReviewFinding, evidencePath: string | null): JsonObject | null {
+  return inlineFindingComment(finding.location, findingBodyText(finding, evidencePath));
+}
+
+function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding): JsonObject | null {
+  return inlineFindingComment(entry.finding.location, entry.commentBody);
 }
 
 function hasInlineFindingCandidates(findings: readonly ReviewFinding[]): boolean {
@@ -1436,6 +1558,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     localReviews,
     trustedLocalReviews,
     trustedLaneReviews,
+    trustedRoundSummary: currentRoundSummaryPointer(raw.comments, raw.laneReviews, raw.trustedMarkerAuthor, raw.pr.number, raw.pr.headRefOid),
     unavailable: raw.unavailable,
     trustedMarkerAuthor: raw.trustedMarkerAuthor === 'any-valid-marker'
       ? 'any-valid-marker'
@@ -1541,7 +1664,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
   constructor(private readonly options: GitHubReviewProviderOptions = {}) {}
 
-  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true }; }
+  capabilities(): ReviewForgeCapabilities & { readonly reviewStats: true } { return { loadReview: true, loadReviewSnapshot: true, reviewStats: true, findCurrentBranchReview: true, planReviewRequests: true, applyReviewRequests: true, publishLaneReview: true, publishLaneReviewInline: true, resolveReviewThreads: true, publishRoundReviewSummary: true }; }
 
   async getReviewItem(key: ReviewItemKey): Promise<ReviewItem> {
     if (key.providerId !== this.id) throw new Error(`load GitHub review item failed: providerId ${key.providerId} is unsupported. Use a github review item key.`);
@@ -2160,6 +2283,307 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       });
     }
     return publishReviewResult(result, { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount }, `Provider-visible pull request review for ${input.lane} was published; rerun PR view/gate to inspect provider state.`);
+  }
+
+  async loadReviewDiffIndex(prNumber: number): Promise<ParsedDiffIndex | null> {
+    try {
+      const diff = await this.getPullRequestDiff(prNumber);
+      return parseUnifiedDiffIndex(diff);
+    } catch {
+      return null;
+    }
+  }
+
+  async publishRoundReviewSummary(input: GitHubRoundSummaryPublishInput): Promise<GitHubRoundSummaryPublishResult> {
+    let repositoryName: string;
+    let comments: RawComment[];
+    let reviews: RawReview[];
+    let trustedMarkerAuthor: string;
+    let publisher: ResolvedGitHubReviewPublisher = { accessToken: null, identity: emptyPublisherIdentity() };
+    try {
+      const repository = await this.getRepositoryIdentity();
+      repositoryName = repository.nameWithOwner;
+      comments = await this.getIssueComments(repositoryName, input.prNumber);
+      const rawPr = await this.getPullRequest(input.prNumber);
+      // Round summary publication must bind to the PR's current head, same as lane publish.
+      const observedHead = typeof rawPr.headRefOid === 'string' ? rawPr.headRefOid : '';
+      if (observedHead === '') {
+        throw new Error(`pull request #${input.prNumber} did not report a head SHA, so the publish head cannot be verified; fail closed and retry once GitHub reports the current head.`);
+      }
+      if (observedHead !== input.headSha) {
+        throw new Error(`pull request #${input.prNumber} head changed from ${input.headSha} to ${observedHead}; rerun the round summary publish for the current PR head.`);
+      }
+      reviews = await this.getPullRequestReviews(repositoryName, input.prNumber);
+      const prAuthorLogin = rawPr.author?.login ?? null;
+      publisher = await resolveGitHubReviewPublisher(this.options.publisher ?? null, {
+        cwd: this.options.cwd,
+        exec: this.options.exec,
+        prAuthorLogin,
+        mint: true,
+      });
+      if (publisher.identity.login) this.cachedPublisherLogin = publisher.identity.login;
+      trustedMarkerAuthor = publisher.identity.login ?? await this.currentLogin();
+    } catch (error: unknown) {
+      return roundSummaryPublishResult({
+        status: 'failed',
+        marker: input.marker,
+        body: input.body,
+        publisher: publisher.identity,
+        failure: redact(error instanceof Error ? error.message : String(error)),
+        nextAction: `Fix GitHub PR review visibility or authentication, then rerun the round summary publish for #${input.prNumber}.`,
+      });
+    }
+
+    const publisherDowngradeReason = publisher.identity.formalEventCapability ? null : publisher.identity.fallbackReason;
+
+    if (input.dryRun) {
+      return roundSummaryPublishResult({
+        status: 'planned',
+        marker: input.marker,
+        body: input.body,
+        publishKind: publisher.identity.formalEventCapability ? 'pull-request-review' : 'issue-comment',
+        inlineCommentCount: publisher.identity.formalEventCapability ? input.inlineFindings.length : 0,
+        unanchoredFindingCount: publisher.identity.formalEventCapability ? input.unanchoredFindingCount : input.unanchoredFindingCount + input.inlineFindings.length,
+        publisherDowngradeReason,
+        publisher: publisher.identity,
+        nextAction: `Rerun the round summary publish for #${input.prNumber} without --dry-run to publish the provider-visible round summary.`,
+      });
+    }
+
+    const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
+    const live = existingRecords.filter(record => record.superseded !== true && record.prNumber === input.prNumber);
+    const sameRoundRecord = live.find(record => record.head === input.headSha && record.round === input.round) ?? null;
+    const priorHeadRecords = live.filter(record => record.head !== input.headSha);
+
+    const ghOptions = { ...this.options, token: publisher.accessToken ?? undefined };
+
+    // Revalidate the head immediately before every mutation; the same freshness
+    // discipline as lane publish, since prep work above widens the race window.
+    const assertHeadUnchanged = async (): Promise<void> => {
+      const freshPr = await this.getPullRequest(input.prNumber);
+      const freshHead = typeof freshPr.headRefOid === 'string' ? freshPr.headRefOid : '';
+      if (freshHead === '' || freshHead !== input.headSha) {
+        throw new Error(freshHead === ''
+          ? `pull request #${input.prNumber} stopped reporting a head SHA before publication; fail closed and rerun pr gate.`
+          : `pull request #${input.prNumber} head changed from ${input.headSha} to ${freshHead} before publication; rerun pr gate for the current PR head.`);
+      }
+    };
+
+    // Tombstone every live prior-head summary so exactly one live round summary
+    // remains for the PR; a tombstone failure does not block the current
+    // publish, it just leaves that one prior marker live for one more round.
+    let supersededPriorSummaries = 0;
+    for (const record of priorHeadRecords) {
+      const tombstoneBody = [
+        `<!-- ${ROUND_SUMMARY_MARKER_PREFIX}:${JSON.stringify({ version: 1, head: record.head, round: record.round, prNumber: record.prNumber, findingDigest: record.findingDigest, superseded: true })} -->`,
+        '',
+        'This round summary was superseded by a review of a later head; see the latest QUBE round summary for this pull request.',
+      ].join('\n');
+      const payloadPath = reviewPayloadPath({ body: tombstoneBody });
+      try {
+        await assertHeadUnchanged();
+        const endpoint = record.kind === 'review'
+          ? `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${record.id}`
+          : `repos/${repositoryName}/issues/comments/${record.id}`;
+        const result = await runGh(['api', endpoint, '--method', record.kind === 'review' ? 'PUT' : 'PATCH', '--input', payloadPath], ghOptions);
+        if (result.exitCode === 0) supersededPriorSummaries += 1;
+      } catch {
+        // Best-effort supersession; the current summary still publishes below.
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
+
+    if (sameRoundRecord) {
+      if (sameRoundRecord.findingDigest === input.findingDigest) {
+        return roundSummaryPublishResult({
+          status: 'skipped',
+          marker: input.marker,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          nextAction: 'The provider-visible round summary for this PR head is already published and unchanged.',
+        });
+      }
+      const payloadPath = reviewPayloadPath({ body: input.body });
+      try {
+        await assertHeadUnchanged();
+        const endpoint = sameRoundRecord.kind === 'review'
+          ? `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${sameRoundRecord.id}`
+          : `repos/${repositoryName}/issues/comments/${sameRoundRecord.id}`;
+        const updateResult = await runGh(['api', endpoint, '--method', sameRoundRecord.kind === 'review' ? 'PUT' : 'PATCH', '--input', payloadPath], ghOptions);
+        if (updateResult.exitCode !== 0) throw new Error(updateResult.stderr || updateResult.stdout || 'gh api round summary update failed');
+        const url = sameRoundRecord.kind === 'review' ? publishedReviewUrl(updateResult) : publishedCommentUrl(updateResult);
+        return roundSummaryPublishResult({
+          status: 'published',
+          marker: input.marker,
+          body: input.body,
+          url,
+          summaryUrl: url,
+          publishKind: sameRoundRecord.kind === 'review' ? 'pull-request-review' : 'issue-comment',
+          inlineCommentCount: sameRoundRecord.kind === 'review' ? input.inlineFindings.length : 0,
+          unanchoredFindingCount: sameRoundRecord.kind === 'review' ? input.unanchoredFindingCount : input.unanchoredFindingCount + input.inlineFindings.length,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          nextAction: 'The provider-visible round summary was updated in place for this round; rerun PR view/gate to inspect provider state.',
+        });
+      } catch (error: unknown) {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub round summary update permissions or connectivity, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
+
+    // Same-author or missing-permission identities degrade to an issue comment.
+    if (!publisher.identity.formalEventCapability) {
+      const payloadPath = reviewPayloadPath({ body: input.body });
+      try {
+        await assertHeadUnchanged();
+        const commentResult = await runGh(['api', `repos/${repositoryName}/issues/${input.prNumber}/comments`, '--method', 'POST', '--input', payloadPath], ghOptions);
+        if (commentResult.exitCode !== 0) {
+          return roundSummaryPublishResult({
+            status: 'failed',
+            marker: input.marker,
+            body: input.body,
+            publisherDowngradeReason,
+            supersededPriorSummaries,
+            publisher: publisher.identity,
+            failure: redact(commentResult.stderr || commentResult.stdout || 'gh api issue comment create failed'),
+            nextAction: `Fix GitHub comment permissions or configure a distinct reviewer identity, then rerun the round summary publish for #${input.prNumber}.`,
+          });
+        }
+        const url = publishedCommentUrl(commentResult);
+        return roundSummaryPublishResult({
+          status: 'published',
+          marker: input.marker,
+          body: input.body,
+          url,
+          summaryUrl: url,
+          publishKind: 'issue-comment',
+          inlineCommentCount: 0,
+          unanchoredFindingCount: input.unanchoredFindingCount + input.inlineFindings.length,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          nextAction: publisherDowngradeReason ?? 'Provider-visible comment-state round summary was published; formal PR review events were unavailable.',
+        });
+      } catch (error: unknown) {
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          failure: redact(error instanceof Error ? error.message : String(error)),
+          nextAction: `Fix GitHub comment permissions or configure a distinct reviewer identity, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    }
+
+    const inlineComments = input.inlineFindings
+      .map(entry => inlineSummaryReviewComment(entry))
+      .filter((comment): comment is JsonObject => comment !== null);
+    const roundReviewEvent = (verdict: GitHubRoundSummaryPublishInput['verdict']): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' => {
+      if (verdict === 'approve') return 'APPROVE';
+      if (verdict === 'request-changes') return 'REQUEST_CHANGES';
+      return 'COMMENT';
+    };
+    const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
+      const payloadPath = reviewPayloadPath(payload);
+      try {
+        await assertHeadUnchanged();
+        return await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews`, '--method', 'POST', '--input', payloadPath], ghOptions);
+      } catch (error: unknown) {
+        return {
+          args: [],
+          exitCode: error instanceof GhExecutionError ? error.exitCode : 1,
+          stdout: '',
+          stderr: error instanceof GhExecutionError ? error.stderr : error instanceof Error ? error.message : String(error),
+        };
+      } finally {
+        cleanupReviewPayload(payloadPath);
+      }
+    };
+    const publishedResult = (publishResult: GhRunResult, inlineCommentCount: number, nextAction: string): GitHubRoundSummaryPublishResult => {
+      const url = publishedReviewUrl(publishResult);
+      return roundSummaryPublishResult({
+        status: 'published',
+        marker: input.marker,
+        body: input.body,
+        url,
+        summaryUrl: url,
+        publishKind: 'pull-request-review',
+        inlineCommentCount,
+        unanchoredFindingCount: input.unanchoredFindingCount + (input.inlineFindings.length - inlineCommentCount),
+        publisherDowngradeReason,
+        supersededPriorSummaries,
+        publisher: publisher.identity,
+        nextAction,
+      });
+    };
+
+    const payload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: inlineComments };
+    let result = await submitReview(payload);
+    if (maybePendingReviewConflict(result)) {
+      try {
+        const pendingReviews = (await this.getPullRequestReviews(repositoryName, input.prNumber))
+          .filter(review => review.state === 'PENDING' && reviewAuthor(review) === trustedMarkerAuthor && review.id !== undefined && review.id !== null);
+        for (const review of pendingReviews) {
+          await runGh(['api', `repos/${repositoryName}/pulls/${input.prNumber}/reviews/${String(review.id)}`, '--method', 'DELETE'], ghOptions);
+        }
+        if (pendingReviews.length > 0) result = await submitReview(payload);
+      } catch {
+        // Fall through to the failure/fallback branches below with the original result.
+      }
+    }
+    if (result.exitCode !== 0) {
+      const bodyOnlyPayload = { commit_id: input.headSha, body: input.body, event: roundReviewEvent(input.verdict), comments: [] };
+      const bodyOnlyResult = await submitReview(bodyOnlyPayload);
+      if (bodyOnlyResult.exitCode === 0) {
+        return publishedResult(bodyOnlyResult, 0, 'Provider-visible body-only round summary was published after GitHub rejected inline review comments; rerun PR view/gate to inspect provider state.');
+      }
+      if (roundReviewEvent(input.verdict) !== 'COMMENT') {
+        const commentEventPayload = { commit_id: input.headSha, body: input.body, event: 'COMMENT', comments: [] };
+        const commentEventResult = await submitReview(commentEventPayload);
+        if (commentEventResult.exitCode === 0) {
+          return publishedResult(commentEventResult, 0, 'Provider-visible COMMENT round summary was published after GitHub rejected the requested review event; rerun PR view/gate to inspect provider state.');
+        }
+        return roundSummaryPublishResult({
+          status: 'failed',
+          marker: input.marker,
+          body: input.body,
+          publisherDowngradeReason,
+          supersededPriorSummaries,
+          publisher: publisher.identity,
+          failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${bodyOnlyResult.stderr || bodyOnlyResult.stdout || 'unknown'}; comment fallback failed: ${commentEventResult.stderr || commentEventResult.stdout || 'unknown'}`),
+          nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun the round summary publish for #${input.prNumber}.`,
+        });
+      }
+      return roundSummaryPublishResult({
+        status: 'failed',
+        marker: input.marker,
+        body: input.body,
+        publisherDowngradeReason,
+        supersededPriorSummaries,
+        publisher: publisher.identity,
+        failure: redact(`${result.stderr || result.stdout || 'gh api pull request review failed'}; body-only fallback failed: ${bodyOnlyResult.stderr || bodyOnlyResult.stdout || 'unknown'}`),
+        nextAction: `Fix GitHub pull request review permissions or connectivity, then rerun the round summary publish for #${input.prNumber}.`,
+      });
+    }
+    return publishedResult(result, inlineComments.length, 'Provider-visible round summary was published; rerun PR view/gate to inspect provider state.');
   }
 
   async publishLocalReviewFeedback(item: ReviewItem, input: GitHubLocalReviewPublishInput): Promise<GitHubLocalReviewPublishResult> {

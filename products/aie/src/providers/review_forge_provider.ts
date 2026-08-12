@@ -1,9 +1,12 @@
 import type { GhExec } from '@tjalve/qube-adapter-github';
 import type {
+  ReviewDiffIndex,
   ReviewFinding,
   ReviewForgeLaneReviewHistory as CoreReviewForgeLaneReviewHistory,
   ReviewForgePullRequest as CoreReviewForgePullRequest,
   ReviewForgeRecentPullRequestOptions as CoreReviewForgeRecentPullRequestOptions,
+  ReviewRoundSummaryPublishInput as CoreReviewRoundSummaryPublishInput,
+  ReviewRoundSummaryPublishResult as CoreReviewRoundSummaryPublishResult,
 } from '@tjalve/qube-core';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import type { ExecutorPolicy } from '../core/policy.js';
@@ -102,6 +105,12 @@ export interface ReviewForgeLaneReviewPublishResult extends ReviewLaneReviewPubl
   publisher?: ReviewForgePublisherIdentity;
 }
 
+export interface ReviewForgeRoundSummaryPublishInput extends CoreReviewRoundSummaryPublishInput {}
+
+export interface ReviewForgeRoundSummaryPublishResult extends CoreReviewRoundSummaryPublishResult {
+  publisher?: ReviewForgePublisherIdentity;
+}
+
 export interface ReviewForgePublisherIdentity {
   mode: 'user' | 'github-app' | 'token';
   identityClass: 'user' | 'github-app-installation' | 'fine-grained-token' | 'none';
@@ -123,6 +132,7 @@ export interface ReviewForgeProviderCapabilities {
   publishLaneReviewInline?: boolean;
   publishLocalReview?: boolean;
   resolveReviewThreads?: boolean;
+  publishRoundReviewSummary?: boolean;
 }
 
 export interface ReviewForgeProvider {
@@ -142,6 +152,9 @@ export interface ReviewForgeProvider {
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
+  /** Returns null when the provider cannot compute a diff index for this PR; callers must then treat every finding as unanchored. */
+  loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
+  publishRoundReviewSummary?(input: ReviewForgeRoundSummaryPublishInput): Promise<ReviewForgeRoundSummaryPublishResult>;
 }
 
 export interface ReviewForgeCapabilities {
@@ -155,6 +168,7 @@ export interface ReviewForgeCapabilities {
   publishLocalReview: boolean;
   resolveReviewThreads: boolean;
   ciDiagnostics: boolean;
+  publishRoundReviewSummary: boolean;
 }
 
 export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
@@ -168,6 +182,7 @@ export const MISSING_REVIEW_FORGE_CAPABILITIES: ReviewForgeCapabilities = Object
   publishLocalReview: false,
   resolveReviewThreads: false,
   ciDiagnostics: false,
+  publishRoundReviewSummary: false,
 });
 
 export type ReviewForgeProviderFactory = (options: ReviewForgeProviderOptions) => ReviewForgeProvider;

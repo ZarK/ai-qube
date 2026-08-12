@@ -49,6 +49,7 @@ export interface ReviewForgeCapabilities {
   readonly publishLocalReview?: boolean;
   readonly resolveReviewThreads?: boolean;
   readonly ciDiagnostics?: boolean;
+  readonly publishRoundReviewSummary?: boolean;
 }
 
 export interface ReviewForgePullRequest {
@@ -206,6 +207,47 @@ export interface ReviewLaneReviewPublishResult {
   readonly nextAction: string;
 }
 
+/** One rendered finding attached to its owning lane, ready for provider-side inline placement. */
+export interface ReviewRoundSummaryFinding {
+  readonly laneId: string;
+  readonly finding: ReviewFinding;
+  /** Fully rendered inline-comment body text (message plus any safe suggestion fence), ready to post verbatim. */
+  readonly commentBody: string;
+}
+
+export interface ReviewRoundSummaryPublishInput {
+  readonly dryRun: boolean;
+  readonly prNumber: number;
+  readonly headSha: string;
+  readonly round: string;
+  readonly issueNumber: number;
+  readonly expectedLanes: readonly string[];
+  readonly verdict: "approve" | "request-changes" | "pending" | "inconclusive";
+  /** Fully rendered markdown body, including the embedded marker, ready to publish verbatim. */
+  readonly body: string;
+  readonly marker: string;
+  /** Findings the caller determined are diff-anchorable, for provider-side inline comment placement. */
+  readonly inlineFindings: readonly ReviewRoundSummaryFinding[];
+  readonly unanchoredFindingCount: number;
+  readonly findingDigest: string;
+}
+
+export interface ReviewRoundSummaryPublishResult {
+  readonly status: "disabled" | "pending" | "planned" | "published" | "skipped" | "failed";
+  readonly runId: string | null;
+  readonly marker: string | null;
+  readonly body: string | null;
+  readonly url: string | null;
+  readonly summaryUrl?: string | null;
+  readonly publishKind?: "issue-comment" | "pull-request-review";
+  readonly inlineCommentCount?: number;
+  readonly unanchoredFindingCount?: number;
+  readonly supersededPriorSummaries?: number;
+  readonly publisherDowngradeReason?: string | null;
+  readonly failure: string | null;
+  readonly nextAction: string;
+}
+
 export interface ReviewForgeProvider {
   readonly id: string;
   capabilities(): ReviewForgeCapabilities;
@@ -218,6 +260,9 @@ export interface ReviewForgeProvider {
   apply(plan: ActionPlan): Promise<readonly ActionResult[]>;
   publishLaneReviewFeedback?(item: ReviewItem, input: ReviewLaneReviewPublishInput): Promise<ReviewLaneReviewPublishResult>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
+  /** Returns null when the provider cannot compute a diff index for this PR (e.g. it is unreachable); callers must then treat every finding as unanchored. */
+  loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
+  publishRoundReviewSummary?(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult>;
 }
 
 export interface ReviewForgeStatsCapability {

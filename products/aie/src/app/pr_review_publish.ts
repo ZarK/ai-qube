@@ -256,6 +256,68 @@ function loadSiblingSynthesisLanes(repoRoot: string, issueNumber: number, prNumb
   return { siblings, missing };
 }
 
+export interface ValidatedRoundLane {
+  readonly laneId: LocalReviewLaneId;
+  readonly status: string;
+  readonly recommendation: ReviewForgeLocalReviewRecommendation;
+  readonly summary: string;
+  readonly findings: ReviewFinding[];
+  readonly preconditions: readonly string[];
+  /** The head this lane's own evidence record was recorded at; equals the round head unless the lane carried evidence forward. */
+  readonly evidenceHeadSha: string;
+  readonly carriedForwardFromHeadSha: string | null;
+  readonly path: string;
+}
+
+// Loads every expected lane's current-head validated evidence for a round
+// summary, reusing the exact same fail-closed validation as per-lane publish
+// (trust chain, provenance, artifact contract) so the summary never renders
+// content that would not itself pass lane publication.
+export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[], providerReuseLanes: ReadonlySet<LocalReviewLaneId>): { lanes: ValidatedRoundLane[]; missing: LocalReviewLaneId[] } {
+  const lanes: ValidatedRoundLane[] = [];
+  const missing: LocalReviewLaneId[] = [];
+  for (const laneId of expectedLanes) {
+    try {
+      const validated = validateLaneEvidence(repoRoot, issueNumber, prNumber, headSha, laneId);
+      const carriedForwardFromHeadSha = isRecord(validated.evidence.carriedForward) && typeof validated.evidence.carriedForward.fromHeadSha === 'string' && validated.evidence.carriedForward.fromHeadSha.trim() !== ''
+        ? validated.evidence.carriedForward.fromHeadSha.trim()
+        : null;
+      const preconditions = Array.isArray(validated.evidence.preconditions)
+        ? validated.evidence.preconditions.filter((entry): entry is string => typeof entry === 'string')
+        : [];
+      lanes.push({
+        laneId,
+        status: validated.status,
+        recommendation: validated.recommendation,
+        summary: validated.summary,
+        findings: validated.findings,
+        preconditions,
+        evidenceHeadSha: carriedForwardFromHeadSha ?? headSha,
+        carriedForwardFromHeadSha,
+        path: validated.path,
+      });
+    } catch (error) {
+      if (providerReuseLanes.has(laneId)) {
+        lanes.push({
+          laneId,
+          status: 'passed',
+          recommendation: 'approve',
+          summary: 'Trusted provider current-head review reused.',
+          findings: [],
+          preconditions: [],
+          evidenceHeadSha: headSha,
+          carriedForwardFromHeadSha: null,
+          path: '',
+        });
+        continue;
+      }
+      missing.push(laneId);
+      void error;
+    }
+  }
+  return { lanes, missing };
+}
+
 function laneEvidenceFailure(path: string, detail: string): Error {
   return new Error(`required local review lane evidence is missing or invalid at ${relativeEvidencePath(process.cwd(), path) ?? path}: ${detail}`);
 }

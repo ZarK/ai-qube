@@ -1,4 +1,4 @@
-import type { ReviewForgeCapabilities as CoreReviewForgeCapabilities, ReviewForgePolicy } from '@tjalve/qube-core';
+import type { ReviewDiffIndex, ReviewForgeCapabilities as CoreReviewForgeCapabilities, ReviewForgePolicy, ReviewRoundSummaryPublishInput, ReviewRoundSummaryPublishResult } from '@tjalve/qube-core';
 import type { GhExec } from '@tjalve/qube-adapter-github';
 import type { ActionPlan, ActionResult } from '../core/action_plan.js';
 import { createActionPlan } from '../core/action_plan.js';
@@ -70,6 +70,7 @@ const GITHUB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   publishLocalReview: true,
   resolveReviewThreads: true,
   ciDiagnostics: true,
+  publishRoundReviewSummary: true,
 });
 
 const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
@@ -83,6 +84,7 @@ const GITLAB_CAPABILITIES: ReviewForgeCapabilities = Object.freeze({
   publishLocalReview: false,
   resolveReviewThreads: true,
   ciDiagnostics: true,
+  publishRoundReviewSummary: false,
 });
 
 const ADAPTERS: readonly ReviewForgeAdapter[] = Object.freeze([
@@ -180,6 +182,8 @@ interface LoadedReviewForgeProvider {
   publishLaneReviewFeedbackForPullRequest?(input: ReviewForgeLaneReviewPublishInput): Promise<ReviewForgeLaneReviewPublishResult>;
   describeReviewPublisher?(prAuthorLogin?: string | null, options?: { mint?: boolean }): Promise<import('./review_forge_provider.js').ReviewForgePublisherIdentity>;
   resolveReviewThreads?(input: ResolveReviewThreadInput): Promise<ResolveReviewThreadResult>;
+  loadReviewDiffIndex?(prNumber: number): Promise<ReviewDiffIndex | null>;
+  publishRoundReviewSummary?(input: ReviewRoundSummaryPublishInput): Promise<ReviewRoundSummaryPublishResult>;
 }
 
 function toReviewForgePolicy(policy: ExecutorPolicy): ReviewForgePolicy {
@@ -205,6 +209,7 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
       publishLocalReview: capabilities.publishLocalReview ?? typeof provider.publishLocalReviewFeedback === 'function',
       resolveReviewThreads: capabilities.resolveReviewThreads ?? false,
       ciDiagnostics: true,
+      publishRoundReviewSummary: capabilities.publishRoundReviewSummary ?? false,
     }),
     getReviewItem: (key) => provider.getReviewItem(key),
     findReviewForCurrentBranch: () => provider.findReviewForCurrentBranch(),
@@ -243,6 +248,12 @@ function wrapAdapterReviewForgeProvider(provider: LoadedReviewForgeProvider): Re
     resolveReviewThreads: provider.resolveReviewThreads
       ? (input) => provider.resolveReviewThreads!(input)
       : undefined,
+    loadReviewDiffIndex: provider.loadReviewDiffIndex
+      ? (prNumber) => provider.loadReviewDiffIndex!(prNumber)
+      : undefined,
+    publishRoundReviewSummary: provider.publishRoundReviewSummary
+      ? (input) => provider.publishRoundReviewSummary!(input)
+      : undefined,
   };
 }
 
@@ -267,6 +278,7 @@ class MissingReviewForgeProvider implements ReviewForgeProvider {
       publishLaneReview: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReview,
       publishLaneReviewInline: MISSING_REVIEW_FORGE_CAPABILITIES.publishLaneReviewInline,
       resolveReviewThreads: MISSING_REVIEW_FORGE_CAPABILITIES.resolveReviewThreads,
+      publishRoundReviewSummary: MISSING_REVIEW_FORGE_CAPABILITIES.publishRoundReviewSummary,
     };
   }
 

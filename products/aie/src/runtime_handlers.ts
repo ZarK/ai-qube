@@ -5,6 +5,7 @@ import { formatChecklistVerify, verifyIssueChecklist } from './app/checklist_ver
 import { formatChecklistUpdate, updateIssueChecklist } from './app/issue_checklist.js';
 import { formatPrGate, parsePrNumber, runPrGateService } from './app/pr_gate.js';
 import { formatPrReviewPublish, prReviewPublishFailureMessage, runPrReviewPublishService } from './app/pr_review_publish.js';
+import { formatPrReviewSummaryPublish, prReviewSummaryPublishFailureMessage, runPrReviewSummaryPublishService } from './app/pr_review_summary_publish.js';
 import { formatPrThreadResolve, runPrThreadResolveService } from './app/pr_thread_resolve.js';
 import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
@@ -655,6 +656,54 @@ async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[
   }
 }
 
+async function handlePrReviewPublishSummary(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  if (isHelpToken(pr)) {
+    return usageResult(context, 'pr review publish-summary', 'aie pr review publish-summary <pr> [--issue <n>] [--dry-run] [--json]', [
+      'Usage: aie pr review publish-summary <pr> [--issue <n>] [--dry-run] [--json]',
+      '',
+      'Publish one professional current-head round summary (verdict, ranked findings, lane rollup, collapsible lane details) to the configured review provider, superseding prior-head summaries.',
+      'Requires validated current-head evidence for every active review lane; run the lane reviews and `aie pr review publish` first.',
+      'Examples:',
+      '  aie pr review publish-summary 12',
+      '  aie pr review publish-summary 12 --issue 93 --json',
+    ]);
+  }
+  let prNumber: number | null;
+  try {
+    prNumber = parsePrNumber(pr);
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', error: cause }, cause);
+  }
+  if (prNumber === null) {
+    const message = 'Failed to run `aie pr review publish-summary`: missing pull request number.';
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', error: message }, message);
+  }
+  const issueArg = stringFlag(context, 'issue');
+  const parsedIssue = issueArg && !isHelpToken(issueArg) ? Number(issueArg.startsWith('#') ? issueArg.slice(1) : issueArg) : NaN;
+  const issueNumber = typeof parsedIssue === 'number' && Number.isSafeInteger(parsedIssue) && parsedIssue > 0 ? parsedIssue : undefined;
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'pr review publish-summary', loaded, 'Fix the selected Executor config, then rerun the round summary publish.');
+  try {
+    const result = await runPrReviewSummaryPublishService(loaded.config ?? getDefaults(), {
+      prNumber,
+      issueNumber,
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      repoRoot: loaded.root,
+    });
+    const failureMessage = prReviewSummaryPublishFailureMessage(result);
+    if (failureMessage) {
+      return commandFailure(context, { ok: false, command: 'pr review publish-summary', pr: prNumber, publish: result.publish, error: failureMessage }, failureMessage);
+    }
+    return commandResult(context, result, formatPrReviewSummaryPublish(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to publish round review summary for #${prNumber}. Likely cause: ${cause}.`;
+    return commandFailure(context, { ok: false, command: 'pr review publish-summary', pr: prNumber, error: message }, message);
+  }
+}
+
 async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
   if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', [
@@ -758,6 +807,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'pr body': context => handleConfigCommand(context, 'pr body'),
   'pr gate': context => handleConfigCommand(context, 'pr gate'),
   'pr review publish': handlePrReviewPublish,
+  'pr review publish-summary': handlePrReviewPublishSummary,
   'pr batch': handlePrBatch,
   'pr triage': handlePrTriage,
   'pr thread resolve': handlePrThreadResolve,
