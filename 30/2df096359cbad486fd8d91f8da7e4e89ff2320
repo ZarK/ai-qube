@@ -1,0 +1,16 @@
+.qube/aie/config.json
+  h_13eab01d19dfa9 146-150,226
+AGENTS.md
+  h_13eab01d19dfa9 131
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "302df096359cbad486fd8d91f8da7e4e89ff2320",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
