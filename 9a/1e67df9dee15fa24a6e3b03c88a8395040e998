@@ -1,0 +1,96 @@
+packages/qube-core/src/index.ts
+  s_7babd029284ca7::t_4879ce44c4d654 167-169
+products/aie/src/app/pr_review_publish.ts
+  s_7babd029284ca7::t_bad1d8b5afbc03 259-320
+products/aie/test/support/pr_gate_fixture.cjs
+  s_7babd029284ca7::t_89350db29a2eda 583
+  s_7babd029284ca7::t_b3d6138f5c72ba 574-582,584-588
+  s_7babd029284ca7::t_2f3d50fbd28b51 567-568
+products/aie/src/app/pr_review_summary_publish.ts
+  s_7babd029284ca7::t_5b927968ceec55 1-175
+products/aie/src/app/pr_gate.ts
+  s_7babd029284ca7::t_f0a90f9744ac77 33
+  s_7babd029284ca7::t_c8dcf02ad34316 1046-1051,1053
+  s_7babd029284ca7::t_74b912350de40e 1052,1054-1083
+  s_7babd029284ca7::t_d7a94078c69e14 1194
+  s_7babd029284ca7::t_cddc8b757309ae 1264-1268
+  s_7babd029284ca7::t_4ef40819a88745 169-170
+products/aie/src/command_definition.ts
+  s_7babd029284ca7::t_887eb75d36c36b 133
+  s_7babd029284ca7::t_cdf49323fc90b1 112
+products/aie/src/runtime_handlers.ts
+  s_7babd029284ca7::t_0d04f215a2d65a 659-706
+  s_7babd029284ca7::t_49c5a551ebbc84 810
+  s_7babd029284ca7::t_f2bcbb1510bf22 8
+adapters/github/src/github_review_forge.ts
+  s_7babd029284ca7::t_694e1ee4be5ce0 216
+  s_7babd029284ca7::t_06a2c2f9149c3c 1085,1101-1106
+  s_7babd029284ca7::t_bab8d5e415f768 201-215,217-241,243-250,253-254,256-277,279-282,286-287,296-316,1107-1108
+  s_7babd029284ca7::t_4e9cf7cd84219f 1667
+  s_7babd029284ca7::t_3d416072655296 1561
+  s_7babd029284ca7::t_45b70514b28681 2288-2588
+  s_7babd029284ca7::t_cfef762a7bc149 242,251-252
+  s_7babd029284ca7::t_72f2df330ebf2d 255,278,283-285,288-295
+products/aie/src/command_catalog.ts
+  s_7babd029284ca7::t_a4f018d40a0926 466-477
+  s_7babd029284ca7::t_0605dbf6e9b51f 14,465
+products/aie/test/review_round_summary.test.cjs
+  s_7babd029284ca7::t_c676f3aef8d026 13
+  s_7babd029284ca7::t_ae5004f8bc67b9 168-183
+  s_7babd029284ca7::t_19e435c98063d8 1-12,14-167,184-343
+products/aie/src/app/pr_view.ts
+  s_7babd029284ca7::t_6f593ab4ff6883 330
+  s_7babd029284ca7::t_abd7691d1d126f 306
+  s_e9e9e5177cb6d5::t_cad6015ac8a049 369-371
+  s_7babd029284ca7::t_37e4736cd83d4d 93-99,112-113
+  s_7babd029284ca7::t_15aec2c68a49fa 222-230
+products/aie/src/review_round_summary.ts
+  s_7babd029284ca7::t_38c4ec9dfbc376 145-152
+  s_7babd029284ca7::t_b993d70d4d1cd4 198
+  s_7babd029284ca7::t_bfba872b57b27b 1-144,153-197,199-389
+products/aie/src/providers/review_forge_provider.ts
+  s_7babd029284ca7::t_caca10b9e43efc 135,155-157
+  s_7babd029284ca7::t_b2433e4e997272 108-113
+  s_7babd029284ca7::t_efe94c64bd2950 171,185
+  s_7babd029284ca7::t_ce7417aa675dc3 3,8-9
+products/aie/src/command_flag_details.ts
+  s_7babd029284ca7::t_ded5fd26567376 171-177
+packages/qube-core/src/review_forge.ts
+  s_7babd029284ca7::t_24ca2e171bc715 231
+  s_7babd029284ca7::t_69569ba6c9177f 214-215
+  s_7babd029284ca7::t_f5759aee5773a4 52
+  s_7babd029284ca7::t_0568afadefa1bf 210-213,216-230,232-250,263-265
+products/aie/test/pr_review_summary_publish.test.cjs
+  s_7babd029284ca7::t_8e78787ed52284 1-152
+products/aie/src/providers/review_forge_adapters.ts
+  s_7babd029284ca7::t_0e867a15aa0597 212
+  s_7babd029284ca7::t_0424d111cd81ef 281
+  s_7babd029284ca7::t_0e83861c899fa8 73,87
+  s_7babd029284ca7::t_a434f8dceb9c22 251-256
+  s_7babd029284ca7::t_af791abd769271 185-186
+  s_7babd029284ca7::t_9947b6d3d36d0e 1
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9a1e67df9dee15fa24a6e3b03c88a8395040e998",
+  "prompts": {},
+  "sessions": {
+    "s_7babd029284ca7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8fb24b37-d742-48bd-ae0a-d1ae9f9444bf",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    },
+    "s_e9e9e5177cb6d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aca51d5-c467-4fe9-9a57-b159a638a72a",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
