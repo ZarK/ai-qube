@@ -1,0 +1,45 @@
+products/aie/test/model_route_probe.test.cjs
+  s_28e8d23a3cdc30::t_659f305d2c9426 105-134
+  s_28e8d23a3cdc30::t_3bac0b7279b211 6
+products/aie/src/config/schema.ts
+  s_28e8d23a3cdc30::t_170708a7ccf178 320-321
+  s_28e8d23a3cdc30::t_208eda3d417fbc 2
+products/aie/src/app/model_review_runner.ts
+  s_28e8d23a3cdc30::t_1d10589ede97b0 449,451-463
+  s_28e8d23a3cdc30::t_96c1900135041f 559,563,566-567,578
+  s_28e8d23a3cdc30::t_5d18d8189a16ab 11-13
+  s_28e8d23a3cdc30::t_7e167d8fd74e4a 131,137-138,144,149
+products/aie/test/config.test.cjs
+  s_28e8d23a3cdc30::t_ac459264f4288c 257-271
+products/aie/test/review_host_adapters.test.cjs
+  s_28e8d23a3cdc30::t_1bef7bb1978293 1-93
+products/aie/src/app/model_route_probe.ts
+  s_28e8d23a3cdc30::t_37edc17d002f0e 2-13,18,32,46,48,59,62-63,68,72,75-81,86,90,93-95,97-99,105,108,111,117,120,123-125,127
+products/aie/src/app/local_review_runner.ts
+  s_28e8d23a3cdc30::t_bf64413bb10f91 161
+  s_28e8d23a3cdc30::t_d10af94f57a118 177
+  s_28e8d23a3cdc30::t_c7c4a5bd8d9380 199
+  s_28e8d23a3cdc30::t_d382040364d5ef 4
+products/aie/src/app/review_host_adapters.ts
+  s_28e8d23a3cdc30::t_923d43bb3ea7a4 1-209,211-278,280-309
+  s_28e8d23a3cdc30::t_9435c53a2b10a7 210
+  s_28e8d23a3cdc30::t_fb2c21ef7fd111 279
+products/aie/src/core/policy.ts
+  s_28e8d23a3cdc30::t_67d835bb7b9836 52-55
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "787327565dacb6519f7e2ad94a7954407b2653ca",
+  "prompts": {},
+  "sessions": {
+    "s_28e8d23a3cdc30": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3bc9e31a-e943-497c-b112-4623c586eee5",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
