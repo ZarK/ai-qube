@@ -882,6 +882,17 @@ function localReviewState(recommendation: GitHubLocalReviewRecommendation): stri
   return 'PENDING';
 }
 
+// Normalizes GitHub's review state vocabulary into the provider-agnostic
+// recommendation vocabulary the core participant model reads; COMMENTED and
+// DISMISSED carry no verdict (neither approving nor blocking) so they read
+// as null rather than a synthesized recommendation.
+function normalizedReviewState(state: string | undefined): 'approve' | 'request-changes' | 'pending' | 'inconclusive' | null {
+  if (state === 'APPROVED') return 'approve';
+  if (state === 'CHANGES_REQUESTED') return 'request-changes';
+  if (state === 'PENDING') return 'pending';
+  return null;
+}
+
 function localReviewSummary(comment: LocalReviewComment): string {
   const summary = summarize(comment.body);
   return `QUBE local review ${comment.metadata.recommendation} for ${comment.metadata.profile}: ${summary}`;
@@ -1554,7 +1565,7 @@ function metadata(raw: { pr: GitHubReviewPullRequest; reviewRequests: string[]; 
     })),
     reviewRequests: raw.reviewRequests,
     comments: raw.comments.map(comment => ({ author: comment.author?.login ?? null, body: comment.body ?? null })),
-    latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null })),
+    latestReviews: raw.latestReviews.map(review => ({ author: review.author?.login ?? null, commitOid: review.commit?.oid ?? null, state: normalizedReviewState(review.state) })),
     localReviews,
     trustedLocalReviews,
     trustedLaneReviews,

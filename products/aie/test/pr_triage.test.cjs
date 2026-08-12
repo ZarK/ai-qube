@@ -8,6 +8,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { runPrTriageService, formatPrTriage } = require('../dist/app/pr_triage.js');
 const { writeApprovedHead: writeApprovedHeadSupport, writeValidLaneEvidence } = require('./support/triage_evidence.cjs');
+const { basePr, makePrExec } = require('./support/pr_gate_fixture.cjs');
 const { getDefaults } = require('../dist/config/index.js');
 
 const HEAD = 'abc123';
@@ -43,31 +44,29 @@ function advisoryFinding(id, message, { path = 'src/app.ts', line = 10, suggesti
   return { id, severity: 'advisory', message, location: { path, line }, ...(suggestion ? { suggestion } : {}) };
 }
 
-function fakeGh({ existingSearchHits = {}, createdUrls = [] } = {}) {
-  const calls = [];
+function fakeGh({ existingSearchHits = {}, createdUrls = [], prOverrides = {}, threads = [] } = {}) {
   let createIndex = 0;
+  const pr = basePr({ headRefOid: HEAD, closingIssuesReferences: [{ number: 93 }], ...prOverrides });
+  const base = makePrExec({ prViews: [pr], threads });
   const exec = async args => {
-    calls.push(args);
-    if (args[0] === 'pr' && args[1] === 'view') {
-      return { args, exitCode: 0, stdout: JSON.stringify({ number: 12, title: 'Fixture PR', url: 'https://github.com/example/repo/pull/12', headRefOid: HEAD, closingIssuesReferences: [{ number: 93 }] }), stderr: '' };
-    }
     if (args[0] === 'issue' && args[1] === 'list') {
       const searchIndex = args.indexOf('--search');
       const query = searchIndex >= 0 ? args[searchIndex + 1] : '';
       const hit = Object.entries(existingSearchHits).find(([key]) => query.includes(key));
-      return { args, exitCode: 0, stdout: JSON.stringify(hit ? [{ ...hit[1], body: hit[1].body ?? `Dedupe key: ${hit[0]}` }] : []), stderr: '' };
+      const result = { args, exitCode: 0, stdout: JSON.stringify(hit ? [{ ...hit[1], body: hit[1].body ?? `Dedupe key: ${hit[0]}` }] : []), stderr: '' };
+      base.calls.push(args);
+      return result;
     }
     if (args[0] === 'issue' && args[1] === 'create') {
       const url = createdUrls[createIndex] ?? `https://github.com/example/repo/issues/${900 + createIndex}`;
       createIndex += 1;
-      return { args, exitCode: 0, stdout: `${url}\n`, stderr: '' };
+      const result = { args, exitCode: 0, stdout: `${url}\n`, stderr: '' };
+      base.calls.push(args);
+      return result;
     }
-    if (args[0] === 'pr' && args[1] === 'comment') {
-      return { args, exitCode: 0, stdout: 'https://github.com/example/repo/pull/12#issuecomment-1', stderr: '' };
-    }
-    return { args, exitCode: 1, stdout: '', stderr: `unexpected gh call: ${args.join(' ')}` };
+    return base.exec(args);
   };
-  return { exec, calls };
+  return { exec, calls: base.calls };
 }
 
 function writeApprovedHead(repo, codeQualityFindings, options = {}) {
@@ -215,6 +214,40 @@ describe('pr triage', () => {
     assert.ok(result.limitation);
     assert.match(result.limitation, /local-only fields/);
     assert.match(result.nextAction, /pr gate/);
+  });
+
+  it('refuses to file follow-up issues when a configured provider review source recorded a blocking finding', async () => {
+    const repo = makeRepo();
+    writeApprovedHead(repo, [advisoryFinding('cq-1', 'Duplicate parsing of lane evidence files on resume.')]);
+    const gh = fakeGh({ prOverrides: { reviewDecision: 'CHANGES_REQUESTED', latestReviews: [{ author: { login: 'coderabbitai' }, state: 'CHANGES_REQUESTED', body: 'This regresses retries.', commit: { oid: HEAD } }] } });
+
+    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+
+    assert.equal(result.approvedHead, false);
+    assert.deepEqual(result.blockingProviderSources, ['provider-reviewers']);
+    assert.ok(result.advisories.every(advisory => advisory.disposition === 'blocked'));
+    assert.equal(gh.calls.some(args => args[0] === 'issue' && args[1] === 'create'), false);
+    assert.match(result.nextAction, /blocking provider-visible review findings/);
+  });
+
+  it('files a provider-sourced advisory finding as a follow-up issue with source attribution', async () => {
+    const repo = makeRepo();
+    writeApprovedHead(repo, []);
+    const gh = fakeGh({
+      prOverrides: {
+        reviewDecision: 'REVIEW_REQUIRED',
+        comments: [{ author: { login: 'coderabbitai' }, body: 'Consider caching this lookup for repeat reads.', url: 'https://github.com/example/repo/pull/12#issuecomment-9' }],
+      },
+    });
+
+    const result = await runPrTriageService(getDefaults(), { prNumber: 12, repoRoot: repo, dryRun: false, exec: gh.exec });
+
+    assert.equal(result.approvedHead, true);
+    assert.equal(result.advisories.length, 1);
+    assert.equal(result.advisories[0].lane, 'provider:provider-reviewers');
+    assert.equal(result.advisories[0].disposition, 'created');
+    const createCalls = gh.calls.filter(args => args[0] === 'issue' && args[1] === 'create');
+    assert.equal(createCalls.length, 1);
   });
 
   it('formats a human summary with dispositions and locations', async () => {

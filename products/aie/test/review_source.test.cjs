@@ -80,6 +80,35 @@ describe('review source contract', () => {
     assert.deepEqual(resolved.map(source => source.id), ['a']);
   });
 
+  it('reports a reviewer source unsatisfied when the received review at the current head requested changes', () => {
+    const reviewerSource = { id: 'provider-reviewers', identity: 'reviewer', expected: ['alice'], blocking: true, markers: 'provider', enabled: true };
+    const item = reviewItemWith({
+      trustedMetadata: {
+        latestReviews: [{ author: 'alice', commitOid: 'abc123', state: 'request-changes' }],
+      },
+    });
+
+    const readiness = evaluateReviewSourceContract([reviewerSource], item, 'abc123').sources[0];
+
+    assert.deepEqual(readiness.received, ['alice']);
+    assert.deepEqual(readiness.missing, [], 'the review was received; only its verdict withholds satisfaction');
+    assert.equal(readiness.satisfied, false, 'a received changes-requested review must not read as a satisfied source');
+  });
+
+  it('negative: local-only evidence with no provider counterpart does not satisfy a lane source', () => {
+    // No trustedLaneReviews entries at all: the provider record carries no
+    // memory of this lane ever running, even if a local evidence file exists
+    // on disk. Convergence must key on the provider record, never on local
+    // file presence alone.
+    const laneSource = { id: 'local-lanes', identity: 'lane', expected: ['code-quality'], blocking: true, markers: 'trusted', enabled: true };
+    const item = reviewItemWith({ trustedMetadata: {} });
+
+    const readiness = evaluateReviewSourceContract([laneSource], item, 'abc123').sources[0];
+
+    assert.equal(readiness.satisfied, false);
+    assert.deepEqual(readiness.missing, ['code-quality']);
+  });
+
   it('only counts a blocking source that fails against overall satisfaction', () => {
     const blocking = { id: 'blocking', identity: 'reviewer', expected: ['alice'], blocking: true, markers: 'provider', enabled: true };
     const advisory = { id: 'advisory', identity: 'reviewer', expected: ['bob'], blocking: false, markers: 'provider', enabled: true };
@@ -163,5 +192,26 @@ describe('review source contract wired through pr gate', () => {
     assert.equal(result.reviewSourceContract.allSatisfied, false);
     assert.equal(result.shipReady.ready, false);
     assert.ok(result.shipReady.reasons.some(reason => reason.includes('provider-review-source')));
+  });
+
+  it('is not ship-ready when a configured reviewer source requested changes at the current head, even though the review was received', async () => {
+    const config = getDefaults();
+    config.reviewAgents = [];
+    config.reviewSources = [
+      { id: 'provider-review-source', identity: 'reviewer', expected: ['copilot'], blocking: true, markers: 'provider', enabled: true },
+    ];
+    const pr = basePr({
+      reviewDecision: 'CHANGES_REQUESTED',
+      mergeStateStatus: 'BLOCKED',
+      latestReviews: [{ author: { login: 'copilot' }, state: 'CHANGES_REQUESTED', body: 'This needs another look.', commit: { oid: 'abc123' } }],
+    });
+    const { exec } = makePrExec({ prViews: [pr] });
+
+    const result = await runPrGate(config, { prNumber: 12, dryRun: true, exec });
+
+    const copilotSource = result.reviewSourceContract.sources.find(source => source.id === 'provider-review-source');
+    assert.deepEqual(copilotSource.received, ['copilot'], 'the review was received at the current head');
+    assert.equal(copilotSource.satisfied, false, 'a received changes-requested review must withhold source satisfaction');
+    assert.equal(result.shipReady.ready, false);
   });
 });

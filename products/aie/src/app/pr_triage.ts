@@ -3,6 +3,9 @@ import type { Config } from '../config/index.js';
 import { readCurrentHeadLaneEvidence, readLocalReviewGate, requiredLocalReviewLanes, type LocalReviewLane, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { LANE_HEURISTIC_DIGESTS } from '../review_focus.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { resolveReviewSources } from '../review_source.js';
+import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { redact } from '../redact.js';
 
 const ADVISORY_MARKER_PREFIX = 'qube-advisory';
@@ -27,6 +30,7 @@ export interface PrTriageResult {
   dryRun: boolean;
   approvedHead: boolean;
   blockingLanes: string[];
+  blockingProviderSources: string[];
   missingRequiredLanes: string[];
   advisories: PrTriageAdvisory[];
   lanesInspected: string[];
@@ -183,9 +187,39 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     }
   }
 
+  // Provider-visible feedback from configured reviewer sources is untrusted task
+  // input, distinct from the trusted local lane evidence above: a blocking finding
+  // there withholds approval the same way a blocking lane does, and its advisory
+  // findings join the same triage batch with source attribution.
+  const reviewProvider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
+  const reviewSnapshot = await reviewProvider.loadPullRequestReview(pr.number);
+  const reviewSources = resolveReviewSources(config);
+  const providerFindings = reviewSnapshot.pr.headRefOid === pr.headSha ? ingestProviderReviewFindings(reviewSnapshot.item, reviewSources) : [];
+  const blockingProviderSources = [...new Set(providerFindings.filter(finding => finding.severity === 'blocking').map(finding => finding.sourceId))];
+  for (const finding of providerFindings.filter(entry => entry.severity === 'advisory')) {
+    anyEvidence = true;
+    const source = `provider:${finding.sourceId}`;
+    if (!lanesInspected.includes(source)) lanesInspected.push(source);
+    const normalized = { message: redact(finding.message), location: finding.location, suggestion: null as string | null };
+    const dedupeKey = advisoryDedupeKey(source, normalized);
+    if (seenKeys.has(dedupeKey)) continue;
+    seenKeys.add(dedupeKey);
+    advisories.push({
+      lane: source,
+      findingId: null,
+      message: normalized.message,
+      location: normalized.location,
+      suggestion: null,
+      dedupeKey,
+      disposition: 'planned',
+      issueNumber: null,
+      issueUrl: null,
+    });
+  }
+
   const limitation = anyEvidence
     ? null
-    : 'No terminal current-head local lane evidence was found. Full findings, severities, and locations are local-only fields; trusted provider markers carry verdict-level state only, so advisories cannot be enumerated from provider metadata. Run the PR gate on this machine first.';
+    : 'No terminal current-head local lane evidence or provider-visible reviewer feedback was found. Full local findings, severities, and locations are local-only fields; trusted provider markers carry verdict-level state only, so lane advisories cannot be enumerated from provider metadata beyond configured reviewer sources. Run the PR gate on this machine first.';
   const missingRequiredLanes = pr.issueNumbers.flatMap(issueNumber => requiredLaneIds
     .filter(laneId => !(passedLanesByIssue.get(issueNumber)?.has(laneId) ?? false) && !blockingLanes.includes(laneId))
     .map(laneId => pr.issueNumbers.length > 1 ? `${laneId} (issue #${issueNumber})` : laneId));
@@ -202,7 +236,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     profile: config.reviewProfile,
     severityThreshold: config.reviewSeverityThreshold,
   });
-  const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0 && localReview.status === 'passed';
+  const approvedHead = anyEvidence && blockingLanes.length === 0 && missingRequiredLanes.length === 0 && localReview.status === 'passed' && blockingProviderSources.length === 0;
   const failures: string[] = [];
   if (!approvedHead) {
     for (const advisory of advisories) advisory.disposition = 'blocked';
@@ -275,6 +309,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     ...(blockingLanes.length > 0 ? [`Head is not approved: ${blockingLanes.join(', ')} recorded blocking verdicts, so no follow-up issues were filed.`] : []),
     ...(blockingLanes.length === 0 && anyEvidence && missingRequiredLanes.length > 0 ? [`Head is not approved: required lane coverage is incomplete (${missingRequiredLanes.join(', ')}), so no follow-up issues were filed.`] : []),
     ...(blockingLanes.length === 0 && missingRequiredLanes.length === 0 && anyEvidence && localReview.status !== 'passed' ? [`Head is not approved: local review evidence did not validate (gate status ${localReview.status}), so no follow-up issues were filed.`] : []),
+    ...(blockingProviderSources.length > 0 ? [`Head is not approved: provider-visible review source(s) ${blockingProviderSources.join(', ')} recorded blocking findings, so no follow-up issues were filed.`] : []),
     ...(created > 0 ? [`Filed ${created} follow-up issue(s).`] : []),
     ...(existing > 0 ? [`${existing} already tracked.`] : []),
     ...(dryRun && approvedHead && planned > 0 ? [`${planned} would be filed.`] : []),
@@ -289,6 +324,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
     dryRun,
     approvedHead,
     blockingLanes,
+    blockingProviderSources,
     missingRequiredLanes,
     advisories,
     lanesInspected,
@@ -303,7 +339,9 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
           ? 'The current head carries blocking lane verdicts; resolve them through the PR gate before triaging advisories.'
           : missingRequiredLanes.length > 0
             ? 'Required lane coverage is incomplete at the current head; run `aie pr gate <pr>` to completion before triaging advisories.'
-            : `Local review evidence did not validate (gate status ${localReview.status}); rerun `+'`aie pr gate <pr>`'+` to restore trusted current-head evidence before triaging advisories.`
+            : localReview.status !== 'passed'
+              ? `Local review evidence did not validate (gate status ${localReview.status}); rerun `+'`aie pr gate <pr>`'+` to restore trusted current-head evidence before triaging advisories.`
+              : 'The current head carries blocking provider-visible review findings; resolve them before triaging advisories.'
         : advisories.length === 0
           ? 'No residual advisories; merge when the PR gate reports ship-ready.'
           : failures.length > 0
@@ -317,6 +355,7 @@ export async function runPrTriageService(config: Config, options: PrTriageOption
 export function formatPrTriage(result: PrTriageResult): string {
   const lines = [`PR advisory triage for #${result.pr}${result.dryRun ? ' (dry-run)' : ''}: ${result.summary}`];
   if (!result.approvedHead && result.blockingLanes.length > 0) lines.push(`Blocking lane verdicts at this head: ${result.blockingLanes.join(', ')}.`);
+  if (!result.approvedHead && result.blockingProviderSources.length > 0) lines.push(`Blocking provider-visible review source(s) at this head: ${result.blockingProviderSources.join(', ')}.`);
   for (const advisory of result.advisories) {
     const location = advisory.location ? ` (${advisory.location.path}${advisory.location.line !== null ? `:${advisory.location.line}` : ''})` : '';
     lines.push(`- [${advisory.disposition}] ${advisory.lane}${location}: ${advisory.message.slice(0, 140)}${advisory.issueUrl ? ` -> ${advisory.issueUrl}` : ''}`);

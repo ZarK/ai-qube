@@ -29,6 +29,7 @@ import type { RouteProbeCheck, RoutedProbeHost } from './model_route_probe.js';
 import type { RoutedReviewHostId } from '../core/policy.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { evaluateReviewSourceContract, resolveReviewSources, type ReviewSourceContract } from '../review_source.js';
+import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { prReviewPublishFailureMessage, runPrReviewPublishWithProvider } from './pr_review_publish.js';
 import { runPrReviewSummaryPublishWithProvider } from './pr_review_summary_publish.js';
 import { listReviewAgentAdapters } from '../providers/review_agent_adapters.js';
@@ -949,7 +950,13 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     carryForwardScope,
     providerLaneReuse,
   });
-  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence);
+  // Resolved once and reused for both the fix batch (below) and the review
+  // source contract (further down): the same configured sources must drive
+  // both, or a source could satisfy the contract while its findings never
+  // reached the batch, or vice versa.
+  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const providerFindingsForBatch = ingestProviderReviewFindings(finalSnapshot.item, reviewSources);
+  const fixBatch = buildFixBatch(repoRoot, finalSnapshot.closingIssueNumbers, options.prNumber, finalSnapshot.pr.headRefOid, localReview.evidence, providerFindingsForBatch);
   const publishUnavailable: string[] = [];
   let localReviewPublish = skippedLocalReviewPublish('Per-lane provider publishing uses `qube aie pr review publish <pr> --lane <lane> --issue <issue>` from each review subagent.');
   if (deferProviderMutation && sessionLockBlocksExecution) {
@@ -1115,7 +1122,6 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const reviewParticipantObservations = observeReviewParticipants(finalSnapshot.item, reviewParticipants, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const reviewParticipantRollup = reviewParticipants.length > 0 ? rollupReviewParticipants(reviewParticipantObservations) : null;
   const reviewers = reviewersFromParticipants(reviewParticipantObservations);
-  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
   const reviewSourceContract = evaluateReviewSourceContract(reviewSources, finalSnapshot.item, finalSnapshot.pr.headRefOid, carriedForwardLanes);
   const unsatisfiedBlockingSources = reviewSourceContract.sources.filter(source => source.blocking && !source.satisfied);
   const feedback = prFeedback(finalSnapshot.item);

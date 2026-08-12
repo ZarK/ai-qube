@@ -3,6 +3,9 @@ import { changedReviewPaths } from './pr_gate.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch } from '../local_review_evidence.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
+import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
+import { resolveReviewSources } from '../review_source.js';
+import { ingestProviderReviewFindings } from '../provider_review_findings.js';
 import { redact } from '../redact.js';
 
 export interface PrBatchResult {
@@ -66,10 +69,19 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
     activeFocuses,
     carryForwardScope,
   });
-  const batch = buildFixBatch(repoRoot, pr.issueNumbers, pr.number, pr.headSha, localReview.evidence);
+  // Provider-visible feedback from configured reviewer sources feeds the same
+  // batch as local lane evidence; a stale snapshot (the head moved between the
+  // context read above and this provider read) contributes no findings rather
+  // than reporting on the wrong head, since local evidence is already bound to
+  // pr.headSha independently of this read.
+  const reviewProvider = await createReviewForgeProvider(config.providers.review.kind, { exec: options.exec, cwd: repoRoot, reviewAgents: config.reviewAgents, publisher: config.providers.review.publisher ?? null, ...config.providers.connections[config.providers.review.kind], ...config.providers.review.connection });
+  const reviewSnapshot = await reviewProvider.loadPullRequestReview(pr.number);
+  const reviewSources = resolveReviewSources(config, { activeLaneIds: activeFocuses });
+  const providerFindings = reviewSnapshot.pr.headRefOid === pr.headSha ? ingestProviderReviewFindings(reviewSnapshot.item, reviewSources) : [];
+  const batch = buildFixBatch(repoRoot, pr.issueNumbers, pr.number, pr.headSha, localReview.evidence, providerFindings);
   const lanesWithEvidence = [...new Set(localReview.evidence.flatMap(entry => entry.lanes.map(lane => lane.id)))];
-  const limitation = lanesWithEvidence.length === 0
-    ? 'No current-head local lane evidence was found; the batch covers nothing yet. Run `aie pr gate <pr>` (or individual lanes) first, then re-read the batch.'
+  const limitation = lanesWithEvidence.length === 0 && providerFindings.length === 0
+    ? 'No current-head local lane evidence or provider-visible reviewer feedback was found; the batch covers nothing yet. Run `aie pr gate <pr>` (or individual lanes) first, then re-read the batch.'
     : null;
   return {
     ok: true,
@@ -93,7 +105,8 @@ export function formatPrBatch(result: PrBatchResult): string {
   const lines = [`PR fix batch for #${result.pr} at head ${result.headSha.slice(0, 12)}: ${result.summary}`];
   for (const finding of result.batch.findings) {
     const location = finding.location ? ` (${finding.location.path}${finding.location.line !== null ? `:${finding.location.line}` : ''})` : '';
-    lines.push(`- [${finding.severity}/${finding.classification}] ${finding.lanes.join('+')}${location}: ${finding.message.slice(0, 160)}`);
+    const origin = finding.lanes.length > 0 ? finding.lanes.join('+') : finding.sources.join('+');
+    lines.push(`- [${finding.severity}/${finding.classification}] ${origin}${location}: ${finding.message.slice(0, 160)}`);
   }
   if (result.limitation) lines.push(`Limitation: ${result.limitation}`);
   lines.push(`Next action: ${result.nextAction}`);

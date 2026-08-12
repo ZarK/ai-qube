@@ -38,6 +38,8 @@ export interface ReviewParticipantRollup {
   readonly hostRequestSatisfied: boolean;
   readonly allHostLanesReceived: boolean;
   readonly anyHostLaneChangesRequested: boolean;
+  /** Same check as anyHostLaneChangesRequested, generalized across every received participant kind (host-lane and remote-service alike), so a source built entirely from remote reviewers blocks on their verdict too. */
+  readonly anyChangesRequested: boolean;
   readonly pendingSummary: string | null;
 }
 
@@ -179,12 +181,13 @@ function trustedComments(item: ReviewItem): Array<{ author: string | null; body:
   }));
 }
 
-function trustedLatestReviews(item: ReviewItem): Array<{ author: string | null; commitOid: string | null }> {
+function trustedLatestReviews(item: ReviewItem): Array<{ author: string | null; commitOid: string | null; state: ReviewParticipantRecommendation | null }> {
   const value = item.trustedMetadata.latestReviews;
   if (!Array.isArray(value)) return [];
   return value.filter(isJsonObject).map(review => ({
     author: typeof review.author === "string" ? review.author : null,
     commitOid: typeof review.commitOid === "string" ? review.commitOid : null,
+    state: readRecommendation(review.state),
   }));
 }
 
@@ -223,6 +226,14 @@ function isCurrentRemoteReview(reviews: ReturnType<typeof trustedLatestReviews>,
   return reviews.some(review => authorMatches(review.author, handle) && review.commitOid === headSha);
 }
 
+// The reviewer's own review state at the current head, independent of
+// whichever signal (trusted request marker or the review itself) made
+// requestedForHead true; a reviewer with no current-head review has no
+// verdict to read, and null is the honest result rather than a guess.
+function currentRemoteReviewRecommendation(reviews: ReturnType<typeof trustedLatestReviews>, handle: string, headSha: string): ReviewParticipantRecommendation | null {
+  return reviews.find(review => authorMatches(review.author, handle) && review.commitOid === headSha)?.state ?? null;
+}
+
 function hasStaleRemoteReview(reviews: ReturnType<typeof trustedLatestReviews>, handle: string, headSha: string): boolean {
   return reviews.some(review => authorMatches(review.author, handle) && review.commitOid !== null && review.commitOid !== headSha);
 }
@@ -250,13 +261,16 @@ export function observeReviewParticipants(item: ReviewItem, participants: readon
       const stale = participant.transport === "provider-reviewer"
         ? !requestedForHead && !pending && (hasStaleTrustedMarker(comments, participant.id, headSha, trustedAuthor) || hasStaleRemoteReview(reviews, participant.handle, headSha))
         : !requestedForHead && hasStaleTrustedMarker(comments, participant.id, headSha, trustedAuthor);
+      const recommendation = participant.transport === "provider-reviewer"
+        ? currentRemoteReviewRecommendation(reviews, participant.handle, headSha)
+        : null;
       return {
         participant,
         requestedForHead,
         pending,
         stale,
         received: requestedForHead && !pending && !stale,
-        recommendation: null,
+        recommendation,
         summary: null,
         url: typeof participant.laneId === "string" ? null : null,
       };
@@ -315,6 +329,7 @@ export function rollupReviewParticipants(observations: readonly ReviewParticipan
   const hostLaneReceived = hostLanes.filter(item => item.received).length;
   const receivedCount = observations.filter(item => item.received).length;
   const anyHostLaneChangesRequested = hostLanes.some(item => item.received && item.recommendation === "request-changes");
+  const anyChangesRequested = observations.some(item => item.received && item.recommendation === "request-changes");
 
   let pendingSummary: string | null = null;
   if (hostRequest && !hostRequest.requestedForHead) {
@@ -337,6 +352,7 @@ export function rollupReviewParticipants(observations: readonly ReviewParticipan
     hostRequestSatisfied: hostRequest ? hostRequest.requestedForHead && !hostRequest.stale : true,
     allHostLanesReceived: hostLanes.length === 0 || hostLaneReceived === hostLanes.length,
     anyHostLaneChangesRequested,
+    anyChangesRequested,
     pendingSummary,
   };
 }
