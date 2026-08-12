@@ -1448,7 +1448,8 @@ export function readLocalReviewGate(input: {
 }
 
 export interface FixBatchFinding {
-  laneId: LocalReviewLaneId;
+  /** The single local lane this finding came from, or null for a finding with no local lane origin (provider-only). */
+  laneId: LocalReviewLaneId | null;
   lanes: LocalReviewLaneId[];
   findingId: string;
   contentHash: string;
@@ -1457,6 +1458,17 @@ export interface FixBatchFinding {
   location: { path: string; line: number | null } | null;
   suggestion: string | null;
   classification: 'new' | 'persisting';
+  /** Attribution labels this finding was merged from, e.g. `local:code-quality` or `provider:provider-reviewers`. */
+  sources: string[];
+}
+
+/** A provider-visible finding to merge into the fix batch alongside local lane evidence; see provider_review_findings.ts. */
+export interface FixBatchProviderFinding {
+  sourceId: string;
+  severity: 'blocking' | 'advisory';
+  message: string;
+  location: { path: string; line: number | null } | null;
+  suggestion?: string | null;
 }
 
 export interface FixBatch {
@@ -1547,6 +1559,22 @@ function toFixBatchFinding(laneId: LocalReviewLaneId, finding: ReviewFinding, co
     location: finding.location?.path ? { path: finding.location.path, line: finding.location.line ?? null } : null,
     suggestion: finding.suggestion ?? null,
     classification,
+    sources: [`local:${laneId}`],
+  };
+}
+
+function toProviderFixBatchFinding(finding: FixBatchProviderFinding, index: number): FixBatchFinding {
+  return {
+    laneId: null,
+    lanes: [],
+    findingId: `provider-${index + 1}`,
+    contentHash: hash(JSON.stringify({ source: finding.sourceId, severity: finding.severity, message: finding.message, path: finding.location?.path ?? null })).slice(0, 16),
+    severity: finding.severity,
+    message: finding.message,
+    location: finding.location,
+    suggestion: finding.suggestion ?? null,
+    classification: 'new',
+    sources: [`provider:${finding.sourceId}`],
   };
 }
 
@@ -1557,12 +1585,12 @@ function rankFixBatchFindings(left: FixBatchFinding, right: FixBatchFinding): nu
   const leftClassification = left.classification === 'persisting' ? 0 : 1;
   const rightClassification = right.classification === 'persisting' ? 0 : 1;
   if (leftClassification !== rightClassification) return leftClassification - rightClassification;
-  if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+  if (left.laneId !== right.laneId) return (left.laneId ?? '').localeCompare(right.laneId ?? '');
   if (left.message !== right.message) return left.message.localeCompare(right.message);
   return (left.location?.line ?? 0) - (right.location?.line ?? 0);
 }
 
-export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[], prNumber: number, headSha: string, evidence: readonly LocalReviewEvidence[]): FixBatch {
+export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[], prNumber: number, headSha: string, evidence: readonly LocalReviewEvidence[], providerFindings: readonly FixBatchProviderFinding[] = []): FixBatch {
   const currentByHash = new Map<string, FixBatchFinding>();
   for (const entry of evidence) {
     for (const lane of entry.lanes) {
@@ -1584,7 +1612,7 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
   const priorRemaining = new Map<string, number>();
   for (const entry of priorFindings) priorRemaining.set(entry.contentHash, (priorRemaining.get(entry.contentHash) ?? 0) + 1);
   const orderedCurrent = [...currentByHash.values()].sort((left, right) => {
-    if (left.laneId !== right.laneId) return left.laneId.localeCompare(right.laneId);
+    if (left.laneId !== right.laneId) return (left.laneId ?? '').localeCompare(right.laneId ?? '');
     if (left.message !== right.message) return left.message.localeCompare(right.message);
     return (left.location?.line ?? 0) - (right.location?.line ?? 0);
   });
@@ -1596,18 +1624,23 @@ export function buildFixBatch(repoRoot: string, issueNumbers: readonly number[],
     }
     return { ...finding, classification: 'new' as const };
   }).sort(rankFixBatchFindings);
-  // Cross-lane merge: identical defects reported by several lanes collapse to one
-  // batch entry carrying every reporting lane, so the implementer fixes each defect
-  // once. Per-lane content hashes stay the classification and resolution keys.
+  // Cross-source merge: identical defects reported by several local lanes, or by
+  // both a local lane and a configured provider-visible review source, collapse
+  // to one batch entry carrying every reporting lane and source attribution, so
+  // the implementer fixes each defect once. Per-lane content hashes stay the
+  // classification and resolution keys; provider-only findings have no prior-head
+  // tracking and always classify as new.
+  const providerBatchFindings = providerFindings.map(toProviderFixBatchFinding);
   const mergedByIdentity = new Map<string, FixBatchFinding>();
-  for (const finding of findings) {
+  for (const finding of [...findings, ...providerBatchFindings]) {
     const identity = JSON.stringify({ severity: finding.severity, message: finding.message, location: finding.location, suggestion: finding.suggestion });
     const existing = mergedByIdentity.get(identity);
     if (!existing) {
       mergedByIdentity.set(identity, finding);
       continue;
     }
-    if (!existing.lanes.includes(finding.laneId)) existing.lanes = [...existing.lanes, finding.laneId].sort();
+    if (finding.laneId && !existing.lanes.includes(finding.laneId)) existing.lanes = [...existing.lanes, finding.laneId].sort();
+    for (const source of finding.sources) if (!existing.sources.includes(source)) existing.sources = [...existing.sources, source];
     if (finding.classification === 'persisting') existing.classification = 'persisting';
   }
   const mergedFindings = [...mergedByIdentity.values()].sort(rankFixBatchFindings);

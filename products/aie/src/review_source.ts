@@ -77,7 +77,7 @@ export function evaluateReviewSource(source: ReviewSourceConfig, item: ReviewIte
   const participants = participantsForSource(source);
   const observations = observeReviewParticipants(item, participants, headSha, source.identity === 'lane' ? carriedForwardLanes : []);
   const rollup = rollupReviewParticipants(observations);
-  const satisfied = !participantsBlockGateCompletion(rollup) && !participantsNeedRerun(rollup) && !rollup.anyHostLaneChangesRequested;
+  const satisfied = !participantsBlockGateCompletion(rollup) && !participantsNeedRerun(rollup) && !rollup.anyChangesRequested;
   const receivedIds = new Set(
     observations
       .filter(observation => observation.received)
