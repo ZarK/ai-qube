@@ -1,0 +1,52 @@
+products/aie/src/doctor_diagnostics/workflow_readiness.ts
+  s_3133e1e2fc2f3f::t_7f6d5cddaa67d8 22-31,51
+  s_3133e1e2fc2f3f::t_131b4b40241d8c 210-241,261
+  s_3133e1e2fc2f3f::t_b47c1065105a03 3-4
+products/aie/src/renderers/doctor_renderer.ts
+  s_3133e1e2fc2f3f::t_468ae5d4c91c32 40-42
+products/aie/src/config/types.ts
+  s_3133e1e2fc2f3f::t_ccfe6d89f0fc1a 145-157,165
+  s_3133e1e2fc2f3f::t_90d550cb512811 255
+products/aie/test/review_source.test.cjs
+  s_3133e1e2fc2f3f::t_b6329083abee03 7
+  s_3133e1e2fc2f3f::t_32cbef80c5bf0b 1-6,8-167
+products/aie/test/doctor.test.cjs
+  s_3133e1e2fc2f3f::t_cadef48e2b2bfc 867-896
+products/aie/src/config/schema.ts
+  s_3133e1e2fc2f3f::t_346f5b190440c7 313-365
+  s_3133e1e2fc2f3f::t_726bd411e9189e 7
+  s_3133e1e2fc2f3f::t_e5757866e1777f 911,940
+  s_3133e1e2fc2f3f::t_a7b18ad3945cf1 945
+  s_3133e1e2fc2f3f::t_1edfc91d347c71 953
+products/aie/src/config/defaults.ts
+  s_3133e1e2fc2f3f::t_7b49164bd0fe0d 87
+  s_3133e1e2fc2f3f::t_a5c0eeb5928e52 419
+products/aie/src/review_source.ts
+  s_3133e1e2fc2f3f::t_78d8bbdf9f11fb 1-136
+products/aie/src/doctor_diagnostics/index.ts
+  s_3133e1e2fc2f3f::t_229ceb7fa3d64a 20
+products/aie/src/app/pr_gate.ts
+  s_3133e1e2fc2f3f::t_7d61e8feee05d1 1115-1117
+  s_3133e1e2fc2f3f::t_9f2937a917e9ac 1233-1238
+  s_3133e1e2fc2f3f::t_86b756750cff5f 1156
+  s_3133e1e2fc2f3f::t_f564bc4a432d92 1098-1102
+  s_3133e1e2fc2f3f::t_b5901fa06f225a 1077-1079
+  s_3133e1e2fc2f3f::t_37747e18007602 171
+  s_3133e1e2fc2f3f::t_d04be3d34054f5 31
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "72a049f3fc2fb5252bda5a360c9d746010aa44cc",
+  "prompts": {},
+  "sessions": {
+    "s_3133e1e2fc2f3f": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0a692287-8121-465e-9dcd-9dcabfc66fbc",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
