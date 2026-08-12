@@ -109,6 +109,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'pr batch': { pr: 'Pull request number for the cross-lane fix batch, for example 12 or #12' },
     'pr triage': { pr: 'Pull request number for advisory triage, for example 12 or #12' },
     'pr review publish': { pr: 'Pull request number for the lane review publish target, for example 12 or #12' },
+    'pr review publish-summary': { pr: 'Pull request number for the round summary publish target, for example 12 or #12' },
     'run start': {
       command: 'App command executable after --, for example npm in `aie run start -- npm run dev`',
       ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`commandArg${index + 1}`, 'Optional app command argument captured after --'])),
@@ -129,6 +130,7 @@ function toArgumentMetadata(commandName: string, argument: string) {
     'pr batch',
     'pr triage',
     'pr review publish',
+    'pr review publish-summary',
     'branch suggest',
     'branch check',
     'branch create',

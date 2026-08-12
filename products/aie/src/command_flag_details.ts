@@ -168,6 +168,13 @@ export const PR_REVIEW_PUBLISH_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const PR_REVIEW_PUBLISH_SUMMARY_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable round summary publish output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the provider-visible round summary without mutating GitHub', default: false },
+  { name: '--issue', type: 'integer', description: 'Linked issue number for the round evidence when the PR does not expose one' },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const PR_THREAD_RESOLVE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable review-thread resolution output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show selected review threads without mutating GitHub', default: false },
