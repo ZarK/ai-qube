@@ -1,0 +1,41 @@
+adapters/github/src/github_review_forge.ts
+  s_3adbbed452d95a::t_631c0b9aeed344 885-895,1568
+packages/qube-core/src/review_participant.ts
+  s_3adbbed452d95a::t_aed26d8be73f27 41-42,184,190,229-236,264-266,273,332,355
+products/aie/src/app/pr_batch.ts
+  s_3adbbed452d95a::t_fe54435b3c6514 6-8,72-81,83-84,108-109
+products/aie/src/app/pr_gate.ts
+  s_3adbbed452d95a::t_f5e18d9f9002ab 32,953-959
+products/aie/src/app/pr_triage.ts
+  s_3adbbed452d95a::t_21d70eba9688a2 6-8,33,190-219,222,239,312,327,342-344,358
+products/aie/src/local_review_evidence.ts
+  s_3adbbed452d95a::t_43e7a26769aa43 1451-1452,1461-1471,1562-1577,1588,1593,1615,1627-1633,1635,1642-1643
+products/aie/src/provider_review_findings.ts
+  s_3adbbed452d95a::t_13e8c4794f1ba0 1-90
+products/aie/src/review_source.ts
+  s_3adbbed452d95a::t_ac07855cf01fec 80
+products/aie/test/pr_batch.test.cjs
+  s_3adbbed452d95a::t_d1c00ceab7bce0 11,27-29,45,47,54,62,64,75,77,82-119
+products/aie/test/pr_triage.test.cjs
+  s_3adbbed452d95a::t_4de58b13bb55e2 11,47,49-50,56-58,63-65,67,69,219-252
+products/aie/test/provider_review_findings.test.cjs
+  s_3adbbed452d95a::t_596ca83a4f8075 1-129
+products/aie/test/review_source.test.cjs
+  s_3adbbed452d95a::t_be30ec5629487c 83-111,196-216
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "fa1d02838681ed5db8fbb40781a5c2e9b37d9cd1",
+  "prompts": {},
+  "sessions": {
+    "s_3adbbed452d95a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d22854f4-e41c-4865-8d0d-d1b7d0b78145",
+        "model": "unknown"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
