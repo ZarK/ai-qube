@@ -322,10 +322,32 @@
           "workingDirectory": ".",
           "env": {},
           "externalService": false
+        },
+        {
+          "name": "aiq-build",
+          "kind": "build",
+          "command": "pnpm run build:aiq",
+          "stage": "pre-pr",
+          "required": true,
+          "timeoutSeconds": 1200,
+          "workingDirectory": ".",
+          "env": {},
+          "externalService": false
+        },
+        {
+          "name": "aiq",
+          "kind": "aiq",
+          "command": "node products/aiq/packages/cli/dist/bin/aiq.js run --only 1",
+          "stage": "pre-pr",
+          "required": true,
+          "timeoutSeconds": 1200,
+          "workingDirectory": ".",
+          "env": {},
+          "externalService": false
         }
       ],
       "qualityGates": [],
-      "qualityControl": false
+      "qualityControl": true
     },
     "audit": {
       "manualUiAudit": true,
