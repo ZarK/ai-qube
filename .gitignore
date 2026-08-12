@@ -3,3 +3,7 @@ dist/
 .tmp/
 .DS_Store
 *.log
+
+# Local Executor config overlay - never commit publisher credentials or paths.
+.qube/aie/config.local.json
+aie.config.local.json
