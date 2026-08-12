@@ -119,3 +119,14 @@ Naming rules:
 - Avoid indirect, passive, or redundant names.
 - Preserve established repository naming conventions and public API compatibility; do not create unrelated rename churn.
 <!-- END EXECUTOR MANAGED SECTION -->
+
+
+## PR review and merge culture
+
+These rules refine review/merge behavior without changing the Executor workflow above. Keep running `node products/aie/bin/run pr gate` and still fix real blockers and regressions.
+
+- **Blocking** findings are limited to correctness bugs, security/trust risks, broken required CI/checks, and failed active-issue acceptance criteria.
+- **Advisory** nits (style, polish, architecture preference) are non-blocking and must not prevent merge.
+- Run **one** fresh multi-lane `pr gate` pass per PR (or after a substantive head update). Do not open endless nit loops.
+- Cap at about **two** review rounds. After round 2, if CI is green and there are no unresolved blockers, merge (squash per repository shipping policy).
+- Still address real blockers, regressions, and failed acceptance before merge.
