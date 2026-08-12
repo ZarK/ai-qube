@@ -1172,7 +1172,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     nextAction: shipReadyReasons.length > 0
       ? legacyNextAction
       : advisoryCount > 0
-        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head. Convert the ${advisoryCount} residual advisory finding(s) to follow-up issues with \`aie pr triage ${options.prNumber}\` instead of committing advisory-only fixes to the approved head, then merge.`
+        ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with ${advisoryCount} residual advisory finding(s). Fix cheap advisories now, or drop them and fold anything real into already-queued Ready work — never open a new issue; run \`aie pr triage ${options.prNumber}\` for the disposition report, then merge.`
         : localReview.evidence.some(evidence => evidence.lanes.some(lane => lane.origin === 'trusted-provider'))
           ? `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no locally enumerable advisories (trusted provider reuse carries verdict-level state only); merge when repository policy allows.`
           : `${dryRun ? 'Dry-run: ship-ready' : 'Ship-ready'} at the current head with no residual advisories; merge when repository policy allows.`,
