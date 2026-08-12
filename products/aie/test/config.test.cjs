@@ -254,6 +254,21 @@ describe('config validation', () => {
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.route.maxTurns'));
   });
 
+  it('rejects a review route host id that is not registered in the review host adapter registry, naming it', () => {
+    const input = defaultFile();
+    input.policy.reviews.route = { host: 'mystery-review-host', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, false);
+    const hostError = result.errors.find(error => error.path === 'policy.reviews.route.host');
+    assert.ok(hostError, 'an unregistered review route host must fail with a named reason');
+    assert.match(hostError.message, /mystery-review-host/);
+    assert.match(hostError.message, /registered review host adapter/);
+    assert.match(hostError.message, /codex/);
+    assert.match(hostError.message, /grok/);
+  });
+
   it('validates non-secret connection settings against the selected provider contract', () => {
     const valid = defaultFile();
     valid.providers.work = {

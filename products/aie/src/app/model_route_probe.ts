@@ -1,11 +1,21 @@
 import { execFileSync } from 'node:child_process';
-import { redact } from '../redact.js';
-import { resolveModelHostExecutableSync, type ModelHostExecutable } from './model_review_runner.js';
+import type { RoutedReviewHostId } from '../core/policy.js';
+import { resolveModelHostExecutableSync } from './model_review_runner.js';
+import {
+  getReviewHostAdapter,
+  missingReviewHostCapabilities,
+  sanitizeProbeText,
+  parseGrokModelCatalog,
+  type ModelHostExecutable,
+  type ReviewHostProbeCommandRunner,
+} from './review_host_adapters.js';
+
+export { sanitizeProbeText, parseGrokModelCatalog } from './review_host_adapters.js';
 
 const PROBE_TIMEOUT_MS = 5000;
 const PROBE_MAX_BUFFER = 1024 * 1024;
 
-export type RoutedProbeHost = 'codex' | 'grok';
+export type RoutedProbeHost = RoutedReviewHostId;
 
 export interface RouteProbeCheck {
   host: RoutedProbeHost;
@@ -19,15 +29,8 @@ export interface RouteProbeCheck {
   resolved: ModelHostExecutable | null;
 }
 
-export type RouteProbeCommandRunner = (executable: string, args: readonly string[]) => string;
+export type RouteProbeCommandRunner = ReviewHostProbeCommandRunner;
 export type RouteProbeExecutableResolver = (host: RoutedProbeHost) => ModelHostExecutable;
-
-// Host CLI output is untrusted: strip terminal control sequences and
-// non-printable bytes, redact secrets, and bound the length before any of it
-// reaches diagnostics, doctor output, or lane summaries.
-export function sanitizeProbeText(value: string): string {
-  return redact(value.replace(/\u001b\[[0-9;]*[A-Za-z]/g, '').replace(/[^ -~]/g, ' ').replace(/\s+/g, ' ').trim()).slice(0, 200);
-}
 
 function defaultProbeCommandRunner(executable: string, args: readonly string[]): string {
   return execFileSync(executable, [...args], {
@@ -39,23 +42,36 @@ function defaultProbeCommandRunner(executable: string, args: readonly string[]):
   });
 }
 
-export function parseGrokModelCatalog(output: string): string[] | null {
-  const lines = output.split(/\r?\n/);
-  const headerIndex = lines.findIndex(line => /available models\s*:/i.test(line));
-  if (headerIndex === -1) return null;
-  const models: string[] = [];
-  for (const line of lines.slice(headerIndex + 1)) {
-    const match = /^\s*\*?\s*([A-Za-z0-9][\w.-]*)/.exec(line);
-    if (!match) {
-      if (line.trim() === '') continue;
-      break;
-    }
-    models.push(match[1]);
-  }
-  return models.length > 0 ? models : null;
-}
-
 export function probeModelRoute(host: RoutedProbeHost, model: string | null, runCommand: RouteProbeCommandRunner = defaultProbeCommandRunner, resolveExecutable: RouteProbeExecutableResolver = resolveModelHostExecutableSync): RouteProbeCheck {
+  let adapter;
+  try {
+    adapter = getReviewHostAdapter(host);
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable: null,
+      version: null,
+      modelListed: null,
+      resolved: null,
+      diagnostic: sanitizeProbeText(message.split(/\r?\n/)[0] || `no review host adapter is registered for "${host}"`),
+    };
+  }
+  const missingCapabilities = missingReviewHostCapabilities(adapter);
+  if (missingCapabilities.length > 0) {
+    return {
+      host,
+      model,
+      status: 'blocked',
+      executable: null,
+      version: null,
+      modelListed: null,
+      resolved: null,
+      diagnostic: `The ${host} review host adapter is missing required capabilities (${missingCapabilities.join(', ')}). Fix the registered adapter capabilities before running routed review lanes.`,
+    };
+  }
   // Probe and execution share one resolver so a ready verdict always refers to
   // the executable routed execution would actually spawn.
   let resolved: ModelHostExecutable;
@@ -104,50 +120,9 @@ export function probeModelRoute(host: RoutedProbeHost, model: string | null, run
       diagnostic: `The ${host} CLI resolved but reported an empty version. Fix the ${host} CLI installation before running routed review lanes.`,
     };
   }
-  if (host !== 'grok' || !model) {
-    // Codex exposes no model-catalog command, so model presence is verified at
-    // execution time; hosts without a configured model use the host default.
-    return { host, model, status: 'ready', executable, version, modelListed: null, diagnostic: null, resolved };
+  const probeResult = adapter.probeAfterVersion({ model, executable, prefixArgs, runCommand, version });
+  if (probeResult.status === 'blocked') {
+    return { host, model, status: 'blocked', executable, version, modelListed: probeResult.modelListed, resolved: null, diagnostic: probeResult.diagnostic };
   }
-  let catalogOutput: string;
-  try {
-    catalogOutput = runCommand(executable, [...prefixArgs, 'models']);
-  } catch {
-    return {
-      host,
-      model,
-      status: 'blocked',
-      executable,
-      version,
-      modelListed: null,
-      resolved: null,
-      diagnostic: `The ${host} CLI resolved (${version}) but its model catalog could not be read. Run \`${host} models\` manually and fix authentication or CLI state before running routed review lanes.`,
-    };
-  }
-  const catalog = parseGrokModelCatalog(catalogOutput);
-  if (!catalog) {
-    return {
-      host,
-      model,
-      status: 'blocked',
-      executable,
-      version,
-      modelListed: null,
-      resolved: null,
-      diagnostic: `The ${host} CLI resolved (${version}) but its model catalog output was unrecognized. Run \`${host} models\` manually and update the trusted review route configuration.`,
-    };
-  }
-  if (!catalog.includes(model)) {
-    return {
-      host,
-      model,
-      status: 'blocked',
-      executable,
-      version,
-      modelListed: false,
-      resolved: null,
-      diagnostic: `Configured review model "${model}" is not in the ${host} catalog (${sanitizeProbeText(catalog.join(', '))}). Update the trusted review model configuration to a listed model.`,
-    };
-  }
-  return { host, model, status: 'ready', executable, version, modelListed: true, diagnostic: null, resolved };
+  return { host, model, status: 'ready', executable, version, modelListed: probeResult.modelListed, diagnostic: null, resolved };
 }

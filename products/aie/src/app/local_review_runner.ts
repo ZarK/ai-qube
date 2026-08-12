@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
-import type { ReviewLanePolicy, RoutedReviewHostId } from '../core/policy.js';
+import type { ReviewLanePolicy, ReviewModelHostId, RoutedReviewHostId } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
@@ -158,7 +158,7 @@ export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId):
   if (laneRunner(config, lane) !== 'local-host') return null;
   const route = policy?.route ?? config.reviewRoute;
   if (!route) return null;
-  const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host);
+  const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host as ReviewModelHostId);
   return {
     host: route.host,
     tier: route.tier,
@@ -174,7 +174,7 @@ export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId):
 export function resolveFailoverReviewPlan(config: Config): ModelReviewRoutePlan | null {
   const failover = config.reviewFailover;
   if (!failover) return null;
-  const binding = resolveReviewModelTier(config.reviewModels, failover.route.tier, failover.route.host);
+  const binding = resolveReviewModelTier(config.reviewModels, failover.route.tier, failover.route.host as ReviewModelHostId);
   return {
     host: failover.route.host,
     tier: failover.route.tier,
@@ -196,7 +196,7 @@ export function plannedReviewRouteTargets(config: Config): Array<{ host: RoutedP
   };
   for (const lane of config.reviewLanes) addRoute(resolveModelReviewPlan(config, lane.id as LocalReviewLaneId));
   if (config.reviewRoute) {
-    const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host);
+    const binding = resolveReviewModelTier(config.reviewModels, config.reviewRoute.tier, config.reviewRoute.host as ReviewModelHostId);
     addRoute({ host: config.reviewRoute.host, tier: config.reviewRoute.tier, model: binding.model, effort: binding.effort as ModelReviewRoutePlan['effort'], isolation: 'read-only', timeoutSeconds: config.reviewRoute.timeoutSeconds, maxTurns: config.reviewRoute.maxTurns, substitution: binding.substitution });
   }
   addRoute(resolveFailoverReviewPlan(config));

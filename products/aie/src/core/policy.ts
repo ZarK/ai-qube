@@ -49,7 +49,10 @@ export type ReviewLaneRereviewMode = 'always-rerun' | 'delta';
 export type ReviewModelTierId = 'review' | 'economy' | 'synthesis';
 export type ReviewModelHostId = 'codex' | 'claude-code' | 'opencode' | 'grok';
 export type ReviewModelEffort = 'low' | 'medium' | 'high';
-export type RoutedReviewHostId = 'codex' | 'grok';
+// Runtime-validated against the review host adapter registry
+// (products/aie/src/app/review_host_adapters.ts); not a closed union so
+// registry-only test-double hosts type-check without widening this type.
+export type RoutedReviewHostId = string;
 
 export interface ReviewRoutePolicy {
   host: RoutedReviewHostId;
