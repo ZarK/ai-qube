@@ -38,12 +38,20 @@ export interface QubeDiscoveryCapability {
   readonly summary: string;
 }
 
+export interface QubeInitCapability {
+  readonly participatesByDefault: boolean;
+  readonly command: readonly string[];
+  readonly supportsToolSelection: boolean;
+  readonly alreadyInitializedHint: string;
+}
+
 export interface QubeComponent {
   readonly id: string;
   readonly command: string;
   readonly packageName: string;
   readonly packageVersion: string;
   readonly summary: string;
+  readonly initCapability?: QubeInitCapability;
   readonly capabilities?: {
     readonly localReview?: {
       readonly freshContextReviewerSupport: "host-provided" | "configured-command" | "prompt-only" | "unsupported";
@@ -186,7 +194,13 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aib",
     packageName: "@tjalve/aib",
     packageVersion: dependencyVersion("@tjalve/aib"),
-    summary: "Plan projects, specs, milestones, and work-item drafts."
+    summary: "Plan projects, specs, milestones, and work-item drafts.",
+    initCapability: {
+      participatesByDefault: false,
+      command: ["init"],
+      supportsToolSelection: false,
+      alreadyInitializedHint: "aib init reports its own file actions (create/update/skip) for the planning state directory."
+    }
   },
   {
     id: "executor",
@@ -194,6 +208,12 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     packageName: "@tjalve/aie",
     packageVersion: dependencyVersion("@tjalve/aie"),
     summary: "Execute GitHub issue work through queue, branch, PR, and completion gates.",
+    initCapability: {
+      participatesByDefault: true,
+      command: ["init"],
+      supportsToolSelection: true,
+      alreadyInitializedHint: "aie init reports create/update/skip per managed file and config field."
+    },
     capabilities: {
       localReview: {
         freshContextReviewerSupport: "host-provided",
@@ -220,14 +240,26 @@ export const qubeComponents: readonly QubeComponent[] = Object.freeze([
     command: "aiq",
     packageName: "@tjalve/aiq",
     packageVersion: dependencyVersion("@tjalve/aiq"),
-    summary: "Run staged quality gates and produce agent-readable evidence."
+    summary: "Run staged quality gates and produce agent-readable evidence.",
+    initCapability: {
+      participatesByDefault: false,
+      command: ["setup"],
+      supportsToolSelection: false,
+      alreadyInitializedHint: "aiq has no separate init state; aiq setup renders current quality-gate setup guidance."
+    }
   },
   {
     id: "umpire",
     command: "aiu",
     packageName: "@tjalve/aiu",
     packageVersion: dependencyVersion("@tjalve/aiu"),
-    summary: "Guard agent continuation, host policy, and safe idle-work decisions."
+    summary: "Guard agent continuation, host policy, and safe idle-work decisions.",
+    initCapability: {
+      participatesByDefault: true,
+      command: ["init"],
+      supportsToolSelection: true,
+      alreadyInitializedHint: "aiu init reports create/update/skip per managed host file and continuation config."
+    }
   }
 ]);
 

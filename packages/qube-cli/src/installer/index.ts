@@ -1,4 +1,4 @@
-import { select, type Option } from "@clack/prompts";
+import { multiselect, select, type Option } from "@clack/prompts";
 
 import { createCliError } from "../errors/index.js";
 import type { CommandMetadata } from "../metadata/index.js";
@@ -21,6 +21,12 @@ export interface InstallerChoiceGroup<Value extends string = string> {
 export interface InstallerChoicePromptOptions<Value extends string = string> extends PromptGateOptions<Value> {
   readonly message: string;
   readonly choices: readonly InstallerChoice<Value>[];
+}
+
+export interface InstallerChoicesPromptOptions<Value extends string = string> extends PromptGateOptions<readonly Value[]> {
+  readonly message: string;
+  readonly choices: readonly InstallerChoice<Value>[];
+  readonly required?: boolean;
 }
 
 export function defineInstallerChoice<const Choice extends InstallerChoice>(choice: Choice): Readonly<Choice> {
@@ -126,6 +132,78 @@ export async function promptInstallerChoice<Value extends string>(
     });
   }
   return selected as Value;
+}
+
+export async function promptInstallerChoices<Value extends string>(
+  options: InstallerChoicesPromptOptions<Value>
+): Promise<readonly Value[]> {
+  validateInstallerChoices(options.choices);
+
+  if (options.value !== undefined) {
+    requireChoicesMatch(options.value, options.choices, {
+      command: commandName(options.command),
+      promptName: options.promptName ?? "installer choices"
+    });
+    return options.value;
+  }
+
+  const gate = evaluatePromptGate(options);
+  if (!gate.allowed) {
+    if (options.defaultValue !== undefined) {
+      requireChoicesMatch(options.defaultValue, options.choices, {
+        command: commandName(options.command),
+        promptName: options.promptName ?? "installer choices"
+      });
+      return options.defaultValue;
+    }
+    throw createCliError({
+      command: commandName(options.command),
+      kind: "prompt-blocked",
+      operation: `prompt ${options.promptName ?? "installer choices"}`,
+      likelyCause: gate.message,
+      suggestedNextAction: "Provide explicit flag values or rerun in an interactive terminal.",
+      category: "usage"
+    });
+  }
+
+  const selectOptions: Option<string>[] = options.choices.map(choice => {
+    const base = {
+      value: choice.value,
+      label: choice.recommended === true ? `${choice.label} (recommended)` : choice.label
+    };
+    return choice.description ? { ...base, hint: choice.description } : base;
+  });
+  const initialValues = options.choices.filter(choice => choice.recommended === true).map(choice => choice.value);
+  const selected = await multiselect<string>({
+    message: options.message,
+    options: selectOptions,
+    ...(initialValues.length > 0 ? { initialValues } : {}),
+    required: options.required ?? true
+  });
+  if (isPromptCancel(selected)) {
+    throw createCliError({
+      command: commandName(options.command),
+      kind: "prompt-cancelled",
+      operation: `prompt ${options.promptName ?? "installer choices"}`,
+      likelyCause: "The interactive prompt was cancelled.",
+      suggestedNextAction: "Retry with explicit flag values instead of relying on an interactive prompt.",
+      category: "usage"
+    });
+  }
+  return Object.freeze([...(selected as string[])]) as readonly Value[];
+}
+
+function requireChoicesMatch<Value extends string>(
+  values: readonly Value[],
+  choices: readonly InstallerChoice<Value>[],
+  options: {
+    readonly command?: string;
+    readonly promptName: string;
+  }
+): void {
+  for (const value of values) {
+    requireChoiceMatch(value, choices, options);
+  }
 }
 
 function renderInstallerChoice<Value extends string>(choice: InstallerChoice<Value>): string {

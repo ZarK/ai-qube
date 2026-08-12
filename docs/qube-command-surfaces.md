@@ -10,7 +10,8 @@ See also the static command-flow visual: [QUBE Command Surface: Idea to Complete
 | --- | --- |
 | `qube components` | List QUBE component packages and commands. |
 | `qube install` | Build a guided, supply-chain-safe QUBE install plan. |
-| `qube doctor` | Run Quality Control diagnostics and configured provider connection probes. |
+| `qube init` | Initialize QUBE workspace setup by composing each installed component's init through its init capability contract. |
+| `qube doctor` | Aggregate Quality Control, Executor workflow, Umpire continuation, and configured provider connection diagnostics. |
 | `qube autoresearch` | Run a safety-bounded local autoresearch arena lifecycle. Agent entry: translate the request into <target-directory> plus <goal>, then use AIB arena synthesis before edits. |
 | `qube oneshot` | Create a bounded local artifact without the normal issue, PR, or review-gate workflow. |
 | `qube make-it-so` | Map an intent to the safest real QUBE workflow. |
@@ -23,7 +24,6 @@ Each direct command is the composer-facing name for one component command.
 | Command | Routes to | Description |
 | --- | --- | --- |
 | `qube idea` | `aib init` | Start Bootstrap from a concise idea. |
-| `qube init` | `aib init` | Initialize Bootstrap planning state for a target. |
 | `qube plan status` | `aib status` | Show Bootstrap planning status. |
 | `qube plan next` | `aib next` | Show the next Bootstrap planning action. |
 | `qube answer` | `aib answer` | Record a Bootstrap planning answer. |
