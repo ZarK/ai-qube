@@ -128,5 +128,5 @@ These rules refine review/merge behavior without changing the Executor workflow 
 - **Blocking** findings are limited to correctness bugs, security/trust risks, broken required CI/checks, and failed active-issue acceptance criteria.
 - **Advisory** nits (style, polish, architecture preference) are non-blocking and must not prevent merge.
 - Run **one** fresh multi-lane `pr gate` pass per PR (or after a substantive head update). Do not open endless nit loops.
-- Cap at about **two** review rounds. After round 2, if CI is green and there are no unresolved blockers, merge (squash per repository shipping policy).
+- Cap at **at most two** review rounds, unless a blocker fix materially changes the head. After round 2, if CI is green and there are no unresolved blockers, merge (squash per repository shipping policy).
 - Still address real blockers, regressions, and failed acceptance before merge.
