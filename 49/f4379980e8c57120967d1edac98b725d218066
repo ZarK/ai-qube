@@ -1,0 +1,23 @@
+products/aie/test/pr_meta.test.cjs
+  s_e9e9e5177cb6d5::t_837be75dda0734 28
+  s_e9e9e5177cb6d5::t_9a73fdc92330cf 242-254
+products/aie/test/support/pr_gate_fixture.cjs
+  s_e9e9e5177cb6d5::t_424589898ee8cc 26
+  s_e9e9e5177cb6d5::t_f3db9097a9697b 780
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "49f4379980e8c57120967d1edac98b725d218066",
+  "prompts": {},
+  "sessions": {
+    "s_e9e9e5177cb6d5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0aca51d5-c467-4fe9-9a57-b159a638a72a",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
