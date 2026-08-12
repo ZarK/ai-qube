@@ -4,7 +4,7 @@ import { appendFileSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync,
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { defineInstallerChoiceGroup, promptInstallerChoice, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
+import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
@@ -86,14 +86,21 @@ interface InstallSelections {
   readonly scope: InstallScope;
   readonly packageManager: InstallPackageManager;
   readonly host: InstallHost;
+  readonly hosts: readonly InstallHost[];
   readonly workProvider: InstallWorkProvider;
+  readonly workProviders: readonly InstallWorkProvider[];
   readonly ciProvider: InstallCiProvider;
+  readonly ciProviders: readonly InstallCiProvider[];
+  readonly withComponents: readonly string[];
   readonly lifecycleScripts: InstallLifecycleScripts;
   readonly docs: boolean;
   readonly migration: InstallMigration;
 }
 
+type InstallCommandStage = "package-install" | "workspace-init" | "provider-setup" | "verify";
+
 interface InstallCommandStep {
+  readonly stage: InstallCommandStage;
   readonly label: string;
   readonly command: string;
 }
@@ -436,6 +443,12 @@ const ciProviderChoices = defineInstallerChoiceGroup({
   defaultValue: "github",
   choices: discoveryChoices<InstallCiProvider>(executorCiProviders)
 });
+const optionalInitComponents = qubeComponents.filter(component => component.initCapability?.participatesByDefault === false);
+const withChoices: readonly InstallerChoice<string>[] = Object.freeze(optionalInitComponents.map(component => Object.freeze({
+  value: component.command,
+  label: component.summary,
+  description: `Also run ${component.command} ${component.initCapability?.command.join(" ")} from qube init.`
+})));
 const lifecycleChoices = defineInstallerChoiceGroup({
   name: "lifecycle scripts",
   message: "How should package lifecycle scripts be handled?",
@@ -513,21 +526,23 @@ const installCommand = defineCommand({
     }),
     defineFlag({
       name: "host",
-      description: "Host surface to mention in setup notes. Default: generic.",
-      type: "option",
-      options: discoveryOptionValues(executorHostSurfaces)
+      description: `Comma-separated host surfaces to select; the first is active. Default: generic. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      type: "string"
     }),
     defineFlag({
       name: "work-provider",
-      description: "Work provider to mention in setup notes. Default: github.",
-      type: "option",
-      options: discoveryOptionValues(executorWorkProviders)
+      description: `Comma-separated work providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
+      type: "string"
     }),
     defineFlag({
       name: "ci-provider",
-      description: "CI provider to mention in setup notes. Default: github.",
-      type: "option",
-      options: discoveryOptionValues(executorCiProviders)
+      description: `Comma-separated CI providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "with",
+      description: "Comma-separated optional components to also initialize: aib, aiq.",
+      type: "string"
     }),
     defineFlag({
       name: "lifecycle-scripts",
@@ -870,7 +885,7 @@ interface DirectQubeCommand {
 const doctorCommand = defineCommand({
   kind: "command",
   name: "doctor",
-  description: "Run Quality Control diagnostics and configured provider connection probes.",
+  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, and configured provider connection diagnostics.",
   flags: [jsonFlag, offlineFlag],
   examples: [
     { description: "Run all diagnostics and live read-only provider probes.", command: "qube doctor" },
@@ -882,6 +897,70 @@ const doctorCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: false,
   },
+});
+
+const forceFlag = defineFlag({
+  name: "force",
+  description: "Replace blocked managed sections or known fields intentionally.",
+  type: "boolean"
+});
+const defaultsFlag = defineFlag({
+  name: "defaults",
+  description: "Use default repository policy values without prompting.",
+  type: "boolean"
+});
+
+const initCommand = defineCommand({
+  kind: "command",
+  name: "init",
+  description: "Initialize QUBE workspace setup by composing each installed component's init through its init capability contract.",
+  arguments: [
+    defineArgument({
+      name: "target",
+      description: "Target directory to initialize. Default: the current directory.",
+      required: false
+    })
+  ],
+  flags: [
+    jsonFlag,
+    dryRunFlag,
+    yesFlag,
+    forceFlag,
+    defaultsFlag,
+    defineFlag({
+      name: "host",
+      description: `Comma-separated host surfaces to initialize. Default: generic. Use one or more of: ${discoveryOptionValues(executorHostSurfaces).join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "work-provider",
+      description: `Comma-separated work providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorWorkProviders).join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "ci-provider",
+      description: `Comma-separated CI providers to select; the first is active. Default: github. Use one or more of: ${discoveryOptionValues(executorCiProviders).join(", ")}.`,
+      type: "string"
+    }),
+    defineFlag({
+      name: "with",
+      description: "Comma-separated optional components to also initialize: aib, aiq.",
+      type: "string"
+    })
+  ],
+  examples: [
+    { description: "Initialize the current directory for Claude Code with GitHub providers.", command: "qube init . --host claude-code --work-provider github --ci-provider github --yes" },
+    { description: "Initialize multiple hosts and also scaffold Bootstrap planning.", command: "qube init . --host claude-code,codex --with aib --yes --json" }
+  ],
+  interactions: {
+    json: true,
+    dryRun: {
+      supported: true
+    },
+    noColor: true,
+    nonInteractive: true,
+    ttyPrompt: true
+  }
 });
 
 const directCommandDefinitions: readonly DirectQubeCommand[] = [
@@ -929,7 +1008,6 @@ const directCommandDefinitions: readonly DirectQubeCommand[] = [
       return mapIdeaArgs(args);
     }
   },
-  createDirectCommand("init", "Initialize Bootstrap planning state for a target.", "aib", "init"),
   createDirectCommand("plan status", "Show Bootstrap planning status.", "aib", "status"),
   createDirectCommand("plan next", "Show the next Bootstrap planning action.", "aib", "next"),
   createDirectCommand("answer", "Record a Bootstrap planning answer.", "aib", "answer"),
@@ -1068,10 +1146,10 @@ const componentCommands = qubeComponents.map(component => defineCommand({
   extensions: passthroughExtensions
 }));
 
-let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
+let runtimeRegistry = createCommandRegistry({ commands: [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, ...directCommands, runCommand, ...componentCommands] });
 
 export function renderCommandSurfacesDoc(): string {
-  const composerCommands = [componentsCommand, installCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
+  const composerCommands = [componentsCommand, installCommand, initCommand, doctorCommand, autoresearchCommand, oneshotCommand, makeItSoCommand, runCommand];
   const visibleDirect = directCommandDefinitions.filter(definition => definition.command.hidden !== true);
   const hiddenDirect = directCommandDefinitions.filter(definition => definition.command.hidden === true);
   const lines: string[] = [
@@ -1136,6 +1214,9 @@ export function planQubeCli(input: readonly string[], environment: CliEnvironmen
   }
   if (args[0] === "install") {
     return planQubeInstall(args.slice(1));
+  }
+  if (args[0] === "init") {
+    return planQubeInit(args.slice(1), environment);
   }
   if (args[0] === "doctor") {
     const forwarded = args.slice(1).filter(argument => argument !== "--offline");
@@ -1241,6 +1322,7 @@ function createQubeCli(environment: CliEnvironment) {
         }
         return { stdout: renderInstallPlan(plan) };
       }),
+      createRuntimeCommand(initCommand, ({ flags, args }) => executeQubeInit(flags, args, environment)),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
       createRuntimeCommand(autoresearchCommand, ({ argv }) => executeAutoresearch(argv, environment)),
       createRuntimeCommand(oneshotCommand, ({ argv }) => executeOneshot(argv, environment)),
@@ -1317,6 +1399,54 @@ function formatWorkflowReadiness(workflow: QubeDoctorWorkflowSection): string {
   return `${lines.join("\n")}\n`;
 }
 
+interface QubeDoctorContinuationSection {
+  status: "ok" | "unavailable" | "not-run";
+  report?: unknown;
+  error?: string;
+}
+
+async function collectContinuationHealth(offline: boolean, environment: CliEnvironment): Promise<QubeDoctorContinuationSection> {
+  if (offline) {
+    return { status: "not-run", error: "Offline doctor mode skips continuation diagnostics." };
+  }
+  const planned = planQubeDispatch("aiu", ["doctor", "--json"], environment);
+  if (!planned.dispatch) {
+    return { status: "unavailable", error: planned.stderr.trim() || "Umpire doctor is unavailable." };
+  }
+  const captured = await dispatchCommandCaptured(planned.dispatch);
+  if (captured.exitCode !== 0) {
+    return { status: "unavailable", error: captured.stderr.trim() || `Umpire doctor exited with code ${captured.exitCode}.` };
+  }
+  if (captured.truncated) {
+    return { status: "unavailable", error: "Umpire doctor output exceeded the capture limit; truncated output is never accepted as continuation health." };
+  }
+  try {
+    const parsed = JSON.parse(captured.stdout) as { ok?: unknown; doctor?: unknown };
+    if (parsed && typeof parsed === "object" && parsed.ok === true && parsed.doctor) {
+      return { status: "ok", report: parsed.doctor };
+    }
+    return { status: "unavailable", error: "Umpire doctor returned no continuation report." };
+  } catch {
+    return { status: "unavailable", error: "Umpire doctor returned invalid JSON." };
+  }
+}
+
+function continuationExitCode(continuation: QubeDoctorContinuationSection): number {
+  if (continuation.status !== "ok") {
+    return 0;
+  }
+  const report = continuation.report as { status?: string } | undefined;
+  return report?.status === "error" ? 1 : 0;
+}
+
+function formatContinuationHealth(continuation: QubeDoctorContinuationSection): string {
+  if (continuation.status !== "ok") {
+    return `Continuation health: ${continuation.status}${continuation.error ? ` — ${continuation.error}` : ""}\n`;
+  }
+  const report = continuation.report as { status?: string } | undefined;
+  return `Continuation health: ${report?.status ?? "unknown"}\n`;
+}
+
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
@@ -1324,17 +1454,19 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     mode: offline ? "offline" : "live",
   });
   const workflowPromise = collectWorkflowReadiness(offline, environment);
+  const continuationPromise = collectContinuationHealth(offline, environment);
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const [connections, workflow] = await Promise.all([connectionsPromise, workflowPromise]);
+    const [connections, workflow, continuation] = await Promise.all([connectionsPromise, workflowPromise, continuationPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
-    const exitCode = planned.exitCode === 0 ? connectionExitCode : planned.exitCode || 1;
+    const exitCode = planned.exitCode === 0 ? Math.max(connectionExitCode, continuationExitCode(continuation)) : planned.exitCode || 1;
     if (json) {
       const payload = {
         ok: false,
         command: "doctor",
         quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
         workflow,
+        continuation,
         connectionStatus: connections.status,
         connections,
       };
@@ -1343,18 +1475,19 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const [connections, quality, workflow] = await Promise.all([
+  const [connections, quality, workflow, continuation] = await Promise.all([
     connectionsPromise,
     dispatchCommandCaptured(planned.dispatch),
     workflowPromise,
+    continuationPromise,
   ]);
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
   let exitCode = quality.exitCode === 0
-    ? connectionExitCode
+    ? Math.max(connectionExitCode, continuationExitCode(continuation))
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
@@ -1372,6 +1505,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
       command: "doctor",
       quality: qualityPayload,
       workflow,
+      continuation,
       connectionStatus: connections.status,
       connections,
     };
@@ -1379,9 +1513,147 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
+}
+
+interface QubeInitChildResult {
+  readonly component: string;
+  readonly args: readonly string[];
+  readonly ok: boolean;
+  readonly exitCode: number;
+  readonly json?: unknown;
+  readonly stderr?: string;
+  readonly error?: string;
+}
+
+/** Every init child is dispatched with its own JSON flag and parsed defensively; a failed, unavailable, or non-envelope child is never coerced into ok:true. */
+async function dispatchInitChild(componentName: string, args: readonly string[], environment: CliEnvironment): Promise<QubeInitChildResult> {
+  const planned = planQubeDispatch(componentName, args, environment);
+  if (!planned.dispatch) {
+    return { component: componentName, args, ok: false, exitCode: planned.exitCode || 1, error: planned.stderr.trim() || `${componentName} is unavailable.` };
+  }
+  const captured = await dispatchCommandCaptured(planned.dispatch);
+  if (captured.truncated) {
+    return { component: componentName, args, ok: false, exitCode: captured.exitCode || 1, stderr: captured.stderr, error: `${componentName} output exceeded the capture limit; truncated output is never accepted.` };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(captured.stdout);
+  } catch {
+    return { component: componentName, args, ok: false, exitCode: captured.exitCode === 0 ? 1 : captured.exitCode, stderr: captured.stderr, error: `${componentName} did not return a single JSON envelope.` };
+  }
+  const isEnvelope = parsed !== null && typeof parsed === "object" && !Array.isArray(parsed);
+  const ok = isEnvelope && (parsed as { ok?: unknown }).ok !== false && captured.exitCode === 0;
+  return {
+    component: componentName,
+    args,
+    ok,
+    exitCode: captured.exitCode,
+    ...(isEnvelope ? { json: parsed } : {}),
+    stderr: captured.stderr,
+    ...(ok ? {} : { error: `${componentName} ${args[0] ?? ""} did not report success.`.trim() })
+  };
+}
+
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean }): readonly string[] {
+  const args = ["init", target, "--json"];
+  if (tool) args.push("--tool", tool);
+  if (options.dryRun) args.push("--dry-run");
+  if (options.force) args.push("--force");
+  if (options.yes) args.push("--yes");
+  if (options.defaults) args.push("--defaults");
+  return args;
+}
+
+function buildAiuInitArgs(tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean }): readonly string[] {
+  const args = ["init", "--json"];
+  if (tool) args.push("--tool", tool);
+  if (options.dryRun) args.push("--dry-run");
+  if (options.force) args.push("--force");
+  return args;
+}
+
+async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const target = readString(args.target) ?? ".";
+  const json = flags.json === true;
+  const dryRun = flags["dry-run"] === true;
+  const force = flags.force === true;
+  const yes = flags.yes === true;
+  const defaults = flags.defaults === true;
+
+  const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags, initCommand);
+  const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags, initCommand);
+  const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags, initCommand);
+  const withComponents = await promptInstallerChoices({
+    command: initCommand,
+    promptName: "optional components",
+    message: "Which optional components should also initialize?",
+    choices: withChoices,
+    required: false,
+    value: readOptionList<string>(flags, "with"),
+    defaultValue: [],
+    jsonMode: json,
+    yes: yes || defaults
+  });
+
+  const toolTargets = resolveInitToolTargets(hosts);
+  const aieOptions = { dryRun, force, yes, defaults };
+  const aiuOptions = { dryRun, force };
+  const aieRuns = toolTargets.length === 0
+    ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]
+    : toolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
+  const aiuRuns = toolTargets.length === 0
+    ? [dispatchInitChild("aiu", buildAiuInitArgs(undefined, aiuOptions), environment)]
+    : toolTargets.map(tool => dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
+
+  const withRuns: Array<Promise<QubeInitChildResult>> = [];
+  if (withComponents.includes("aib")) {
+    withRuns.push(dispatchInitChild("aib", ["init", target, "--json", ...(dryRun ? ["--dry-run"] : [])], environment));
+  }
+  if (withComponents.includes("aiq")) {
+    withRuns.push(dispatchInitChild("aiq", ["setup", "--format", "json"], environment));
+  }
+
+  const [aie, aiu, withResults] = await Promise.all([
+    Promise.all(aieRuns),
+    Promise.all(aiuRuns),
+    Promise.all(withRuns)
+  ]);
+
+  const allRuns = [...aie, ...aiu, ...withResults];
+  const ok = allRuns.every(run => run.ok);
+  const exitCode = ok ? 0 : Math.max(1, ...allRuns.filter(run => !run.ok).map(run => run.exitCode || 1));
+  const selections = {
+    target,
+    hosts,
+    workProviders,
+    ciProviders,
+    activeWorkProvider: workProviders[0],
+    activeCiProvider: ciProviders[0],
+    withComponents
+  };
+  const stderr = allRuns.map(run => run.stderr ?? "").filter(text => text.length > 0).join("");
+
+  if (json) {
+    const payload = { ok, command: "init", selections, aie, aiu, with: withResults };
+    return { exitCode, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
+  }
+
+  const lines = [
+    `QUBE init: ${ok ? "completed" : "completed with errors"}`,
+    `Target: ${target}`,
+    `Hosts: ${hosts.join(", ")}`,
+    `Work providers: ${workProviders.join(", ")} (active: ${workProviders[0]})`,
+    `CI providers: ${ciProviders.join(", ")} (active: ${ciProviders[0]})`,
+    ...(withComponents.length > 0 ? [`Also initialized: ${withComponents.join(", ")}`] : []),
+    ""
+  ];
+  for (const run of allRuns) {
+    lines.push(`- ${run.component} ${run.args[0] ?? ""}: ${run.ok ? "ok" : `failed — ${run.error ?? "unknown error"}`}`);
+  }
+  return { exitCode, stdout: `${lines.join("\n")}\n`, stderr };
 }
 
 async function executeQubeDispatch(componentName: string | undefined, componentArgs: readonly string[], environment: CliEnvironment): Promise<RuntimeCommandResult> {
@@ -4217,6 +4489,95 @@ function planQubeInstall(args: readonly string[]): CliExecution {
   };
 }
 
+/** Minimal plan-only forward for non-async callers; the real multi-component orchestration runs only through the async qube init handler (dispatchInitChild), mirroring how the plan-only doctor branch forwards to a single component. */
+function planQubeInit(args: readonly string[], environment: CliEnvironment): CliExecution {
+  const flags: Record<string, unknown> = {};
+  const positional: string[] = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === undefined) {
+      continue;
+    }
+    if (token === "--json") {
+      flags.json = true;
+      continue;
+    }
+    if (token === "--dry-run") {
+      flags["dry-run"] = true;
+      continue;
+    }
+    if (token === "--yes" || token === "-y") {
+      flags.yes = true;
+      continue;
+    }
+    if (token === "--force") {
+      flags.force = true;
+      continue;
+    }
+    if (token === "--defaults") {
+      flags.defaults = true;
+      continue;
+    }
+    const option = parseInitOptionToken(args, index);
+    if (option?.kind === "missing-value") {
+      return { exitCode: 2, stdout: "", stderr: `Missing value for init option --${option.key}.\n` };
+    }
+    if (option?.kind === "parsed") {
+      flags[option.key] = option.value;
+      index = option.nextIndex;
+      continue;
+    }
+    if (!token.startsWith("-")) {
+      positional.push(token);
+      continue;
+    }
+    return { exitCode: 2, stdout: "", stderr: `Unknown init flag or argument: ${token}\n` };
+  }
+
+  const validationError = validateInstallFlagChoices(flags);
+  if (validationError) {
+    return validationError;
+  }
+
+  const target = positional[0] ?? ".";
+  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
+  const toolTargets = resolveInitToolTargets(hosts);
+  const dispatchArgs = buildAieInitArgs(target, toolTargets[0], {
+    dryRun: flags["dry-run"] === true,
+    force: flags.force === true,
+    yes: flags.yes === true,
+    defaults: flags.defaults === true
+  });
+  return planQubeDispatch("aie", dispatchArgs, environment);
+}
+
+function parseInitOptionToken(
+  args: readonly string[],
+  index: number
+):
+  | { readonly kind: "parsed"; readonly key: string; readonly value: string; readonly nextIndex: number }
+  | { readonly kind: "missing-value"; readonly key: string }
+  | undefined {
+  const token = args[index];
+  if (!token) {
+    return undefined;
+  }
+  for (const key of ["host", "work-provider", "ci-provider", "with"]) {
+    const flag = `--${key}`;
+    if (token.startsWith(`${flag}=`)) {
+      return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
+    }
+    if (token === flag) {
+      const value = args[index + 1];
+      if (!value || value.startsWith("-")) {
+        return { kind: "missing-value", key };
+      }
+      return { kind: "parsed", key, value, nextIndex: index + 1 };
+    }
+  }
+  return undefined;
+}
+
 function createDirectCommand(
   name: string,
   description: string,
@@ -4271,18 +4632,33 @@ function createDirectCommand(
 async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>): Promise<InstallSelections> {
   const scope = await resolveInstallChoice(scopeChoices, readOption<InstallScope>(flags, "scope"), flags);
   const packageManager = await resolveInstallChoice(packageManagerChoices, readOption<InstallPackageManager>(flags, "package-manager"), flags);
-  const host = await resolveInstallChoice(hostChoices, readOption<InstallHost>(flags, "host"), flags);
-  const workProvider = await resolveInstallChoice(workProviderChoices, readOption<InstallWorkProvider>(flags, "work-provider"), flags);
-  const ciProvider = await resolveInstallChoice(ciProviderChoices, readOption<InstallCiProvider>(flags, "ci-provider"), flags);
+  const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags);
+  const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags);
+  const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags);
   const lifecycleScripts = await resolveInstallChoice(lifecycleChoices, readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts"), flags);
   const docsValue = await resolveInstallChoice(docsChoices, readDocsFlag(flags), flags);
   const migration = await resolveInstallChoice(migrationChoices, readOption<InstallMigration>(flags, "migration"), flags);
+  const withComponents = await promptInstallerChoices({
+    command: installCommand,
+    promptName: "optional components",
+    message: "Which optional components should also initialize?",
+    choices: withChoices,
+    required: false,
+    value: readOptionList<string>(flags, "with"),
+    defaultValue: [],
+    jsonMode: flags.json === true,
+    yes: flags.yes === true
+  });
   return {
     scope,
     packageManager,
-    host,
-    workProvider,
-    ciProvider,
+    host: hosts[0] ?? "generic",
+    hosts,
+    workProvider: workProviders[0] ?? "github",
+    workProviders,
+    ciProvider: ciProviders[0] ?? "github",
+    ciProviders,
+    withComponents,
     lifecycleScripts,
     docs: docsValue === "yes",
     migration
@@ -4292,10 +4668,11 @@ async function resolveInstallSelections(flags: Readonly<Record<string, unknown>>
 async function resolveInstallChoice<Value extends string>(
   group: InstallerChoiceGroup<Value>,
   value: Value | undefined,
-  flags: Readonly<Record<string, unknown>>
+  flags: Readonly<Record<string, unknown>>,
+  command: Parameters<typeof promptInstallerChoice>[0]["command"] = installCommand
 ): Promise<Value> {
   return promptInstallerChoice({
-    command: installCommand,
+    command,
     promptName: group.name,
     message: group.message,
     choices: group.choices,
@@ -4306,14 +4683,39 @@ async function resolveInstallChoice<Value extends string>(
   });
 }
 
+async function resolveInstallChoices<Value extends string>(
+  group: InstallerChoiceGroup<Value>,
+  values: readonly Value[] | undefined,
+  flags: Readonly<Record<string, unknown>>,
+  command: Parameters<typeof promptInstallerChoices>[0]["command"] = installCommand
+): Promise<readonly Value[]> {
+  return promptInstallerChoices({
+    command,
+    promptName: group.name,
+    message: group.message,
+    choices: group.choices,
+    value: values,
+    defaultValue: flags.yes === true && group.defaultValue !== undefined ? [group.defaultValue] : undefined,
+    jsonMode: flags.json === true,
+    yes: flags.yes === true
+  });
+}
+
 function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown>>): InstallSelections {
   // Keep these synchronous fallbacks aligned with the choice group defaults above.
+  const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
+  const workProviders = readOptionList<InstallWorkProvider>(flags, "work-provider") ?? ["github"];
+  const ciProviders = readOptionList<InstallCiProvider>(flags, "ci-provider") ?? ["github"];
   return {
     scope: readOption<InstallScope>(flags, "scope") ?? "local",
     packageManager: readOption<InstallPackageManager>(flags, "package-manager") ?? "pnpm",
-    host: readOption<InstallHost>(flags, "host") ?? "generic",
-    workProvider: readOption<InstallWorkProvider>(flags, "work-provider") ?? "github",
-    ciProvider: readOption<InstallCiProvider>(flags, "ci-provider") ?? "github",
+    host: hosts[0] ?? "generic",
+    hosts,
+    workProvider: workProviders[0] ?? "github",
+    workProviders,
+    ciProvider: ciProviders[0] ?? "github",
+    ciProviders,
+    withComponents: readOptionList<string>(flags, "with") ?? [],
     lifecycleScripts: readOption<InstallLifecycleScripts>(flags, "lifecycle-scripts") ?? "disabled",
     docs: readDocsFlag(flags) !== "no",
     migration: readOption<InstallMigration>(flags, "migration") ?? "none"
@@ -4361,58 +4763,82 @@ function summarizeDiscoveryOptions(options: readonly QubeDiscoveryOption[]): rea
 
 function createInstallConnections(selections: InstallSelections): readonly ConnectionContract[] {
   const selected = [
-    executorWorkProviders.find(option => option.id === selections.workProvider)?.connection,
-    executorCiProviders.find(option => option.id === selections.ciProvider)?.connection,
+    ...selections.workProviders.map(id => executorWorkProviders.find(option => option.id === id)?.connection),
+    ...selections.ciProviders.map(id => executorCiProviders.find(option => option.id === id)?.connection),
   ].filter((connection): connection is ConnectionContract => connection !== null && connection !== undefined);
   return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
 }
 
-function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
+const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code"] as const);
+type AieInitHostTool = (typeof AIE_INIT_HOST_TOOLS)[number];
+type AieInitTool = AieInitHostTool | "all";
+
+/** aie/aiu init accept one --tool value; grok-build shares codex's AGENTS.md target and "generic" has no tool value. */
+function resolveInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
+  const mapped = new Set<AieInitHostTool>();
+  for (const host of hosts) {
+    if (host === "claude-code") mapped.add("claude-code");
+    else if (host === "codex" || host === "grok-build") mapped.add("codex");
+    else if (host === "opencode") mapped.add("opencode");
+  }
+  if (mapped.size === 0) {
+    return [];
+  }
+  if (AIE_INIT_HOST_TOOLS.every(tool => mapped.has(tool))) {
+    return ["all"];
+  }
+  return Object.freeze([...mapped]);
+}
+
+function buildQubeInitCommand(selections: InstallSelections): string {
+  const parts = [
+    "qube init .",
+    `--host ${selections.hosts.join(",")}`,
+    `--work-provider ${selections.workProviders.join(",")}`,
+    `--ci-provider ${selections.ciProviders.join(",")}`
+  ];
+  if (selections.withComponents.length > 0) {
+    parts.push(`--with ${selections.withComponents.join(",")}`);
+  }
+  return parts.join(" ");
+}
+
+function createPackageInstallCommand(selections: InstallSelections): InstallCommandStep {
   const packageSpec = `${packageName}@${packageVersion}`;
+  const label = selections.scope === "global" ? "Install QUBE globally for manual shell use." : "Install QUBE in the current project.";
   if (selections.packageManager === "pnpm" && selections.scope === "local") {
-    return [
-      {
-        label: "Install QUBE in the current project.",
-        command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
-      },
-      {
-        label: "Confirm the installed component deck.",
-        command: "pnpm exec qube components"
-      }
-    ];
+    return { stage: "package-install", label, command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
   }
   if (selections.packageManager === "pnpm" && selections.scope === "global") {
-    return [
-      {
-        label: "Install QUBE globally for manual shell use.",
-        command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
-      },
-      {
-        label: "Confirm the installed component deck.",
-        command: "qube components"
-      }
-    ];
+    return { stage: "package-install", label, command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
   }
   if (selections.packageManager === "npm" && selections.scope === "local") {
-    return [
-      {
-        label: "Install QUBE in the current project.",
-        command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
-      },
-      {
-        label: "Confirm the installed component deck.",
-        command: "npm exec -- qube components"
-      }
-    ];
+    return { stage: "package-install", label, command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
   }
+  return { stage: "package-install", label, command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
+}
+
+function createProviderSetupCommands(selections: InstallSelections): readonly InstallCommandStep[] {
+  const commands: InstallCommandStep[] = [];
+  if (selections.workProviders.includes("github") || selections.ciProviders.includes("github")) {
+    commands.push({ stage: "provider-setup", label: "Configure GitHub status labels.", command: "qube aie labels setup" });
+  }
+  return Object.freeze(commands);
+}
+
+function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
   return [
+    createPackageInstallCommand(selections),
     {
-      label: "Install QUBE globally for manual shell use.",
-      command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim()
+      stage: "workspace-init",
+      label: "Initialize QUBE workspace setup for the selected hosts and providers.",
+      command: buildQubeInitCommand(selections)
     },
+    ...createProviderSetupCommands(selections),
     {
-      label: "Confirm the installed component deck.",
-      command: "qube components"
+      stage: "verify",
+      label: "Verify the workspace with the aggregating doctor.",
+      command: "qube doctor"
     }
   ];
 }
@@ -4422,25 +4848,25 @@ function createInstallFiles(selections: InstallSelections): readonly string[] {
     return [];
   }
   const files = ["README.md install snippet"];
-  if (selections.host === "codex") {
+  if (selections.hosts.includes("codex")) {
     files.push(...listCodexInstallFiles());
   }
-  if (selections.host === "claude-code") {
+  if (selections.hosts.includes("claude-code")) {
     files.push(...listClaudeCodeInstallFiles());
   }
-  if (selections.host === "grok-build") {
+  if (selections.hosts.includes("grok-build")) {
     files.push(...listGrokBuildInstallFiles());
   }
-  if (selections.host === "opencode") {
+  if (selections.hosts.includes("opencode")) {
     files.push(".opencode command notes");
   }
-  if (selections.workProvider === "github" || selections.workProvider === "gitlab" || selections.workProvider === "linear" || selections.workProvider === "jira") {
+  if (selections.workProviders.some(id => id === "github" || id === "gitlab" || id === "linear" || id === "jira")) {
     files.push(".qube/aie/config.json provider notes");
   }
-  if (selections.ciProvider === "jenkins") {
+  if (selections.ciProviders.includes("jenkins")) {
     files.push(".qube/aie/gates/jenkins gate evidence notes");
   }
-  return files;
+  return Object.freeze([...new Set(files)]);
 }
 
 function createInstallNotes(selections: InstallSelections): readonly string[] {
@@ -4456,15 +4882,28 @@ function createInstallNotes(selections: InstallSelections): readonly string[] {
   }
   notes.push("Autoresearch agent entry: run `qube autoresearch --help`, translate natural-language requests to `<target>` plus `<goal>`, and synthesize the arena before edits.");
   notes.push("QUBE provider probes verify only QUBE adapter credentials; host MCP server credentials are separate even when they use the same token.");
+  notes.push("Run `qube components` any time to confirm the installed component deck.");
   notes.push(installOptionNote("Work provider", executorWorkProviders, selections.workProvider));
   notes.push(installOptionNote("CI provider", executorCiProviders, selections.ciProvider));
-  if (selections.host === "codex") {
+  if (selections.workProviders.length > 1) {
+    notes.push(`Additional installed work providers (not yet active): ${selections.workProviders.slice(1).join(", ")}. The first selected work provider stays active; Executor init still always writes GitHub as the provider kind, so switching the active kind for another provider requires a manual .qube/aie/config.json edit.`);
+  }
+  if (selections.ciProviders.length > 1) {
+    notes.push(`Additional installed CI providers (not yet active): ${selections.ciProviders.slice(1).join(", ")}. The first selected CI provider stays active.`);
+  }
+  if (selections.hosts.length > 1) {
+    notes.push(`qube init fans out across all selected hosts (${selections.hosts.join(", ")}) inside one command.`);
+  }
+  if (selections.withComponents.length > 0) {
+    notes.push(`qube init also initializes: ${selections.withComponents.join(", ")}.`);
+  }
+  if (selections.hosts.includes("codex")) {
     notes.push(...listCodexInstallNotes());
   }
-  if (selections.host === "claude-code") {
+  if (selections.hosts.includes("claude-code")) {
     notes.push(...listClaudeCodeInstallNotes());
   }
-  if (selections.host === "grok-build") {
+  if (selections.hosts.includes("grok-build")) {
     notes.push(...listGrokBuildInstallNotes());
   }
   if (selections.migration === "standalone-globals") {
@@ -4497,9 +4936,9 @@ function renderInstallPlan(plan: InstallPlan): string {
     `Package: ${plan.package.name}@${plan.package.version}`,
     `Scope: ${plan.selections.scope}`,
     `Package manager: ${plan.selections.packageManager}`,
-    `Host surface: ${plan.selections.host}`,
-    `Work provider: ${plan.selections.workProvider}`,
-    `CI provider: ${plan.selections.ciProvider}`,
+    `Host surface: ${plan.selections.hosts.join(", ")}`,
+    `Work provider: ${plan.selections.workProviders.join(", ")}`,
+    `CI provider: ${plan.selections.ciProviders.join(", ")}`,
     `Lifecycle scripts: ${plan.selections.lifecycleScripts}`,
     `Docs/config notes: ${plan.selections.docs ? "included" : "omitted"}`,
     `Migration path: ${plan.selections.migration}`,
@@ -4555,16 +4994,13 @@ function lifecycleFlag(selections: InstallSelections): string {
 }
 
 function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): CliExecution | undefined {
-  const groups = [
+  const singleGroups = [
     { key: "scope", choices: scopeChoices.choices },
     { key: "package-manager", choices: packageManagerChoices.choices },
-    { key: "host", choices: hostChoices.choices },
-    { key: "work-provider", choices: workProviderChoices.choices },
-    { key: "ci-provider", choices: ciProviderChoices.choices },
     { key: "lifecycle-scripts", choices: lifecycleChoices.choices },
     { key: "migration", choices: migrationChoices.choices }
   ];
-  for (const group of groups) {
+  for (const group of singleGroups) {
     const value = flags[group.key];
     if (typeof value !== "string") {
       continue;
@@ -4576,6 +5012,29 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
       exitCode: 2,
       stdout: "",
       stderr: `Invalid install option --${group.key}=${value}. Use one of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
+    };
+  }
+
+  const multiGroups = [
+    { key: "host", choices: hostChoices.choices },
+    { key: "work-provider", choices: workProviderChoices.choices },
+    { key: "ci-provider", choices: ciProviderChoices.choices },
+    { key: "with", choices: withChoices }
+  ];
+  for (const group of multiGroups) {
+    const value = flags[group.key];
+    if (typeof value !== "string") {
+      continue;
+    }
+    const tokens = splitCsvOption(value);
+    const invalid = tokens.filter(token => !group.choices.some(choice => choice.value === token));
+    if (invalid.length === 0) {
+      continue;
+    }
+    return {
+      exitCode: 2,
+      stdout: "",
+      stderr: `Invalid install option --${group.key}=${invalid.join(",")}. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
     };
   }
   return undefined;
@@ -4599,6 +5058,19 @@ function readDocsFlag(flags: Readonly<Record<string, unknown>>): YesNo | undefin
 function hasCompleteInstallSelections(flags: Readonly<Record<string, unknown>>): boolean {
   return ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "migration"].every(key => typeof flags[key] === "string")
     && typeof flags.docs === "boolean";
+}
+
+function splitCsvOption(value: string): readonly string[] {
+  return Object.freeze(value.split(",").map(token => token.trim()).filter(token => token.length > 0));
+}
+
+function readOptionList<Value extends string>(flags: Readonly<Record<string, unknown>>, key: string): readonly Value[] | undefined {
+  const value = flags[key];
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const tokens = splitCsvOption(value) as readonly Value[];
+  return tokens.length > 0 ? tokens : undefined;
 }
 
 function parseInstallArgs(args: readonly string[]):
@@ -4667,7 +5139,7 @@ function parseOptionToken(
   if (!token) {
     return undefined;
   }
-  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "lifecycle-scripts", "migration"]) {
+  for (const key of ["scope", "package-manager", "host", "work-provider", "ci-provider", "with", "lifecycle-scripts", "migration"]) {
     const flag = `--${key}`;
     if (token.startsWith(`${flag}=`)) {
       return { kind: "parsed", key, value: token.slice(flag.length + 1), nextIndex: index };
@@ -4695,6 +5167,8 @@ function installOptionValues(key: string): readonly string[] {
       return workProviderChoices.choices.map(choice => choice.value);
     case "ci-provider":
       return ciProviderChoices.choices.map(choice => choice.value);
+    case "with":
+      return withChoices.map(choice => choice.value);
     case "lifecycle-scripts":
       return lifecycleChoices.choices.map(choice => choice.value);
     case "migration":

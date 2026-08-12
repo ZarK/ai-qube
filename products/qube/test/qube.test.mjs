@@ -104,6 +104,21 @@ function createWorkflowDoctorShim(root) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aie", version: "0.2.2" })}\n`, "utf8");
 }
 
+function createJsonEnvelopeShim(root, componentId, payload) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const packageDir = path.join(root, "node_modules", "@tjalve", componentId);
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  const responsePayload = `${JSON.stringify(payload)}\n`;
+  writeFileSync(path.join(packageDir, "response.json"), responsePayload, "utf8");
+  const commandPath = path.join(binDir, process.platform === "win32" ? `${componentId}.cmd` : componentId);
+  writeFileSync(commandPath, process.platform === "win32"
+    ? `@echo off\r\ntype "%~dp0..\\@tjalve\\${componentId}\\response.json"\r\n`
+    : `#!/bin/sh\nprintf '%s\\n' '${responsePayload.trim()}'\n`, "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: `@tjalve/${componentId}`, version: findQubeComponent(componentId).packageVersion })}\n`, "utf8");
+}
+
 function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   const target = path.join(cwd, "target");
   mkdirSync(target, { recursive: true });
@@ -224,7 +239,8 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /review doctor\s+Validate reviewer publisher readiness/);
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
-    assert.match(help.stdout, /doctor\s+Run Quality Control diagnostics and configured provider connection probes\./);
+    assert.match(help.stdout, /init\s+Initialize QUBE workspace setup by composing each installed component's init through its init capability contract\./);
+    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, and configured provider connection diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
 
@@ -385,12 +401,16 @@ describe("qube composer CLI", () => {
     assert.deepEqual(parsed.installPlan.selections, {
       docs: true,
       host: "generic",
+      hosts: ["generic"],
       ciProvider: "github",
+      ciProviders: ["github"],
       lifecycleScripts: "disabled",
       migration: "none",
       packageManager: "pnpm",
       scope: "local",
-      workProvider: "github"
+      workProvider: "github",
+      workProviders: ["github"],
+      withComponents: []
     });
     assert.equal(parsed.installPlan.dryRun, true);
     assert.deepEqual(parsed.installPlan.connections.map(connection => connection.adapterId), ["github"]);
@@ -398,8 +418,17 @@ describe("qube composer CLI", () => {
     assert.ok(parsed.installPlan.notes.some(note => note.includes("qube autoresearch --help")));
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommand,
-      "pnpm exec qube components"
+      "qube init . --host generic --work-provider github --ci-provider github",
+      "qube aie labels setup",
+      "qube doctor"
     ]);
+    assert.deepEqual(parsed.installPlan.commands.map(step => step.stage), [
+      "package-install",
+      "workspace-init",
+      "provider-setup",
+      "verify"
+    ]);
+    assert.ok(parsed.installPlan.notes.some(note => note.includes("Run `qube components` any time")));
     assert.deepEqual(
       parsed.installPlan.options.hosts.map(option => [option.value, option.support, option.default, option.source]),
       [
@@ -792,6 +821,60 @@ describe("qube composer CLI", () => {
     }
   });
 
+  it("aggregates Umpire continuation health into doctor", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-continuation-doctor-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-continuation-packages-"));
+    createQualityDoctorShim(packageRoot);
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "doctor", doctor: { status: "ok", checks: [] } });
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: { work: { kind: "github" }, review: { kind: "github" }, ci: { kind: "github" } },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.continuation.status, "ok");
+    assert.equal(parsed.continuation.report.status, "ok");
+
+    const human = runCli(["doctor"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.match(human.stdout, /Continuation health: ok/);
+  });
+
+  it("fails doctor when Umpire continuation health reports an error without hiding the underlying report", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-continuation-error-doctor-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-continuation-error-packages-"));
+    createQualityDoctorShim(packageRoot);
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "doctor", doctor: { status: "error", checks: [{ id: "stale-lock", status: "error" }] } });
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: { work: { kind: "github" }, review: { kind: "github" }, ci: { kind: "github" } },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.notEqual(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.continuation.report.status, "error");
+  });
+
+  it("never reports continuation as ok when the Umpire doctor is unavailable", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-continuation-missing-doctor-"));
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-continuation-missing-packages-"));
+    createQualityDoctorShim(packageRoot);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: { work: { kind: "github" }, review: { kind: "github" }, ci: { kind: "github" } },
+    })}\n`, "utf8");
+
+    const result = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.continuation.status, "unavailable");
+    assert.notEqual(parsed.continuation.error.trim(), "");
+  });
+
   it("renders GitLab work provider install notes without prompting", () => {
     const result = runCli([
       "install",
@@ -954,7 +1037,9 @@ describe("qube composer CLI", () => {
     assert.equal(parsed.installPlan.selections.host, "grok-build");
     assert.deepEqual(parsed.installPlan.commands.map(step => step.command), [
       qubePnpmAddCommand,
-      "pnpm exec qube components"
+      "qube init . --host grok-build --work-provider github --ci-provider github",
+      "qube aie labels setup",
+      "qube doctor"
     ]);
     assert.ok(parsed.installPlan.files.includes("AGENTS.md policy notes: Grok Build reads AGENTS.md repository instructions; QUBE keeps durable policy in AGENTS.md and provider records."));
     assert.match(parsed.installPlan.notes.join("\n"), /Grok Build host support uses AGENTS\.md/);
@@ -2161,6 +2246,120 @@ describe("qube composer CLI", () => {
     assert.equal(result.exitCode, 4);
     assert.match(result.stderr, /Cannot find aiq/);
     assert.match(result.stderr, /Install QUBE with its component dependencies/);
+  });
+});
+
+describe("qube init composer orchestrator", () => {
+  function initEnv(packageRoot, extra = {}) {
+    return { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, ...extra };
+  }
+
+  it("composes aie and aiu init from one selection set for a single host", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-single-host-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: false, actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true } });
+
+    const result = runCli(["init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github", "--yes", "--json"], { env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.command, "init");
+    assert.deepEqual(parsed.selections.hosts, ["claude-code"]);
+    assert.equal(parsed.selections.activeWorkProvider, "github");
+    assert.equal(parsed.selections.activeCiProvider, "github");
+    assert.equal(parsed.aie.length, 1);
+    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "claude-code", "--yes"]);
+    assert.equal(parsed.aiu.length, 1);
+    assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "claude-code"]);
+    assert.deepEqual(parsed.with, []);
+  });
+
+  it("collapses to --tool all when every real host tool is selected, and fans out otherwise", () => {
+    const allRoot = mkdtempSync(path.join(tmpdir(), "qube-init-all-hosts-"));
+    createJsonEnvelopeShim(allRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(allRoot, "aiu", { ok: true, command: "init" });
+    const allResult = runCli(["init", ".", "--host", "codex,claude-code,opencode", "--yes", "--json"], { env: initEnv(allRoot) });
+    assert.equal(allResult.status, 0, allResult.stderr);
+    const allParsed = JSON.parse(allResult.stdout);
+    assert.equal(allParsed.aie.length, 1);
+    assert.ok(allParsed.aie[0].args.includes("--tool"));
+    assert.ok(allParsed.aie[0].args.includes("all"));
+
+    const partialRoot = mkdtempSync(path.join(tmpdir(), "qube-init-partial-hosts-"));
+    createJsonEnvelopeShim(partialRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(partialRoot, "aiu", { ok: true, command: "init" });
+    const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { env: initEnv(partialRoot) });
+    assert.equal(partialResult.status, 0, partialResult.stderr);
+    const partialParsed = JSON.parse(partialResult.stdout);
+    assert.equal(partialParsed.aie.length, 2);
+    const tools = partialParsed.aie.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(tools, ["claude-code", "opencode"]);
+  });
+
+  it("also initializes aib when selected through --with", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-with-aib-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    createJsonEnvelopeShim(packageRoot, "aib", { ok: true, command: "init", files: [] });
+
+    const result = runCli(["init", ".", "--host", "generic", "--with", "aib", "--yes", "--json"], { env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.selections.withComponents, ["aib"]);
+    assert.equal(parsed.with.length, 1);
+    assert.equal(parsed.with[0].component, "aib");
+    assert.ok(parsed.with[0].ok);
+  });
+
+  it("rejects an unsupported --host token with a loud, non-silent error", () => {
+    const result = runCli(["init", ".", "--host", "bogus-host", "--yes", "--json"]);
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /Unsupported choice "bogus-host"/);
+  });
+
+  it("rejects an unsupported --with token instead of silently ignoring it", () => {
+    const result = runCli(["init", ".", "--with", "not-a-component", "--yes", "--json"]);
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.match(parsed.error.likelyCause, /Unsupported choice "not-a-component"/);
+  });
+
+  it("never reports success when a required init component is unavailable", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-missing-aiu-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    // aiu is intentionally not shimmed, so it cannot be resolved.
+
+    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.aie[0].ok, true);
+    assert.equal(parsed.aiu[0].ok, false);
+    assert.match(parsed.aiu[0].error, /cannot find aiu/i);
+  });
+
+  it("never coerces a child ok:false envelope into an overall success", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-failing-aie-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: false, command: "init", error: { kind: "conflict", likelyCause: "managed section drift" } });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+
+    const result = runCli(["init", ".", "--host", "claude-code", "--yes", "--json"], { env: initEnv(packageRoot) });
+    assert.notEqual(result.status, 0);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.aie[0].ok, false);
+  });
+
+  it("blocks JSON init prompts unless flags or safe defaults are supplied", () => {
+    const result = runCli(["init", ".", "--json"]);
+    assert.equal(result.status, 2);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.command, "init");
+    assert.equal(parsed.error.kind, "prompt-blocked");
   });
 });
 
