@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -33,6 +34,105 @@ describe("provider-neutral stop hooks", () => {
       assert.match("reason" in result.stdoutJson ? result.stdoutJson.reason : "", /Continue active work/);
       assert.equal(result.continuationDecision?.kind, "continue");
       assert.deepEqual(result.continuationDecision?.reasonCodes, ["continue-active-work"]);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("blocks Grok Build stops from a camelCase Stop payload", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedState: activeWorkState(),
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify(grokStopPayload(target, "grok-session")),
+      });
+
+      assert.equal(result.decision, "block");
+      assert.equal("decision" in result.stdoutJson ? result.stdoutJson.decision : undefined, "block");
+      assert.match("reason" in result.stdoutJson ? result.stdoutJson.reason : "", /Continue active work/);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not accept a Claude snake_case-only payload as a Grok parse", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedState: activeWorkState(),
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify(stopPayload(target, "claude-session")),
+      });
+
+      assert.equal(result.decision, "allow");
+      assert.equal(result.reason, "malformed-hook-input");
+      assert.match(result.stderr, /Claude snake_case Stop input is not a valid Grok parse/);
+      assert.equal("decision" in result.stdoutJson, false);
+    } finally {
+      await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not follow an untrusted payload cwd to another repository", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const victim = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedState: activeWorkState(),
+    });
+    const attackerMarker = path.join(tmpdir(), `aiu-hook-attacker-${Date.now()}.marker`);
+    const attacker = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedCommand: [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(attackerMarker)}, "ran")`],
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: victim,
+        observedAt,
+        stdin: JSON.stringify(grokStopPayload(attacker, "attacker-session")),
+      });
+
+      assert.equal(result.decision, "allow");
+      assert.equal(result.reason, "untrusted-hook-cwd");
+      assert.equal(existsSync(attackerMarker), false);
+    } finally {
+      await rm(victim, { recursive: true, force: true });
+      await rm(attacker, { recursive: true, force: true });
+    }
+  });
+
+  it("fail-opens a Grok session-end Stop instead of blocking", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const target = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedState: activeWorkState(),
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: target,
+        observedAt,
+        stdin: JSON.stringify({ ...grokStopPayload(target, "grok-session"), reason: "channel_closed" }),
+      });
+
+      assert.equal(result.decision, "allow");
+      assert.equal(result.reason, "session-end-stop");
     } finally {
       await rm(target, { recursive: true, force: true });
     }
@@ -308,7 +408,7 @@ async function loadHookStop(): Promise<typeof HookStop> {
 }
 
 async function createRepo(options: {
-  readonly tool: "codex" | "claude-code";
+  readonly tool: "codex" | "claude-code" | "grok-build";
   readonly stopHookBlocking: boolean;
   readonly trustedState?: Record<string, unknown>;
   readonly trustedCommand?: readonly [string, ...string[]];
@@ -346,6 +446,20 @@ async function createRepo(options: {
     ...(options.whipEnabled === false ? { whip: { enabled: false } } : {}),
   }), "utf8");
   return target;
+}
+
+function grokStopPayload(cwd: string, sessionId: string) {
+  return {
+    cwd,
+    hookEventName: "stop",
+    lastAssistantMessage: "done",
+    permissionMode: "default",
+    reason: "end_turn",
+    sessionId,
+    stopHookActive: false,
+    timestamp: observedAt,
+    workspaceRoot: cwd,
+  };
 }
 
 function stopPayload(cwd: string, sessionId: string) {

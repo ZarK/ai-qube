@@ -160,6 +160,14 @@ export const doctorCommand = defineCommand({
       description: "A config enables stop-hook blocking for a host that must safe-allow stopping.",
     },
     {
+      kind: "grok-hook-trusted",
+      description: "The Grok Build project Stop hook is present and the folder is trusted.",
+    },
+    {
+      kind: "grok-hook-untrusted",
+      description: "The Grok Build project Stop hook is present but the folder is not trusted.",
+    },
+    {
       kind: "host-entrypoint-package-backed",
       description: "A configured host entrypoint delegates to the package-backed runtime.",
     },
@@ -516,7 +524,7 @@ export const hookStopCommand = defineCommand({
       name: "tool",
       description: "Host tool that invoked the Stop hook.",
       type: "option",
-      options: ["codex", "claude-code"],
+      options: ["codex", "claude-code", "grok-build"],
       required: true,
     }),
   ],
@@ -528,6 +536,10 @@ export const hookStopCommand = defineCommand({
     defineExample({
       description: "Inspect the Claude Code Stop hook decision result as JSON.",
       command: "aiu hook-stop --tool claude-code --json",
+    }),
+    defineExample({
+      description: "Handle a Grok Build Stop hook using trusted-state decisions and host policy.",
+      command: "aiu hook-stop --tool grok-build",
     }),
   ],
   output: {

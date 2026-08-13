@@ -9,6 +9,7 @@ import {
   AIU_HOSTS,
   loadAiuConfig,
 } from "./config.js";
+import { inspectGrokFolderTrust } from "./grok_trust.js";
 import { evaluateAiuHostRuntimePolicy, getAiuHostCapabilityProfiles } from "./host_policy.js";
 import { runAiuWhipCommand, type AiuWhipReport } from "./whip.js";
 
@@ -176,6 +177,7 @@ export function runAiuDoctor(options: AiuInspectionOptions = {}): AiuDoctorRepor
     ...checkStatePaths(paths),
     ...checkHostFiles(configLoad),
     ...checkHostEntrypoints(configLoad),
+    ...checkGrokProjectHookTrust(configLoad),
     ...checkTrustedCommands(paths),
     ...checkTrustedCommandCompatibility(configLoad),
   ];
@@ -475,7 +477,30 @@ function packageBackedEntrypointMarker(host: AiuHost, relativePath: string): str
   if (host === "claude-code" && relativePath.endsWith(path.join(".claude", "settings.json"))) {
     return `pnpm exec aiu hook-stop --tool ${host}`;
   }
+  if (host === "grok-build" && relativePath.endsWith(path.join(".grok", "hooks", "ai-umpire.json"))) {
+    return `pnpm exec aiu hook-stop --tool ${host}`;
+  }
   return undefined;
+}
+
+function checkGrokProjectHookTrust(configLoad: AiuConfigLoadResult): readonly AiuDoctorCheck[] {
+  if (!configLoad.config.hosts.enabled.includes("grok-build")) {
+    return [];
+  }
+  const relativePath = path.join(".grok", "hooks", "ai-umpire.json");
+  const absolutePath = path.join(configLoad.repoRoot, relativePath);
+  if (!existsSync(absolutePath)) {
+    return [];
+  }
+  const trust = inspectGrokFolderTrust(configLoad.repoRoot);
+  if (trust.trusted) {
+    return [
+      check("grok-hook-trusted", "host", "ok", "grok-hook-trusted", "Grok Build project Stop hook is present and the folder is trusted.", trust.trustFile, "Continue using the trusted project hook."),
+    ];
+  }
+  return [
+    check("grok-hook-untrusted", "host", "warning", "grok-hook-untrusted", "Grok Build project Stop hook is present but the folder is not trusted. Untrusted project hooks do not run.", trust.trustFile, "Run /hooks-trust in Grok Build, or start with --trust, then rerun aiu doctor --json."),
+  ];
 }
 
 function checkTrustedCommands(paths: AiuResolvedPaths): readonly AiuDoctorCheck[] {

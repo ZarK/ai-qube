@@ -253,7 +253,8 @@ describe("metadata-backed CLI", () => {
     assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
     assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "codex")?.stopHook?.blocksByDefault, true);
-    assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.support, "unsupported");
+    assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.support, "experimental");
+    assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.blocksByDefault, true);
     assert.ok(parsed.sections?.config?.policyFields?.includes("hosts.stopHookBlocking"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("planning.enabled"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("whip.enabled"));
@@ -285,7 +286,7 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("promptFingerprint"));
     assert.ok(parsed.sections?.decision?.selectedItemFields?.includes("expectedEvidence"));
     assert.ok(parsed.sections?.decision?.reasonCodes?.some((reason) => reason.code === "stop-supply-chain-approval" && reason.category === "safety"));
-    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code"]);
+    assert.deepEqual(parsed.sections?.hookStop?.tools, ["codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.hookStop?.outputKinds, ["allow", "block"]);
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("malformed-hook-input"));
     assert.ok(parsed.sections?.hookStop?.stableErrorKinds?.includes("trusted-state-load-failed"));
@@ -339,6 +340,8 @@ describe("metadata-backed CLI", () => {
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("host-runtime-disabled"));
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("host-entrypoint-package-backed"));
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("host-entrypoint-unmanaged"));
+    assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("grok-hook-trusted"));
+    assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("grok-hook-untrusted"));
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("trusted-command-compatible"));
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("planning-trusted-command-found"));
     assert.ok(parsed.sections?.doctor?.stableDiagnosticKinds?.includes("quality-trusted-command-missing"));
