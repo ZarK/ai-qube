@@ -837,6 +837,44 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(triage.modelTier, 'economy');
   });
 
+  it('does not carry forward approved evidence that never recorded a model tier', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => {
+      const { modelTier: _omit, ...rest } = lane;
+      return {
+        ...rest,
+        artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: null }],
+        contextReviewed: [
+          { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+          { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+        ],
+        toolsUsed: ['codex'],
+      };
+    });
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.notEqual(lane.status, 'completed');
+    assert.doesNotMatch(lane.summary, /Carried forward/);
+  });
+
   it('does not carry forward when the recorded lane tier differs from the current plan', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

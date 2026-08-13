@@ -482,7 +482,7 @@ export async function findCarryForwardSource(input: {
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
-      if (input.expectedModelTier && parsed.modelTier !== undefined && parsed.modelTier !== input.expectedModelTier) continue;
+      if (input.expectedModelTier && parsed.modelTier !== input.expectedModelTier) continue;
       if (input.expectedHost && parsed.runnerProvenance.host !== input.expectedHost) continue;
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
       if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
