@@ -1,0 +1,19 @@
+products/qube/src/runtime.ts
+  s_c36b11aa048655::t_8214ad295e6c6b 4741
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "b75d92fce8869b9dfa6b7876d9000a9655c137c7",
+  "prompts": {},
+  "sessions": {
+    "s_c36b11aa048655": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "b1da72ae-bc6b-4cbe-8f58-967ca767b432",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
