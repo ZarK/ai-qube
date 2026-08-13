@@ -34,6 +34,13 @@ import {
   listGrokBuildInstallFiles,
   listGrokBuildInstallNotes,
   planQubeCli,
+  probeHostToolkits,
+  composeHostToolkitManifests,
+  createInitRecord,
+  writeInitRecord,
+  MCP_BYPASS_CAVEAT,
+  PROVIDER_MCP_CONFIG_PATHS,
+  QUBE_INIT_RECORD_PATH,
   qubeComponents,
   renderCommandSurfacesDoc,
   runConnectionDoctor,
@@ -241,7 +248,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /pr gate\s+Request and inspect configured pull request reviews\./);
     assert.match(help.stdout, /app start\s+Start a local app process for audit work\./);
     assert.match(help.stdout, /init\s+Initialize QUBE workspace setup by composing each installed component's init through its init capability contract\./);
-    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, and configured provider connection diagnostics\./);
+    assert.match(help.stdout, /doctor\s+Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics\./);
     assert.match(help.stdout, /check\s+Run Quality Control checks for explicit paths\./);
     assert.match(help.stdout, /quality status\s+Show AIQ quality status\./);
 
@@ -2406,10 +2413,11 @@ describe("qube init composer orchestrator", () => {
 
   it("composes aie and aiu init from one selection set for a single host", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-single-host-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-single-cwd-"));
     createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: false, actions: [] });
     createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true } });
 
-    const result = runCli(["init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github", "--yes", "--json"], { env: initEnv(packageRoot) });
+    const result = runCli(["init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, true);
@@ -2426,9 +2434,10 @@ describe("qube init composer orchestrator", () => {
 
   it("collapses to --tool all when every real host tool is selected, and fans out otherwise", () => {
     const allRoot = mkdtempSync(path.join(tmpdir(), "qube-init-all-hosts-"));
+    const allCwd = mkdtempSync(path.join(tmpdir(), "qube-init-all-cwd-"));
     createJsonEnvelopeShim(allRoot, "aie", { ok: true, command: "init", actions: [] });
     createJsonEnvelopeShim(allRoot, "aiu", { ok: true, command: "init" });
-    const allResult = runCli(["init", ".", "--host", "codex,claude-code,opencode", "--yes", "--json"], { env: initEnv(allRoot) });
+    const allResult = runCli(["init", ".", "--host", "codex,claude-code,opencode", "--yes", "--json"], { cwd: allCwd, env: initEnv(allRoot) });
     assert.equal(allResult.status, 0, allResult.stderr);
     const allParsed = JSON.parse(allResult.stdout);
     assert.equal(allParsed.aie.length, 1);
@@ -2436,9 +2445,10 @@ describe("qube init composer orchestrator", () => {
     assert.ok(allParsed.aie[0].args.includes("all"));
 
     const partialRoot = mkdtempSync(path.join(tmpdir(), "qube-init-partial-hosts-"));
+    const partialCwd = mkdtempSync(path.join(tmpdir(), "qube-init-partial-cwd-"));
     createJsonEnvelopeShim(partialRoot, "aie", { ok: true, command: "init", actions: [] });
     createJsonEnvelopeShim(partialRoot, "aiu", { ok: true, command: "init" });
-    const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { env: initEnv(partialRoot) });
+    const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { cwd: partialCwd, env: initEnv(partialRoot) });
     assert.equal(partialResult.status, 0, partialResult.stderr);
     const partialParsed = JSON.parse(partialResult.stdout);
     assert.equal(partialParsed.aie.length, 2);
@@ -2452,7 +2462,8 @@ describe("qube init composer orchestrator", () => {
     createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
     createJsonEnvelopeShim(packageRoot, "aib", { ok: true, command: "init", files: [] });
 
-    const result = runCli(["init", ".", "--host", "generic", "--with", "aib", "--yes", "--json"], { env: initEnv(packageRoot) });
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-with-aib-cwd-"));
+    const result = runCli(["init", ".", "--host", "generic", "--with", "aib", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
     assert.deepEqual(parsed.selections.withComponents, ["aib"]);
@@ -2510,6 +2521,231 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.ok, false);
     assert.equal(parsed.command, "init");
     assert.equal(parsed.error.kind, "prompt-blocked");
+  });
+});
+
+describe("host toolkit manifests", () => {
+  function writeRequiredAssets(cwd, host) {
+    if (host === "claude-code") {
+      writeFileSync(path.join(cwd, "CLAUDE.md"), "instructions\n");
+      mkdirSync(path.join(cwd, ".claude", "commands"), { recursive: true });
+      mkdirSync(path.join(cwd, ".claude", "skills", "make-it-so"), { recursive: true });
+      writeFileSync(path.join(cwd, ".claude", "commands", "make-it-so.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".claude", "skills", "make-it-so", "SKILL.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".claude", "settings.json"), "{}\n");
+    }
+    if (host === "codex") {
+      writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
+      mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
+      mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", "hooks"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", "skills", "ai-umpire"), { recursive: true });
+      writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin", "plugin.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", "hooks", "hooks.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", "skills", "ai-umpire", "SKILL.md"), "skill\n");
+    }
+  }
+
+  it("plans Claude Code instruction, command, skill, and hook assets without Claude-only files on Codex", () => {
+    const claude = composeHostToolkitManifests(["claude-code"], {
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    });
+    const claudePaths = claude.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
+    assert.deepEqual(claudePaths, [
+      "CLAUDE.md",
+      ".claude/commands/make-it-so.md",
+      ".claude/skills/make-it-so/SKILL.md",
+      ".claude/settings.json",
+    ]);
+    assert.ok(claude.manifests[0].assets.some((asset) => asset.kind === "subagent" && asset.required === false));
+    assert.equal(claude.mcp.optIn, false);
+    assert.equal(claude.mcp.configured, false);
+    assert.match(claude.mcp.caveat, /bypass QUBE policy/);
+
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-claude-pkg-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-claude-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const planned = runCli([
+      "init", ".", "--host", "claude-code", "--work-provider", "github", "--ci-provider", "github",
+      "--yes", "--dry-run", "--json",
+    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.equal(planned.status, 0, planned.stderr);
+    const parsed = JSON.parse(planned.stdout);
+    assert.deepEqual(parsed.hosts.selected, ["claude-code"]);
+    assert.deepEqual(
+      parsed.hosts.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path),
+      claudePaths,
+    );
+    assert.equal(parsed.selections.mcp, false);
+    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), false);
+    for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
+      assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
+    }
+
+    const codex = composeHostToolkitManifests(["codex"], { workProviders: ["github"], mcpOptIn: false });
+    const codexPaths = codex.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
+    assert.deepEqual(codexPaths, [
+      "AGENTS.md",
+      ".codex/prompts/make-it-so.md",
+      ".agents/plugins/marketplace.json",
+      "plugins/ai-umpire/.codex-plugin/plugin.json",
+      "plugins/ai-umpire/hooks/hooks.json",
+      "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
+    ]);
+    assert.ok(!codexPaths.some((item) => item.includes(".claude")));
+  });
+
+  it("does not write provider MCP config without an explicit --mcp opt-in", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-mcp-pkg-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-mcp-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+
+    const implicit = runCli([
+      "init", ".", "--host", "generic", "--work-provider", "github", "--ci-provider", "github",
+      "--yes", "--json",
+    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot, QUBE_MCP: "1", MCP: "1" } });
+    assert.equal(implicit.status, 0, implicit.stderr);
+    const implicitParsed = JSON.parse(implicit.stdout);
+    assert.equal(implicitParsed.selections.mcp, false);
+    assert.equal(implicitParsed.hosts.mcp.optIn, false);
+    assert.equal(implicitParsed.hosts.mcp.configured, false);
+    assert.equal(existsSync(path.join(cwd, QUBE_INIT_RECORD_PATH)), true);
+    for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
+      assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
+    }
+
+    const opted = runCli([
+      "init", ".", "--host", "generic", "--work-provider", "github", "--ci-provider", "github",
+      "--yes", "--mcp", "--json",
+    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.equal(opted.status, 0, opted.stderr);
+    const optedParsed = JSON.parse(opted.stdout);
+    assert.equal(optedParsed.selections.mcp, true);
+    assert.equal(optedParsed.hosts.mcp.optIn, true);
+    assert.equal(optedParsed.hosts.mcp.configured, false);
+    assert.match(optedParsed.hosts.mcp.caveat, /bypass QUBE policy/);
+    assert.equal(optedParsed.hosts.mcp.caveat, MCP_BYPASS_CAVEAT);
+    for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
+      assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
+    }
+  });
+
+  it("reports per-host toolkit completeness after init and missing when a required asset is absent", () => {
+    const completeRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-complete-"));
+    writeRequiredAssets(completeRoot, "claude-code");
+    writeInitRecord(completeRoot, createInitRecord({
+      hosts: ["claude-code"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const complete = probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
+    assert.equal(complete.status, "complete");
+    assert.deepEqual(complete.selected, ["claude-code"]);
+    assert.equal(complete.hosts[0].status, "complete");
+    assert.equal(complete.hosts[0].missing.length, 0);
+    assert.ok(!complete.recommendations.some((item) => /opencode/i.test(item)));
+
+    const missingRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-missing-"));
+    writeFileSync(path.join(missingRoot, "CLAUDE.md"), "instructions\n");
+    writeInitRecord(missingRoot, createInitRecord({
+      hosts: ["claude-code"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const missing = probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
+    assert.equal(missing.status, "missing");
+    assert.notEqual(missing.hosts[0].status, "complete");
+    assert.ok(missing.hosts[0].missing.includes(".claude/commands/make-it-so.md"));
+
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-doctor-pkg-"));
+    createQualityDoctorShim(qualityRoot);
+    const doctor = runCli(["doctor", "--offline", "--json"], { cwd: missingRoot, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(doctor.stdout);
+    assert.equal(parsed.hosts.status, "missing");
+    assert.equal(parsed.hosts.hosts[0].status, "missing");
+    assert.notEqual(doctor.status, 0);
+    assert.equal(parsed.ok, false);
+  });
+
+  it("does not report complete for an unknown or empty selected host record", () => {
+    const unknownRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-unknown-host-"));
+    writeInitRecord(unknownRoot, createInitRecord({
+      hosts: ["unsupported-host"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const unknown = probeHostToolkits({ cwd: unknownRoot, env: { PATH: "" }, offline: true });
+    assert.equal(unknown.status, "missing");
+    assert.equal(unknown.hosts[0].status, "missing");
+    assert.match(unknown.hosts[0].reason, /not a supported toolkit host/);
+
+    const emptyRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-empty-hosts-"));
+    writeInitRecord(emptyRoot, createInitRecord({
+      hosts: [],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const empty = probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
+    assert.equal(empty.status, "missing");
+    assert.notEqual(empty.status, "complete");
+  });
+
+  it("does not report Codex complete when only the marketplace file is present", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-codex-partial-"));
+    writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
+    mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
+    mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
+    writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
+    writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
+    writeInitRecord(cwd, createInitRecord({
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: true });
+    assert.equal(probed.status, "missing");
+    assert.ok(probed.hosts[0].missing.includes("plugins/ai-umpire/hooks/hooks.json"));
+  });
+
+  it("fails doctor when a required GitHub CLI dependency is missing", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-gh-missing-"));
+    writeRequiredAssets(cwd, "claude-code");
+    writeInitRecord(cwd, createInitRecord({
+      hosts: ["claude-code"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: false });
+    assert.equal(probed.status, "partial");
+    assert.equal(probed.cliDependencies[0].status, "missing");
+
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-gh-doctor-pkg-"));
+    createQualityDoctorShim(qualityRoot);
+    const doctor = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(doctor.stdout);
+    assert.equal(parsed.hosts.status, "partial");
+    assert.notEqual(doctor.status, 0);
+    assert.equal(parsed.ok, false);
+  });
+
+  it("exports host toolkit composition from the package surface", () => {
+    assert.equal(typeof composeHostToolkitManifests, "function");
+    assert.equal(typeof probeHostToolkits, "function");
+    assert.equal(typeof writeInitRecord, "function");
+    assert.equal(QUBE_INIT_RECORD_PATH, ".qube/init.json");
   });
 });
 

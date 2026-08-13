@@ -18,6 +18,15 @@ import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
+import {
+  composeHostToolkitManifests,
+  createInitRecord,
+  formatHostToolkits,
+  formatPlannedHostToolkits,
+  probeHostToolkits,
+  writeInitRecord,
+  type HostToolkitReport,
+} from "./host_toolkit.js";
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
@@ -889,7 +898,7 @@ interface DirectQubeCommand {
 const doctorCommand = defineCommand({
   kind: "command",
   name: "doctor",
-  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, and configured provider connection diagnostics.",
+  description: "Aggregate Quality Control, Executor workflow, Umpire continuation, host toolkit completeness, and configured provider connection diagnostics.",
   flags: [jsonFlag, offlineFlag],
   examples: [
     { description: "Run all diagnostics and live read-only provider probes.", command: "qube doctor" },
@@ -950,11 +959,17 @@ const initCommand = defineCommand({
       name: "with",
       description: "Comma-separated optional components to also initialize: aib, aiq.",
       type: "string"
+    }),
+    defineFlag({
+      name: "mcp",
+      description: "Opt in to host MCP wiring for exploratory reading. Default: off. Provider access stays on qube commands.",
+      type: "boolean"
     })
   ],
   examples: [
     { description: "Initialize the current directory for Claude Code with GitHub providers.", command: "qube init . --host claude-code --work-provider github --ci-provider github --yes" },
-    { description: "Initialize multiple hosts and also scaffold Bootstrap planning.", command: "qube init . --host claude-code,codex --with aib --yes --json" }
+    { description: "Initialize multiple hosts and also scaffold Bootstrap planning.", command: "qube init . --host claude-code,codex --with aib --yes --json" },
+    { description: "Record an explicit MCP opt-in. This does not install provider MCP servers.", command: "qube init . --host claude-code --mcp --yes --dry-run --json" }
   ],
   interactions: {
     json: true,
@@ -1451,6 +1466,10 @@ function formatContinuationHealth(continuation: QubeDoctorContinuationSection): 
   return `Continuation health: ${report?.status ?? "unknown"}\n`;
 }
 
+function toolkitExitCode(hosts: HostToolkitReport): number {
+  return hosts.status === "missing" || hosts.status === "partial" ? 1 : 0;
+}
+
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {
   const connectionsPromise = runConnectionDoctor({
     cwd: environment.cwd,
@@ -1459,11 +1478,14 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   });
   const workflowPromise = collectWorkflowReadiness(offline, environment);
   const continuationPromise = collectContinuationHealth(offline, environment);
+  const hosts = probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline });
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
     const [connections, workflow, continuation] = await Promise.all([connectionsPromise, workflowPromise, continuationPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
-    const exitCode = planned.exitCode === 0 ? Math.max(connectionExitCode, continuationExitCode(continuation)) : planned.exitCode || 1;
+    const exitCode = planned.exitCode === 0
+      ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
+      : planned.exitCode || 1;
     if (json) {
       const payload = {
         ok: false,
@@ -1471,6 +1493,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         quality: { ok: false, error: planned.stderr.trim() || "Quality Control doctor is unavailable." },
         workflow,
         continuation,
+        hosts,
         connectionStatus: connections.status,
         connections,
       };
@@ -1479,7 +1502,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
   const [connections, quality, workflow, continuation] = await Promise.all([
@@ -1491,7 +1514,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   const connectionExitCode = connections.status === "fail" ? 1 : 0;
   // Offline mode must not mask an actual Quality Control failure as success.
   let exitCode = quality.exitCode === 0
-    ? Math.max(connectionExitCode, continuationExitCode(continuation))
+    ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
     : (quality.exitCode || 1);
   if (json) {
     let qualityPayload: unknown;
@@ -1510,6 +1533,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
       quality: qualityPayload,
       workflow,
       continuation,
+      hosts,
       connectionStatus: connections.status,
       connections,
     };
@@ -1517,7 +1541,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
 }
@@ -1586,6 +1610,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const force = flags.force === true;
   const yes = flags.yes === true;
   const defaults = flags.defaults === true;
+  const mcpOptIn = flags.mcp === true;
 
   const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags, initCommand);
   const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags, initCommand);
@@ -1636,12 +1661,23 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     ciProviders,
     activeWorkProvider: workProviders[0],
     activeCiProvider: ciProviders[0],
-    withComponents
+    withComponents,
+    mcp: mcpOptIn
   };
+  const hostToolkits = composeHostToolkitManifests(hosts, { workProviders, ciProviders, mcpOptIn });
+  const targetPath = path.resolve(environment.cwd, target);
+  if (!dryRun && ok) {
+    writeInitRecord(targetPath, createInitRecord({
+      hosts,
+      workProviders,
+      ciProviders,
+      mcpOptIn,
+    }));
+  }
   const stderr = allRuns.map(run => run.stderr ?? "").filter(text => text.length > 0).join("");
 
   if (json) {
-    const payload = { ok, command: "init", selections, aie, aiu, with: withResults };
+    const payload = { ok, command: "init", selections, hosts: hostToolkits, aie, aiu, with: withResults };
     return { exitCode, jsonStdout: `${JSON.stringify(payload)}\n`, stderr };
   }
 
@@ -1652,6 +1688,8 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     `Work providers: ${workProviders.join(", ")} (active: ${workProviders[0]})`,
     `CI providers: ${ciProviders.join(", ")} (active: ${ciProviders[0]})`,
     ...(withComponents.length > 0 ? [`Also initialized: ${withComponents.join(", ")}`] : []),
+    "",
+    formatPlannedHostToolkits(hostToolkits).trimEnd(),
     ""
   ];
   for (const run of allRuns) {

@@ -1,5 +1,5 @@
 import { Config } from './config/index.js';
-import { AgentHostId, AgentHostProfile, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
+import { AgentHostId, AgentHostProfile, type CommandTarget, parseAgentHostSelection, uniqueAgentHostIds } from './agent_hosts.js';
 import { SUPPLY_CHAIN_GUARD_NAME, SUPPLY_CHAIN_GUARD_SKILL_PATH, SUPPLY_CHAIN_GUARD_URL } from './supply_chain_guard.js';
 import { getAgentDescriptor } from './agent_descriptors.js';
 import type { ReviewModelHostId } from './core/policy.js';
@@ -14,6 +14,19 @@ export function parseInitTool(value: string): InitTool[] | null {
 
 export function uniqueTools(tools: InitTool[]): InitTool[] {
   return uniqueAgentHostIds(tools);
+}
+
+export function commandTargetEnabled(config: Config, target: CommandTarget, hostId: AgentHostId): boolean {
+  if (target.enabledBy === 'always') return true;
+  if (target.enabledBy === 'opencodeCommandAlias') return config.opencodeCommandAlias;
+  if (target.enabledBy === 'hostLocalReview') {
+    return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.localReviewAgents.includes(hostId);
+  }
+  return false;
+}
+
+export function enabledCommandTargets(config: Config, host: AgentHostProfile): CommandTarget[] {
+  return host.commandTargets.filter(target => commandTargetEnabled(config, target, host.id));
 }
 
 function yesNo(value: boolean): string {
@@ -291,8 +304,9 @@ function renderTodoRequirementLines(config: Config, hosts: AgentHostProfile[]): 
 function renderHostCapabilityLines(config: Config, hosts: AgentHostProfile[]): string[] {
   const routedReview = routedLocalReviewEnabled(config);
   return hosts.map(host => {
+    const installedCommands = enabledCommandTargets(config, host);
     const commandText = host.supportsProjectCommands
-      ? `project commands or agents are installed when configured (${host.commandTargets.map(target => target.path).join(', ') || 'none'})`
+      ? `project commands or agents are installed when configured (${installedCommands.map(target => target.path).join(', ') || 'none'})`
       : 'project command files are not installed by Executor for this host';
     const dialogueText = routedReview
       ? 'Use host plan/todo support in the main session; run the configured `pr gate` route batch and do not spawn native review subagents for routed lanes'
