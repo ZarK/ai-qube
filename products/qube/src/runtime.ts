@@ -18,6 +18,7 @@ import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
+import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -103,6 +104,8 @@ interface InstallCommandStep {
   readonly stage: InstallCommandStage;
   readonly label: string;
   readonly command: string;
+  readonly status: InstallStepStatus;
+  readonly reason: string;
 }
 
 interface InstallOptionSummary {
@@ -132,6 +135,7 @@ interface InstallPlan {
   readonly options: InstallOptionGroups;
   readonly mode: "copy-commands";
   readonly dryRun: boolean;
+  readonly steps: readonly InstallCommandStep[];
   readonly commands: readonly InstallCommandStep[];
   readonly connections: readonly ConnectionContract[];
   readonly files: readonly string[];
@@ -4722,7 +4726,8 @@ function createInstallSelectionsFromFlags(flags: Readonly<Record<string, unknown
   };
 }
 
-function createInstallPlan(selections: InstallSelections, dryRun: boolean): InstallPlan {
+function createInstallPlan(selections: InstallSelections, dryRun: boolean, cwd = process.cwd()): InstallPlan {
+  const steps = createInstallCommands(selections, cwd);
   return {
     package: {
       name: packageName,
@@ -4732,7 +4737,8 @@ function createInstallPlan(selections: InstallSelections, dryRun: boolean): Inst
     options: createInstallOptionGroups(),
     mode: "copy-commands",
     dryRun,
-    commands: createInstallCommands(selections),
+    steps,
+    commands: steps.filter(step => step.status !== "satisfied"),
     connections: createInstallConnections(selections),
     files: createInstallFiles(selections),
     notes: createInstallNotes(selections)
@@ -4803,42 +4809,52 @@ function buildQubeInitCommand(selections: InstallSelections): string {
   return parts.join(" ");
 }
 
-function createPackageInstallCommand(selections: InstallSelections): InstallCommandStep {
+function createPackageInstallCommand(selections: InstallSelections, status: InstallStepStatus, reason: string): InstallCommandStep {
   const packageSpec = `${packageName}@${packageVersion}`;
   const label = selections.scope === "global" ? "Install QUBE globally for manual shell use." : "Install QUBE in the current project.";
   if (selections.packageManager === "pnpm" && selections.scope === "local") {
-    return { stage: "package-install", label, command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
+    return { stage: "package-install", label, command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
   }
   if (selections.packageManager === "pnpm" && selections.scope === "global") {
-    return { stage: "package-install", label, command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
+    return { stage: "package-install", label, command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
   }
   if (selections.packageManager === "npm" && selections.scope === "local") {
-    return { stage: "package-install", label, command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
+    return { stage: "package-install", label, command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
   }
-  return { stage: "package-install", label, command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim() };
+  return { stage: "package-install", label, command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
 }
 
-function createProviderSetupCommands(selections: InstallSelections): readonly InstallCommandStep[] {
+function createProviderSetupCommands(selections: InstallSelections, status: InstallStepStatus, reason: string): readonly InstallCommandStep[] {
   const commands: InstallCommandStep[] = [];
   if (selections.workProviders.includes("github") || selections.ciProviders.includes("github")) {
-    commands.push({ stage: "provider-setup", label: "Configure GitHub status labels.", command: "qube aie labels setup" });
+    commands.push({ stage: "provider-setup", label: "Configure GitHub status labels.", command: "qube aie labels setup", status, reason });
   }
   return Object.freeze(commands);
 }
 
-function createInstallCommands(selections: InstallSelections): readonly InstallCommandStep[] {
+function createInstallCommands(selections: InstallSelections, cwd: string): readonly InstallCommandStep[] {
+  const probed = probeInstallState(cwd, selections);
+  const byStage = new Map(probed.map(step => [step.stage, step]));
+  const packageState = byStage.get("package-install") ?? { status: "missing" as const, reason: "Package install state could not be probed." };
+  const workspaceState = byStage.get("workspace-init") ?? { status: "missing" as const, reason: "Workspace init state could not be probed." };
+  const providerState = byStage.get("provider-setup") ?? { status: "missing" as const, reason: "Provider setup state could not be probed." };
+  const verifyState = byStage.get("verify") ?? { status: "missing" as const, reason: "Verify state could not be probed." };
   return [
-    createPackageInstallCommand(selections),
+    createPackageInstallCommand(selections, packageState.status, packageState.reason),
     {
       stage: "workspace-init",
       label: "Initialize QUBE workspace setup for the selected hosts and providers.",
-      command: buildQubeInitCommand(selections)
+      command: buildQubeInitCommand(selections),
+      status: workspaceState.status,
+      reason: workspaceState.reason
     },
-    ...createProviderSetupCommands(selections),
+    ...createProviderSetupCommands(selections, providerState.status, providerState.reason),
     {
       stage: "verify",
       label: "Verify the workspace with the aggregating doctor.",
-      command: "qube doctor"
+      command: "qube doctor",
+      status: verifyState.status,
+      reason: verifyState.reason
     }
   ];
 }
@@ -4944,7 +4960,12 @@ function renderInstallPlan(plan: InstallPlan): string {
     `Migration path: ${plan.selections.migration}`,
     "",
     "Commands to run:",
-    ...plan.commands.flatMap((step, index) => [`${index + 1}. ${step.label}`, `   ${step.command}`]),
+    ...(plan.commands.length > 0
+      ? plan.commands.flatMap((step, index) => [`${index + 1}. [${step.status}] ${step.label}`, `   ${step.command}`, `   ${step.reason}`])
+      : ["None. Every probed setup step is already satisfied."]),
+    "",
+    "Step status:",
+    ...plan.steps.map(step => `- ${step.stage}: ${step.status} — ${step.reason}`),
     "",
     "Current options:",
     renderOptionSummary("Host surfaces", plan.options.hosts),
