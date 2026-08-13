@@ -4702,6 +4702,9 @@ async function runApplyComponents(environment: CliEnvironment, scope: InstallSco
   if (spawned.truncated) {
     return { error: "qube components --json output exceeded the capture limit." };
   }
+  if (spawned.exitCode !== 0) {
+    return { error: spawned.stderr.trim() || `qube components --json exited with code ${spawned.exitCode}.` };
+  }
   const stdout = spawned.stdout.trim();
   if (stdout === "") {
     return { error: spawned.stderr.trim() || "qube components --json did not return a JSON envelope." };
