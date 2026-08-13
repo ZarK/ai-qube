@@ -57,6 +57,45 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-focus.md')), false);
   });
 
+  it('plans Grok Build as its own init tool and does not write Codex files', async () => {
+    const repo = makeGitRepo();
+    const planned = await buildInitPlan({ target: '.', tool: 'grok-build', dryRun: true, force: false, cwd: repo });
+    assert.equal(planned.ok, true);
+    assert.deepEqual(planned.selectedTools, ['grok-build']);
+    assert.deepEqual(planned.actions.map(action => action.path), [join('.qube', 'aie', 'config.json'), 'AGENTS.md']);
+
+    const result = await runInit({ target: '.', tool: 'grok-build', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /Grok Build:/);
+    assert.match(agents, /Do not invent a Grok todo tool/);
+    assert.doesNotMatch(agents, /\.codex\//);
+    assert.equal(existsSync(join(repo, '.codex')), false);
+    assert.equal(existsSync(join(repo, '.claude')), false);
+    assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
+
+    const cli = binRun(['init', '.', '--tool', 'grok-build', '--dry-run', '--json'], repo);
+    assert.equal(cli.status, 0, cli.stderr);
+    const parsed = JSON.parse(cli.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selectedTools, ['grok-build']);
+  });
+
+  it('shares one AGENTS.md managed section for Grok Build plus Codex', async () => {
+    const repo = makeGitRepo();
+    const planned = await buildInitPlan({ target: '.', tool: 'grok-build,codex', dryRun: true, force: false, cwd: repo });
+    assert.equal(planned.ok, true);
+    assert.deepEqual(planned.selectedTools, ['codex', 'grok-build']);
+    const result = await runInit({ target: '.', tool: 'grok-build,codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.equal((agents.match(/<!-- BEGIN EXECUTOR MANAGED SECTION -->/g) || []).length, 1);
+    assert.match(agents, /Grok Build:/);
+    assert.match(agents, /Codex:/);
+    assert.match(agents, /\.codex\/prompts\/make-it-so\.md/);
+    assert.equal(existsSync(join(repo, '.codex', 'prompts', 'make-it-so.md')), true);
+  });
+
   it('writes the Codex make-it-so prompt for a Codex-only init', async () => {
     const repo = makeGitRepo();
     const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
@@ -1001,10 +1040,11 @@ describe('init service', () => {
     const codex = profiles.find(profile => profile.id === 'codex');
     const claude = profiles.find(profile => profile.id === 'claude-code');
 
-    assert.equal(profiles.length, 3);
+    assert.equal(profiles.length, 4);
     assert.ok(opencode);
     assert.ok(codex);
     assert.ok(claude);
+    assert.ok(profiles.find(profile => profile.id === 'grok-build'));
     assert.equal(opencode.supportsProjectCommands, true);
     assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
     assert.equal(codex.supportsProjectCommands, true);
@@ -1015,7 +1055,7 @@ describe('init service', () => {
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
     const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');
-    assert.deepEqual(agentsHosts, ['opencode', 'codex']);
+    assert.deepEqual(agentsHosts, ['opencode', 'codex', 'grok-build']);
 
     const wrapperPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { legacyScripts: 'install-wrappers' } } });
     const cleanupPlan = await buildInitPlan({ target: '.', tool: 'opencode', dryRun: true, force: false, cwd: repo, policy: { migration: { cleanupKnownHelpers: true } } });
@@ -1064,9 +1104,9 @@ describe('init service', () => {
 
     assert.equal(result.status, 0, result.stderr);
     const parsed = JSON.parse(result.stdout);
-    assert.deepEqual(parsed.profiles, ['opencode']);
+    assert.deepEqual(parsed.profiles, ['opencode', 'grok-build']);
     assert.deepEqual(parsed.paths, ['AGENTS.md']);
-    assert.deepEqual(parsed.agentsHosts, ['opencode']);
+    assert.deepEqual(parsed.agentsHosts, ['opencode', 'grok-build']);
     assert.equal(parsed.claudeHosts, null);
     assert.match(parsed.explicitClaudeMessage, /Claude Code host profile adapter @tjalve\/qube-adapter-claude-code is not installed/);
   });
@@ -1114,11 +1154,11 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    assert.equal(JSON.parse(json.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(JSON.parse(json.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
     assert.equal(jsonWithTool.status, 0);
-    assert.equal(JSON.parse(jsonWithTool.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(JSON.parse(jsonWithTool.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
     assert.equal(jsonWithListFlag.status, 0);
-    assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 
@@ -1218,7 +1258,7 @@ describe('init command metadata', () => {
     const tool = metadata.flagDetails.find(flag => flag.name === '--tool');
     const missingMilestone = metadata.flagDetails.find(flag => flag.name === '--missing-milestone');
     const age = metadata.flagDetails.find(flag => flag.name === '--package-age-days');
-    assert.deepEqual(tool.options, ['opencode', 'codex', 'claude-code', 'all']);
+    assert.deepEqual(tool.options, ['opencode', 'codex', 'claude-code', 'grok-build', 'all']);
     assert.deepEqual(missingMilestone.options, ['ignore', 'warn', 'block']);
     assert.equal(age.type, 'integer');
   });

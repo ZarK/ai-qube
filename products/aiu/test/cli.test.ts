@@ -246,13 +246,14 @@ describe("metadata-backed CLI", () => {
     assert.ok(config.errors?.some((error) => error.kind === "unsafe-command-descriptor"));
     assert.equal(parsed.sections?.config?.schemaVersion, 1);
     assert.equal(parsed.sections?.config?.defaultPath, ".qube/aiu/config.json");
-    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code"]);
+    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilityNames, ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"]);
     assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "recipe-only", "unsupported"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilitySupport, ["supported", "experimental", "disabled", "unsupported", "unknown"]);
-    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code"]);
-    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental"]);
+    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(parsed.sections?.config?.hostProfiles?.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
     assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "codex")?.stopHook?.blocksByDefault, true);
+    assert.equal(parsed.sections?.config?.hostProfiles?.find((profile) => profile.tool === "grok-build")?.stopHook?.support, "unsupported");
     assert.ok(parsed.sections?.config?.policyFields?.includes("hosts.stopHookBlocking"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("planning.enabled"));
     assert.ok(parsed.sections?.config?.policyFields?.includes("whip.enabled"));

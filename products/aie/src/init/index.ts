@@ -369,7 +369,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
         completedChanges: [],
         skippedActions: [],
         warnings,
-        errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, or all.`],
+        errors: [`Unsupported init tool "${options.tool}". Use opencode, codex, claude-code, grok-build, or all.`],
         nextCommand: 'Run `qube aie init --help` to see supported tool values.',
       },
       writes,

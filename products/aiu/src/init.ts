@@ -16,7 +16,7 @@ import {
   type AiuManagedHostFile,
 } from "./host_policy.js";
 
-export const AIU_INIT_TOOLS = ["opencode", "codex", "claude-code", "all"] as const;
+export const AIU_INIT_TOOLS = ["opencode", "codex", "claude-code", "grok-build", "all"] as const;
 
 export type AiuInitTool = (typeof AIU_INIT_TOOLS)[number];
 export type AiuInitFileOperation = "create" | "update" | "skip" | "conflict";
@@ -339,7 +339,7 @@ function parseJsonObject(raw: string): { readonly ok: true; readonly value: Reco
 
 function readMergedHosts(config: Record<string, unknown>): readonly AiuHost[] {
   const hosts = isRecord(config.hosts) && Array.isArray(config.hosts.enabled) ? config.hosts.enabled : [];
-  return hosts.filter((host): host is AiuHost => typeof host === "string" && ["opencode", "codex", "claude-code"].includes(host));
+  return hosts.filter((host): host is AiuHost => typeof host === "string" && ["opencode", "codex", "claude-code", "grok-build"].includes(host));
 }
 
 function readMergedTrustedStateCommandNames(config: Record<string, unknown>): readonly string[] {

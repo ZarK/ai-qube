@@ -127,6 +127,37 @@ function createJsonEnvelopeShim(root, componentId, payload) {
   writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: `@tjalve/${componentId}`, version: findQubeComponent(componentId).packageVersion })}\n`, "utf8");
 }
 
+function createAiuMergingShim(root) {
+  const binDir = path.join(root, "node_modules", ".bin");
+  const packageDir = path.join(root, "node_modules", "@tjalve", "aiu");
+  mkdirSync(binDir, { recursive: true });
+  mkdirSync(packageDir, { recursive: true });
+  const scriptPath = path.join(packageDir, "merge.mjs");
+  writeFileSync(scriptPath, [
+    "import { existsSync, mkdirSync, readFileSync, writeFileSync } from \"node:fs\";",
+    "import path from \"node:path\";",
+    "const toolIndex = process.argv.indexOf(\"--tool\");",
+    "const tool = toolIndex >= 0 ? process.argv[toolIndex + 1] : \"unknown\";",
+    "const configPath = path.join(process.cwd(), \".qube\", \"aiu\", \"config.json\");",
+    "mkdirSync(path.dirname(configPath), { recursive: true });",
+    "let enabled = [];",
+    "if (existsSync(configPath)) {",
+    "  enabled = JSON.parse(readFileSync(configPath, \"utf8\")).hosts.enabled;",
+    "}",
+    "const next = { hosts: { enabled: [...new Set([...enabled, tool])] } };",
+    "await new Promise((resolve) => setTimeout(resolve, 150));",
+    "writeFileSync(configPath, JSON.stringify(next));",
+    "process.stdout.write(JSON.stringify({ ok: true, command: \"init\", init: { tools: [tool] } }) + \"\\n\");",
+    "",
+  ].join("\n"), "utf8");
+  const commandPath = path.join(binDir, process.platform === "win32" ? "aiu.cmd" : "aiu");
+  writeFileSync(commandPath, process.platform === "win32"
+    ? `@echo off\r\n"${process.execPath}" "%~dp0..\\@tjalve\\aiu\\merge.mjs" %*\r\n`
+    : `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(scriptPath)} "$@"\n`, "utf8");
+  if (process.platform !== "win32") chmodSync(commandPath, 0o755);
+  writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name: "@tjalve/aiu", version: findQubeComponent("aiu").packageVersion })}\n`, "utf8");
+}
+
 function createAutoresearchPackageTarget(cwd, initialScore = 10, options = {}) {
   const target = path.join(cwd, "target");
   mkdirSync(target, { recursive: true });
@@ -2451,9 +2482,81 @@ describe("qube init composer orchestrator", () => {
     const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { cwd: partialCwd, env: initEnv(partialRoot) });
     assert.equal(partialResult.status, 0, partialResult.stderr);
     const partialParsed = JSON.parse(partialResult.stdout);
-    assert.equal(partialParsed.aie.length, 2);
-    const tools = partialParsed.aie.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(tools, ["claude-code", "opencode"]);
+    assert.equal(partialParsed.aie.length, 1);
+    assert.equal(partialParsed.aie[0].args[partialParsed.aie[0].args.indexOf("--tool") + 1], "opencode,claude-code");
+    assert.equal(partialParsed.aiu.length, 2);
+    const aiuTools = partialParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(aiuTools, ["claude-code", "opencode"]);
+  });
+
+  it("treats Grok Build as its own init tool instead of Codex", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: true, selectedTools: ["grok-build"], actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true, tools: ["grok-build"] } });
+    const result = runCli(["init", ".", "--host", "grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selections.hosts, ["grok-build"]);
+    assert.equal(parsed.aie.length, 1);
+    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "grok-build", "--dry-run", "--yes"]);
+    assert.equal(parsed.aiu.length, 1);
+    assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "grok-build", "--dry-run"]);
+    assert.equal(parsed.aie[0].args.includes("codex"), false);
+    assert.equal(parsed.aiu[0].args.includes("codex"), false);
+  });
+
+  it("keeps classic all-host init separate from an explicit Grok Build selection", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const classic = runCli(["init", ".", "--host", "opencode,codex,claude-code", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(classic.status, 0, classic.stderr);
+    const classicParsed = JSON.parse(classic.stdout);
+    assert.equal(classicParsed.aie.length, 1);
+    assert.equal(classicParsed.aie[0].args[classicParsed.aie[0].args.indexOf("--tool") + 1], "all");
+    assert.equal(classicParsed.aiu.length, 1);
+    assert.equal(classicParsed.aiu[0].args[classicParsed.aiu[0].args.indexOf("--tool") + 1], "all");
+
+    const combined = runCli(["init", ".", "--host", "opencode,codex,claude-code,grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(combined.status, 0, combined.stderr);
+    const combinedParsed = JSON.parse(combined.stdout);
+    assert.equal(combinedParsed.aie.length, 1);
+    assert.equal(combinedParsed.aie[0].args[combinedParsed.aie[0].args.indexOf("--tool") + 1], "all,grok-build");
+    const combinedAiuTools = combinedParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(combinedAiuTools, ["all", "grok-build"]);
+  });
+
+  it("applies Umpire host inits one after another so combined hosts stay in config", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-aiu-seq-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createAiuMergingShim(packageRoot);
+    const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.aiu.length, 2);
+    const configPath = path.join(cwd, ".qube", "aiu", "config.json");
+    assert.equal(existsSync(configPath), true);
+    const enabled = JSON.parse(readFileSync(configPath, "utf8")).hosts.enabled.sort();
+    assert.deepEqual(enabled, ["codex", "grok-build"]);
+  });
+
+  it("keeps one Executor init for Grok Build plus Codex and fans Umpire per host", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.aie.length, 1);
+    assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "codex,grok-build");
+    assert.equal(parsed.aiu.length, 2);
+    const aiuTools = parsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(aiuTools, ["codex", "grok-build"]);
   });
 
   it("also initializes aib when selected through --with", () => {

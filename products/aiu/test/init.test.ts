@@ -94,6 +94,25 @@ describe("init planner", () => {
     }
   });
 
+  it("initializes Grok Build without Codex or Claude Code files", async () => {
+    const target = await createRepoRoot();
+    const result = await runCli(target, ["init", "--tool", "grok-build", "--json"]);
+    const parsed = JSON.parse(result.stdout) as InitEnvelope;
+    const config = JSON.parse(await readFile(path.join(target, ".qube", "aiu", "config.json"), "utf8")) as {
+      hosts: { enabled: string[] };
+    };
+
+    assert.equal(result.exitCode, 0);
+    assert.equal(parsed.init.ok, true);
+    assert.deepEqual(parsed.init.tools, ["grok-build"]);
+    assert.deepEqual(config.hosts.enabled, ["grok-build"]);
+    assert.equal(parsed.init.files.length, 0);
+    assert.equal(existsSync(path.join(target, ".agents", "plugins", "marketplace.json")), false);
+    assert.equal(existsSync(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json")), false);
+    assert.equal(existsSync(path.join(target, ".claude", "settings.json")), false);
+    assert.equal(existsSync(path.join(target, ".opencode", "plugins", "ai-umpire-continuation.ts")), false);
+  });
+
   it("applies --tool all through host capability profiles", async () => {
     const target = await createRepoRoot();
     const result = await runCli(target, ["init", "--tool", "all", "--json"]);

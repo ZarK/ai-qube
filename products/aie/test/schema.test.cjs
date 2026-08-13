@@ -113,7 +113,7 @@ describe('schema command', () => {
     assert.deepEqual(flag(init, 'tool').tokens, ['--tool']);
     assert.ok(flag(init, 'missing-milestone'));
     assert.ok(flag(init, 'unverified-risk-approval').tokens.includes('--no-unverified-risk-approval'));
-    assert.deepEqual(flag(init, 'tool').options, ['all', 'claude-code', 'codex', 'opencode']);
+    assert.deepEqual(flag(init, 'tool').options, ['all', 'claude-code', 'codex', 'grok-build', 'opencode']);
     assert.deepEqual(flag(init, 'missing-milestone').options, ['block', 'ignore', 'warn']);
     assert.equal(flag(init, 'package-age-days').type, 'integer');
     assert.match(flag(init, 'unverified-risk-approval').description, /source\/provenance/);
