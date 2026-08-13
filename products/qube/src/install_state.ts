@@ -10,6 +10,7 @@ export type InstallStepStatus = "satisfied" | "stale" | "missing";
 
 export interface InstallStateSelections {
   readonly scope: "local" | "global";
+  readonly packageManager: "npm" | "pnpm";
   readonly hosts: readonly string[];
   readonly workProviders: readonly string[];
   readonly ciProviders: readonly string[];
@@ -87,7 +88,7 @@ function selectedAdapterPackages(selections: InstallStateSelections): readonly s
 export function instructionTargetsForHosts(hosts: readonly string[]): readonly string[] {
   const targets = new Set<string>();
   for (const host of hosts) {
-    if (host === "codex" || host === "grok-build") targets.add("AGENTS.md");
+    if (host === "codex" || host === "grok-build" || host === "opencode") targets.add("AGENTS.md");
     if (host === "claude-code") targets.add("CLAUDE.md");
   }
   return [...targets];
@@ -139,7 +140,21 @@ function globalRoot(packageManager: "npm" | "pnpm"): string | null {
   }
 }
 
+function probeGlobalPackageInstall(selections: InstallStateSelections): InstallStepState {
+  const root = globalRoot(selections.packageManager);
+  if (!root || installedPackageVersion(root, packageName) !== packageVersion) {
+    return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is not installed globally with ${selections.packageManager}.` };
+  }
+  for (const adapterName of selectedAdapterPackages(selections)) {
+    if (!installedPackageVersion(root, adapterName)) {
+      return { stage: "package-install", status: "missing", reason: `Selected adapter ${adapterName} is not installed globally.` };
+    }
+  }
+  return { stage: "package-install", status: "satisfied", reason: "The selected QUBE and adapter packages are installed globally at the expected versions." };
+}
+
 function probePackageInstall(cwd: string, selections: InstallStateSelections): InstallStepState {
+  if (selections.scope === "global") return probeGlobalPackageInstall(selections);
   const manifestPath = resolveContained(cwd, "package.json");
   if (!existsSync(manifestPath)) {
     return { stage: "package-install", status: "missing", reason: "No package.json is present to declare the QUBE install." };
@@ -154,13 +169,6 @@ function probePackageInstall(cwd: string, selections: InstallStateSelections): I
   }
   if (parsed.name === packageName) {
     return { stage: "package-install", status: "missing", reason: "This working directory is the QUBE package itself, not a consumer install." };
-  }
-  if (selections.scope === "global") {
-    const root = globalRoot("pnpm") ?? globalRoot("npm");
-    if (!root || installedPackageVersion(root, packageName) !== packageVersion) {
-      return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is not installed globally.` };
-    }
-    return { stage: "package-install", status: "satisfied", reason: "The selected QUBE package is installed globally at the expected version." };
   }
   const declared = declaredPackageVersion(parsed, packageName);
   if (declared !== packageVersion) {

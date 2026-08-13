@@ -604,7 +604,7 @@ describe("qube composer CLI", () => {
 
   it("keeps unknown package state missing instead of satisfied", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-empty-"));
-    const state = probeInstallState(root, { scope: "local", hosts: ["generic"], workProviders: ["github"], ciProviders: ["github"] });
+    const state = probeInstallState(root, { scope: "local", packageManager: "pnpm", hosts: ["generic"], workProviders: ["github"], ciProviders: ["github"] });
     assert.equal(state.find(step => step.stage === "package-install").status, "missing");
     assert.equal(state.find(step => step.stage === "workspace-init").status, "missing");
     assert.equal(state.every(step => step.status !== "satisfied"), true);
