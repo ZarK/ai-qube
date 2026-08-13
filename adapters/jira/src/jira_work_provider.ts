@@ -6,6 +6,8 @@ export interface JiraRestClient {
   getIssue(key: string): Promise<JiraIssue>;
 }
 
+export type JiraFetch = typeof fetch;
+
 export interface JiraWorkProviderOptions {
   readonly client?: JiraRestClient;
   readonly baseUrl?: string;
@@ -16,6 +18,10 @@ export interface JiraWorkProviderOptions {
   readonly limit?: number;
   readonly workflowSchema?: JiraWorkflowSchema;
   readonly requestTimeoutMs?: number;
+  /** Injected HTTP transport for fixture replay and tests. Defaults to global fetch. */
+  readonly fetch?: JiraFetch;
+  /** REST search page size. Defaults to 100. */
+  readonly pageSize?: number;
 }
 
 interface JiraSearchResponse {
@@ -27,6 +33,14 @@ interface JiraSearchResponse {
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const DEFAULT_SEARCH_PAGE_SIZE = 100;
+
+function searchPageSize(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_SEARCH_PAGE_SIZE;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error("Jira work provider pageSize must be a positive integer.");
+  }
+  return value;
+}
 const DEFAULT_WORK_ITEM_LIMIT = 100;
 const MAX_WORK_ITEM_LIMIT = 1_000;
 const JIRA_PROJECT_KEY = /^[A-Z][A-Z0-9_]*$/u;
@@ -56,6 +70,8 @@ class FetchJiraRestClient implements JiraRestClient {
   private readonly requestTimeoutMs: number;
   private readonly listFields: readonly string[];
   private readonly issueFields: readonly string[];
+  private readonly fetchImpl: JiraFetch;
+  private readonly pageSize: number;
 
   constructor(options: JiraWorkProviderOptions) {
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JIRA_BASE_URL, "JIRA_BASE_URL"));
@@ -64,6 +80,8 @@ class FetchJiraRestClient implements JiraRestClient {
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
     this.listFields = searchFields(options.workflowSchema);
     this.issueFields = issueFields(options.workflowSchema);
+    this.fetchImpl = options.fetch ?? fetch;
+    this.pageSize = searchPageSize(options.pageSize);
   }
 
   async listIssues(input: { jql: string; limit: number; fields?: readonly string[] }): Promise<JiraIssue[]> {
@@ -71,7 +89,7 @@ class FetchJiraRestClient implements JiraRestClient {
     const fields = input.fields ?? this.listFields;
     let startAt = 0;
     while (issues.length < input.limit) {
-      const maxResults = Math.min(DEFAULT_SEARCH_PAGE_SIZE, input.limit - issues.length);
+      const maxResults = Math.min(this.pageSize, input.limit - issues.length);
       const payload = await this.searchPage({ jql: input.jql, fields, startAt, maxResults });
       const pageIssues = [...(payload.issues ?? [])];
       issues.push(...pageIssues);
@@ -102,7 +120,7 @@ class FetchJiraRestClient implements JiraRestClient {
   private async request<T>(url: URL): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.fetchImpl(url, {
         method: "GET",
         headers: {
           Authorization: `Basic ${Buffer.from(`${this.email}:${this.apiToken}`, "utf8").toString("base64")}`,

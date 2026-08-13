@@ -37,12 +37,16 @@ export interface JenkinsRestClient {
   getBuild(input: { readonly jobPath: string; readonly build: JenkinsBuildSelector }): Promise<JenkinsBuild>;
 }
 
+export type JenkinsFetch = typeof fetch;
+
 export interface JenkinsCiProviderOptions {
   readonly client?: JenkinsRestClient;
   readonly baseUrl?: string;
   readonly user?: string;
   readonly apiToken?: string;
   readonly requestTimeoutMs?: number;
+  /** Injected HTTP transport for fixture replay and tests. Defaults to global fetch. */
+  readonly fetch?: JenkinsFetch;
 }
 
 export interface JenkinsBuildEvidenceInput {
@@ -143,6 +147,7 @@ class FetchJenkinsRestClient implements JenkinsRestClient {
   private readonly user: string | undefined;
   private readonly apiToken: string | undefined;
   private readonly requestTimeoutMs: number;
+  private readonly fetchImpl: JenkinsFetch;
 
   constructor(options: JenkinsCiProviderOptions) {
     this.baseUrl = normalizeBaseUrl(required(options.baseUrl ?? process.env.JENKINS_BASE_URL, "JENKINS_BASE_URL"));
@@ -152,6 +157,7 @@ class FetchJenkinsRestClient implements JenkinsRestClient {
       throw new Error("Jenkins CI provider requires both JENKINS_USER and JENKINS_API_TOKEN when either credential is present.");
     }
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
+    this.fetchImpl = options.fetch ?? fetch;
   }
 
   async getBuild(input: { readonly jobPath: string; readonly build: JenkinsBuildSelector }): Promise<JenkinsBuild> {
@@ -162,7 +168,7 @@ class FetchJenkinsRestClient implements JenkinsRestClient {
     }
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.fetchImpl(url, {
         method: "GET",
         headers,
         signal: AbortSignal.timeout(this.requestTimeoutMs),

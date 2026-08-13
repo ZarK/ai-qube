@@ -66,6 +66,8 @@ export interface GitLabReviewRestClient {
   getCurrentUser?(): Promise<GitLabUser>;
 }
 
+export type GitLabReviewFetch = typeof fetch;
+
 export interface GitLabReviewProviderOptions {
   readonly client?: GitLabReviewRestClient;
   readonly token?: string;
@@ -76,6 +78,8 @@ export interface GitLabReviewProviderOptions {
   readonly maxReviewPages?: number;
   readonly maxReviewItems?: number;
   readonly maxResponseBytes?: number;
+  /** Injected HTTP transport for fixture replay and tests. Defaults to global fetch. */
+  readonly fetch?: GitLabReviewFetch;
 }
 
 export interface GitLabReviewPullRequest {

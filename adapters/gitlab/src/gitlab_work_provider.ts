@@ -6,6 +6,8 @@ export interface GitLabRestClient {
   getIssue(input: { projectId: string; iid: string }): Promise<GitLabIssue>;
 }
 
+export type GitLabFetch = typeof fetch;
+
 export interface GitLabWorkProviderOptions {
   client?: GitLabRestClient;
   token?: string;
@@ -14,11 +16,23 @@ export interface GitLabWorkProviderOptions {
   limit?: number;
   includeIssueLinks?: boolean;
   requestTimeoutMs?: number;
+  /** Injected HTTP transport for fixture replay and tests. Defaults to global fetch. */
+  fetch?: GitLabFetch;
+  /** REST list page size. Defaults to 100. */
+  pageSize?: number;
 }
 
 const GITLAB_BASE_URL = 'https://gitlab.com';
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 const GITLAB_PAGE_LIMIT = 100;
+
+function listPageSize(value: number | undefined): number {
+  if (value === undefined) return GITLAB_PAGE_LIMIT;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('GitLab work provider pageSize must be a positive integer.');
+  }
+  return value;
+}
 const DEFAULT_LIMIT = Number.MAX_SAFE_INTEGER;
 
 function required(value: string | undefined, name: string): string {
@@ -60,19 +74,23 @@ class FetchGitLabRestClient implements GitLabRestClient {
   private readonly token: string;
   private readonly includeIssueLinks: boolean;
   private readonly requestTimeoutMs: number;
+  private readonly fetchImpl: GitLabFetch;
+  private readonly pageSize: number;
 
   constructor(options: GitLabWorkProviderOptions) {
     this.apiBaseUrl = `${(options.baseUrl ?? process.env.GITLAB_BASE_URL ?? GITLAB_BASE_URL).replace(/\/+$/, '')}/api/v4`;
     this.token = required(options.token ?? process.env.GITLAB_TOKEN, 'GITLAB_TOKEN');
     this.includeIssueLinks = options.includeIssueLinks ?? true;
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
+    this.fetchImpl = options.fetch ?? fetch;
+    this.pageSize = listPageSize(options.pageSize);
   }
 
   async listOpenIssues(input: { projectId: string; limit: number }): Promise<GitLabIssue[]> {
     const issues: GitLabIssue[] = [];
     let page: string | null = '1';
     while (page && issues.length < input.limit) {
-      const perPage = Math.min(GITLAB_PAGE_LIMIT, input.limit - issues.length);
+      const perPage = Math.min(this.pageSize, input.limit - issues.length);
       const result: { value: GitLabIssue[]; nextPage: string | null } = await this.getPage<GitLabIssue[]>(`/projects/${encodeProjectId(input.projectId)}/issues`, {
         state: 'opened',
         scope: 'all',
@@ -113,7 +131,7 @@ class FetchGitLabRestClient implements GitLabRestClient {
     }
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.fetchImpl(url, {
         headers: {
           'PRIVATE-TOKEN': this.token,
           Accept: 'application/json',

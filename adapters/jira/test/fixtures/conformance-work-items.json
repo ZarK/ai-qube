@@ -1,0 +1,232 @@
+{
+  "recordedFrom": "Jira REST /rest/api/3/search issues[] payloads",
+  "jql": "project = ENG AND resolution = Unresolved ORDER BY Rank",
+  "issues": [
+    {
+      "id": "ENG201",
+      "key": "ENG-201",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-201",
+      "fields": {
+        "summary": "Fixture ready issue",
+        "description": "- [x] map\n- [ ] harness",
+        "status": {
+          "name": "To Do",
+          "statusCategory": {
+            "key": "new",
+            "name": "new"
+          }
+        },
+        "priority": {
+          "name": "High"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": [
+          {
+            "type": {
+              "name": "Blocks",
+              "inward": "is blocked by",
+              "outward": "blocks"
+            },
+            "inwardIssue": {
+              "key": "ENG-204",
+              "fields": {
+                "summary": "blocker"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ENG202",
+      "key": "ENG-202",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-202",
+      "fields": {
+        "summary": "Fixture in-progress issue",
+        "description": "* [x] start\n* [ ] finish",
+        "status": {
+          "name": "In Progress",
+          "statusCategory": {
+            "key": "indeterminate",
+            "name": "indeterminate"
+          }
+        },
+        "priority": {
+          "name": "Highest"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": []
+      }
+    },
+    {
+      "id": "ENG203",
+      "key": "ENG-203",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-203",
+      "fields": {
+        "summary": "Fixture medium-priority issue",
+        "description": "Plain body",
+        "status": {
+          "name": "To Do",
+          "statusCategory": {
+            "key": "new",
+            "name": "new"
+          }
+        },
+        "priority": {
+          "name": "Medium"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": []
+      }
+    },
+    {
+      "id": "ENG204",
+      "key": "ENG-204",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-204",
+      "fields": {
+        "summary": "Fixture blocking issue",
+        "description": "* [ ] keep blocking",
+        "status": {
+          "name": "In Progress",
+          "statusCategory": {
+            "key": "indeterminate",
+            "name": "indeterminate"
+          }
+        },
+        "priority": {
+          "name": "High"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": [
+          {
+            "type": {
+              "name": "Blocks",
+              "inward": "is blocked by",
+              "outward": "blocks"
+            },
+            "outwardIssue": {
+              "key": "ENG-201",
+              "fields": {
+                "summary": "blocked"
+              }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ENG205",
+      "key": "ENG-205",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-205",
+      "fields": {
+        "summary": "Fixture low-priority issue",
+        "description": "* [ ] later",
+        "status": {
+          "name": "Backlog",
+          "statusCategory": {
+            "key": "new",
+            "name": "new"
+          }
+        },
+        "priority": {
+          "name": "Low"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": []
+      }
+    },
+    {
+      "id": "ENG206",
+      "key": "ENG-206",
+      "self": "https://acme.atlassian.net/rest/api/3/issue/ENG-206",
+      "fields": {
+        "summary": "Fixture blocked issue",
+        "description": "* [ ] waiting\nBlocked on dependency.",
+        "status": {
+          "name": "Blocked",
+          "statusCategory": {
+            "key": "indeterminate",
+            "name": "indeterminate"
+          }
+        },
+        "priority": {
+          "name": "High"
+        },
+        "assignee": {
+          "displayName": "Fixture Bot"
+        },
+        "labels": [
+          "fixture"
+        ],
+        "issuetype": {
+          "name": "Task"
+        },
+        "project": {
+          "key": "ENG",
+          "name": "Engineering"
+        },
+        "issuelinks": []
+      }
+    }
+  ]
+}

@@ -16,6 +16,7 @@ export type {
   JenkinsBuildResult,
   JenkinsBuildSelector,
   JenkinsCiProviderCapabilities,
+  JenkinsFetch,
   JenkinsCiProviderOptions,
   JenkinsQueueItem,
   JenkinsRestClient,

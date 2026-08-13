@@ -51,6 +51,7 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   private readonly maxReviewPages: number;
   private readonly maxReviewItems: number;
   private readonly maxResponseBytes: number;
+  private readonly fetchImpl: NonNullable<GitLabReviewProviderOptions["fetch"]>;
 
   constructor(options: GitLabReviewProviderOptions) {
     this.apiBaseUrl = `${(options.baseUrl ?? process.env.GITLAB_BASE_URL ?? GITLAB_BASE_URL).replace(/\/+$/, "")}/api/v4`;
@@ -59,6 +60,7 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
     this.maxReviewPages = positiveInteger(options.maxReviewPages, DEFAULT_MAX_REVIEW_PAGES, "maxReviewPages");
     this.maxReviewItems = positiveInteger(options.maxReviewItems, DEFAULT_MAX_REVIEW_ITEMS, "maxReviewItems");
     this.maxResponseBytes = positiveInteger(options.maxResponseBytes, DEFAULT_MAX_RESPONSE_BYTES, "maxResponseBytes");
+    this.fetchImpl = options.fetch ?? fetch;
   }
 
   async getMergeRequest(input: { projectId: string; iid: string }): Promise<GitLabMergeRequest> {
@@ -152,7 +154,7 @@ export class FetchGitLabReviewRestClient implements GitLabReviewRestClient {
   private async request(url: URL, init: RequestInit): Promise<Response> {
     let response: Response;
     try {
-      response = await fetch(url, {
+      response = await this.fetchImpl(url, {
         ...init,
         headers: {
           "PRIVATE-TOKEN": this.token,
