@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
+import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderGrokEconomyAgent, renderGrokReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
 import { economyCatalogAgent } from './review_catalog.js';
 
 export interface InitRenderContext {
@@ -63,6 +63,10 @@ function commandBody(config: Config, target: CommandTarget, context: InitRenderC
   if (target.renderer === 'opencode-review-explorer-agent') return renderOpenCodeEconomyAgent(economyCatalogAgent('qube-review-explorer'), config);
   if (target.renderer === 'opencode-review-digest-agent') return renderOpenCodeEconomyAgent(economyCatalogAgent('qube-review-digest'), config);
   if (target.renderer === 'opencode-review-librarian-agent') return renderOpenCodeEconomyAgent(economyCatalogAgent('qube-review-librarian'), config);
+  if (target.renderer === 'grok-review-focus-agent') return renderGrokReviewFocusAgent(config);
+  if (target.renderer === 'grok-review-explorer-agent') return renderGrokEconomyAgent(economyCatalogAgent('qube-review-explorer'), config);
+  if (target.renderer === 'grok-review-digest-agent') return renderGrokEconomyAgent(economyCatalogAgent('qube-review-digest'), config);
+  if (target.renderer === 'grok-review-librarian-agent') return renderGrokEconomyAgent(economyCatalogAgent('qube-review-librarian'), config);
   const exhaustive: never = target.renderer;
   throw new Error(`Unsupported init command renderer ${exhaustive as CommandRenderer}. Next action: use a supported Executor host profile command target.`);
 }
