@@ -1,10 +1,12 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { LocalReviewTrust } from './local_review_evidence.js';
+import { dirname, isAbsolute, relative, resolve } from 'node:path';
+import { verifyTrustedStoreChain, type LocalReviewTrust } from './local_review_evidence.js';
 import { redact } from './redact.js';
 
 export const REVIEW_LEARNINGS_RELATIVE_PATH = '.qube/aie/review-learnings.json';
+export const REVIEW_LEARNINGS_RENDER_LIMIT = 20;
+const LEARNINGS_STORE = ['.qube', 'aie'] as const;
 
 export type ReviewLearningDisposition = 'accepted' | 'rejected' | 'guidance';
 
@@ -54,13 +56,7 @@ export function resolveReviewLearningsPath(repoRoot: string, relativePath = REVI
   if (!normalized.startsWith('.qube/aie/')) {
     throw new Error(`Refusing review learnings path ${relativePath}. Learnings must live under .qube/aie/.`);
   }
-  try {
-    if (lstatSync(resolved).isSymbolicLink()) {
-      throw new Error(`Refusing to read review learnings through a symlink: ${relativePath}.`);
-    }
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-  }
+  verifyTrustedStoreChain(repoRoot, LEARNINGS_STORE, resolved);
   return resolved;
 }
 
@@ -124,18 +120,37 @@ export function renderReviewLearningsText(file: ReviewLearningsFile): string {
     lines.push('No learnings are recorded yet.');
     return lines.join('\n');
   }
-  for (const entry of file.entries) {
+  const rendered = file.entries.length > REVIEW_LEARNINGS_RENDER_LIMIT
+    ? file.entries.slice(-REVIEW_LEARNINGS_RENDER_LIMIT)
+    : file.entries;
+  if (rendered.length < file.entries.length) {
+    lines.push(`Showing the ${rendered.length} most recent of ${file.entries.length} recorded learnings.`);
+  }
+  for (const entry of rendered) {
     const target = [entry.disposition, entry.lane, entry.findingId].filter((item): item is string => typeof item === 'string' && item !== '').join(' / ');
     lines.push(`- ${target}: ${entry.message}${entry.guidance !== '' ? ` Guidance: ${entry.guidance}` : ''}`);
   }
   return lines.join('\n');
 }
 
+const fragmentCache = new Map<string, { mtimeMs: number; size: number; fragment: ReviewLearningsFragment }>();
+
 export function loadReviewLearningsFragment(repoRoot: string): ReviewLearningsFragment | null {
+  const path = resolveReviewLearningsPath(repoRoot);
+  if (!existsSync(path)) {
+    fragmentCache.delete(path);
+    return null;
+  }
+  const stats = lstatSync(path);
+  const cached = fragmentCache.get(path);
+  if (cached && cached.mtimeMs === stats.mtimeMs && cached.size === stats.size) return cached.fragment;
   const file = loadReviewLearnings(repoRoot);
-  if (!file) return null;
+  if (!file) {
+    fragmentCache.delete(path);
+    return null;
+  }
   const text = renderReviewLearningsText(file);
-  return {
+  const fragment: ReviewLearningsFragment = {
     id: 'repo-configured/review-learnings',
     source: 'repo-configured',
     sourceCategory: 'lane',
@@ -144,15 +159,19 @@ export function loadReviewLearningsFragment(repoRoot: string): ReviewLearningsFr
     trust: 'repo-doc',
     text,
   };
+  fragmentCache.set(path, { mtimeMs: stats.mtimeMs, size: stats.size, fragment });
+  return fragment;
 }
 
 export function writeReviewLearnings(repoRoot: string, file: ReviewLearningsFile): string {
   const path = resolveReviewLearningsPath(repoRoot);
   mkdirSync(dirname(path), { recursive: true });
-  if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
-    throw new Error(`Refusing to write review learnings through a symlink: ${REVIEW_LEARNINGS_RELATIVE_PATH}.`);
+  verifyTrustedStoreChain(repoRoot, LEARNINGS_STORE, path);
+  if (existsSync(path) && !lstatSync(path).isFile()) {
+    throw new Error(`Refusing to write review learnings through a non-regular file: ${REVIEW_LEARNINGS_RELATIVE_PATH}.`);
   }
   writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, { encoding: 'utf8' });
+  fragmentCache.delete(path);
   return path;
 }
 
