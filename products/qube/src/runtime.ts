@@ -4679,6 +4679,33 @@ async function runApplyProviderSetup(step: InstallCommandStep, environment: CliE
   return { stage: "provider-setup", command: step.command, status: "executed", exitCode: result.exitCode ?? 0 };
 }
 
+async function runApplyComponents(environment: CliEnvironment, scope: InstallScope): Promise<unknown> {
+  const entries = scope === "global"
+    ? pathEntries(environment.env)
+    : [path.join(environment.cwd, "node_modules", ".bin")];
+  const commandPath = resolveCommandFromEntries("qube", entries, environment);
+  if (!commandPath) {
+    return { error: "Cannot find qube to run components --json after apply." };
+  }
+  const spawned = await spawnCapturedPath(commandPath, ["components", "--json"], environment);
+  if (spawned.truncated) {
+    return { error: "qube components --json output exceeded the capture limit." };
+  }
+  const stdout = spawned.stdout.trim();
+  if (stdout === "") {
+    return { error: spawned.stderr.trim() || "qube components --json did not return a JSON envelope." };
+  }
+  try {
+    const parsed = JSON.parse(stdout) as unknown;
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return { error: "qube components --json did not return a JSON object." };
+    }
+    return parsed;
+  } catch {
+    return { error: "qube components --json returned invalid JSON." };
+  }
+}
+
 async function collectApplyVerification(selections: InstallSelections, environment: CliEnvironment): Promise<{
   readonly components: unknown;
   readonly doctor: unknown;
@@ -4686,6 +4713,7 @@ async function collectApplyVerification(selections: InstallSelections, environme
   readonly findings: readonly string[];
 }> {
   const mismatches = collectInstallMismatches(selections, environment);
+  const componentsPromise = runApplyComponents(environment, selections.scope);
   const doctorResult = await executeQubeDoctor(true, false, environment);
   let doctorPayload: unknown;
   if (typeof doctorResult.jsonStdout === "string" && doctorResult.jsonStdout.trim() !== "") {
@@ -4699,7 +4727,7 @@ async function collectApplyVerification(selections: InstallSelections, environme
     doctorPayload = { error: detail === "" ? "Doctor did not return a JSON envelope." : detail };
   }
   return {
-    components: Object.freeze({ components: qubeComponents }),
+    components: await componentsPromise,
     doctor: doctorPayload,
     mismatches,
     findings: doctorFindings(doctorPayload)

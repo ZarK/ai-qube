@@ -593,7 +593,7 @@ describe("qube composer CLI", () => {
     mkdirSync(tools, { recursive: true });
     mkdirSync(binDir, { recursive: true });
     writeNodeShim(tools, "pnpm", `
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 const log = process.env.QUBE_TEST_PM_LOG;
 if (log) appendFileSync(log, process.argv.slice(2).join(" ") + "\\n");
@@ -616,6 +616,18 @@ for (const spec of specs) {
   const dir = path.join(process.cwd(), "node_modules", ...spec.name.split("/"));
   mkdirSync(dir, { recursive: true });
   writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: spec.name, version: spec.version }, null, 2) + "\\n");
+  if (spec.name === "@tjalve/qube" && process.env.QUBE_TEST_SKIP_QUBE_BIN !== "1") {
+    const binDir = path.join(process.cwd(), "node_modules", ".bin");
+    mkdirSync(binDir, { recursive: true });
+    const script = "process.stdout.write(JSON.stringify({ ok: true, command: \\"components\\", components: [{ id: \\"executor\\" }] }) + \\"\\\\n\\");";
+    writeFileSync(path.join(binDir, "qube.mjs"), script);
+    if (process.platform === "win32") {
+      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nnode \\"%~dp0qube.mjs\\" %*\\r\\n");
+    } else {
+      writeFileSync(path.join(binDir, "qube"), "#!/usr/bin/env node\\n" + script);
+      chmodSync(path.join(binDir, "qube"), 0o755);
+    }
+  }
 }
 writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\\n");
 `);
@@ -1695,7 +1707,9 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
     assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
     assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
-    assert.ok(parsed.apply.components);
+    assert.equal(parsed.apply.components.ok, true);
+    assert.equal(parsed.apply.components.command, "components");
+    assert.ok(Array.isArray(parsed.apply.components.components));
     assert.equal(typeof parsed.apply.doctor, "object");
     assert.ok(parsed.apply.doctor !== null);
 
@@ -1704,6 +1718,35 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const secondParsed = JSON.parse(second.stdout);
     assert.deepEqual(secondParsed.apply.executed, []);
     assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
+  });
+
+  it("reports a loud components error when qube is missing after apply", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-no-qube-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SKIP_QUBE_BIN: "1" } });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.apply.components.error, "Cannot find qube to run components --json after apply.");
   });
 
   it("pins every workspace adapter package in the shipped catalog", () => {
