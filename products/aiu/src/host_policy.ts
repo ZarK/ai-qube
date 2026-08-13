@@ -256,25 +256,44 @@ const HOST_PROFILES: Readonly<Record<AiuHost, AiuHostCapabilityProfile>> = Objec
   "grok-build": Object.freeze({
     tool: "grok-build",
     supportLevel: "experimental",
-    description: "Grok Build is an init host. Stop-hook continuation files are not installed by this init tool.",
+    description: "Grok Build project Stop hook delegating to the package-backed aiu entrypoint.",
     capabilities: Object.freeze({
       idleEvents: capability("idleEvents", "unsupported", [], "Grok Build idle events are not part of this init contract."),
-      stopHook: capability("stopHook", "unsupported", [], "Grok Build Stop-hook payload parsing is a follow-up and is not installed here."),
+      stopHook: capability("stopHook", "experimental", [], "Grok Build Stop hook files can delegate to the package-backed decision runtime."),
       todoRead: capability("todoRead", "unsupported", [], "Grok Build does not have a durable Umpire todo tool. Keep todos in the visible checklist plus provider records."),
-      sessionState: capability("sessionState", "unsupported", ["wait"], "Grok Build session state is not a trusted Umpire input yet."),
-      promptDelivery: capability("promptDelivery", "unsupported", ["continue", "repair"], "Grok Build continuation prompt delivery is not installed by this init tool."),
+      sessionState: capability("sessionState", "experimental", ["wait"], "Grok Build host session state is derived from the Stop hook payload when available."),
+      promptDelivery: capability("promptDelivery", "experimental", ["continue", "repair"], "Grok Build stop hooks can emit stdout block responses with concrete continuation prompts.", "stdout"),
       selectedSession: capability("selectedSession", "unsupported", [], "Selected Grok Build session awareness is not a verified contract yet."),
       modelTargeting: capability("modelTargeting", "unknown", [], "Grok Build model targeting is outside this init contract."),
       userActivity: capability("userActivity", "unsupported", ["wait"], "Grok Build typing activity is not available to Umpire policy yet."),
-      projectTrust: capability("projectTrust", "experimental", [], "Grok Build project trust is host-provided."),
+      projectTrust: capability("projectTrust", "experimental", [], "Grok Build project hooks require folder trust before they run."),
     }),
     stopHook: Object.freeze({
-      support: "unsupported",
-      blocksByDefault: false,
-      description: "Grok Build Stop-hook continuation is not installed by this init tool.",
+      support: "experimental",
+      blocksByDefault: true,
+      description: "Grok Build Stop hook blocking is available when hosts.stopHookBlocking.grok-build is explicitly enabled.",
     }),
-    managedFiles: Object.freeze([]),
-    trustSteps: Object.freeze(["Review Grok Build host surfaces before enabling Umpire continuation for that host."]),
+    managedFiles: Object.freeze([
+      Object.freeze({
+        relativePath: path.join(".grok", "hooks", "ai-umpire.json"),
+        description: "Grok Build AI Umpire project Stop hook.",
+        content: stableJson({
+          hooks: {
+            Stop: [
+              {
+                hooks: [
+                  {
+                    command: "pnpm exec aiu hook-stop --tool grok-build",
+                    type: "command",
+                  },
+                ],
+              },
+            ],
+          },
+        }),
+      }),
+    ]),
+    trustSteps: Object.freeze(["Review the Grok Build Stop hook, then run /hooks-trust so the project hook can execute."]),
   }),
 });
 

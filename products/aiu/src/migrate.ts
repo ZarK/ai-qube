@@ -171,6 +171,7 @@ const PACKAGE_BACKED_COMMANDS: readonly AiuMigrationPackageCommand[] = Object.fr
   Object.freeze({ id: "opencode-plugin", command: "import { createAiuOpenCodeServerPlugin } from \"@tjalve/aiu/opencode\"", host: "opencode", reason: "Package-backed OpenCode plugin wrapper import." }),
   Object.freeze({ id: "codex-stop-hook", command: "pnpm exec aiu hook-stop --tool codex", host: "codex", reason: "Package-backed Codex Stop hook command." }),
   Object.freeze({ id: "claude-code-stop-hook", command: "pnpm exec aiu hook-stop --tool claude-code", host: "claude-code", reason: "Package-backed Claude Code Stop hook command." }),
+  Object.freeze({ id: "grok-build-stop-hook", command: "pnpm exec aiu hook-stop --tool grok-build", host: "grok-build", reason: "Package-backed Grok Build Stop hook command." }),
 ]);
 
 export function planAiuMigration(options: AiuMigrationOptions = {}): AiuMigrationPlan {

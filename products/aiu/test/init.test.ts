@@ -50,6 +50,10 @@ describe("init planner", () => {
         tool: "claude-code",
         file: path.join(".claude", "settings.json"),
       },
+      {
+        tool: "grok-build",
+        file: path.join(".grok", "hooks", "ai-umpire.json"),
+      },
     ];
 
     for (const { tool, file } of cases) {
@@ -90,6 +94,12 @@ describe("init planner", () => {
         };
         assert.equal(settings.hooks.Stop[0]?.hooks[0]?.type, "command");
         assert.equal(settings.hooks.Stop[0]?.hooks[0]?.command, "pnpm exec aiu hook-stop --tool claude-code");
+      } else if (tool === "grok-build") {
+        const hooks = JSON.parse(await readFile(path.join(target, file), "utf8")) as {
+          hooks: { Stop: Array<{ hooks: Array<{ command: string; type: string }> }> };
+        };
+        assert.equal(hooks.hooks.Stop[0]?.hooks[0]?.type, "command");
+        assert.equal(hooks.hooks.Stop[0]?.hooks[0]?.command, "pnpm exec aiu hook-stop --tool grok-build");
       }
     }
   });
@@ -106,7 +116,8 @@ describe("init planner", () => {
     assert.equal(parsed.init.ok, true);
     assert.deepEqual(parsed.init.tools, ["grok-build"]);
     assert.deepEqual(config.hosts.enabled, ["grok-build"]);
-    assert.equal(parsed.init.files.length, 0);
+    assert.equal(parsed.init.files.length, 1);
+    assert.equal(existsSync(path.join(target, ".grok", "hooks", "ai-umpire.json")), true);
     assert.equal(existsSync(path.join(target, ".agents", "plugins", "marketplace.json")), false);
     assert.equal(existsSync(path.join(target, "plugins", "ai-umpire", "hooks", "hooks.json")), false);
     assert.equal(existsSync(path.join(target, ".claude", "settings.json")), false);

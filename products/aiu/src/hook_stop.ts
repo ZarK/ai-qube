@@ -7,7 +7,7 @@ import { runAiuTrustedStateAdapter, type AiuTrustedStateAdapterResult } from "./
 import { decideAiuWhipContinuation, readAiuWhipState } from "./whip.js";
 
 export interface AiuHookStopOptions {
-  readonly tool: Extract<AiuHost, "codex" | "claude-code">;
+  readonly tool: Extract<AiuHost, "codex" | "claude-code" | "grok-build">;
   readonly stdin?: string;
   readonly cwd?: string;
   readonly configPath?: string;
@@ -44,6 +44,7 @@ interface HookPayload {
   readonly permission_mode?: string;
   readonly model?: string;
   readonly last_assistant_message?: string | null;
+  readonly reason?: string;
 }
 
 const MAX_DIAGNOSTIC_LENGTH = 240;
@@ -53,10 +54,16 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
   const stdin = options.stdin ?? "";
   const inputBytes = Buffer.byteLength(stdin, "utf8");
   const observedAt = options.observedAt ?? new Date().toISOString();
-  const parsed = parseHookPayload(stdin);
+  const parsed = parseHookPayload(options.tool, stdin);
   if (!parsed.ok) {
     return allow(options, inputBytes, parsed.code, [
       diagnostic("warning", parsed.code, parsed.error),
+    ]);
+  }
+
+  if (options.tool === "grok-build" && parsed.payload.reason !== undefined && parsed.payload.reason !== "end_turn") {
+    return allow(options, inputBytes, "session-end-stop", [
+      diagnostic("info", "session-end-stop", "Grok Build reported a session-end Stop; continuation is not applied."),
     ]);
   }
 
@@ -195,7 +202,10 @@ export async function readHookStopStdin(timeoutMs = 250): Promise<string> {
   });
 }
 
-function parseHookPayload(stdin: string): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "empty-hook-input" | "malformed-hook-input"; readonly error: string } {
+function parseHookPayload(
+  tool: AiuHookStopOptions["tool"],
+  stdin: string,
+): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "empty-hook-input" | "malformed-hook-input"; readonly error: string } {
   const trimmed = stdin.trim();
   if (trimmed.length === 0) {
     return { ok: false, code: "empty-hook-input", error: "Stop hook input is empty." };
@@ -205,24 +215,7 @@ function parseHookPayload(stdin: string): { readonly ok: true; readonly payload:
     if (!isRecord(parsed)) {
       return { ok: false, code: "malformed-hook-input", error: "Stop hook input must be a JSON object." };
     }
-    const validationError = validateHookPayloadShape(parsed);
-    if (validationError) {
-      return { ok: false, code: "malformed-hook-input", error: validationError };
-    }
-    return {
-      ok: true,
-      payload: Object.freeze({
-        cwd: readString(parsed.cwd),
-        hook_event_name: readString(parsed.hook_event_name),
-        session_id: readString(parsed.session_id),
-        stop_hook_active: readBoolean(parsed.stop_hook_active),
-        transcript_path: readNullableString(parsed.transcript_path),
-        turn_id: readString(parsed.turn_id),
-        permission_mode: readString(parsed.permission_mode),
-        model: readString(parsed.model),
-        last_assistant_message: readNullableString(parsed.last_assistant_message),
-      }),
-    };
+    return tool === "grok-build" ? parseGrokStopPayload(parsed) : parseClaudeStopPayload(parsed);
   } catch (error) {
     return {
       ok: false,
@@ -232,7 +225,50 @@ function parseHookPayload(stdin: string): { readonly ok: true; readonly payload:
   }
 }
 
-function validateHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
+function parseClaudeStopPayload(parsed: Record<string, unknown>): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "malformed-hook-input"; readonly error: string } {
+  const validationError = validateClaudeHookPayloadShape(parsed);
+  if (validationError) {
+    return { ok: false, code: "malformed-hook-input", error: validationError };
+  }
+  return {
+    ok: true,
+    payload: Object.freeze({
+      cwd: readString(parsed.cwd),
+      hook_event_name: readString(parsed.hook_event_name),
+      session_id: readString(parsed.session_id),
+      stop_hook_active: readBoolean(parsed.stop_hook_active),
+      transcript_path: readNullableString(parsed.transcript_path),
+      turn_id: readString(parsed.turn_id),
+      permission_mode: readString(parsed.permission_mode),
+      model: readString(parsed.model),
+      last_assistant_message: readNullableString(parsed.last_assistant_message),
+    }),
+  };
+}
+
+function parseGrokStopPayload(parsed: Record<string, unknown>): { readonly ok: true; readonly payload: HookPayload } | { readonly ok: false; readonly code: "malformed-hook-input"; readonly error: string } {
+  if (typeof parsed.hookEventName !== "string" && typeof parsed.hook_event_name === "string") {
+    return { ok: false, code: "malformed-hook-input", error: "Claude snake_case Stop input is not a valid Grok parse." };
+  }
+  const validationError = validateGrokHookPayloadShape(parsed);
+  if (validationError) {
+    return { ok: false, code: "malformed-hook-input", error: validationError };
+  }
+  return {
+    ok: true,
+    payload: Object.freeze({
+      cwd: readString(parsed.cwd),
+      hook_event_name: readString(parsed.hookEventName),
+      session_id: readString(parsed.sessionId),
+      stop_hook_active: readBoolean(parsed.stopHookActive),
+      last_assistant_message: readNullableString(parsed.lastAssistantMessage),
+      permission_mode: readString(parsed.permissionMode),
+      reason: readString(parsed.reason),
+    }),
+  };
+}
+
+function validateClaudeHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
   const requiredStrings = ["cwd", "hook_event_name", "session_id", "turn_id", "permission_mode", "model"] as const;
   for (const key of requiredStrings) {
     if (typeof parsed[key] !== "string" || parsed[key].length === 0) {
@@ -250,6 +286,31 @@ function validateHookPayloadShape(parsed: Record<string, unknown>): string | und
   }
   if (!isOptionalNullableString(parsed.last_assistant_message)) {
     return "last_assistant_message must be a string or null.";
+  }
+  return undefined;
+}
+
+function validateGrokHookPayloadShape(parsed: Record<string, unknown>): string | undefined {
+  const requiredStrings = ["cwd", "hookEventName", "sessionId"] as const;
+  for (const key of requiredStrings) {
+    if (typeof parsed[key] !== "string" || parsed[key].length === 0) {
+      return `${key} must be a non-empty string.`;
+    }
+  }
+  if (parsed.hookEventName !== "stop") {
+    return "Unsupported hook event; expected stop.";
+  }
+  if (typeof parsed.stopHookActive !== "boolean") {
+    return "stopHookActive must be a boolean.";
+  }
+  if (parsed.permissionMode !== undefined && (typeof parsed.permissionMode !== "string" || parsed.permissionMode.length === 0)) {
+    return "permissionMode must be a non-empty string.";
+  }
+  if (parsed.reason !== undefined && (typeof parsed.reason !== "string" || parsed.reason.length === 0)) {
+    return "reason must be a non-empty string.";
+  }
+  if (!isOptionalNullableString(parsed.lastAssistantMessage)) {
+    return "lastAssistantMessage must be a string or null.";
   }
   return undefined;
 }

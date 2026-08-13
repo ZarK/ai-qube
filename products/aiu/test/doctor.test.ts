@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 
 import { getAiuResolvedPaths, runAiuDoctor } from "../dist/src/doctor.js";
 import { getAiuHostCapabilityProfile } from "../dist/src/host_policy.js";
+import { inspectGrokFolderTrust } from "../dist/src/grok_trust.js";
 
 const tempRoots: string[] = [];
 
@@ -118,6 +119,83 @@ describe("doctor diagnostics", () => {
     const report = runAiuDoctor({ cwd: repoRoot });
 
     assert.ok(report.checks.some((check) => check.kind === "host-entrypoint-unmanaged" && check.path === hookPath));
+  });
+
+  it("reports the Grok trust step when the project hook is present and untrusted", async () => {
+    const repoRoot = await createRepoRoot();
+    const grokHome = await createTempRoot("aiu-grok-home-");
+    await writeManagedHostFiles(repoRoot, "grok-build");
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["grok-build"],
+        modes: {
+          "grok-build": ["stop"],
+        },
+      },
+    });
+    const previousHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const report = runAiuDoctor({ cwd: repoRoot });
+      const untrusted = report.checks.find((check) => check.kind === "grok-hook-untrusted");
+      assert.ok(untrusted);
+      assert.equal(untrusted.status, "warning");
+      assert.match(untrusted.suggestedNextAction ?? "", /\/hooks-trust/);
+      assert.equal(report.checks.some((check) => check.kind === "grok-hook-trusted"), false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousHome;
+      }
+    }
+  });
+
+  it("reports a trusted Grok project hook when the folder is recorded as trusted", async () => {
+    const repoRoot = await createRepoRoot();
+    const grokHome = await createTempRoot("aiu-grok-home-trusted-");
+    await writeManagedHostFiles(repoRoot, "grok-build");
+    await writeConfig(repoRoot, {
+      version: 1,
+      hosts: {
+        enabled: ["grok-build"],
+        modes: {
+          "grok-build": ["stop"],
+        },
+      },
+    });
+    await writeFile(path.join(grokHome, "trusted_folders.toml"), `[folders.'${repoRoot}']\ntrusted = true\n`, "utf8");
+    const previousHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const report = runAiuDoctor({ cwd: repoRoot });
+      assert.ok(report.checks.some((check) => check.kind === "grok-hook-trusted"));
+      assert.equal(report.checks.some((check) => check.kind === "grok-hook-untrusted"), false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousHome;
+      }
+    }
+  });
+
+  it("does not treat a missing trust file as a trusted Grok project hook", async () => {
+    const repoRoot = await createRepoRoot();
+    const grokHome = await createTempRoot("aiu-grok-home-missing-");
+    const previousHome = process.env.GROK_HOME;
+    process.env.GROK_HOME = grokHome;
+    try {
+      const trust = inspectGrokFolderTrust(repoRoot);
+      assert.equal(trust.trusted, false);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.GROK_HOME;
+      } else {
+        process.env.GROK_HOME = previousHome;
+      }
+    }
   });
 
   it("reports host capability and policy compatibility", async () => {
@@ -349,7 +427,13 @@ async function readText(pathValue: string): Promise<string> {
   return await readFile(pathValue, "utf8");
 }
 
-async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex" | "claude-code"): Promise<void> {
+async function createTempRoot(prefix: string): Promise<string> {
+  const repoRoot = await mkdtemp(path.join(tmpdir(), prefix));
+  tempRoots.push(repoRoot);
+  return repoRoot;
+}
+
+async function writeManagedHostFiles(repoRoot: string, host: "opencode" | "codex" | "claude-code" | "grok-build"): Promise<void> {
   for (const file of getAiuHostCapabilityProfile(host).managedFiles) {
     const target = path.join(repoRoot, file.relativePath);
     await mkdir(path.dirname(target), { recursive: true });

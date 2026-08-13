@@ -22,12 +22,13 @@ describe("host runtime policy", () => {
     assert.equal(getAiuHostCapabilityProfile("opencode").capabilities.promptDelivery.support, "supported");
     assert.equal(getAiuHostCapabilityProfile("codex").stopHook.blocksByDefault, true);
     assert.equal(getAiuHostCapabilityProfile("claude-code").capabilities.stopHook.support, "experimental");
-    assert.equal(getAiuHostCapabilityProfile("grok-build").managedFiles.length, 0);
-    assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.support, "unsupported");
+    assert.equal(getAiuHostCapabilityProfile("grok-build").managedFiles.length, 1);
+    assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.support, "experimental");
+    assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.blocksByDefault, true);
     const grokBuild = profiles.find((profile) => profile.tool === "grok-build");
     assert.ok(grokBuild);
-    assert.deepEqual(grokBuild.managedFiles, []);
-    assert.equal(grokBuild.stopHook.support, "unsupported");
+    assert.equal(grokBuild.managedFiles[0]?.relativePath.replaceAll("\\", "/"), ".grok/hooks/ai-umpire.json");
+    assert.match(grokBuild.managedFiles[0]?.content ?? "", /hook-stop --tool grok-build/);
   });
 
   it("uses safe init defaults for host modes and capability overrides", () => {

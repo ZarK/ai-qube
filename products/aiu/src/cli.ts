@@ -256,8 +256,8 @@ export const aiuCli = createCli({
           selectedItemFields: ["kind", "id", "title", "sourceId", "status", "targetKind", "affectedPaths", "command", "rerunCommand", "artifactChecks", "expectedEvidence", "prompt", "priority", "promptFingerprint"],
         },
         hookStop: {
-          commands: ["aiu hook-stop --tool codex", "aiu hook-stop --tool claude-code"],
-          tools: ["codex", "claude-code"],
+          commands: ["aiu hook-stop --tool codex", "aiu hook-stop --tool claude-code", "aiu hook-stop --tool grok-build"],
+          tools: ["codex", "claude-code", "grok-build"],
           outputKinds: ["allow", "block"],
           stdoutShapes: [
             { decision: "allow", json: {} },
@@ -397,6 +397,8 @@ export const aiuCli = createCli({
             "host-capability-experimental",
             "host-capability-unsupported",
             "host-stop-hook-blocking-unsafe",
+            "grok-hook-trusted",
+            "grok-hook-untrusted",
             "state-path-writable",
             "state-path-creatable",
             "state-path-not-directory",
@@ -411,8 +413,8 @@ export const aiuCli = createCli({
   ],
 });
 
-function readHookStopTool(value: unknown): "codex" | "claude-code" | undefined {
-  return value === "codex" || value === "claude-code" ? value : undefined;
+function readHookStopTool(value: unknown): "codex" | "claude-code" | "grok-build" | undefined {
+  return value === "codex" || value === "claude-code" || value === "grok-build" ? value : undefined;
 }
 
 function readWhipAction(value: unknown): AiuWhipReport["action"] | undefined {
