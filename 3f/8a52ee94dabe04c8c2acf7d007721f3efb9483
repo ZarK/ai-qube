@@ -1,0 +1,29 @@
+products/aie/src/app/local_review_runner.ts
+  s_01502918d166a1::t_1e4afd22719338 19-20,72-78,91,118-122,469,472,475-492,494,792
+products/aie/test/pr_gate_b.test.cjs
+  s_867d8afebeba1a::t_8f0accad0a105c 331,342-349,351-352,355-362,365,373-376,480-482
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3f8a52ee94dabe04c8c2acf7d007721f3efb9483",
+  "prompts": {},
+  "sessions": {
+    "s_01502918d166a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff6fe-6585-72e3-b5ec-c1aed0db5590",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    },
+    "s_867d8afebeba1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "236623c8-07eb-4f55-b734-a3017e4eccc9",
+        "model": "unknown"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
