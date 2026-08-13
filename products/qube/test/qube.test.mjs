@@ -2538,8 +2538,14 @@ describe("host toolkit manifests", () => {
       writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
       mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
       mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", "hooks"), { recursive: true });
+      mkdirSync(path.join(cwd, "plugins", "ai-umpire", "skills", "ai-umpire"), { recursive: true });
       writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
       writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", ".codex-plugin", "plugin.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", "hooks", "hooks.json"), "{}\n");
+      writeFileSync(path.join(cwd, "plugins", "ai-umpire", "skills", "ai-umpire", "SKILL.md"), "skill\n");
     }
   }
 
@@ -2584,7 +2590,14 @@ describe("host toolkit manifests", () => {
 
     const codex = composeHostToolkitManifests(["codex"], { workProviders: ["github"], mcpOptIn: false });
     const codexPaths = codex.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
-    assert.deepEqual(codexPaths, ["AGENTS.md", ".codex/prompts/make-it-so.md", ".agents/plugins/marketplace.json"]);
+    assert.deepEqual(codexPaths, [
+      "AGENTS.md",
+      ".codex/prompts/make-it-so.md",
+      ".agents/plugins/marketplace.json",
+      "plugins/ai-umpire/.codex-plugin/plugin.json",
+      "plugins/ai-umpire/hooks/hooks.json",
+      "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
+    ]);
     assert.ok(!codexPaths.some((item) => item.includes(".claude")));
   });
 
@@ -2686,6 +2699,24 @@ describe("host toolkit manifests", () => {
     const empty = probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
     assert.equal(empty.status, "missing");
     assert.notEqual(empty.status, "complete");
+  });
+
+  it("does not report Codex complete when only the marketplace file is present", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-codex-partial-"));
+    writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
+    mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
+    mkdirSync(path.join(cwd, ".agents", "plugins"), { recursive: true });
+    writeFileSync(path.join(cwd, ".codex", "prompts", "make-it-so.md"), "make it so\n");
+    writeFileSync(path.join(cwd, ".agents", "plugins", "marketplace.json"), "{}\n");
+    writeInitRecord(cwd, createInitRecord({
+      hosts: ["codex"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: true });
+    assert.equal(probed.status, "missing");
+    assert.ok(probed.hosts[0].missing.includes("plugins/ai-umpire/hooks/hooks.json"));
   });
 
   it("fails doctor when a required GitHub CLI dependency is missing", () => {

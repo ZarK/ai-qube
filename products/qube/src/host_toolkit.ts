@@ -146,6 +146,9 @@ function codexAssets(): readonly ToolkitAsset[] {
     asset("codex-review-digest", "subagent", "aie", "Codex review-digest subagent.", { path: path.posix.join(".codex", "agents", "qube-review-digest.toml"), required: false }),
     asset("codex-review-librarian", "subagent", "aie", "Codex review-librarian subagent.", { path: path.posix.join(".codex", "agents", "qube-review-librarian.toml"), required: false }),
     asset("codex-stop-hook", "hook", "aiu", "Codex AI Umpire plugin marketplace entry.", { path: path.posix.join(".agents", "plugins", "marketplace.json") }),
+    asset("codex-plugin-manifest", "hook", "aiu", "Codex AI Umpire plugin manifest.", { path: path.posix.join("plugins", "ai-umpire", ".codex-plugin", "plugin.json") }),
+    asset("codex-plugin-hooks", "hook", "aiu", "Codex AI Umpire Stop hook.", { path: path.posix.join("plugins", "ai-umpire", "hooks", "hooks.json") }),
+    asset("codex-plugin-skill", "skill", "aiu", "Codex AI Umpire skill instructions.", { path: path.posix.join("plugins", "ai-umpire", "skills", "ai-umpire", "SKILL.md") }),
   ]);
 }
 
