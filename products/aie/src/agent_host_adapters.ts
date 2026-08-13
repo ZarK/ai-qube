@@ -1,6 +1,6 @@
 import { posix as pathPosix } from 'path';
 
-export type AgentHostId = 'opencode' | 'codex' | 'claude-code';
+export type AgentHostId = 'opencode' | 'codex' | 'claude-code' | 'grok-build';
 export type AgentHostSelection = AgentHostId | 'all';
 
 export interface InstructionTarget {
@@ -155,16 +155,43 @@ const BUILTIN_OPENCODE_PROFILE: AgentHostProfile = {
   supportsProjectCommands: true,
 };
 
-const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
+const BUILTIN_GROK_BUILD_PROFILE: AgentHostProfile = {
+  id: 'grok-build',
+  displayName: 'Grok Build',
+  instructionTargets: [AGENTS_INSTRUCTIONS],
+  commandTargets: [],
+  todo: {
+    tools: [],
+    fallback: 'Keep durable todos in the visible checklist plus GitHub issue checkboxes and comments.',
+    instruction: 'For Grok Build, keep durable todos in the visible checklist plus provider records. Do not invent a Grok todo tool.',
+  },
+  dialogue: {
+    expectation: 'Operate autonomously in the main Grok Build session. Provider-visible PR reviews and GitHub issue comments remain the durable communication channel for review results.',
+  },
+  subagents: {
+    supported: true,
+    instruction: 'Grok Build subagents may be used for bounded support work. Routed review already has a Grok host adapter and is not installed by this init tool.',
+  },
+  hooks: {
+    supported: true,
+    description: 'Grok Build Stop hooks are host-provided. Executor init does not write Grok hook files.',
+  },
+  supportsProjectCommands: false,
+};
+
+const HOST_ORDER: AgentHostId[] = ['opencode', 'codex', 'claude-code', 'grok-build'];
+const ALL_HOST_IDS: AgentHostId[] = ['opencode', 'codex', 'claude-code'];
 
 const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
   opencode: BUILTIN_OPENCODE_PROFILE,
+  'grok-build': BUILTIN_GROK_BUILD_PROFILE,
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
   Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false }),
   Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true }),
   Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true }),
+  Object.freeze({ id: 'grok-build', packageName: null, installed: true }),
 ]);
 
 let cachedCodexProfile: AgentHostProfile | null | undefined;
@@ -271,9 +298,21 @@ export async function getAllAgentHostProfiles(): Promise<AgentHostProfile[]> {
 }
 
 export function parseAgentHostSelection(value: string): AgentHostId[] | null {
-  if (value === 'all') return [...HOST_ORDER];
-  if (value === 'opencode' || value === 'codex' || value === 'claude-code') return [value];
-  return null;
+  const parts = value.split(',').map(part => part.trim()).filter(part => part.length > 0);
+  if (parts.length === 0) return null;
+  const selected: AgentHostId[] = [];
+  for (const part of parts) {
+    if (part === 'all') {
+      selected.push(...ALL_HOST_IDS);
+      continue;
+    }
+    if (part === 'opencode' || part === 'codex' || part === 'claude-code' || part === 'grok-build') {
+      selected.push(part);
+      continue;
+    }
+    return null;
+  }
+  return uniqueAgentHostIds(selected);
 }
 
 export function uniqueAgentHostIds(ids: AgentHostId[]): AgentHostId[] {

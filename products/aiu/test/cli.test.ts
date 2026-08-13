@@ -246,7 +246,7 @@ describe("metadata-backed CLI", () => {
     assert.ok(config.errors?.some((error) => error.kind === "unsafe-command-descriptor"));
     assert.equal(parsed.sections?.config?.schemaVersion, 1);
     assert.equal(parsed.sections?.config?.defaultPath, ".qube/aiu/config.json");
-    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code"]);
+    assert.deepEqual(parsed.sections?.config?.hostNames, ["opencode", "codex", "claude-code", "grok-build"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilityNames, ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"]);
     assert.deepEqual(parsed.sections?.config?.hostSupportLevels, ["supported", "experimental", "recipe-only", "unsupported"]);
     assert.deepEqual(parsed.sections?.config?.hostCapabilitySupport, ["supported", "experimental", "disabled", "unsupported", "unknown"]);

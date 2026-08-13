@@ -22,6 +22,8 @@ describe("host runtime policy", () => {
     assert.equal(getAiuHostCapabilityProfile("opencode").capabilities.promptDelivery.support, "supported");
     assert.equal(getAiuHostCapabilityProfile("codex").stopHook.blocksByDefault, true);
     assert.equal(getAiuHostCapabilityProfile("claude-code").capabilities.stopHook.support, "experimental");
+    assert.equal(getAiuHostCapabilityProfile("grok-build").managedFiles.length, 0);
+    assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.support, "unsupported");
   });
 
   it("uses safe init defaults for host modes and capability overrides", () => {

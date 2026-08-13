@@ -253,6 +253,29 @@ const HOST_PROFILES: Readonly<Record<AiuHost, AiuHostCapabilityProfile>> = Objec
     ]),
     trustSteps: Object.freeze(["Enable the Claude Code stop hook after reviewing the managed descriptor."]),
   }),
+  "grok-build": Object.freeze({
+    tool: "grok-build",
+    supportLevel: "experimental",
+    description: "Grok Build is an init host. Stop-hook continuation files are not installed by this init tool.",
+    capabilities: Object.freeze({
+      idleEvents: capability("idleEvents", "unsupported", [], "Grok Build idle events are not part of this init contract."),
+      stopHook: capability("stopHook", "unsupported", [], "Grok Build Stop-hook payload parsing is a follow-up and is not installed here."),
+      todoRead: capability("todoRead", "unsupported", [], "Grok Build does not have a durable Umpire todo tool. Keep todos in the visible checklist plus provider records."),
+      sessionState: capability("sessionState", "unsupported", ["wait"], "Grok Build session state is not a trusted Umpire input yet."),
+      promptDelivery: capability("promptDelivery", "unsupported", ["continue", "repair"], "Grok Build continuation prompt delivery is not installed by this init tool."),
+      selectedSession: capability("selectedSession", "unsupported", [], "Selected Grok Build session awareness is not a verified contract yet."),
+      modelTargeting: capability("modelTargeting", "unknown", [], "Grok Build model targeting is outside this init contract."),
+      userActivity: capability("userActivity", "unsupported", ["wait"], "Grok Build typing activity is not available to Umpire policy yet."),
+      projectTrust: capability("projectTrust", "experimental", [], "Grok Build project trust is host-provided."),
+    }),
+    stopHook: Object.freeze({
+      support: "unsupported",
+      blocksByDefault: false,
+      description: "Grok Build Stop-hook continuation is not installed by this init tool.",
+    }),
+    managedFiles: Object.freeze([]),
+    trustSteps: Object.freeze(["Review Grok Build host surfaces before enabling Umpire continuation for that host."]),
+  }),
 });
 
 export function getAiuHostCapabilityProfile(tool: AiuHost): AiuHostCapabilityProfile {

@@ -1627,15 +1627,16 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     yes: yes || defaults
   });
 
-  const toolTargets = resolveInitToolTargets(hosts);
+  const aieToolTargets = resolveAieInitToolTargets(hosts);
+  const aiuToolTargets = resolveAiuInitToolTargets(hosts);
   const aieOptions = { dryRun, force, yes, defaults };
   const aiuOptions = { dryRun, force };
-  const aieRuns = toolTargets.length === 0
+  const aieRuns = aieToolTargets.length === 0
     ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]
-    : toolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
-  const aiuRuns = toolTargets.length === 0
+    : aieToolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
+  const aiuRuns = aiuToolTargets.length === 0
     ? [dispatchInitChild("aiu", buildAiuInitArgs(undefined, aiuOptions), environment)]
-    : toolTargets.map(tool => dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
+    : aiuToolTargets.map(tool => dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
 
   const withRuns: Array<Promise<QubeInitChildResult>> = [];
   if (withComponents.includes("aib")) {
@@ -4583,7 +4584,7 @@ function planQubeInit(args: readonly string[], environment: CliEnvironment): Cli
 
   const target = positional[0] ?? ".";
   const hosts = readOptionList<InstallHost>(flags, "host") ?? ["generic"];
-  const toolTargets = resolveInitToolTargets(hosts);
+  const toolTargets = resolveAieInitToolTargets(hosts);
   const dispatchArgs = buildAieInitArgs(target, toolTargets[0], {
     dryRun: flags["dry-run"] === true,
     force: flags.force === true,
@@ -4813,25 +4814,48 @@ function createInstallConnections(selections: InstallSelections): readonly Conne
   return Object.freeze([...new Map(selected.map(connection => [connection.adapterId, connection])).values()]);
 }
 
-const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code"] as const);
+const AIE_INIT_HOST_TOOLS = Object.freeze(["opencode", "codex", "claude-code", "grok-build"] as const);
+const AIE_INIT_ALL_TOOLS = Object.freeze(["opencode", "codex", "claude-code"] as const);
 type AieInitHostTool = (typeof AIE_INIT_HOST_TOOLS)[number];
-type AieInitTool = AieInitHostTool | "all";
+type AieInitTool = AieInitHostTool | "all" | "all,grok-build" | `${AieInitHostTool},${string}`;
 
-/** aie/aiu init accept one --tool value; grok-build shares codex's AGENTS.md target and "generic" has no tool value. */
-function resolveInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
+function mapSelectedInitTools(hosts: readonly InstallHost[]): Set<AieInitHostTool> {
   const mapped = new Set<AieInitHostTool>();
   for (const host of hosts) {
     if (host === "claude-code") mapped.add("claude-code");
-    else if (host === "codex" || host === "grok-build") mapped.add("codex");
+    else if (host === "codex") mapped.add("codex");
+    else if (host === "grok-build") mapped.add("grok-build");
     else if (host === "opencode") mapped.add("opencode");
   }
-  if (mapped.size === 0) {
-    return [];
+  return mapped;
+}
+
+function hasClassicAllTools(mapped: ReadonlySet<AieInitHostTool>): boolean {
+  return AIE_INIT_ALL_TOOLS.every(tool => mapped.has(tool));
+}
+
+/** Executor accepts one --tool value that may list several hosts so shared AGENTS.md is written once. */
+function resolveAieInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
+  const mapped = mapSelectedInitTools(hosts);
+  if (mapped.size === 0) return [];
+  if (hasClassicAllTools(mapped) && !mapped.has("grok-build")) return ["all"];
+  if (hasClassicAllTools(mapped) && mapped.has("grok-build")) return ["all,grok-build"];
+  return Object.freeze([AIE_INIT_HOST_TOOLS.filter(tool => mapped.has(tool)).join(",") as AieInitTool]);
+}
+
+/** Umpire accepts one enumerated --tool value, so host tools fan out. */
+function resolveAiuInitToolTargets(hosts: readonly InstallHost[]): readonly AieInitTool[] {
+  const mapped = mapSelectedInitTools(hosts);
+  if (mapped.size === 0) return [];
+  const tools: AieInitTool[] = [];
+  if (hasClassicAllTools(mapped)) tools.push("all");
+  else {
+    for (const tool of AIE_INIT_ALL_TOOLS) {
+      if (mapped.has(tool)) tools.push(tool);
+    }
   }
-  if (AIE_INIT_HOST_TOOLS.every(tool => mapped.has(tool))) {
-    return ["all"];
-  }
-  return Object.freeze([...mapped]);
+  if (mapped.has("grok-build")) tools.push("grok-build");
+  return Object.freeze(tools);
 }
 
 function buildQubeInitCommand(selections: InstallSelections): string {

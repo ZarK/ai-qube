@@ -309,8 +309,8 @@ async function handleView(context: Parameters<RuntimeCommandHandler>[0]) {
 async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
   const target = stringArg(context, 'target');
   if (!target || isHelpToken(target)) {
-    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
-      'Usage: aie init <target> [--tool opencode|codex|claude-code|all] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+    return usageResult(context, 'init', 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]', [
+      'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       commandDescription('init'),
       '',
       'Behavior:',

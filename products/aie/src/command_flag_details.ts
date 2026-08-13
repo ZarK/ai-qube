@@ -39,7 +39,7 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--force', type: 'boolean', description: 'Replace blocked managed sections or known fields intentionally', default: false },
   { name: '--yes', type: 'boolean', description: 'Run non-interactively using provided values and defaults', default: false },
   { name: '--defaults', type: 'boolean', description: 'Use default repository policy values without prompting', default: false },
-  { name: '--tool', type: 'string', description: 'Agent host projection to install', options: ['opencode', 'codex', 'claude-code', 'all'], default: 'opencode' },
+  { name: '--tool', type: 'string', description: 'Agent host projection to install', options: ['opencode', 'codex', 'claude-code', 'grok-build', 'all'], default: 'opencode' },
   { name: '--branch-naming', type: 'string', description: 'Issue branch naming pattern containing <number> and <slug>' },
   { name: '--base-branch', type: 'string', description: 'Configured base branch for freshness checks', default: 'main' },
   { name: '--base-remote', type: 'string', description: 'Configured base remote for freshness checks', default: 'origin' },

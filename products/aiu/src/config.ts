@@ -7,7 +7,7 @@ export const AIU_CONFIG_FILENAME = ".qube/aiu/config.json";
 export const AIU_LEGACY_CONFIG_FILENAME = "aiu.config.json";
 export const AIU_CONFIG_FILENAMES = [AIU_CONFIG_FILENAME, AIU_LEGACY_CONFIG_FILENAME] as const;
 export const AIU_CONFIG_SCHEMA_VERSION = 1;
-export const AIU_HOSTS = ["opencode", "codex", "claude-code"] as const;
+export const AIU_HOSTS = ["opencode", "codex", "claude-code", "grok-build"] as const;
 export const AIU_HOST_CAPABILITY_NAMES = ["idleEvents", "stopHook", "todoRead", "sessionState", "promptDelivery", "selectedSession", "modelTargeting", "userActivity", "projectTrust"] as const;
 export const AIU_CONTINUATION_MODES = ["continue", "repair", "wait", "stop"] as const;
 export const AIU_PROMPT_SECTION_KINDS = ["work", "planning", "quality", "whip"] as const;
@@ -925,7 +925,7 @@ function validateHost(value: string, fieldPath: string, diagnostics: AiuConfigDi
   if (isHost(value)) {
     return true;
   }
-  diagnostics.push(diagnostic("invalid-host", fieldPath, `Unsupported host "${value}".`, "Use opencode, codex, or claude-code."));
+  diagnostics.push(diagnostic("invalid-host", fieldPath, `Unsupported host "${value}".`, "Use opencode, codex, claude-code, or grok-build."));
   return false;
 }
 

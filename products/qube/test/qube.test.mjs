@@ -2451,9 +2451,44 @@ describe("qube init composer orchestrator", () => {
     const partialResult = runCli(["init", ".", "--host", "opencode,claude-code", "--yes", "--json"], { cwd: partialCwd, env: initEnv(partialRoot) });
     assert.equal(partialResult.status, 0, partialResult.stderr);
     const partialParsed = JSON.parse(partialResult.stdout);
-    assert.equal(partialParsed.aie.length, 2);
-    const tools = partialParsed.aie.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
-    assert.deepEqual(tools, ["claude-code", "opencode"]);
+    assert.equal(partialParsed.aie.length, 1);
+    assert.equal(partialParsed.aie[0].args[partialParsed.aie[0].args.indexOf("--tool") + 1], "opencode,claude-code");
+    assert.equal(partialParsed.aiu.length, 2);
+    const aiuTools = partialParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(aiuTools, ["claude-code", "opencode"]);
+  });
+
+  it("treats Grok Build as its own init tool instead of Codex", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", dryRun: true, selectedTools: ["grok-build"], actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init", init: { ok: true, tools: ["grok-build"] } });
+    const result = runCli(["init", ".", "--host", "grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.deepEqual(parsed.selections.hosts, ["grok-build"]);
+    assert.equal(parsed.aie.length, 1);
+    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "grok-build", "--dry-run", "--yes"]);
+    assert.equal(parsed.aiu.length, 1);
+    assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "grok-build", "--dry-run"]);
+    assert.equal(parsed.aie[0].args.includes("codex"), false);
+    assert.equal(parsed.aiu[0].args.includes("codex"), false);
+  });
+
+  it("keeps one Executor init for Grok Build plus Codex and fans Umpire per host", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const result = runCli(["init", ".", "--host", "grok-build,codex", "--yes", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.aie.length, 1);
+    assert.equal(parsed.aie[0].args[parsed.aie[0].args.indexOf("--tool") + 1], "codex,grok-build");
+    assert.equal(parsed.aiu.length, 2);
+    const aiuTools = parsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(aiuTools, ["codex", "grok-build"]);
   });
 
   it("also initializes aib when selected through --with", () => {
