@@ -328,6 +328,34 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
+  it('keeps prior-head lane evidence out of new-head lane prompts', async () => {
+    const repo = makeGitRepo();
+    const priorPath = join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldhead', 'issue-compliance.json');
+    mkdirSync(join(repo, '.qube', 'aie', 'reviews', '93', '12', 'oldhead'), { recursive: true });
+    writeFileSync(priorPath, `${JSON.stringify({
+      version: 1,
+      issueNumber: 93,
+      prNumber: 12,
+      headSha: 'oldhead',
+      lane: 'issue-compliance',
+      summary: 'SUPERSEDED_ACCEPTANCE_WORDING remains blocking.',
+    }, null, 2)}\n`);
+    const config = localHostConfig(null);
+    const { exec } = makePrExec({
+      prViews: [cleanLocalPr()],
+      issueBodies: { 93: '## Requirements\nCURRENT_ACCEPTANCE_WORDING is the live criterion.\n' },
+    });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
+    const promptText = result.localReviewRunner.lanes.map(lane => lane.promptText).join('\n');
+
+    assert.match(promptText, /Do not read files under \.qube\/aie\/reviews\/\*\*/);
+    assert.match(promptText, /CURRENT_ACCEPTANCE_WORDING/);
+    assert.doesNotMatch(promptText, /SUPERSEDED_ACCEPTANCE_WORDING/);
+    assert.ok(existsSync(priorPath));
+    assert.match(result.localReviewRunner.lanes[0].spawnPrompt, /Do not read any path under \.qube\/aie\/reviews\/\*\*/);
+  });
+
   it('writes a shared per-head digest and drops raw issue-body rereads from lane prompts', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

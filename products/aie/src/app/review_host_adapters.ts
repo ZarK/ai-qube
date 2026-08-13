@@ -234,6 +234,7 @@ const grokAdapter: ReviewHostAdapter = Object.freeze({
       '--deny', 'Edit',
       '--deny', 'WebFetch',
       '--deny', 'MCPTool(*)',
+      '--deny', 'Read(.qube/aie/reviews/**)',
       '--no-plan',
       '--no-subagents',
       '--disable-web-search',
