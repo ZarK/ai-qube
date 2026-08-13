@@ -66,7 +66,7 @@ export interface ToolkitCliDependency {
 }
 
 export interface HostToolkitProbe {
-  readonly host: ToolkitHostId;
+  readonly host: string;
   readonly displayName: string;
   readonly status: ToolkitHostStatus;
   readonly present: readonly string[];
@@ -390,10 +390,28 @@ function probeManifest(cwd: string, manifest: HostToolkitManifest): HostToolkitP
 
 function rollupStatus(hosts: readonly HostToolkitProbe[], cli: readonly ToolkitCliDependency[], hasRecord: boolean): ToolkitHostStatus {
   if (!hasRecord) return "unknown";
-  if (hosts.some((host) => host.status === "missing")) return "missing";
+  if (hosts.length === 0 || hosts.some((host) => host.status === "missing")) return "missing";
   if (cli.some((item) => item.required && (item.status === "missing" || item.status === "unauthenticated"))) return "partial";
   if (hosts.every((host) => host.status === "complete")) return "complete";
   return "partial";
+}
+
+function probeSelectedHost(cwd: string, host: string): HostToolkitProbe {
+  if (!isToolkitHostId(host)) {
+    return Object.freeze({
+      host,
+      displayName: host,
+      status: "missing",
+      present: Object.freeze([]),
+      missing: Object.freeze([host]),
+      reason: `Host "${host}" is not a supported toolkit host.`,
+    });
+  }
+  return probeManifest(cwd, Object.freeze({
+    host,
+    displayName: HOST_DISPLAY_NAMES[host],
+    assets: assetsForHost(host),
+  }));
 }
 
 export function probeHostToolkits(options: ProbeHostToolkitOptions): HostToolkitReport {
@@ -414,12 +432,7 @@ export function probeHostToolkits(options: ProbeHostToolkitOptions): HostToolkit
     });
   }
 
-  const composition = composeHostToolkitManifests(record.hosts, {
-    workProviders: record.workProviders,
-    ciProviders: record.ciProviders,
-    mcpOptIn: record.mcp.optIn,
-  });
-  const hosts = Object.freeze(composition.manifests.map((manifest) => probeManifest(options.cwd, manifest)));
+  const hosts = Object.freeze(record.hosts.map((host) => probeSelectedHost(options.cwd, host)));
   const githubSelected = usesGithub(record.workProviders, record.ciProviders);
   const cliDependencies = Object.freeze([
     probeGh(options.env, options.offline === true, githubSelected),

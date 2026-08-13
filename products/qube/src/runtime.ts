@@ -1467,7 +1467,7 @@ function formatContinuationHealth(continuation: QubeDoctorContinuationSection): 
 }
 
 function toolkitExitCode(hosts: HostToolkitReport): number {
-  return hosts.status === "missing" ? 1 : 0;
+  return hosts.status === "missing" || hosts.status === "partial" ? 1 : 0;
 }
 
 async function executeQubeDoctor(json: boolean, offline: boolean, environment: CliEnvironment): Promise<RuntimeCommandResult> {

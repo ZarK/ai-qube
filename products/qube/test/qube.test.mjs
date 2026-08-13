@@ -2663,6 +2663,53 @@ describe("host toolkit manifests", () => {
     assert.equal(parsed.ok, false);
   });
 
+  it("does not report complete for an unknown or empty selected host record", () => {
+    const unknownRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-unknown-host-"));
+    writeInitRecord(unknownRoot, createInitRecord({
+      hosts: ["unsupported-host"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const unknown = probeHostToolkits({ cwd: unknownRoot, env: { PATH: "" }, offline: true });
+    assert.equal(unknown.status, "missing");
+    assert.equal(unknown.hosts[0].status, "missing");
+    assert.match(unknown.hosts[0].reason, /not a supported toolkit host/);
+
+    const emptyRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-empty-hosts-"));
+    writeInitRecord(emptyRoot, createInitRecord({
+      hosts: [],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const empty = probeHostToolkits({ cwd: emptyRoot, env: { PATH: "" }, offline: true });
+    assert.equal(empty.status, "missing");
+    assert.notEqual(empty.status, "complete");
+  });
+
+  it("fails doctor when a required GitHub CLI dependency is missing", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-gh-missing-"));
+    writeRequiredAssets(cwd, "claude-code");
+    writeInitRecord(cwd, createInitRecord({
+      hosts: ["claude-code"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const probed = probeHostToolkits({ cwd, env: { PATH: "" }, offline: false });
+    assert.equal(probed.status, "partial");
+    assert.equal(probed.cliDependencies[0].status, "missing");
+
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-gh-doctor-pkg-"));
+    createQualityDoctorShim(qualityRoot);
+    const doctor = runCli(["doctor", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(doctor.stdout);
+    assert.equal(parsed.hosts.status, "partial");
+    assert.notEqual(doctor.status, 0);
+    assert.equal(parsed.ok, false);
+  });
+
   it("exports host toolkit composition from the package surface", () => {
     assert.equal(typeof composeHostToolkitManifests, "function");
     assert.equal(typeof probeHostToolkits, "function");
