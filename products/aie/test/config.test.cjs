@@ -182,6 +182,33 @@ describe('config validation', () => {
     assert.ok(result.errors.some(error => error.path === 'policy.reviews.lanes[0].carryForwardContext'));
   });
 
+  it('defaults and accepts per-lane model tiers', () => {
+    const input = defaultFile();
+    input.policy.reviews.lanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'docs-instructions', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'task-record-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', tier: 'review' },
+      { id: 'security', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', tier: 'economy' },
+    ];
+
+    const result = validateConfig(input);
+
+    assert.equal(result.ok, true);
+    const byId = new Map(result.config.reviewLanes.map(lane => [lane.id, lane.tier]));
+    assert.equal(byId.get('code-quality'), 'review');
+    assert.equal(byId.get('docs-instructions'), 'economy');
+    assert.equal(byId.get('task-record-compliance'), 'review');
+    assert.equal(byId.get('security'), 'economy');
+
+    const invalid = defaultFile();
+    invalid.policy.reviews.lanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', tier: 'cheap' },
+    ];
+    const invalidResult = validateConfig(invalid);
+    assert.equal(invalidResult.ok, false);
+    assert.ok(invalidResult.errors.some(error => error.path === 'policy.reviews.lanes[0].tier'));
+  });
+
   it('validates review concurrency bounds', () => {
     const valid = defaultFile();
     valid.policy.reviews.concurrency = 4;

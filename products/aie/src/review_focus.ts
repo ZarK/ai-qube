@@ -1,5 +1,5 @@
 import type { Config } from './config/index.js';
-import type { ReviewLanePolicy } from './core/policy.js';
+import type { ReviewLanePolicy, ReviewModelTierId } from './core/policy.js';
 import { type LocalReviewLaneId, type LocalReviewProfile, requiredLocalReviewLanes } from './local_review_evidence.js';
 import { pathsTouchPatterns as sharedPathsTouchPatterns, simpleGlobMatch } from './risk_cards/glob.js';
 
@@ -56,6 +56,21 @@ export function pathsTouchPatterns(paths: readonly string[], patterns: readonly 
 }
 
 export type CarryForwardContextMode = 'all' | 'config' | 'scope';
+
+const ECONOMY_LANE_TIERS = new Set<string>(['docs-instructions', 'task-record-compliance']);
+
+export function defaultLaneModelTier(laneId: string): ReviewModelTierId {
+  return ECONOMY_LANE_TIERS.has(laneId) ? 'economy' : 'review';
+}
+
+export function resolveLaneModelTier(
+  lane: { tier?: ReviewModelTierId; route?: { tier: ReviewModelTierId } | null } | undefined,
+  laneId: string,
+): ReviewModelTierId {
+  if (lane?.route?.tier) return lane.route.tier;
+  if (lane?.tier) return lane.tier;
+  return defaultLaneModelTier(laneId);
+}
 
 export function defaultCarryForwardContext(laneId: string): CarryForwardContextMode {
   if (laneId === 'issue-compliance' || laneId === 'final-gate' || laneId === 'task-record-compliance') return 'all';

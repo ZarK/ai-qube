@@ -2,13 +2,14 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy, ReviewModelHostId, RoutedReviewHostId } from '../core/policy.js';
-import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, defaultLaneModelTier, resolveLaneModelTier } from '../review_focus.js';
+import { classifyApprovedLaneDelta, type DeltaTriageLaneResult } from '../review_delta_triage.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
 import type { PrGateExec } from './pr_gate.js';
 import { formatRiskCardReviewerFragment, selectRiskCards } from '../risk_cards/index.js';
-import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
+import { buildLocalReviewPublishCommand, buildLocalReviewSpawnContract, clearRouteFault, evaluateCarryForwardDecision, executableReviewCommandsTrusted, expectedLaneFragmentDigest, findCarryForwardSource, hash, laneContextLines, laneEvidencePath, layoutContextText, layoutReviewContextLines, promptStack, readRouteFaults, recordRouteFault, resolveReviewModelTier, riskCardCommandIdentity, runExternalLane, writeCarriedForwardLane, writeLane, writeTrustedRoutedProvenance, type LocalReviewSpawnContract, type ReviewModelTierResolution } from './local_review_runner_support.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { runModelReview, type ModelHostExecutable, type ModelReviewRoutePlan, type ModelRouteProcess } from './model_review_runner.js';
 import { probeModelRoute, type RouteProbeCheck, type RoutedProbeHost } from './model_route_probe.js';
@@ -43,6 +44,7 @@ export interface LocalReviewLaneRun {
   spawnPrompt: string;
   spawnContract: LocalReviewSpawnContract | null;
   route: ModelReviewRoutePlan | null;
+  modelTier: 'review' | 'economy' | 'synthesis';
   summary: string;
   blocker: string | null;
   evidenceSource: 'fresh-run' | 'local' | 'trusted-provider' | null;
@@ -89,6 +91,7 @@ export interface LocalReviewRunResult {
   modelTiers: { review: ReviewModelTierResolution; economy: ReviewModelTierResolution; synthesis: ReviewModelTierResolution };
   economyCatalog: EconomyCatalogTierResolution[];
   headDigest: LocalReviewHeadDigestResult | null;
+  deltaTriage: { modelTier: 'economy'; lanes: DeltaTriageLaneResult[] };
   lanes: LocalReviewLaneRun[];
   written: string[];
   unavailable: string[];
@@ -168,15 +171,30 @@ function laneCommand(config: Config, lane: LocalReviewLaneId): string | null {
   return command && command !== '' ? command : null;
 }
 
+function plannedLaneModelTier(config: Config, lane: LocalReviewLaneId, route: ModelReviewRoutePlan | null = resolveModelReviewPlan(config, lane)): LocalReviewLaneRun['modelTier'] {
+  return route?.tier ?? resolveLaneModelTier(lanePolicy(config, lane), lane);
+}
+
+function plannedLaneTierResolution(
+  config: Config,
+  lane: LocalReviewLaneId,
+  modelTiers: LocalReviewRunResult['modelTiers'],
+  route: ModelReviewRoutePlan | null,
+): ReviewModelTierResolution {
+  if (route) return { model: route.model, effort: route.effort, substitution: route.substitution };
+  return modelTiers[plannedLaneModelTier(config, lane, route)];
+}
+
 export function resolveModelReviewPlan(config: Config, lane: LocalReviewLaneId): ModelReviewRoutePlan | null {
   const policy = lanePolicy(config, lane);
   if (laneRunner(config, lane) !== 'local-host') return null;
   const route = policy?.route ?? config.reviewRoute;
   if (!route) return null;
-  const binding = resolveReviewModelTier(config.reviewModels, route.tier, route.host as ReviewModelHostId);
+  const tier = policy?.route ? policy.route.tier : resolveLaneModelTier(policy, lane);
+  const binding = resolveReviewModelTier(config.reviewModels, tier, route.host as ReviewModelHostId);
   return {
     host: route.host,
-    tier: route.tier,
+    tier,
     model: binding.model,
     effort: binding.effort as ModelReviewRoutePlan['effort'],
     isolation: 'read-only',
@@ -250,7 +268,7 @@ function localAieCliPrefix(config: Config, repoRoot: string): string {
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane)): LocalReviewLaneRun {
   if (!renderPrompts) {
     // Trusted-provider reuse spawns nothing and validates no local evidence, so prompt
     // rendering and hashing would be dead work for the reused lane.
@@ -270,6 +288,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
       spawnPrompt: '',
       spawnContract: null,
       route,
+      modelTier: plannedTier,
       summary,
       blocker,
       evidenceSource: status === 'unavailable' || status === 'failed' ? null : 'fresh-run',
@@ -282,7 +301,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
-    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, modelTier: 'review', tierResolution })
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, modelTier: plannedTier, tierResolution })
     : null;
   return {
     issueNumber,
@@ -297,6 +316,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     promptStackHash,
     promptText,
     promptOutputContract: rendered.outputContract,
+    modelTier: plannedTier,
     spawnPrompt: spawnContract?.taskPrompt ?? '',
     spawnContract,
     route,
@@ -320,26 +340,26 @@ function reuseLaneRun(config: Config, input: LocalReviewRunnerInput, lane: Local
     const localLane = readCurrentHeadLaneEvidence(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane);
     if (localLane && (localLane.status === 'passed' || localLane.status === 'failed' || localLane.status === 'needs-work')) {
       const summary = `Existing current-head lane evidence (${localLane.status}) reused; no reviewer execution required.`;
-      return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route), evidenceSource: 'local' };
+      return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, input.dryRun ? 'skipped' : 'completed', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)), evidenceSource: 'local' };
     }
     return null;
   }
   const providerLane = acceptedProviderLane(input.providerLaneReuse, lane, issueNumber);
   if (providerLane) {
     const summary = `Trusted provider current-head review reused (${providerLane.recommendation}/${providerLane.status}); no reviewer execution required and no local evidence was fabricated.`;
-    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, false), evidenceSource: 'trusted-provider' };
+    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, summary, null, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, route, false, plannedLaneModelTier(config, lane, route)), evidenceSource: 'trusted-provider' };
   }
   return null;
 }
 
-async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], linkedIssueNumbers: readonly number[], written: string[], riskCardFragments: readonly string[] = []): Promise<LocalReviewLaneRun | null> {
+async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number, runner: ReviewLanePolicy['runner'], command: string | null, path: string, cliPrefix: string, contextLines: readonly string[], linkedIssueNumbers: readonly number[], written: string[], riskCardFragments: readonly string[] = [], deltaTriage: DeltaTriageLaneResult[] = []): Promise<LocalReviewLaneRun | null> {
   if (runner !== 'local-host' && runner !== 'local-command') return null;
   const lanePolicy = config.reviewLanes.find(entry => entry.id === lane);
   if ((lanePolicy?.rereview ?? defaultRereviewMode(lane)) !== 'delta') return null;
   const contextPatterns = [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements];
   // Risk cards can activate from issue text without a git delta. Carry forward only when the prior
   // evidence recorded the same command-supplied risk-card fragment identity as the current head.
-  const source = await findCarryForwardSource({
+  const decision = await evaluateCarryForwardDecision({
     repoRoot: input.repoRoot,
     issueNumber,
     prNumber: input.prNumber,
@@ -352,15 +372,36 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
     expectedAdapter: runner,
     requiredCommand: command,
+    expectedModelTier: plannedLaneModelTier(config, lane),
+    expectedHost: runner === 'local-host' ? (resolveModelReviewPlan(config, lane)?.host ?? 'codex') : null,
   });
-  if (!source) return null;
-  if (input.dryRun) {
-    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments), evidenceSource: 'local' };
+  if (decision.source) {
+    deltaTriage.push({
+      lane,
+      verdict: 'not-relevant',
+      modelTier: 'economy',
+      reason: decision.source.deltaSummary,
+      escalate: false,
+    });
+  } else if (decision.priorApproved) {
+    deltaTriage.push(classifyApprovedLaneDelta({
+      lane,
+      deltaPaths: decision.deltaComputed ? decision.deltaPaths : null,
+      matchPatterns: lanePolicy?.match ?? [],
+      contextPatterns,
+      contextMode: lanePolicy?.carryForwardContext ?? defaultCarryForwardContext(lane),
+    }));
   }
-  const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source);
+  const source = decision.source;
+  if (!source) return null;
+  const plannedTier = plannedLaneModelTier(config, lane);
+  if (input.dryRun) {
+    return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedTier), evidenceSource: 'local' };
+  }
+  const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source, plannedTier);
   if (!writtenPath) return null;
   written.push(writtenPath);
-  return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments), evidenceSource: 'local' };
+  return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedTier), evidenceSource: 'local' };
 }
 
 // Two concurrent sessions per host keep host-level caches and rate limits safe
@@ -466,10 +507,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     },
   }));
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
   const primaryIssueNumber = input.issueNumbers[0];
@@ -492,9 +533,9 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
 
   const lanes: LocalReviewLaneRun[] = [];
   const written: string[] = [digestPath];
+  const deltaTriage: DeltaTriageLaneResult[] = [];
   const unavailable: string[] = [];
   const routedJobs: RoutedLaneJob[] = [];
-  const reviewTierResolution = modelTiers.review;
   let failed = false;
   const commandTrust = await executableReviewCommandsTrusted(input.repoRoot, `${config.baseRemote}/${config.baseBranch}`);
   const commandlessHostLanes = new Set(requiredLanes.filter(lane => laneRunner(config, lane) === 'local-host' && !laneCommand(config, lane) && !resolveModelReviewPlan(config, lane)));
@@ -514,7 +555,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           ? opencode.missingCapabilities[0] ?? 'opencode-local-review-runner-unsupported'
           : codex.missingCapabilities[0] ?? 'codex-local-reviewer-not-configured';
         unavailable.push(`${lane}: ${summary}`);
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedLaneModelTier(config, lane)));
         continue;
       }
       const reused = reuseLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, riskCardFragments, null);
@@ -522,7 +563,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(reused);
         continue;
       }
-      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written, riskCardFragments);
+      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, 'local-host', null, path, cliPrefix, contextLines, linkedIssueNumbers, written, riskCardFragments, deltaTriage);
       if (carried) {
         lanes.push(carried);
         continue;
@@ -530,7 +571,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], reviewTierResolution, riskCardFragments));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], plannedLaneTierResolution(config, lane, modelTiers, null), riskCardFragments, null, true, plannedLaneModelTier(config, lane)));
     }
   }
 
@@ -558,12 +599,12 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const plannedSummary = route
         ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ' This lane reached the configured host-fault threshold and executes through the fallback route.' : ''}`
         : runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.';
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], route ? { model: route.model, effort: route.effort, substitution: route.substitution } : reviewTierResolution, riskCardFragments, route);
+      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route));
       if (!input.dryRun && command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';
         unavailable.push(`${lane}: ${summary}`);
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, summary, blocker, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
         continue;
       }
       const reused = reuseLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, includePrompt, [issueNumber], riskCardFragments, route);
@@ -571,7 +612,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(reused);
         continue;
       }
-      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written, riskCardFragments);
+      const carried = await carryForwardLaneRun(config, input, lane, issueNumber, runner, command, path, cliPrefix, contextLines, [issueNumber], written, riskCardFragments, deltaTriage);
       if (carried) {
         lanes.push(carried);
         continue;
@@ -636,17 +677,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-host', plannedRun.promptStackHash, input.repoRoot, path, contextLines, publishCommand, input.exec, riskCardFragments);
         if (!evidence) {
           failed = true;
-          lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+          lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
           continue;
         }
-        const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, evidence, 'local-host');
+        const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route) }, 'local-host');
         written.push(writtenPath);
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
         continue;
       }
       if (runner !== 'local-command' || !command) {
         unavailable.push(`${lane}: no local-command runner command is configured.`);
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, 'No runnable local-command is configured for this lane.', 'missing local-command', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'unavailable', path, 'No runnable local-command is configured for this lane.', 'missing local-command', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
         continue;
       }
       if (input.dryRun) {
@@ -657,12 +698,12 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const evidence = await runExternalLane(command, lane, issueNumber, input.prNumber, input.headSha, profile, 'local-command', plannedRun.promptStackHash, input.repoRoot, path, contextLines, publishCommand, input.exec, riskCardFragments);
       if (!evidence) {
         failed = true;
-        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+        lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
         continue;
       }
-      const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, evidence, 'local-command');
+      const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route) }, 'local-command');
       written.push(writtenPath);
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments));
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route)));
     }
   }
 
@@ -728,7 +769,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       }
       const summary = check?.diagnostic ?? `${job.route.host} route probe returned no result; the route is blocked before model execution.`;
       unavailable.push(`${job.lane}: ${summary}`);
-      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'unavailable', job.path, summary, 'model-route-probe-blocked', cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route));
     }
   }
   if (runnableJobs.length > 0) {
@@ -747,17 +788,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           // so fallback-run faults keep the failover engaged until a verdict.
           recordRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane, reasonCode, reviewRouteKey(job.primaryRoute ?? job.route));
         }
-        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+        lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'failed', job.path, summary, reasonCode, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route));
         return;
       }
       // Any valid completed verdict clears the lane's host-fault tally; review
       // verdicts are evidence, never faults, and never advance failover.
       clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
-      const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, routed.evidence, 'local-host');
+      const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, { ...routed.evidence, modelTier: job.route.tier }, 'local-host');
       const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, routed.evidence);
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
-      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route);
+      lanes[job.laneSlot] = laneRun(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, job.lane, job.runner, null, 'completed', job.path, routed.evidence.summary, routed.evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [job.issueNumber], [job.path], undefined, riskCardFragments, job.route, true, plannedLaneModelTier(config, job.lane, job.route));
       if (input.onLaneValidated) {
         try {
           await input.onLaneValidated(lanes[job.laneSlot]);
@@ -790,6 +831,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     modelTiers,
     economyCatalog,
     headDigest,
+    deltaTriage: { modelTier: 'economy', lanes: deltaTriage },
     lanes,
     written,
     unavailable,

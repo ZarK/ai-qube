@@ -254,7 +254,46 @@ describe('model review runner', () => {
 
     assert.equal(result.error, null);
     assert.equal(result.evidence.runnerProvenance.sessionId, 'codex-thread');
+    assert.equal(result.evidence.modelTier, 'review');
+    assert.equal(result.evidence.usage, undefined);
     assert.equal(existsSync(capturedSchemaPath), false);
+  });
+
+  it('records host-reported usage on routed evidence and omits it when the host reports none', async () => {
+    const repoRoot = mkdtempSync(join(tmpdir(), 'aie-usage-'));
+    const withUsage = await runModelReview({
+      ...reviewInput(repoRoot, 'codex'),
+      resolveExecutable: async () => 'codex.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: [
+          JSON.stringify({ type: 'thread.started', thread_id: 'codex-thread' }),
+          JSON.stringify({ type: 'item.completed', item: { type: 'agent_message', text: JSON.stringify(laneResult()) } }),
+          JSON.stringify({ type: 'turn.completed', usage: { input_tokens: 40, output_tokens: 9 } }),
+        ].join('\n'),
+      }),
+    });
+    assert.equal(withUsage.error, null);
+    assert.deepEqual(withUsage.evidence.usage, { inputTokens: 40, outputTokens: 9 });
+    assert.equal(withUsage.evidence.modelTier, 'review');
+
+    const withoutUsage = await runModelReview({
+      ...reviewInput(repoRoot, 'grok'),
+      resolveExecutable: async () => 'grok.exe',
+      runProcess: async () => ({
+        exitCode: 0,
+        stderr: '',
+        timedOut: false,
+        stdinDelivered: true,
+        stdout: JSON.stringify({ text: JSON.stringify(laneResult()), sessionId: 'grok-session' }),
+      }),
+    });
+    assert.equal(withoutUsage.error, null);
+    assert.equal(withoutUsage.evidence.usage, undefined);
+    assert.ok(!Object.hasOwn(withoutUsage.evidence, 'usage'));
   });
 
   it('routes Grok through a private prompt file and injects trusted provenance', async () => {

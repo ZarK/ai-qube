@@ -319,7 +319,12 @@ function localEvidence({ issueNumber = 93, prNumber = 12, headSha = 'abc123', la
       { id: 'tests-quality', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'tests reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/tests-quality.json`, sha256: null }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('tests-quality'), runnerProvenance: laneProvenance('tests-quality') },
       { id: 'manual-qa', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'QA reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/manual-qa.json`, sha256: null }], commands: ['pnpm test'], surfaces: ['CLI'], promptStack: promptStackForLane('manual-qa'), runnerProvenance: laneProvenance('manual-qa') },
       { id: 'final-gate', status: 'passed', severity: 'none', recommendation: 'approve', summary: 'final gate reviewed', blockers: [], artifacts: [{ kind: 'json', path: `.qube/aie/reviews/${issueNumber}/${prNumber}/${headSha}/final-gate.json`, sha256: null }], commands: ['qube aie pr gate 12 --dry-run'], surfaces: ['PR'], promptStack: promptStackForLane('final-gate'), runnerProvenance: laneProvenance('final-gate') },
-    ].map(lane => ({ completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`, preconditions: [], ...lane })),
+    ].map(lane => ({
+      completeness: `Inspected the ${lane.id} lane scope at this head; nothing was left uninspected.`,
+      preconditions: [],
+      modelTier: lane.id === 'task-record-compliance' || lane.id === 'docs-instructions' ? 'economy' : 'review',
+      ...lane,
+    })),
   };
 }
 
