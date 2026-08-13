@@ -1,0 +1,56 @@
+products/aie/src/app/local_review_runner.ts
+  h_13eab01d19dfa9 95-103,308-309,380,467-477,530,533,647,855
+products/aie/src/app/local_review_runner_support.ts
+  h_13eab01d19dfa9 16,372-373,904,906,915-925,1283
+products/aie/src/app/pr_gate.ts
+  h_13eab01d19dfa9 24,886,1013,1085
+products/aie/src/app/pr_review_publish.ts
+  h_13eab01d19dfa9 6,51-52,605-606,665
+products/aie/src/app/pr_review_summary_publish.ts
+  h_13eab01d19dfa9 3,28-29,88,164
+products/aie/src/app/review_feedback.ts
+  h_13eab01d19dfa9 1-138
+products/aie/src/command_catalog.ts
+  h_13eab01d19dfa9 26,296-308
+products/aie/src/command_flag_details.ts
+  h_13eab01d19dfa9 150-159
+products/aie/src/config/defaults.ts
+  h_13eab01d19dfa9 250,348,420
+products/aie/src/config/schema.ts
+  h_13eab01d19dfa9 285,309-313
+products/aie/src/core/policy.ts
+  h_13eab01d19dfa9 116-118
+products/aie/src/review_focus.ts
+  h_13eab01d19dfa9 122,124,135-147
+products/aie/src/review_learnings.ts
+  h_13eab01d19dfa9 1-164
+products/aie/src/review_synthesis.ts
+  h_13eab01d19dfa9 3,20-21,30-31,113,118,137-141,150-167,225-226
+products/aie/src/runtime_handlers.ts
+  h_13eab01d19dfa9 14,604-645,916,931
+products/aie/test/config.test.cjs
+  h_13eab01d19dfa9 212-226
+products/aie/test/pr_gate_b.test.cjs
+  h_13eab01d19dfa9 658-692
+products/aie/test/review_feedback.test.cjs
+  h_13eab01d19dfa9 1-99
+products/aie/test/review_focus.test.cjs
+  h_13eab01d19dfa9 106-117
+products/aie/test/review_learnings.test.cjs
+  h_13eab01d19dfa9 1-81
+products/aie/test/review_setup.test.cjs
+  h_13eab01d19dfa9 65,69
+products/aie/test/review_synthesis.test.cjs
+  h_13eab01d19dfa9 251-289
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "89612c9d265e04b2a0c2e1d57e55196fff561371",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
