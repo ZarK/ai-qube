@@ -1,0 +1,16 @@
+products/aie/src/app/review_head_digest.ts
+  h_13eab01d19dfa9 78-79,131,134,136,140,193
+products/aie/test/review_head_digest.test.cjs
+  h_13eab01d19dfa9 9,64-71
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "bf2fc243548d0d2bb258493014aa6bd34fa5a1c1",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
