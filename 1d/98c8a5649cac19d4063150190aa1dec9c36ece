@@ -1,0 +1,21 @@
+products/qube/src/install_state.ts
+  s_f713ff4b3f864d::t_33953cdd464567 207-209
+products/qube/test/qube.test.mjs
+  s_f713ff4b3f864d::t_0da19d1c608734 548-558
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "1d98c8a5649cac19d4063150190aa1dec9c36ece",
+  "prompts": {},
+  "sessions": {
+    "s_f713ff4b3f864d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2f47b44a-9719-4f51-b011-6f01582b6a53",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
