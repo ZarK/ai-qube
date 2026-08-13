@@ -1,0 +1,16 @@
+products/aie/src/review_learnings.ts
+  h_13eab01d19dfa9 3-4,8-9,59,123-129,136-137,139-146,148-151,153,162-163,169-171,174
+products/aie/test/review_learnings.test.cjs
+  h_13eab01d19dfa9 10,14,38-50,90-108
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "4f10e861cbe14d4106f46c5fb8814632c4e0d99f",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
