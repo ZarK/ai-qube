@@ -2476,6 +2476,28 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.aiu[0].args.includes("codex"), false);
   });
 
+  it("keeps classic all-host init separate from an explicit Grok Build selection", () => {
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-classic-all-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const classic = runCli(["init", ".", "--host", "opencode,codex,claude-code", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(classic.status, 0, classic.stderr);
+    const classicParsed = JSON.parse(classic.stdout);
+    assert.equal(classicParsed.aie.length, 1);
+    assert.equal(classicParsed.aie[0].args[classicParsed.aie[0].args.indexOf("--tool") + 1], "all");
+    assert.equal(classicParsed.aiu.length, 1);
+    assert.equal(classicParsed.aiu[0].args[classicParsed.aiu[0].args.indexOf("--tool") + 1], "all");
+
+    const combined = runCli(["init", ".", "--host", "opencode,codex,claude-code,grok-build", "--yes", "--dry-run", "--json"], { cwd, env: initEnv(packageRoot) });
+    assert.equal(combined.status, 0, combined.stderr);
+    const combinedParsed = JSON.parse(combined.stdout);
+    assert.equal(combinedParsed.aie.length, 1);
+    assert.equal(combinedParsed.aie[0].args[combinedParsed.aie[0].args.indexOf("--tool") + 1], "all,grok-build");
+    const combinedAiuTools = combinedParsed.aiu.map(run => run.args[run.args.indexOf("--tool") + 1]).sort();
+    assert.deepEqual(combinedAiuTools, ["all", "grok-build"]);
+  });
+
   it("keeps one Executor init for Grok Build plus Codex and fans Umpire per host", () => {
     const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-"));
     const cwd = mkdtempSync(path.join(tmpdir(), "qube-init-grok-codex-cwd-"));

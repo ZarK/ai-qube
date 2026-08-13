@@ -287,7 +287,7 @@ export function getAiuHostCapabilityProfiles(tools: readonly AiuHost[]): readonl
 }
 
 export function getAllAiuHostCapabilityProfiles(): readonly AiuHostCapabilityProfile[] {
-  return getAiuHostCapabilityProfiles(["opencode", "codex", "claude-code"]);
+  return Object.freeze(Object.values(HOST_PROFILES));
 }
 
 export function getDefaultHostCapabilityOverrides(tool: AiuHost): Readonly<Partial<Record<AiuHostCapabilityName, boolean | "none" | "stdout" | "host">>> {

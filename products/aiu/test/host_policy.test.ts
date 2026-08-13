@@ -17,13 +17,17 @@ describe("host runtime policy", () => {
   it("exposes provider-neutral profiles and explicit support states", () => {
     const profiles = getAllAiuHostCapabilityProfiles();
 
-    assert.deepEqual(profiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code"]);
-    assert.deepEqual(profiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental"]);
+    assert.deepEqual(profiles.map((profile) => profile.tool), ["opencode", "codex", "claude-code", "grok-build"]);
+    assert.deepEqual(profiles.map((profile) => profile.supportLevel), ["supported", "experimental", "experimental", "experimental"]);
     assert.equal(getAiuHostCapabilityProfile("opencode").capabilities.promptDelivery.support, "supported");
     assert.equal(getAiuHostCapabilityProfile("codex").stopHook.blocksByDefault, true);
     assert.equal(getAiuHostCapabilityProfile("claude-code").capabilities.stopHook.support, "experimental");
     assert.equal(getAiuHostCapabilityProfile("grok-build").managedFiles.length, 0);
     assert.equal(getAiuHostCapabilityProfile("grok-build").stopHook.support, "unsupported");
+    const grokBuild = profiles.find((profile) => profile.tool === "grok-build");
+    assert.ok(grokBuild);
+    assert.deepEqual(grokBuild.managedFiles, []);
+    assert.equal(grokBuild.stopHook.support, "unsupported");
   });
 
   it("uses safe init defaults for host modes and capability overrides", () => {
