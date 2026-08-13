@@ -4590,7 +4590,15 @@ function collectInstallMismatches(selections: InstallSelections, environment: Cl
   return Object.freeze(mismatches);
 }
 
-function isVerificationError(payload: unknown): boolean {
+function isComponentsEnvelope(payload: unknown): payload is { readonly ok: true; readonly command: "components"; readonly components: readonly unknown[] } {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return false;
+  }
+  const record = payload as Record<string, unknown>;
+  return record.ok === true && record.command === "components" && Array.isArray(record.components);
+}
+
+function isVerificationError(payload: unknown, kind: "components" | "doctor"): boolean {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return true;
   }
@@ -4598,7 +4606,10 @@ function isVerificationError(payload: unknown): boolean {
   if (typeof record.error === "string" && record.command === undefined) {
     return true;
   }
-  return record.ok === false && record.command === "components";
+  if (kind === "components") {
+    return !isComponentsEnvelope(payload);
+  }
+  return false;
 }
 
 function doctorFindings(payload: unknown): readonly string[] {
@@ -4846,8 +4857,8 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
   const verification = await collectApplyVerification(selections, environment);
   const failedStep = executed.some(step => step.status === "failed");
   const verificationFailed = verification.mismatches.length > 0
-    || isVerificationError(verification.components)
-    || isVerificationError(verification.doctor);
+    || isVerificationError(verification.components, "components")
+    || isVerificationError(verification.doctor, "doctor");
   const exitCode = failedStep || verificationFailed ? 1 : 0;
   const appliedPlan: InstallPlan = { ...plan, mode: "apply", dryRun: false };
   const apply: InstallApplyReport = {
