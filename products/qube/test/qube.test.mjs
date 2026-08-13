@@ -3,7 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -22,6 +22,7 @@ import {
   assertGrokBuildHostCapabilityAvailable,
   formatGrokBuildUnsupportedCapabilityMessage,
   findQubeComponent,
+  probeInstallState,
   getCodexHostCapability,
   getGrokBuildHostCapability,
   inspectCodexWorkspace,
@@ -469,6 +470,155 @@ describe("qube composer CLI", () => {
     assert.match(notes, /Supported capabilities: .*read-merge-blockers/);
     assert.doesNotMatch(notes, /Supported capabilities: [^.]*run-aiq-github-action/);
     assert.match(notes, /Standalone capabilities: run-aiq-github-action/);
+    assert.deepEqual(parsed.installPlan.steps.map(step => step.status), ["missing", "missing", "missing", "missing"]);
+  });
+
+  function writeManagedSection(filePath, body, checksum = null) {
+    const normalized = `${String(body).replace(/\r\n/g, "\n").trimEnd()}\n`;
+    const digest = checksum ?? createHash("sha256").update(normalized).digest("hex");
+    mkdirSync(path.dirname(filePath), { recursive: true });
+    writeFileSync(filePath, [
+      "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
+      "<!-- executor-managed-version: 1 -->",
+      `<!-- executor-managed-checksum: ${digest} -->`,
+      String(body).trimEnd(),
+      "<!-- END EXECUTOR MANAGED SECTION -->",
+      ""
+    ].join("\n"));
+  }
+
+  function writeInstalledPackage(root, name, version) {
+    const packageDir = path.join(root, "node_modules", ...name.split("/"));
+    mkdirSync(packageDir, { recursive: true });
+    writeFileSync(path.join(packageDir, "package.json"), `${JSON.stringify({ name, version }, null, 2)}\n`);
+  }
+
+  function writeConfiguredRepo(root, options = {}) {
+    mkdirSync(path.join(root, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(root, "package.json"), `${JSON.stringify({
+      name: "demo-app",
+      version: "1.0.0",
+      devDependencies: {
+        [qubePackageName]: qubePackageVersion,
+        "@tjalve/qube-adapter-github": "0.1.3",
+        "@tjalve/qube-adapter-codex": "0.1.3"
+      }
+    }, null, 2)}\n`);
+    if (options.installPackages !== false) {
+      writeInstalledPackage(root, qubePackageName, qubePackageVersion);
+      writeInstalledPackage(root, "@tjalve/qube-adapter-github", "0.1.3");
+      writeInstalledPackage(root, "@tjalve/qube-adapter-codex", "0.1.3");
+    }
+    writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1, providers: { work: { kind: "github" } } }, null, 2)}\n`);
+    if (options.staleManaged) {
+      writeManagedSection(path.join(root, "AGENTS.md"), "Team rules.", "deadbeef");
+    } else if (options.crlfManaged) {
+      const body = "Team rules.";
+      const digest = createHash("sha256").update(`${body.replace(/\r\n?/g, "\n").trimEnd()}\n`).digest("hex");
+      writeFileSync(path.join(root, "AGENTS.md"), [
+        "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
+        "<!-- executor-managed-version: 1 -->",
+        `<!-- executor-managed-checksum: ${digest} -->`,
+        body,
+        "<!-- END EXECUTOR MANAGED SECTION -->",
+        ""
+      ].join("\r\n"));
+    } else if (options.managed !== false) {
+      writeManagedSection(path.join(root, "AGENTS.md"), "Team rules.");
+    }
+  }
+
+  it("reports every step satisfied and a no-op command list for a configured repo", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-configured-"));
+    writeConfiguredRepo(root);
+    const first = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    const second = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(first.status, 0, first.stderr);
+    const parsed = JSON.parse(first.stdout);
+    assert.deepEqual(parsed.installPlan.steps.map(step => [step.stage, step.status]), [
+      ["package-install", "satisfied"],
+      ["workspace-init", "satisfied"],
+      ["provider-setup", "satisfied"],
+      ["verify", "satisfied"]
+    ]);
+    assert.deepEqual(parsed.installPlan.commands, []);
+    assert.deepEqual(JSON.parse(second.stdout).installPlan.commands, []);
+  });
+
+  it("does not treat a version-only config as a configured workspace", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-version-only-"));
+    writeConfiguredRepo(root);
+    writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.steps.find(step => step.stage === "workspace-init").status, "missing");
+    assert.ok(parsed.installPlan.commands.some(step => step.stage === "workspace-init"));
+  });
+
+  it("plans workspace init when existing config does not match the selected providers", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-provider-mismatch-"));
+    writeConfiguredRepo(root);
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "linear", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const workspace = JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "missing");
+    assert.ok(JSON.parse(result.stdout).installPlan.commands.some(step => step.stage === "workspace-init"));
+  });
+
+  it("does not treat declared but uninstalled packages as satisfied", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-declared-only-"));
+    writeConfiguredRepo(root, { installPackages: false });
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.steps.find(step => step.stage === "package-install").status, "missing");
+    assert.ok(parsed.installPlan.commands.some(step => step.stage === "package-install"));
+  });
+
+  it("accepts a current managed section that uses CRLF line endings", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-crlf-"));
+    writeConfiguredRepo(root, { crlfManaged: true });
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    assert.equal(JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init").status, "satisfied");
+  });
+
+  it("plans a refresh when a managed instruction section is stale", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-stale-"));
+    writeConfiguredRepo(root, { staleManaged: true });
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    const workspace = parsed.installPlan.steps.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "stale");
+    assert.ok(parsed.installPlan.commands.some(step => step.stage === "workspace-init" && step.command.includes("qube init")));
+  });
+
+  it("does not treat a symlink config as a satisfied workspace", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-symlink-"));
+    writeConfiguredRepo(root);
+    const configPath = path.join(root, ".qube", "aie", "config.json");
+    const outside = path.join(root, "outside.json");
+    writeFileSync(outside, "{\"version\":1}\n");
+    try {
+      unlinkSync(configPath);
+      symlinkSync(outside, configPath);
+    } catch {
+      return;
+    }
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "generic", "--work-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const workspace = JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init");
+    assert.notEqual(workspace.status, "satisfied");
+  });
+
+  it("keeps unknown package state missing instead of satisfied", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-empty-"));
+    const state = probeInstallState(root, { scope: "local", packageManager: "pnpm", hosts: ["generic"], workProviders: ["github"], ciProviders: ["github"] });
+    assert.equal(state.find(step => step.stage === "package-install").status, "missing");
+    assert.equal(state.find(step => step.stage === "workspace-init").status, "missing");
+    assert.equal(state.every(step => step.status !== "satisfied"), true);
   });
 
   it("renders explicit global npm install commands without prompting", () => {

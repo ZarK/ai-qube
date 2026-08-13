@@ -50,5 +50,7 @@ export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
+export { probeInstallState, instructionTargetsForHosts } from "./install_state.js";
+export type { InstallStateSelections, InstallStepState, InstallStepStatus } from "./install_state.js";
 export { planQubeCli, renderCommandSurfacesDoc, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
 export type { CliEnvironment, CliExecution, CommandResolution, DispatchRequest } from "./runtime.js";
