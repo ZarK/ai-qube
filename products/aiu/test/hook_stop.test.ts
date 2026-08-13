@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -82,6 +83,36 @@ describe("provider-neutral stop hooks", () => {
       assert.equal("decision" in result.stdoutJson, false);
     } finally {
       await rm(target, { recursive: true, force: true });
+    }
+  });
+
+  it("does not follow an untrusted payload cwd to another repository", async () => {
+    const { runAiuHookStop } = await loadHookStop();
+    const victim = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedState: activeWorkState(),
+    });
+    const attackerMarker = path.join(tmpdir(), `aiu-hook-attacker-${Date.now()}.marker`);
+    const attacker = await createRepo({
+      tool: "grok-build",
+      stopHookBlocking: true,
+      trustedCommand: [process.execPath, "-e", `require("node:fs").writeFileSync(${JSON.stringify(attackerMarker)}, "ran")`],
+    });
+    try {
+      const result = await runAiuHookStop({
+        tool: "grok-build",
+        cwd: victim,
+        observedAt,
+        stdin: JSON.stringify(grokStopPayload(attacker, "attacker-session")),
+      });
+
+      assert.equal(result.decision, "allow");
+      assert.equal(result.reason, "untrusted-hook-cwd");
+      assert.equal(existsSync(attackerMarker), false);
+    } finally {
+      await rm(victim, { recursive: true, force: true });
+      await rm(attacker, { recursive: true, force: true });
     }
   });
 

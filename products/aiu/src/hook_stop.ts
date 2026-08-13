@@ -1,3 +1,5 @@
+import path from "node:path";
+
 import type { AiuConfig, AiuHost } from "./config.js";
 import { loadAiuConfig } from "./config.js";
 import { decideAiuContinuation, type AiuContinuationDecision } from "./decision.js";
@@ -73,7 +75,13 @@ export async function runAiuHookStop(options: AiuHookStopOptions): Promise<AiuHo
     ]);
   }
 
-  const cwd = parsed.payload.cwd ?? options.cwd;
+  const resolvedCwd = resolveTrustedHookCwd(options.cwd, parsed.payload.cwd);
+  if (!resolvedCwd.ok) {
+    return allow(options, inputBytes, resolvedCwd.code, [
+      diagnostic("warning", resolvedCwd.code, resolvedCwd.error),
+    ]);
+  }
+  const cwd = resolvedCwd.cwd;
   const configLoad = loadAiuConfig(options.configPath ? { cwd, configPath: options.configPath } : { cwd });
   const policyBlocker = stopHookPolicyBlocker(configLoad.config, options.tool);
   const configDiagnostics = configLoad.diagnostics.map((item) => diagnostic(item.severity, item.kind, item.message));
@@ -200,6 +208,43 @@ export async function readHookStopStdin(timeoutMs = 250): Promise<string> {
     process.stdin.once("error", onEnd);
     process.stdin.resume();
   });
+}
+
+function resolveTrustedHookCwd(
+  invocationCwd: string | undefined,
+  payloadCwd: string | undefined,
+): { readonly ok: true; readonly cwd: string } | { readonly ok: false; readonly code: "untrusted-hook-cwd"; readonly error: string } {
+  const trustedRoot = path.resolve(invocationCwd ?? process.cwd());
+  if (payloadCwd === undefined || payloadCwd.length === 0) {
+    return { ok: true, cwd: trustedRoot };
+  }
+  const requested = path.resolve(payloadCwd);
+  if (!isSameOrChildPath(requested, trustedRoot)) {
+    return {
+      ok: false,
+      code: "untrusted-hook-cwd",
+      error: "Stop hook cwd is outside the invocation repository.",
+    };
+  }
+  return { ok: true, cwd: trustedRoot };
+}
+
+function isSameOrChildPath(candidate: string, root: string): boolean {
+  const normalizedCandidate = normalizePath(candidate);
+  const normalizedRoot = normalizePath(root);
+  if (normalizedCandidate === normalizedRoot) {
+    return true;
+  }
+  const prefix = normalizedRoot.endsWith(path.sep) ? normalizedRoot : `${normalizedRoot}${path.sep}`;
+  return normalizedCandidate.startsWith(prefix);
+}
+
+function normalizePath(value: string): string {
+  const resolved = path.resolve(value);
+  if (process.platform === "win32" && /^[A-Za-z]:/.test(resolved)) {
+    return resolved[0].toLowerCase() + resolved.slice(1);
+  }
+  return resolved;
 }
 
 function parseHookPayload(

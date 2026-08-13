@@ -266,6 +266,7 @@ export const aiuCli = createCli({
           stableErrorKinds: [
             "empty-hook-input",
             "malformed-hook-input",
+            "untrusted-hook-cwd",
             "config-invalid",
             "host-not-enabled",
             "stop-hook-blocking-disabled",
