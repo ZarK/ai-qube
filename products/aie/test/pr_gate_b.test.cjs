@@ -328,7 +328,7 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.doesNotMatch(result.localReviewRunner.lanes[0].promptText, /Fallback host mode/);
   });
 
-  it('renders issue bodies and the PR criterion-to-proof map into the bounded review bundle', async () => {
+  it('writes a shared per-head digest and drops raw issue-body rereads from lane prompts', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     const prBody = '## Summary\nDetails.\n\n## Criterion-to-proof map\n### Criterion 1: Bundled acceptance context reaches the reviewer.\n- Proven by: `products/aie/test/pr_gate_b.test.cjs`.\n\n## Notes\nOutside the map.';
@@ -339,15 +339,30 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
+    const digest = result.localReviewRunner.headDigest;
+    assert.ok(digest);
+    assert.equal(digest.builder, 'qube-review-digest');
+    assert.match(digest.sha256, /^[a-f0-9]{64}$/);
+    assert.match(digest.path.replace(/\\/g, '/'), /\.qube\/aie\/reviews\/93\/12\/abc123\/context-digest\.json$/);
+    const written = JSON.parse(readFileSync(digest.path, 'utf8'));
+    assert.equal(written.sha256, digest.sha256);
+    assert.ok(written.provenance.sources.some(source => source.kind === 'issue-body'));
     const promptText = result.localReviewRunner.lanes[0].promptText;
-    assert.match(promptText, /Bundle issue body #93: Issue acceptance context body\./);
-    assert.match(promptText, /Bundle PR criterion-to-proof map: ## Criterion-to-proof map/);
+    assert.match(promptText, /Shared per-head review digest/);
+    assert.match(promptText, new RegExp(`Digest sha256: ${digest.sha256}`));
     assert.match(promptText, /Criterion 1: Bundled acceptance context reaches the reviewer\./);
-    assert.doesNotMatch(promptText, /Outside the map/);
     assert.match(promptText, /items=\[ \] #1 Bundled criterion\./);
+    assert.doesNotMatch(promptText, /Bundle issue body #93:/);
+    assert.doesNotMatch(promptText, /Issue acceptance context body/);
+    assert.doesNotMatch(promptText, /Outside the map/);
+    const digestHashes = new Set(result.localReviewRunner.lanes.map(lane => {
+      const match = lane.promptText.match(/Digest sha256: ([a-f0-9]{64})/);
+      return match && match[1];
+    }));
+    assert.deepEqual([...digestHashes], [digest.sha256]);
   });
 
-  it('names a genuinely missing bundle element instead of omitting it silently', async () => {
+  it('names a genuinely missing digest field instead of omitting it silently', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
     const { exec } = makePrExec({ prViews: [cleanLocalPr({ body: 'No criterion map in this body.' })] });
@@ -355,8 +370,10 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, exec, includeLocalReviewPrompts: true });
 
     const promptText = result.localReviewRunner.lanes[0].promptText;
-    assert.match(promptText, /Bundle issue body #93: MISSING - the work provider supplied no issue body/);
-    assert.match(promptText, /Bundle PR criterion-to-proof map: MISSING - the PR body contains no Criterion-to-proof section/);
+    assert.match(promptText, /body=missing/);
+    assert.match(promptText, /Digest criterion-to-proof: missing/);
+    assert.doesNotMatch(promptText, /Bundle issue body #93:/);
+    assert.doesNotMatch(promptText, /Bundle PR criterion-to-proof map:/);
   });
 
   it('folds changed-file AIQ findings into local review spawn prompts for verification', async () => {
@@ -460,7 +477,9 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     const bundle = JSON.parse(readFileSync(bundlePath, 'utf8'));
 
     assert.equal(result.localReviewRunner.status, 'completed');
-    assert.equal(result.localReviewRunner.written.length, 6);
+    assert.equal(result.localReviewRunner.written.length, 7);
+    assert.ok(result.localReviewRunner.headDigest);
+    assert.ok(result.localReviewRunner.written.includes(result.localReviewRunner.headDigest.path));
     assert.equal(result.localReview.status, 'passed');
     assert.equal(result.status, 'complete');
     assert.equal(lane.issueNumber, 93);

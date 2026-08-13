@@ -727,18 +727,7 @@ function boundedPathList(paths: readonly string[], maxPaths = 60, maxCharacters 
   return bounded(`${visible.join(', ')}${suffix}`, maxCharacters);
 }
 
-// The bounded bundle is the authoritative acceptance context for read-only
-// review lanes, so a genuinely absent element is named explicitly instead of
-// silently omitted: the lane can then return a named-gap verdict instead of a
-// blanket inconclusive.
-function criterionProofSectionFromPrBody(prBody: string): string | null {
-  const match = prBody.match(/(?:^|\n)(##\s+Criterion-to-proof[\s\S]*?)(?=\n##\s|$)/i);
-  return match ? match[1].trim() : null;
-}
-
-async function buildLocalReviewContextLines(config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], issueBodies: ReadonlyMap<number, string>, prBody: string | undefined): Promise<string[]> {
-  const paths = await changedReviewPaths(config, repoRoot);
-  const diffStat = await gitText(repoRoot, ['diff', '--stat', `${config.baseRemote}/${config.baseBranch}...HEAD`], 4000);
+function buildLocalReviewContextLines(config: Config, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], paths: readonly string[], diffStat: string): string[] {
   const sources = config.reviewContextSources;
   const reviewThreadMode = prThreadContextMode(sources);
   const requirementSources = sources.requirements.length > 0 ? sources.requirements.join(', ') : 'none configured';
@@ -757,22 +746,12 @@ async function buildLocalReviewContextLines(config: Config, repoRoot: string, sn
     `PR title: ${snapshot.pr.title}.`,
     `PR head SHA: ${snapshot.pr.headRefOid}.`,
     `Review decision: ${snapshot.pr.reviewDecision}; merge state: ${snapshot.pr.mergeStateStatus}; mergeability: ${snapshot.pr.mergeable}.`,
+    'Acceptance criteria, PR intent, changed-path map, diff stats, and related tests are in the shared per-head review digest. Consume that digest instead of rereading issue bodies or PR threads.',
     'Changed and relevant local paths are listed once in the bounded review bundle.',
     'Bounded review bundle:',
     `Bundle PR: #${snapshot.pr.number} ${snapshot.pr.title}; url=${snapshot.pr.url}; head=${snapshot.pr.headRefOid}; state=${snapshot.pr.state}; draft=${snapshot.pr.isDraft}; reviewDecision=${snapshot.pr.reviewDecision}; mergeState=${snapshot.pr.mergeStateStatus}; mergeable=${snapshot.pr.mergeable}.`,
     `Bundle issues: ${issueChecklists.map(summary => `#${summary.issue.number} ${summary.issue.title} (${summary.issue.state}) ${summary.issue.url}`).join(' | ') || 'none loaded'}.`,
     `Bundle acceptance checklists: ${issueChecklists.map(summary => `#${summary.issue.number} checked=${summary.checklist.checked}/${summary.checklist.total}; items=${summary.checklist.items.map(item => `[${item.checked ? 'x' : ' '}] #${item.index} ${bounded(item.text, 160)}`).join('; ') || 'none'}`).join(' | ') || 'none loaded'}.`,
-    ...issueChecklists.map(summary => {
-      const body = issueBodies.get(summary.issue.number) ?? '';
-      return body.trim() === ''
-        ? `Bundle issue body #${summary.issue.number}: MISSING - the work provider supplied no issue body for this issue.`
-        : `Bundle issue body #${summary.issue.number}: ${bounded(body, 6000)}`;
-    }),
-    prBody === undefined
-      ? 'Bundle PR criterion-to-proof map: UNAVAILABLE - the PR body could not be loaded from the review provider.'
-      : criterionProofSectionFromPrBody(prBody) === null
-        ? 'Bundle PR criterion-to-proof map: MISSING - the PR body contains no Criterion-to-proof section.'
-        : `Bundle PR criterion-to-proof map: ${bounded(criterionProofSectionFromPrBody(prBody) ?? '', 6000)}`,
     `Bundle changed files: ${changedPaths}.`,
     `Bundle diff stat: ${diffStat === '' ? 'unavailable' : bounded(diffStat, 4000)}.`,
     `Bundle checks: ${checkDiagnostics.map(diagnostic => `${diagnostic.checkName}=${diagnostic.status}; ${bounded(diagnostic.summary, 220)}`).join(' | ') || 'none loaded'}.`,
@@ -795,11 +774,11 @@ async function loadPrBodyText(prNumber: number, repoRoot: string, exec: PrGateEx
   return loadPullRequestBody(prNumber, { cwd: repoRoot, exec: exec as GhExec | undefined });
 }
 
-async function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, repoRoot: string, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], issueBodies: ReadonlyMap<number, string>, prBody: string | undefined): Promise<string[]> {
+function cachedLocalReviewContextLines(cache: Map<string, Promise<string[]>>, config: Config, snapshot: Pick<ReviewForgeSnapshot, 'item' | 'pr' | 'closingIssueNumbers'>, issueChecklists: IssueChecklistSummary[], checkDiagnostics: PrGateCheckDiagnostic[], feedback: PrGateFeedback[], paths: readonly string[], diffStat: string): Promise<string[]> {
   const key = localReviewContextCacheKey(snapshot);
   const cached = cache.get(key);
   if (cached) return cached;
-  const loaded = buildLocalReviewContextLines(config, repoRoot, snapshot, issueChecklists, checkDiagnostics, feedback, issueBodies, prBody);
+  const loaded = Promise.resolve(buildLocalReviewContextLines(config, snapshot, issueChecklists, checkDiagnostics, feedback, paths, diffStat));
   cache.set(key, loaded);
   return loaded;
 }
@@ -852,7 +831,8 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   const loadedChecklists = await loadIssueChecklists(finalSnapshot.closingIssueNumbers, options, linkedChecklistWarnings);
   const issueChecklists = loadedChecklists.summaries;
   const bundlePrBody = await loadPrBodyText(options.prNumber, repoRoot, options.exec);
-  const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, repoRoot, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback, loadedChecklists.issueBodies, bundlePrBody);
+  const diffStats = await gitText(repoRoot, ['diff', '--stat', `${config.baseRemote}/${config.baseBranch}...HEAD`], 4000);
+  const localReviewContextLines = await cachedLocalReviewContextLines(localReviewContextCache, config, finalSnapshot, issueChecklists, initialCheckDiagnostics, initialFeedback, changedPaths, diffStats);
   const riskCardIssueText = [finalSnapshot.pr.title, loadedChecklists.riskCardIssueText].filter(part => part.trim() !== '').join('\n');
   const gateProfile = localShadow ? 'local-shadow' as const : localRequired && config.reviewProfile === 'remote-compatible' ? 'local-standard' as const : config.reviewProfile;
   const providerLaneReuse: ProviderLaneReuse | undefined = localRequired || localShadow
@@ -927,6 +907,11 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     includePrompts: options.includeLocalReviewPrompts === true,
     changedPaths,
     riskCardIssueText,
+    issueChecklists,
+    issueBodies: loadedChecklists.issueBodies,
+    prTitle: finalSnapshot.pr.title,
+    prBody: bundlePrBody,
+    diffStats,
     modelRouteProcess: options.modelRouteProcess,
     resolveModelHost: options.resolveModelHost,
     resolveModelHead: options.resolveModelHead,
@@ -1248,6 +1233,9 @@ export function formatPrGate(result: PrGateResult): string {
     for (const conversation of result.conversations) lines.push(`- ${conversation.id}: resolved=${conversation.resolved ? 'yes' : 'no'}; outdated=${conversation.outdated ? 'yes' : 'no'}; canResolve=${conversation.viewerCanResolve ? 'yes' : 'no'}; ${conversation.path ?? 'unknown path'}${conversation.line ? `:${conversation.line}` : ''}; ${conversation.summary}${conversation.url ? ` (${conversation.url})` : ''}`);
   }
   lines.push(`Local review runner: ${result.localReviewRunner.status}; ${result.localReviewRunner.summary}`);
+  if (result.localReviewRunner.headDigest) {
+    lines.push(`Shared review digest: builder=${result.localReviewRunner.headDigest.builder}; sha256=${result.localReviewRunner.headDigest.sha256}; path=${result.localReviewRunner.headDigest.path}`);
+  }
   for (const lane of result.localReviewRunner.lanes) {
     lines.push(`- ${lane.status}: issue #${lane.issueNumber} ${lane.lane}; runner=${lane.runner}; source=${lane.evidenceSource ?? 'none'}; evidence=${lane.evidencePath}`);
   }

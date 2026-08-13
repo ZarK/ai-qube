@@ -16,6 +16,8 @@ import { defaultRereviewMode } from '../config/schema.js';
 import { aiqReviewContextLines, loadAiqReviewFindings } from './aiq_review_findings.js';
 import { inspectAffected } from '../repo/index.js';
 import type { RepoAffectedResult } from '@tjalve/qube-core';
+import { buildReviewHeadDigest, reviewHeadDigestContextLines, writeReviewHeadDigest, type ReviewHeadDigest } from './review_head_digest.js';
+import type { IssueChecklistSummary } from './issue_checklist.js';
 
 import { probeHostReviewRunner, probeHostReviewRunnerSync, type HostReviewCapability } from '../providers/host_runner_adapters.js';
 
@@ -67,6 +69,13 @@ export interface EconomyCatalogTierResolution {
   spawnContract: EconomyCatalogSpawnContract;
 }
 
+export interface LocalReviewHeadDigestResult {
+  path: string;
+  sha256: string;
+  builder: 'qube-review-digest';
+  digest: ReviewHeadDigest;
+}
+
 export interface LocalReviewRunResult {
   required: boolean;
   dryRun: boolean;
@@ -79,6 +88,7 @@ export interface LocalReviewRunResult {
   opencode: OpenCodeReviewCapability;
   modelTiers: { review: ReviewModelTierResolution; economy: ReviewModelTierResolution; synthesis: ReviewModelTierResolution };
   economyCatalog: EconomyCatalogTierResolution[];
+  headDigest: LocalReviewHeadDigestResult | null;
   lanes: LocalReviewLaneRun[];
   written: string[];
   unavailable: string[];
@@ -105,6 +115,11 @@ interface LocalReviewRunnerInput {
   routeProbe?: (host: RoutedProbeHost, model: string | null) => RouteProbeCheck;
   providerLaneReuse?: ProviderLaneReuse;
   layoutInspector?: typeof inspectAffected;
+  issueChecklists?: readonly IssueChecklistSummary[];
+  issueBodies?: ReadonlyMap<number, string>;
+  prTitle?: string;
+  prBody?: string;
+  diffStats?: string;
   /** Invoked as each routed lane's evidence lands (serialized in completion order), so the caller can publish a validated lane before slower siblings finish. */
   onLaneValidated?: (lane: LocalReviewLaneRun) => Promise<void>;
 }
@@ -412,7 +427,6 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     const cause = err instanceof Error ? err.message : String(err);
     layoutUnavailableLines = [`Layout inspection was unavailable for this run (cause: ${layoutContextText(cause)}); changed-project and generated/vendor classification is missing from this context.`];
   }
-  const contextLines = [...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected), ...layoutUnavailableLines];
   // Activate from issue text + changed paths only so hashes stay deterministic and do not
   // flip on every generated review-context line that happens to mention common keywords.
   const activatedRiskCards = selectRiskCards({
@@ -452,14 +466,32 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     },
   }));
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
+  const primaryIssueNumber = input.issueNumbers[0];
+  const digest = buildReviewHeadDigest({
+    repoRoot: input.repoRoot,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    issueNumbers: input.issueNumbers,
+    issueChecklists: input.issueChecklists ?? [],
+    issueBodies: input.issueBodies ?? new Map(),
+    prTitle: input.prTitle ?? '',
+    prBody: input.prBody,
+    changedPaths: input.changedPaths ?? [],
+    diffStats: input.diffStats ?? '',
+    layout: layoutAffected,
+  });
+  const digestPath = writeReviewHeadDigest(input.repoRoot, digest, primaryIssueNumber);
+  const headDigest: LocalReviewHeadDigestResult = { path: digestPath, sha256: digest.sha256, builder: 'qube-review-digest', digest };
+  const contextLines = [...reviewHeadDigestContextLines(digest, digestPath), ...(input.contextLines ?? []), ...aiqReviewContextLines(aiqFindings), ...layoutReviewContextLines(layoutAffected), ...layoutUnavailableLines];
+
   const lanes: LocalReviewLaneRun[] = [];
-  const written: string[] = [];
+  const written: string[] = [digestPath];
   const unavailable: string[] = [];
   const routedJobs: RoutedLaneJob[] = [];
   const reviewTierResolution = modelTiers.review;
@@ -757,6 +789,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     opencode,
     modelTiers,
     economyCatalog,
+    headDigest,
     lanes,
     written,
     unavailable,
