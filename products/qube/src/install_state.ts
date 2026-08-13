@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders } from "./components.js";
 import { packageName, packageVersion } from "./package.js";
 
-export type InstallStepStatus = "satisfied" | "stale" | "missing" | "unknown";
+export type InstallStepStatus = "satisfied" | "stale" | "missing";
 
 export interface InstallStateSelections {
   readonly scope: "local" | "global";
@@ -116,13 +117,26 @@ function managedSectionStatus(content: string): InstallStepStatus | "absent" {
   return expected === checksumMatch[1] || legacy === checksumMatch[1] ? "satisfied" : "stale";
 }
 
-function installedPackageVersion(cwd: string, name: string): string | null {
-  const relativePath = `node_modules/${name}/package.json`;
-  const path = resolveContained(cwd, relativePath);
+function installedPackageVersion(root: string, name: string): string | null {
+  const path = join(root, "node_modules", ...name.split("/"), "package.json");
   if (!existsSync(path)) return null;
-  const parsedResult = tryReadJsonFile(path);
-  if (!parsedResult.ok || !isRecord(parsedResult.value) || typeof parsedResult.value.version !== "string") return null;
-  return parsedResult.value.version;
+  try {
+    if (lstatSync(path).isSymbolicLink()) return null;
+    const parsed = JSON.parse(readFileSync(path, "utf8"));
+    return isRecord(parsed) && typeof parsed.version === "string" ? parsed.version : null;
+  } catch {
+    return null;
+  }
+}
+
+function globalRoot(packageManager: "npm" | "pnpm"): string | null {
+  try {
+    const result = spawnSync(packageManager, ["root", "-g"], { encoding: "utf8", timeout: 5000, windowsHide: true });
+    const root = result.stdout?.trim();
+    return result.status === 0 && root ? root : null;
+  } catch {
+    return null;
+  }
 }
 
 function probePackageInstall(cwd: string, selections: InstallStateSelections): InstallStepState {
@@ -142,7 +156,11 @@ function probePackageInstall(cwd: string, selections: InstallStateSelections): I
     return { stage: "package-install", status: "missing", reason: "This working directory is the QUBE package itself, not a consumer install." };
   }
   if (selections.scope === "global") {
-    return { stage: "package-install", status: "missing", reason: "Global package presence is not observed from a local working directory." };
+    const root = globalRoot("pnpm") ?? globalRoot("npm");
+    if (!root || installedPackageVersion(root, packageName) !== packageVersion) {
+      return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is not installed globally.` };
+    }
+    return { stage: "package-install", status: "satisfied", reason: "The selected QUBE package is installed globally at the expected version." };
   }
   const declared = declaredPackageVersion(parsed, packageName);
   if (declared !== packageVersion) {
@@ -175,6 +193,15 @@ function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): In
   if (!isRecord(parsed) || parsed.version !== 1) {
     return { stage: "workspace-init", status: "missing", reason: ".qube/aie/config.json is missing or not a current-version config." };
   }
+  const providers = isRecord(parsed.providers) ? parsed.providers : null;
+  const workKind = providers && isRecord(providers.work) && typeof providers.work.kind === "string" ? providers.work.kind : null;
+  const ciKind = providers && isRecord(providers.ci) && typeof providers.ci.kind === "string" ? providers.ci.kind : workKind;
+  if (workKind && !selections.workProviders.includes(workKind)) {
+    return { stage: "workspace-init", status: "missing", reason: `Workspace work provider is ${workKind}, not one of the selected providers.` };
+  }
+  if (ciKind && !selections.ciProviders.includes(ciKind)) {
+    return { stage: "workspace-init", status: "missing", reason: `Workspace CI provider is ${ciKind}, not one of the selected providers.` };
+  }
   const targets = instructionTargetsForHosts(selections.hosts);
   let stale = false;
   for (const target of targets) {
@@ -203,7 +230,7 @@ function probeProviderSetup(cwd: string, selections: InstallStateSelections): In
   if (!existsSync(configPath)) {
     return { stage: "provider-setup", status: "missing", reason: "GitHub labels setup still needs a configured workspace." };
   }
-  return { stage: "provider-setup", status: "unknown", reason: "Local config does not prove that GitHub status labels exist on the provider." };
+  return { stage: "provider-setup", status: "satisfied", reason: "Workspace config is present; live GitHub label drift is owned by doctor, not the local install delta." };
 }
 
 export function probeInstallState(cwd: string, selections: InstallStateSelections): readonly InstallStepState[] {

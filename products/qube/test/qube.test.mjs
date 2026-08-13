@@ -538,11 +538,21 @@ describe("qube composer CLI", () => {
     assert.deepEqual(parsed.installPlan.steps.map(step => [step.stage, step.status]), [
       ["package-install", "satisfied"],
       ["workspace-init", "satisfied"],
-      ["provider-setup", "unknown"],
+      ["provider-setup", "satisfied"],
       ["verify", "satisfied"]
     ]);
     assert.deepEqual(parsed.installPlan.commands, []);
     assert.deepEqual(JSON.parse(second.stdout).installPlan.commands, []);
+  });
+
+  it("plans workspace init when existing config does not match the selected providers", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-provider-mismatch-"));
+    writeConfiguredRepo(root);
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "linear", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const workspace = JSON.parse(result.stdout).installPlan.steps.find(step => step.stage === "workspace-init");
+    assert.equal(workspace.status, "missing");
+    assert.ok(JSON.parse(result.stdout).installPlan.commands.some(step => step.stage === "workspace-init"));
   });
 
   it("does not treat declared but uninstalled packages as satisfied", () => {
