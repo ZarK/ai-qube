@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { existsSync, readFileSync } from "node:fs";
 import { describe, it } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   LIVE_SUITE_BOOTSTRAP_CHECKLISTS,
@@ -284,6 +286,48 @@ describe("provisioner lifecycle", () => {
     assert.ok(LIVE_SUITE_PROVIDERS.includes("jenkins"));
     assert.doesNotThrow(() => assertBootstrapChecklistsCoverLiveProviders());
     assert.equal(LIVE_SUITE_BOOTSTRAP_CHECKLISTS.length, LIVE_SUITE_PROVIDERS.length);
+  });
+
+  it("ships provisioner and bootstrap checklist modules on the package files surface", () => {
+    const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+    assert.ok(packageJson.files.includes("dist"));
+    for (const relative of [
+      "../dist/bootstrap-checklists.js",
+      "../dist/provisioners/jira.js",
+      "../dist/provisioners/jenkins.js",
+      "../dist/provisioners/linear.js",
+      "../dist/provisioners/gitlab.js",
+    ]) {
+      assert.equal(existsSync(fileURLToPath(new URL(relative, import.meta.url))), true, relative);
+    }
+  });
+
+  it("rejects http Jira and Jenkins origins instead of sending credentials", () => {
+    const budget = new RequestBudget();
+    const fetchImpl = async () => {
+      throw new Error("must not fetch");
+    };
+    assert.throws(() => createJiraProvisioner({
+      adapter: { id: "jira", packageName: "@tjalve/qube-adapter-jira" },
+      env: { JIRA_EMAIL: "fixture@example.com", JIRA_API_TOKEN: "fixture-token", JIRA_BASE_URL: "http://fixture.atlassian.net" },
+      config: {},
+      budget,
+      fetchImpl,
+    }), /https/);
+    assert.throws(() => createJenkinsProvisioner({
+      adapter: { id: "jenkins", packageName: "@tjalve/qube-adapter-jenkins" },
+      env: { JENKINS_USER: "fixture-user", JENKINS_API_TOKEN: "fixture-token", JENKINS_BASE_URL: "http://jenkins.example.com" },
+      config: {},
+      budget,
+      fetchImpl,
+    }), /https/);
+    assert.throws(() => createJenkinsProvisioner({
+      adapter: { id: "jenkins", packageName: "@tjalve/qube-adapter-jenkins" },
+      env: { JENKINS_USER: "fixture-user", JENKINS_API_TOKEN: "fixture-token", JENKINS_BASE_URL: "https://user:token@jenkins.example.com" },
+      config: {},
+      budget,
+      fetchImpl,
+    }), /omit credentials/);
   });
 
   it("derives a valid short Jira project key from the run id", () => {
