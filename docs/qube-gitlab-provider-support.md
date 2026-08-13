@@ -156,6 +156,21 @@ gaps. They remain unsupported until each mutation path has a tested adapter
 contract. GitLab discussion resolution is supported through the review-thread
 resolution command.
 
+## Live Suite Bootstrap
+
+Use this checklist once for a disposable live-suite namespace. The suite skips
+without `QUBE_TESTKIT_LIVE=1` and the credentials below. It never reports
+`passed` when it skips.
+
+1. Select a GitLab user or group that may hold disposable private projects
+   named `qube-testkit-*`.
+2. Create a personal or project access token. Set `GITLAB_TOKEN`. Set
+   `GITLAB_BASE_URL` for a self-managed host.
+3. Grant `api` scope so the token can create and delete projects, issues,
+   issue links, branches, and merge requests.
+4. Set `QUBE_TESTKIT_LIVE=1`. Run `qube doctor --json`. Then run the GitLab
+   adapter live suite.
+
 ## Known Differences From GitHub
 
 - GitLab uses project issue `iid` values and `#iid` references rather than

@@ -138,6 +138,12 @@ Linear provider setup and limitations are documented in the repository guide:
 GitLab provider setup and limitations are documented in the repository guide:
 [GitLab provider support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-gitlab-provider-support.md).
 
+Jira provider setup and live-suite bootstrap are documented in the repository guide:
+[Jira provider support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-jira-provider-support.md).
+
+Jenkins provider setup and live-suite bootstrap are documented in the repository guide:
+[Jenkins provider support](https://github.com/ZarK/ai-qube/blob/HEAD/docs/qube-jenkins-provider-support.md).
+
 ## Make-It-So Contract
 
 `qube make-it-so` is the cardinal work command for turning intent into the

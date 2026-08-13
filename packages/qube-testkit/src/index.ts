@@ -45,8 +45,10 @@ export type { SeedManifest, SeedReviewItem, SeedWorkItem } from "./seed-manifest
 export { RequestBudget, RequestBudgetExceededError, DEFAULT_LIVE_MAX_REQUESTS, DEFAULT_LIVE_TIMEOUT_MS } from "./request-budget.js";
 
 export {
+  LIVE_SUITE_AUTH_METHODS,
   LIVE_SUITE_PROVIDERS,
   evaluateLiveGate,
+  isLiveSuiteAuthMethod,
   isLiveSuiteProvider,
   runProvisionerLifecycle,
   verifySeededWork,
@@ -63,8 +65,21 @@ export type {
   TaggedResource,
 } from "./provisioner.js";
 
+export {
+  LIVE_SUITE_BOOTSTRAP_CHECKLISTS,
+  assertBootstrapChecklistsCoverLiveProviders,
+  bootstrapChecklistFor,
+} from "./bootstrap-checklists.js";
+export type {
+  BootstrapChecklistKind,
+  BootstrapChecklistStep,
+  ProviderBootstrapChecklist,
+} from "./bootstrap-checklists.js";
+
 export { runLiveProvisionerSuite } from "./live-suite.js";
 export { createLinearProvisioner } from "./provisioners/linear.js";
 export { createGitLabProvisioner } from "./provisioners/gitlab.js";
+export { createJiraProvisioner, jiraProjectKey } from "./provisioners/jira.js";
+export { createJenkinsProvisioner } from "./provisioners/jenkins.js";
 
 export type { QubeAdapterCapability } from "@tjalve/qube-core";
