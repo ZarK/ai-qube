@@ -121,21 +121,19 @@ export function createJiraProvisioner(context: LiveSuiteContext): ProviderProvis
       if (sandbox.projectId) await client.deleteProject(sandbox.projectId);
     },
     async sweep(tagPrefix = "qube-testkit-"): Promise<readonly TaggedResource[]> {
-      const projects = await client.searchProjects(tagPrefix);
-      const leftover: TaggedResource[] = [];
-      for (const project of projects) {
+      const snapshot = (await client.searchProjects(tagPrefix))
+        .filter(project => (project.name ?? "").startsWith(tagPrefix));
+      for (const project of snapshot) {
         const key = project.key ?? String(project.id ?? "");
-        const name = project.name ?? "";
-        if (!name.startsWith(tagPrefix) && !key.toUpperCase().startsWith("Q")) continue;
-        if (!name.startsWith(tagPrefix)) continue;
         if (key) await client.deleteProject(key);
-        const still = (await client.searchProjects(tagPrefix)).some(candidate => {
-          const candidateKey = candidate.key ?? String(candidate.id ?? "");
-          return candidateKey === key || candidate.id === project.id;
-        });
-        if (still) leftover.push({ kind: "project", id: key || String(project.id ?? name), tag: name || key });
       }
-      return leftover;
+      return (await client.searchProjects(tagPrefix))
+        .filter(project => (project.name ?? "").startsWith(tagPrefix))
+        .map(project => ({
+          kind: "project" as const,
+          id: project.key ?? String(project.id ?? project.name ?? ""),
+          tag: project.name ?? project.key ?? "",
+        }));
     },
   };
 }

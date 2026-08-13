@@ -574,6 +574,53 @@ describe("provisioner lifecycle", () => {
     assert.equal(leftover.length, 0);
   });
 
+  it("deletes every tagged Jira project after a complete search snapshot, even when later pages would shift", async () => {
+    const remaining = [
+      { id: "21", key: "QCCC3333", name: "qube-testkit-ccc" },
+      { id: "22", key: "QDDD4444", name: "qube-testkit-ddd" },
+    ];
+    const deleted = [];
+    const fetchImpl = async (url, init = {}) => {
+      const parsed = new URL(String(url));
+      const method = String(init.method ?? "GET").toUpperCase();
+      if (method === "GET" && parsed.pathname.endsWith("/rest/api/3/project/search")) {
+        const startAt = Number(parsed.searchParams.get("startAt") ?? "0");
+        const item = remaining[startAt];
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          async json() {
+            return {
+              values: item ? [item] : [],
+              startAt,
+              maxResults: 1,
+              total: remaining.length,
+              isLast: startAt + 1 >= remaining.length,
+            };
+          },
+        };
+      }
+      if (method === "DELETE" && parsed.pathname.includes("/rest/api/3/project/")) {
+        const key = decodeURIComponent(parsed.pathname.split("/").pop() ?? "");
+        deleted.push(key);
+        const index = remaining.findIndex(project => project.key === key);
+        if (index >= 0) remaining.splice(index, 1);
+        return { ok: true, status: 204, headers: { get: () => null }, async json() { return undefined; } };
+      }
+      throw new Error(`unexpected ${method} ${parsed.pathname}`);
+    };
+    const leftover = await createJiraProvisioner({
+      adapter: { id: "jira", packageName: "@tjalve/qube-adapter-jira" },
+      env: { JIRA_EMAIL: "fixture@example.com", JIRA_API_TOKEN: "fixture-token", JIRA_BASE_URL: "https://fixture.atlassian.net" },
+      config: { baseUrl: "https://fixture.atlassian.net" },
+      budget: new RequestBudget(),
+      fetchImpl,
+    }).sweep("qube-testkit-");
+    assert.deepEqual(deleted, ["QCCC3333", "QDDD4444"]);
+    assert.equal(leftover.length, 0);
+  });
+
   it("sweeps leftover Jenkins folders that still match the live-suite tag prefix", async () => {
     const remaining = new Map([
       ["qube-testkit-a", { name: "qube-testkit-a" }],
