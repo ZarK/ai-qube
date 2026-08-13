@@ -153,6 +153,16 @@ describe('provider permutation composition', () => {
     assert.equal(missing.capabilities().triggerRun, false);
     assert.throws(() => missing.mapCheck(JENKINS_CHECKS.passed), /unknown until the selected adapter package is installed/);
     await assert.rejects(() => missing.triggerRun(), /unknown until the selected adapter package is installed/);
+
+    const config = permutationConfig('jira', 'gitlab', 'jenkins');
+    const composition = await composeProviderPermutation(config, {
+      createCi: async () => {
+        throw new Error('ERR_MODULE_NOT_FOUND @tjalve/qube-adapter-jenkins');
+      },
+    });
+    assert.equal(composition.ci.id, 'jenkins');
+    assert.ok(composition.observations.filter(item => item.role === 'ci').every(item => item.support === 'unknown'));
+    assert.ok(composition.missing.some(item => item.role === 'ci' && item.id === 'readStatus' && item.support === 'unknown'));
   });
 
   it('rejects CI trigger as unsupported on the production provider path', async () => {
@@ -176,10 +186,34 @@ describe('provider permutation composition', () => {
       writeFileSync(join(outside, 'secret.json'), '{"secret":true}\n');
       symlinkSync(join(outside, 'secret.json'), join(root, 'escape.json'));
       assert.throws(() => resolveCompositionFixturePath(root, 'escape.json'), /symlink/);
+      const linkedDir = join(root, 'linked');
+      symlinkSync(outside, linkedDir);
+      assert.throws(() => resolveCompositionFixturePath(root, join('linked', 'secret.json')), /symlink/);
     } catch (error) {
       if (error.code === 'EPERM' || error.code === 'ENOTSUP') return;
       throw error;
     }
+  });
+
+  it('rejects reused composition evidence when fixture contents change at the same path', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-permutation-digest-'));
+    writeFileSync(join(root, 'checks.json'), JSON.stringify(JENKINS_CHECKS.passed));
+    const config = permutationConfig('linear', 'github', 'jenkins');
+    const first = await composeProviderPermutation(config, {
+      headSha: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      fixtureRoot: root,
+      fixturePath: 'checks.json',
+    });
+    writeFileSync(join(root, 'checks.json'), JSON.stringify(JENKINS_CHECKS.failed));
+    await assert.rejects(
+      () => composeProviderPermutation(config, {
+        headSha: first.identity.headSha,
+        fixtureRoot: root,
+        fixturePath: 'checks.json',
+        previousIdentity: first.identity,
+      }),
+      /fixture digest/,
+    );
   });
 
   it('rejects reused composition evidence for a different head or config digest', async () => {

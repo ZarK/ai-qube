@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs';
 import { isAbsolute, relative, resolve } from 'node:path';
 
 import type { Config } from '../config/types.js';
@@ -44,6 +44,7 @@ export interface ComposeProviderOptions {
   readonly fixturePath?: string;
   readonly ciCheck?: unknown;
   readonly previousIdentity?: CompositionIdentity;
+  readonly createCi?: typeof createCiProvider;
 }
 
 const WORK_CAPABILITY_IDS = [
@@ -123,44 +124,57 @@ export function resolveCompositionFixturePath(root: string, relativePath: string
   if (isAbsolute(relativePath)) {
     throw new Error('Composition fixture path must be relative to the fixture root.');
   }
-  const segments = relativePath.split(/[\\/]/u);
-  if (segments.some(segment => segment === '..')) {
+  const segments = relativePath.split(/[\\/]/u).filter(segment => segment !== '');
+  if (segments.some(segment => segment === '..' || segment === '.')) {
     throw new Error('Composition fixture path must not include parent-directory segments.');
   }
   const rootResolved = resolve(root);
-  const resolved = resolve(rootResolved, relativePath);
-  const rel = relative(rootResolved, resolved);
-  if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new Error('Composition fixture path must stay under the fixture root.');
-  }
-  if (existsSync(resolved) && lstatSync(resolved).isSymbolicLink()) {
-    const realFile = realpathSync(resolved);
-    const realRoot = realpathSync(rootResolved);
-    const escaped = relative(realRoot, realFile);
+  const realRoot = existsSync(rootResolved) ? realpathSync(rootResolved) : rootResolved;
+  let current = rootResolved;
+  for (const segment of segments) {
+    current = resolve(current, segment);
+    const lexical = relative(rootResolved, current);
+    if (lexical.startsWith('..') || isAbsolute(lexical)) {
+      throw new Error('Composition fixture path must stay under the fixture root.');
+    }
+    if (!existsSync(current)) continue;
+    const realCurrent = realpathSync(current);
+    const escaped = relative(realRoot, realCurrent);
     if (escaped.startsWith('..') || isAbsolute(escaped)) {
       throw new Error('Composition fixture path must not escape the fixture root through a symlink.');
     }
   }
-  return resolved;
+  return current;
+}
+
+export function compositionFixtureDigest(root: string | undefined, fixturePath: string | undefined): string | null {
+  if (!fixturePath) return null;
+  if (root) {
+    const resolved = resolveCompositionFixturePath(root, fixturePath);
+    if (existsSync(resolved) && statSync(resolved).isFile()) {
+      return createHash('sha256').update(readFileSync(resolved)).digest('hex');
+    }
+  }
+  return createHash('sha256').update(fixturePath).digest('hex');
 }
 
 export async function composeProviderPermutation(config: Config, options: ComposeProviderOptions = {}): Promise<ProviderComposition> {
-  if (options.previousIdentity) {
-    const preview = bindCompositionIdentity({
-      headSha: options.headSha ?? null,
-      configDigest: compositionConfigDigest(config),
-      fixtureDigest: options.fixturePath ? createHash('sha256').update(options.fixturePath).digest('hex') : null,
-    });
-    assertCurrentCompositionIdentity(options.previousIdentity, preview);
-  }
-
   if (options.fixtureRoot && options.fixturePath) {
     resolveCompositionFixturePath(options.fixtureRoot, options.fixturePath);
   }
 
+  if (options.previousIdentity) {
+    const preview = bindCompositionIdentity({
+      headSha: options.headSha ?? null,
+      configDigest: compositionConfigDigest(config),
+      fixtureDigest: compositionFixtureDigest(options.fixtureRoot, options.fixturePath),
+    });
+    assertCurrentCompositionIdentity(options.previousIdentity, preview);
+  }
+
   const workObserved = await observeWork(config);
   const reviewObserved = await observeReview(config);
-  const ciObserved = await observeCi(config, options.headSha);
+  const ciObserved = await observeCi(config, options.headSha, options.createCi);
 
   let ciCheck: CiCheckStatus | null = null;
   if (options.ciCheck !== undefined) {
@@ -176,7 +190,7 @@ export async function composeProviderPermutation(config: Config, options: Compos
   const identity = bindCompositionIdentity({
     headSha: options.headSha ?? null,
     configDigest: compositionConfigDigest(config),
-    fixtureDigest: options.fixturePath ? createHash('sha256').update(options.fixturePath).digest('hex') : null,
+    fixtureDigest: compositionFixtureDigest(options.fixtureRoot, options.fixturePath),
   });
 
   return {
@@ -224,11 +238,11 @@ async function observeReview(config: Config): Promise<{ id: string; capabilities
   }
 }
 
-async function observeCi(config: Config, headSha?: string): Promise<{ id: string; capabilities: CiProviderCapabilities; present: boolean; provider: CiProvider }> {
+async function observeCi(config: Config, headSha?: string, createCi: typeof createCiProvider = createCiProvider): Promise<{ id: string; capabilities: CiProviderCapabilities; present: boolean; provider: CiProvider }> {
   const id = config.providers.ci.kind;
   const meta = listCiProviderAdapters().find(adapter => adapter.id === id);
   try {
-    const provider = await createCiProvider(id, {
+    const provider = await createCi(id, {
       ...config.providers.connections[id],
       ...config.providers.ci.connection,
       headSha,
@@ -243,7 +257,7 @@ async function observeCi(config: Config, headSha?: string): Promise<{ id: string
     };
   } catch {
     const fallback = createMissingCiProvider(id, meta?.packageName ?? `missing-${id}`, meta?.setup ?? []);
-    return { id, capabilities: meta?.capabilities ?? fallback.capabilities(), present: Boolean(meta), provider: fallback };
+    return { id, capabilities: fallback.capabilities(), present: false, provider: fallback };
   }
 }
 

@@ -39,7 +39,9 @@ export function mapGitLabPipelineStatus(input: GitLabPipelineCheckInput, headSha
   const status = typeof input.status === "string" ? input.status.toLowerCase() : "";
   const expectedHead = normalizeSha(headSha ?? input.headSha);
   const pipelineSha = normalizeSha(input.sha);
-  const matchesHead = expectedHead === null || pipelineSha === null || expectedHead === pipelineSha;
+  const matchesHead = expectedHead === null
+    ? true
+    : pipelineSha !== null && expectedHead === pipelineSha;
   const runId = input.id === undefined || input.id === null ? null : String(input.id);
   const url = typeof input.web_url === "string" && input.web_url.trim() !== "" ? input.web_url : null;
   const name = typeof input.name === "string" && input.name.trim() !== "" ? input.name : "GitLab pipeline";

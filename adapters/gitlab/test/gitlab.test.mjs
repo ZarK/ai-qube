@@ -1469,12 +1469,15 @@ describe("GitLab CI provider adapter", () => {
     const failed = mapGitLabPipelineStatus({ id: 2, status: "failed", sha: head, web_url: "https://gitlab.example.com/p/2" }, head);
     const pending = mapGitLabPipelineStatus({ id: 3, status: "running", sha: head, web_url: "https://gitlab.example.com/p/3" }, head);
     const stale = mapGitLabPipelineStatus({ id: 4, status: "success", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", web_url: "https://gitlab.example.com/p/4" }, head);
+    const missingSha = mapGitLabPipelineStatus({ id: 5, status: "success", web_url: "https://gitlab.example.com/p/5" }, head);
 
     assert.equal(passed.result, "passed");
     assert.equal(failed.result, "failed");
     assert.equal(pending.result, "pending");
     assert.equal(stale.result, "unknown");
     assert.equal(stale.reasonCode, "stale-head-pipeline");
+    assert.equal(missingSha.result, "unknown");
+    assert.equal(missingSha.reasonCode, "stale-head-pipeline");
   });
 
   it("reports trigger mutations as unsupported", async () => {
