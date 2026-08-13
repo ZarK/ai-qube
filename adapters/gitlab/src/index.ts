@@ -7,7 +7,7 @@ export type { GitLabIssueDraft, GitLabWorkItemDraft } from "./render_gitlab_draf
 export { attachGitLabBlockedBy, gitLabIssueToWorkItem, gitLabWorkItemKey } from "./gitlab_work_codec.js";
 export type { GitLabIssue, GitLabIssueLink, GitLabLinkedIssue, GitLabMilestone, GitLabUser } from "./gitlab_work_codec.js";
 export { createGitLabWorkProvider, GitLabWorkProvider } from "./gitlab_work_provider.js";
-export type { GitLabRestClient, GitLabWorkProviderOptions } from "./gitlab_work_provider.js";
+export type { GitLabRestClient, GitLabFetch, GitLabWorkProviderOptions } from "./gitlab_work_provider.js";
 export {
   createGitLabReviewForgeProvider,
   createGitLabReviewProvider,
@@ -21,7 +21,7 @@ export type {
   GitLabDiscussion,
   GitLabMergeRequest,
   GitLabNote,
-  GitLabReviewProviderOptions,
+  GitLabReviewFetch, GitLabReviewProviderOptions,
   GitLabReviewPullRequest,
   GitLabReviewRestClient,
   GitLabReviewSnapshot,

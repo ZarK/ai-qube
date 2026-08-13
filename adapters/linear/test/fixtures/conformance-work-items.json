@@ -1,0 +1,286 @@
+{
+  "recordedFrom": "Linear GraphQL team.issues nodes (QubeLinearIssues query shape)",
+  "teamId": "team-fixture",
+  "issues": [
+    {
+      "id": "lin-eng-101",
+      "identifier": "ENG-101",
+      "number": 101,
+      "title": "Fixture ready issue",
+      "description": "- [x] map codec\n- [ ] wire harness",
+      "url": "https://linear.app/acme/issue/ENG-101/fixture",
+      "priority": 2,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-unstarted",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": [
+          {
+            "type": "blockedBy",
+            "relatedIssue": {
+              "id": "lin-eng-104",
+              "identifier": "ENG-104"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "lin-eng-102",
+      "identifier": "ENG-102",
+      "number": 102,
+      "title": "Fixture in-progress issue",
+      "description": "- [x] start work\n- [ ] finish work",
+      "url": "https://linear.app/acme/issue/ENG-102/fixture",
+      "priority": 1,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-started",
+        "name": "In Progress",
+        "type": "started"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "id": "lin-eng-103",
+      "identifier": "ENG-103",
+      "number": 103,
+      "title": "Fixture medium-priority issue",
+      "description": "No checklist here.",
+      "url": "https://linear.app/acme/issue/ENG-103/fixture",
+      "priority": 3,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-unstarted",
+        "name": "Todo",
+        "type": "unstarted"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "id": "lin-eng-104",
+      "identifier": "ENG-104",
+      "number": 104,
+      "title": "Fixture blocking issue",
+      "description": "- [ ] keep blocking\nBlocked by: none",
+      "url": "https://linear.app/acme/issue/ENG-104/fixture",
+      "priority": 2,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-started",
+        "name": "In Progress",
+        "type": "started"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": [
+          {
+            "type": "blocks",
+            "relatedIssue": {
+              "id": "lin-eng-101",
+              "identifier": "ENG-101"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "lin-eng-105",
+      "identifier": "ENG-105",
+      "number": 105,
+      "title": "Fixture low-priority issue",
+      "description": "- [ ] triage later",
+      "url": "https://linear.app/acme/issue/ENG-105/fixture",
+      "priority": 4,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-backlog",
+        "name": "Backlog",
+        "type": "backlog"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": []
+      }
+    },
+    {
+      "id": "lin-eng-106",
+      "identifier": "ENG-106",
+      "number": 106,
+      "title": "Fixture unknown-state issue",
+      "description": "Closed-shaped fixture for unknown status mapping.",
+      "url": "https://linear.app/acme/issue/ENG-106/fixture",
+      "priority": 0,
+      "archivedAt": null,
+      "team": {
+        "id": "team-fixture",
+        "key": "ENG",
+        "name": "Engineering"
+      },
+      "state": {
+        "id": "state-completed",
+        "name": "Done",
+        "type": "completed"
+      },
+      "assignee": {
+        "id": "user-1",
+        "displayName": "Fixture Bot"
+      },
+      "labels": {
+        "nodes": [
+          {
+            "id": "label-0",
+            "name": "fixture"
+          }
+        ]
+      },
+      "project": {
+        "id": "project-1",
+        "name": "Adapter fixtures",
+        "targetDate": "2026-08-01",
+        "status": {
+          "name": "Active",
+          "type": "started"
+        }
+      },
+      "relations": {
+        "nodes": []
+      }
+    }
+  ]
+}

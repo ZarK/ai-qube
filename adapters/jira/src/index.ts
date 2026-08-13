@@ -17,7 +17,7 @@ export type {
   JiraWorkflowSchema,
 } from "./jira_work_codec.js";
 export { createJiraWorkProvider, JiraWorkProvider } from "./jira_work_provider.js";
-export type { JiraRestClient, JiraWorkProviderOptions } from "./jira_work_provider.js";
+export type { JiraRestClient, JiraFetch, JiraWorkProviderOptions } from "./jira_work_provider.js";
 export { renderJiraIssueDraft } from "./render_jira_draft.js";
 export type { JiraIssueDraft, JiraWorkItemDraft } from "./render_jira_draft.js";
 

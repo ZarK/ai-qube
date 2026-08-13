@@ -8,6 +8,10 @@ interface LinearGraphqlResponse<T> {
 
 interface LinearIssueConnection {
   nodes?: LinearIssue[];
+  pageInfo?: {
+    hasNextPage?: boolean | null;
+    endCursor?: string | null;
+  } | null;
 }
 
 interface LinearIssuesQuery {
@@ -25,6 +29,8 @@ export interface LinearGraphqlClient {
   getIssue(idOrIdentifier: string): Promise<LinearIssue>;
 }
 
+export type LinearFetch = typeof fetch;
+
 export interface LinearWorkProviderOptions {
   client?: LinearGraphqlClient;
   apiKey?: string;
@@ -32,15 +38,19 @@ export interface LinearWorkProviderOptions {
   limit?: number;
   endpoint?: string;
   requestTimeoutMs?: number;
+  /** Injected HTTP transport for fixture replay and tests. Defaults to global fetch. */
+  fetch?: LinearFetch;
+  /** GraphQL page size for listOpenIssues pagination. Defaults to 100. */
+  pageSize?: number;
 }
 
 const LINEAR_ENDPOINT = 'https://api.linear.app/graphql';
 const DEFAULT_REQUEST_TIMEOUT_MS = 15_000;
 
 const LIST_OPEN_ISSUES_QUERY = `
-query QubeLinearIssues($teamId: String!, $first: Int!) {
+query QubeLinearIssues($teamId: String!, $first: Int!, $after: String) {
   team(id: $teamId) {
-    issues(first: $first, filter: { archivedAt: { null: true } }) {
+    issues(first: $first, after: $after, filter: { archivedAt: { null: true } }) {
       nodes {
         id
         identifier
@@ -56,6 +66,10 @@ query QubeLinearIssues($teamId: String!, $first: Int!) {
         labels { nodes { id name } }
         project { id name targetDate status { name type } }
         relations { nodes { type relatedIssue { id identifier } } }
+      }
+      pageInfo {
+        hasNextPage
+        endCursor
       }
     }
   }
@@ -98,6 +112,15 @@ function requestTimeoutMs(value: number | undefined): number {
   return value;
 }
 
+
+function listPageSize(value: number | undefined): number {
+  if (value === undefined) return 100;
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error('Linear work provider pageSize must be a positive integer.');
+  }
+  return value;
+}
+
 function isAbortTimeout(error: unknown): boolean {
   if (!(error instanceof Error)) return false;
   return error.name === 'TimeoutError' || error.name === 'AbortError';
@@ -107,16 +130,34 @@ class FetchLinearGraphqlClient implements LinearGraphqlClient {
   private readonly endpoint: string;
   private readonly apiKey: string;
   private readonly requestTimeoutMs: number;
+  private readonly fetchImpl: LinearFetch;
+  private readonly pageSize: number;
 
   constructor(options: LinearWorkProviderOptions) {
     this.endpoint = options.endpoint ?? LINEAR_ENDPOINT;
     this.apiKey = required(options.apiKey ?? process.env.LINEAR_API_KEY, 'LINEAR_API_KEY');
     this.requestTimeoutMs = requestTimeoutMs(options.requestTimeoutMs);
+    this.fetchImpl = options.fetch ?? fetch;
+    this.pageSize = listPageSize(options.pageSize);
   }
 
   async listOpenIssues(input: { teamId: string; limit: number }): Promise<LinearIssue[]> {
-    const response = await this.query<LinearIssuesQuery>(LIST_OPEN_ISSUES_QUERY, { teamId: input.teamId, first: input.limit });
-    return response.team?.issues?.nodes ?? [];
+    const issues: LinearIssue[] = [];
+    let after: string | null = null;
+    while (issues.length < input.limit) {
+      const first = Math.min(this.pageSize, input.limit - issues.length);
+      const response: LinearIssuesQuery = await this.query<LinearIssuesQuery>(LIST_OPEN_ISSUES_QUERY, {
+        teamId: input.teamId,
+        first,
+        after,
+      });
+      const nodes = response.team?.issues?.nodes ?? [];
+      issues.push(...nodes);
+      const pageInfo: { hasNextPage?: boolean | null; endCursor?: string | null } | null | undefined = response.team?.issues?.pageInfo;
+      if (!pageInfo?.hasNextPage || !pageInfo.endCursor || nodes.length === 0) break;
+      after = pageInfo.endCursor;
+    }
+    return issues;
   }
 
   async getIssue(idOrIdentifier: string): Promise<LinearIssue> {
@@ -130,7 +171,7 @@ class FetchLinearGraphqlClient implements LinearGraphqlClient {
   private async query<T>(query: string, variables: Record<string, unknown>): Promise<T> {
     let response: Response;
     try {
-      response = await fetch(this.endpoint, {
+      response = await this.fetchImpl(this.endpoint, {
         method: 'POST',
         headers: {
           Authorization: this.apiKey,

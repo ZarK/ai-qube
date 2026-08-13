@@ -1,0 +1,53 @@
+{
+  "recordedFrom": "Jenkins REST job/*/api/json build and queue payloads",
+  "passed": {
+    "jobPath": "folder/app",
+    "build": 42,
+    "buildRecord": {
+      "id": "42",
+      "number": 42,
+      "result": "SUCCESS",
+      "building": false,
+      "queueId": 9,
+      "timestamp": 1767313445000,
+      "duration": 1200,
+      "url": "https://jenkins.example.com/job/folder/job/app/42/",
+      "fullDisplayName": "folder/app #42",
+      "artifacts": [
+        {
+          "fileName": "report.xml",
+          "relativePath": "reports/report.xml"
+        }
+      ]
+    },
+    "required": true
+  },
+  "failed": {
+    "jobPath": "folder/app",
+    "build": 43,
+    "buildRecord": {
+      "id": "43",
+      "number": 43,
+      "result": "FAILURE",
+      "building": false,
+      "timestamp": 1767317045000,
+      "duration": 800,
+      "url": "https://jenkins.example.com/job/folder/job/app/43/",
+      "fullDisplayName": "folder/app #43",
+      "artifacts": []
+    },
+    "required": true
+  },
+  "pending": {
+    "jobPath": "folder/app",
+    "queueItem": {
+      "id": 77,
+      "why": "Waiting for next available executor",
+      "task": {
+        "name": "app",
+        "url": "https://jenkins.example.com/job/folder/job/app/"
+      }
+    },
+    "required": true
+  }
+}

@@ -1,0 +1,225 @@
+{
+  "recordedFrom": "GitLab REST /projects/:id/issues payloads with x-next-page pagination",
+  "projectId": "acme/qube",
+  "issues": [
+    {
+      "id": 1301,
+      "iid": 301,
+      "project_id": 99,
+      "title": "Fixture ready issue",
+      "description": "- done: map\n- todo: harness",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/301",
+      "labels": [
+        "S-Ready",
+        "P2-High"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 2,
+        "completed_count": 1
+      },
+      "issue_links": [
+        {
+          "id": 1,
+          "link_type": "is_blocked_by",
+          "source_issue": {
+            "iid": 301,
+            "project_id": 99
+          },
+          "target_issue": {
+            "iid": 304,
+            "project_id": 99
+          }
+        }
+      ]
+    },
+    {
+      "id": 1302,
+      "iid": 302,
+      "project_id": 99,
+      "title": "Fixture in-progress issue",
+      "description": "- done: start\n- todo: finish",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/302",
+      "labels": [
+        "S-InProgress",
+        "P1-Critical"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 2,
+        "completed_count": 1
+      },
+      "issue_links": []
+    },
+    {
+      "id": 1303,
+      "iid": 303,
+      "project_id": 99,
+      "title": "Fixture medium-priority issue",
+      "description": "Plain body",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/303",
+      "labels": [
+        "S-Ready",
+        "P3-Medium"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 0,
+        "completed_count": 0
+      },
+      "issue_links": []
+    },
+    {
+      "id": 1304,
+      "iid": 304,
+      "project_id": 99,
+      "title": "Fixture blocking issue",
+      "description": "- todo: keep blocking",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/304",
+      "labels": [
+        "S-InProgress",
+        "P2-High"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 2,
+        "completed_count": 1
+      },
+      "issue_links": [
+        {
+          "id": 1,
+          "link_type": "blocks",
+          "source_issue": {
+            "iid": 304,
+            "project_id": 99
+          },
+          "target_issue": {
+            "iid": 301,
+            "project_id": 99
+          }
+        }
+      ]
+    },
+    {
+      "id": 1305,
+      "iid": 305,
+      "project_id": 99,
+      "title": "Fixture low-priority issue",
+      "description": "- todo: later",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/305",
+      "labels": [
+        "S-Ready",
+        "P4-Low"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 2,
+        "completed_count": 1
+      },
+      "issue_links": []
+    },
+    {
+      "id": 1306,
+      "iid": 306,
+      "project_id": 99,
+      "title": "Fixture blocked issue",
+      "description": "- todo: waiting",
+      "state": "opened",
+      "web_url": "https://gitlab.example.com/acme/qube/-/issues/306",
+      "labels": [
+        "S-Blocked",
+        "P2-High"
+      ],
+      "assignees": [
+        {
+          "username": "fixture-bot",
+          "name": "Fixture Bot"
+        }
+      ],
+      "milestone": {
+        "id": 1,
+        "title": "M3",
+        "state": "active",
+        "due_date": "2026-08-30"
+      },
+      "task_completion_status": {
+        "count": 2,
+        "completed_count": 1
+      },
+      "issue_links": [
+        {
+          "id": 1,
+          "link_type": "is_blocked_by",
+          "source_issue": {
+            "iid": 306,
+            "project_id": 99
+          },
+          "target_issue": {
+            "iid": 304,
+            "project_id": 99
+          }
+        }
+      ]
+    }
+  ]
+}
