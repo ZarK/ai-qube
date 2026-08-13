@@ -324,7 +324,7 @@ async function handleInit(context: Parameters<RuntimeCommandHandler>[0]) {
     ]);
   }
   try {
-    const result = await runInit({ target, tool: (stringFlag(context, 'tool') ?? 'opencode') as 'opencode' | 'codex' | 'claude-code' | 'all', dryRun: readBooleanFlag(context, 'dry-run'), force: readBooleanFlag(context, 'force'), policy: policyFromRuntimeFlags(context) });
+    const result = await runInit({ target, tool: stringFlag(context, 'tool') ?? 'opencode', dryRun: readBooleanFlag(context, 'dry-run'), force: readBooleanFlag(context, 'force'), policy: policyFromRuntimeFlags(context) });
     return commandResult(context, result, formatInitHuman(result), result.ok ? 0 : 1);
   } catch (err: unknown) {
     const cause = err instanceof Error ? err.message : String(err);

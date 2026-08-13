@@ -1634,10 +1634,6 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const aieRuns = aieToolTargets.length === 0
     ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]
     : aieToolTargets.map(tool => dispatchInitChild("aie", buildAieInitArgs(target, tool, aieOptions), environment));
-  const aiuRuns = aiuToolTargets.length === 0
-    ? [dispatchInitChild("aiu", buildAiuInitArgs(undefined, aiuOptions), environment)]
-    : aiuToolTargets.map(tool => dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
-
   const withRuns: Array<Promise<QubeInitChildResult>> = [];
   if (withComponents.includes("aib")) {
     withRuns.push(dispatchInitChild("aib", ["init", target, "--json", ...(dryRun ? ["--dry-run"] : [])], environment));
@@ -1646,9 +1642,16 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     withRuns.push(dispatchInitChild("aiq", ["setup", "--format", "json"], environment));
   }
 
-  const [aie, aiu, withResults] = await Promise.all([
+  // Umpire init merges hosts.enabled in one process. Run those children one after another
+  // so two tools cannot overwrite the same config file.
+  const aiu: QubeInitChildResult[] = [];
+  const aiuTools = aiuToolTargets.length === 0 ? [undefined] : aiuToolTargets;
+  for (const tool of aiuTools) {
+    aiu.push(await dispatchInitChild("aiu", buildAiuInitArgs(tool, aiuOptions), environment));
+  }
+
+  const [aie, withResults] = await Promise.all([
     Promise.all(aieRuns),
-    Promise.all(aiuRuns),
     Promise.all(withRuns)
   ]);
 
