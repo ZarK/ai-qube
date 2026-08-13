@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative } from "node:path";
 
-import { executorCiProviders, executorHostSurfaces, executorWorkProviders } from "./components.js";
+import { selectedAdapterInstallSpecs } from "./install_packages.js";
 import { packageName, packageVersion } from "./package.js";
 
 export type InstallStepStatus = "satisfied" | "stale" | "missing";
@@ -74,17 +74,6 @@ function declaredPackageVersion(manifest: Record<string, unknown>, name: string)
   return null;
 }
 
-function selectedAdapterPackages(selections: InstallStateSelections): readonly string[] {
-  const catalogs = [...executorHostSurfaces, ...executorWorkProviders, ...executorCiProviders];
-  const ids = [...selections.hosts, ...selections.workProviders, ...selections.ciProviders];
-  const names = new Set<string>();
-  for (const id of ids) {
-    const option = catalogs.find(entry => entry.id === id);
-    if (option?.packageName && option.packageName !== packageName) names.add(option.packageName);
-  }
-  return [...names];
-}
-
 export function instructionTargetsForHosts(hosts: readonly string[]): readonly string[] {
   const targets = new Set<string>();
   for (const host of hosts) {
@@ -145,9 +134,9 @@ function probeGlobalPackageInstall(selections: InstallStateSelections): InstallS
   if (!root || installedPackageVersion(root, packageName) !== packageVersion) {
     return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is not installed globally with ${selections.packageManager}.` };
   }
-  for (const adapterName of selectedAdapterPackages(selections)) {
-    if (!installedPackageVersion(root, adapterName)) {
-      return { stage: "package-install", status: "missing", reason: `Selected adapter ${adapterName} is not installed globally.` };
+  for (const spec of selectedAdapterInstallSpecs(selections)) {
+    if (installedPackageVersion(root, spec.name) !== spec.version) {
+      return { stage: "package-install", status: "missing", reason: `Selected adapter ${spec.name}@${spec.version} is not installed globally.` };
     }
   }
   return { stage: "package-install", status: "satisfied", reason: "The selected QUBE and adapter packages are installed globally at the expected versions." };
@@ -178,11 +167,11 @@ function probePackageInstall(cwd: string, selections: InstallStateSelections): I
   if (installed !== packageVersion) {
     return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is declared but not installed in node_modules.` };
   }
-  for (const adapterName of selectedAdapterPackages(selections)) {
-    const declaredAdapter = declaredPackageVersion(parsed, adapterName);
-    const installedAdapter = installedPackageVersion(cwd, adapterName);
-    if (!declaredAdapter || declaredAdapter !== installedAdapter) {
-      return { stage: "package-install", status: "missing", reason: `Selected adapter ${adapterName} is not installed at the declared version.` };
+  for (const spec of selectedAdapterInstallSpecs(selections)) {
+    const declaredAdapter = declaredPackageVersion(parsed, spec.name);
+    const installedAdapter = installedPackageVersion(cwd, spec.name);
+    if (declaredAdapter !== spec.version || installedAdapter !== spec.version) {
+      return { stage: "package-install", status: "missing", reason: `Selected adapter ${spec.name} is not installed at ${spec.version}.` };
     }
   }
   return { stage: "package-install", status: "satisfied", reason: "The selected QUBE and adapter packages are installed at the expected versions." };

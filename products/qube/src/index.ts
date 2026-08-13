@@ -81,5 +81,14 @@ export type {
 } from "./host_toolkit.js";
 export { probeInstallState, instructionTargetsForHosts } from "./install_state.js";
 export type { InstallStateSelections, InstallStepState, InstallStepStatus } from "./install_state.js";
+export {
+  adapterPackageVersion,
+  adapterPackageVersions,
+  formatPackageInstallCommand,
+  packageInstallArgv,
+  packageInstallSpecs,
+  selectedAdapterInstallSpecs
+} from "./install_packages.js";
+export type { AdapterInstallSpec, AdapterPackageName, InstallPackageSelections } from "./install_packages.js";
 export { planQubeCli, renderCommandSurfacesDoc, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
 export type { CliEnvironment, CliExecution, CommandResolution, DispatchRequest } from "./runtime.js";

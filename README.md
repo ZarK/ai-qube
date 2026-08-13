@@ -37,11 +37,13 @@ globals:
 ```sh
 qube install
 qube install --yes --dry-run --json
+qube install --apply --yes
 qube install --scope global --package-manager npm --yes
 ```
 
-The installer prints a plan and copyable commands. It does not run package
-managers or lifecycle scripts for you.
+The installer prints a plan and copyable commands by default. `--apply` executes
+the remaining pinned install delta after confirmation, or immediately with
+`--yes`. `--json` without `--yes` stays plan-only.
 
 ```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.1.1
