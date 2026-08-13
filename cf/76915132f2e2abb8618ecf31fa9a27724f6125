@@ -1,0 +1,21 @@
+products/aie/src/review_focus.ts
+  s_cfe4420639e4a4::t_164c37e627efe2 127
+products/aie/test/review_focus.test.cjs
+  s_cfe4420639e4a4::t_48b0deecff8698 118-128
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "cf76915132f2e2abb8618ecf31fa9a27724f6125",
+  "prompts": {},
+  "sessions": {
+    "s_cfe4420639e4a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d17a6e2-84c4-4929-ba3d-f10e6d4c01ee",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
