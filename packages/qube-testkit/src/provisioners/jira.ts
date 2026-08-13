@@ -188,10 +188,11 @@ class JiraProvisionerClient {
         `/rest/api/3/project/search?query=${encodeURIComponent(query)}&startAt=${startAt}&maxResults=50`,
       );
       const values = payload.values ?? [];
+      const maxResults = payload.maxResults ?? 50;
       projects.push(...values);
-      if (payload.isLast === true || values.length === 0) return projects;
+      if (values.length === 0 || payload.isLast === true) return projects;
       if (typeof payload.total === "number" && projects.length >= payload.total) return projects;
-      if (values.length < (payload.maxResults ?? 50)) return projects;
+      if (payload.isLast !== false && values.length < maxResults) return projects;
       startAt += values.length;
     }
     throw new Error("Jira provisioner sweep exceeded the project page bound.");
