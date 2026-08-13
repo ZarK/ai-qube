@@ -1,0 +1,36 @@
+adapters/claude-code/src/index.ts
+  h_13eab01d19dfa9 2,128-145,186,203
+adapters/claude-code/test/claude-code.test.mjs
+  h_13eab01d19dfa9 29-31
+adapters/codex/src/index.ts
+  h_13eab01d19dfa9 91-99,140
+adapters/codex/test/codex.test.mjs
+  h_13eab01d19dfa9 15
+docs/qube-command-surfaces.md
+  h_13eab01d19dfa9 14
+products/aie/src/init_content.ts
+  h_13eab01d19dfa9 2,19-31,307,309
+products/aie/src/init_renderer.ts
+  h_13eab01d19dfa9 3,48
+products/aie/test/init.test.cjs
+  h_13eab01d19dfa9 46-71,268-270,272-273,296,654-655,1011-1014
+products/qube/src/host_toolkit.ts
+  h_13eab01d19dfa9 1-488
+products/qube/src/index.ts
+  h_13eab01d19dfa9 53-81
+products/qube/src/runtime.ts
+  h_13eab01d19dfa9 21-29,901,962-966,971-972,1469-1472,1481,1486-1488,1496,1505,1517,1536,1544,1613,1664-1665,1667-1676,1680,1691-1692
+products/qube/test/qube.test.mjs
+  h_13eab01d19dfa9 37-43,251,2416,2420,2437,2440,2448,2451,2465-2466,2527-2673
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "4d3a7d6b943877cf05c8ae213f3efdc61a832db2",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
