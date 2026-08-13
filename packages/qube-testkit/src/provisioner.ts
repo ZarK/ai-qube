@@ -2,6 +2,7 @@ import type {
   ConnectionAuthMethod,
   ConnectionContract,
   ConnectionHttpRequest,
+  ConnectionHttpResponse,
   ConnectionProbeOptions,
   ConnectionProbeResult,
   QubeAdapterContract,
@@ -10,6 +11,7 @@ import type {
   WorkItem,
   WorkProvider,
 } from "@tjalve/qube-core";
+import { readConnectionJsonResponse } from "@tjalve/qube-core";
 
 import { RequestBudget } from "./request-budget.js";
 import { SHARED_SEED_MANIFEST, type SeedManifest, type SeedWorkItem } from "./seed-manifest.js";
@@ -151,19 +153,18 @@ export async function runProvisionerLifecycle(options: LiveSuiteOptions): Promis
   let probe;
   try {
     budget.consume("probe");
-    const probeFetch = options.probeOptions?.fetch
-      ? async (request: ConnectionHttpRequest) => {
-        budget.consume("probe-http");
-        return options.probeOptions!.fetch!(request);
-      }
-      : undefined;
+    const innerProbeFetch = options.probeOptions?.fetch;
     probe = await options.probe({
       mode: options.probeOptions?.mode ?? "live",
       env,
       config,
       ...options.probeOptions,
       timeoutMs: options.probeOptions?.timeoutMs ?? budget.timeoutMs,
-      ...(probeFetch ? { fetch: probeFetch } : {}),
+      fetch: async (request: ConnectionHttpRequest) => {
+        budget.consume("probe-http");
+        if (innerProbeFetch) return innerProbeFetch(request);
+        return fetchConnectionThroughBudget(request, provisionerFetch);
+      },
     });
   } catch (error) {
     const reason = classifyLifecycleError(error);
@@ -315,6 +316,23 @@ function hasRequiredCredentials(
     return false;
   }
   return true;
+}
+
+async function fetchConnectionThroughBudget(
+  request: ConnectionHttpRequest,
+  fetchImpl: typeof fetch,
+): Promise<ConnectionHttpResponse> {
+  const headers: Record<string, string> = { ...request.headers };
+  if (request.basicAuth) {
+    headers.Authorization = `Basic ${Buffer.from(`${request.basicAuth.username}:${request.basicAuth.password}`, "utf8").toString("base64")}`;
+  }
+  const response = await fetchImpl(request.url, {
+    method: request.method,
+    headers,
+    ...(request.body === undefined ? {} : { body: request.body }),
+    signal: AbortSignal.timeout(request.timeoutMs),
+  });
+  return { status: response.status, body: await readConnectionJsonResponse(response) };
 }
 
 function present(value: string | undefined): boolean {

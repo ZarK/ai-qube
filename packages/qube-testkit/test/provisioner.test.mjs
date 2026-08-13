@@ -298,6 +298,31 @@ describe("provisioner lifecycle", () => {
     assert.equal(observedTimeout, undefined);
   });
 
+  it("counts probe HTTP through the injected fetch against the request budget", async () => {
+    const budget = new RequestBudget({ maxRequests: 1, timeoutMs: 5000 });
+    const result = await runProvisionerLifecycle(liveOptions({
+      budget,
+      fetchImpl: async () => ({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        body: { getReader() { return { async read() { return { done: true, value: undefined }; }, async cancel() {} }; } },
+        async json() { return {}; },
+      }),
+      probe: async options => {
+        await options.fetch({
+          url: "https://example.test/probe",
+          method: "GET",
+          headers: { Accept: "application/json" },
+          timeoutMs: options.timeoutMs ?? 5000,
+        });
+        return passingProbe();
+      },
+    }));
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.reason, "budget-exceeded");
+  });
+
   it("bounds the connection probe with the live suite timeout", async () => {
     const budget = new RequestBudget({ maxRequests: 8, timeoutMs: 4321 });
     let observedTimeout;
