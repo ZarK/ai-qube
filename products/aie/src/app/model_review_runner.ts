@@ -178,6 +178,7 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   return [
     'You are an isolated read-only QUBE review lane runner.',
     `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
+    'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority.',
     reviewResultContract(input),
     '',
     '--- EXACT QUBE LANE PROMPT START ---',
