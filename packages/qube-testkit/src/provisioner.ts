@@ -16,8 +16,9 @@ import { readConnectionJsonResponse } from "@tjalve/qube-core";
 import { RequestBudget } from "./request-budget.js";
 import { SHARED_SEED_MANIFEST, type SeedManifest, type SeedWorkItem } from "./seed-manifest.js";
 
-export const LIVE_SUITE_PROVIDERS = Object.freeze(["linear", "gitlab"] as const);
+export const LIVE_SUITE_PROVIDERS = Object.freeze(["linear", "gitlab", "jira", "jenkins"] as const);
 export type LiveSuiteProvider = (typeof LIVE_SUITE_PROVIDERS)[number];
+export const LIVE_SUITE_AUTH_METHODS = Object.freeze(["token-env", "basic-env"] as const);
 
 export type LiveSuiteStatus = "passed" | "failed" | "skipped" | "error";
 export type LiveSuiteReason =
@@ -49,6 +50,8 @@ export interface ProvisionerSandbox {
   readonly reviewId?: string;
   readonly projectId?: string;
   readonly teamId?: string;
+  readonly folderPath?: string;
+  readonly jobPaths?: readonly string[];
 }
 
 export interface ProviderProvisioner {
@@ -56,6 +59,7 @@ export interface ProviderProvisioner {
   readonly mapsBlockedStatus: boolean;
   construct(): Promise<ProvisionerSandbox>;
   seed(sandbox: ProvisionerSandbox, manifest: SeedManifest): Promise<ProvisionerSandbox>;
+  verify?(sandbox: ProvisionerSandbox, manifest: SeedManifest): Promise<readonly string[]>;
   deconstruct(sandbox: ProvisionerSandbox): Promise<void>;
   sweep(tagPrefix?: string): Promise<readonly TaggedResource[]>;
 }
@@ -72,8 +76,11 @@ export interface LiveSuiteContext {
 export interface LiveSuiteOptions {
   readonly adapter: QubeAdapterContract;
   readonly createProvisioner: (context: LiveSuiteContext) => ProviderProvisioner;
-  readonly createWorkProvider: (sandbox: ProvisionerSandbox, context: LiveSuiteContext) => WorkProvider;
+  readonly createWorkProvider?: (sandbox: ProvisionerSandbox, context: LiveSuiteContext) => WorkProvider;
   readonly createReviewProvider?: (sandbox: ProvisionerSandbox, context: LiveSuiteContext) => ReviewForgeProvider;
+  readonly createCiProvider?: (sandbox: ProvisionerSandbox, context: LiveSuiteContext) => {
+    readBuildEvidence(input: { readonly jobPath: string; readonly build?: string | number; readonly required?: boolean }): Promise<unknown>;
+  };
   readonly probe: (options: ConnectionProbeOptions) => Promise<ConnectionProbeResult>;
   readonly manifest?: SeedManifest;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -102,6 +109,26 @@ export function isLiveSuiteProvider(value: string): value is LiveSuiteProvider {
   return (LIVE_SUITE_PROVIDERS as readonly string[]).includes(value);
 }
 
+export function isLiveSuiteAuthMethod(value: string | undefined): value is (typeof LIVE_SUITE_AUTH_METHODS)[number] {
+  return value !== undefined && (LIVE_SUITE_AUTH_METHODS as readonly string[]).includes(value);
+}
+
+async function verifySandbox(
+  sandbox: ProvisionerSandbox,
+  options: LiveSuiteOptions,
+  context: LiveSuiteContext,
+  provisioner: ProviderProvisioner,
+): Promise<readonly string[]> {
+  const manifest = options.manifest ?? SHARED_SEED_MANIFEST;
+  if (provisioner.verify) {
+    return provisioner.verify(sandbox, manifest);
+  }
+  if (!options.createWorkProvider) {
+    throw new Error("Live verify requires a work provider or a provisioner verify hook.");
+  }
+  return verifySeededWork(sandbox, options, context, provisioner.mapsBlockedStatus);
+}
+
 export function evaluateLiveGate(input: {
   readonly adapter: QubeAdapterContract;
   readonly env: Readonly<Record<string, string | undefined>>;
@@ -117,11 +144,11 @@ export function evaluateLiveGate(input: {
     };
   }
   const authMethod = input.adapter.connection?.authMethod as ConnectionAuthMethod | undefined;
-  if (authMethod !== "token-env") {
+  if (!isLiveSuiteAuthMethod(authMethod)) {
     return {
       status: "error",
       reason: "unsupported-auth-mode",
-      summary: `Live provisioner suite requires token-env authentication; ${providerId} uses ${authMethod ?? "unknown"}.`,
+      summary: `Live provisioner suite requires token-env or basic-env authentication; ${providerId} uses ${authMethod ?? "unknown"}.`,
     };
   }
   if (input.env[input.liveEnvVar] !== "1") {
@@ -200,7 +227,7 @@ export async function runProvisionerLifecycle(options: LiveSuiteOptions): Promis
   try {
     sandbox = await provisioner.construct();
     sandbox = await provisioner.seed(sandbox, options.manifest ?? SHARED_SEED_MANIFEST);
-    const verifiedWork = await verifySeededWork(sandbox, options, context, provisioner.mapsBlockedStatus);
+    const verifiedWork = await verifySandbox(sandbox, options, context, provisioner);
     if (options.createReviewProvider && sandbox.reviewId) {
       await verifySeededReview(sandbox, options, context);
     }
@@ -234,6 +261,9 @@ export async function verifySeededWork(
   mapsBlockedStatus: boolean,
 ): Promise<readonly string[]> {
   const manifest = options.manifest ?? SHARED_SEED_MANIFEST;
+  if (!options.createWorkProvider) {
+    throw new Error("Live verify requires a work provider.");
+  }
   const provider = options.createWorkProvider(sandbox, context);
   const items = await provider.listOpenWorkItems();
   const verified: string[] = [];

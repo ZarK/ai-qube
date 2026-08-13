@@ -117,6 +117,20 @@ to change Linear workflow state, comments, assignees, or completion state.
 This is deliberate: Linear workflow states are team-specific, and QUBE must not
 guess which state means started, blocked, ready, or done for a team.
 
+## Live Suite Bootstrap
+
+Use this checklist once for a disposable live-suite team. The suite skips
+without `QUBE_TESTKIT_LIVE=1` and the credentials below. It never reports
+`passed` when it skips.
+
+1. Select a Linear workspace and team that may hold disposable `qube-testkit`
+   labels and issues.
+2. Create a Linear personal API key. Set `LINEAR_API_KEY` and `LINEAR_TEAM_ID`.
+3. Grant the key permission to create labels, create issues, create blocked-by
+   relations, and archive issues.
+4. Set `QUBE_TESTKIT_LIVE=1`. Run `qube doctor --json`. Then run the Linear
+   adapter live suite.
+
 ## Known Differences From GitHub
 
 - Linear has teams and team-specific workflow states instead of repository-wide

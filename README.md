@@ -176,6 +176,8 @@ Useful public docs:
 - `docs/qube-codex-host-support.md`
 - `docs/qube-gitlab-provider-support.md`
 - `docs/qube-host-surfaces.md`
+- `docs/qube-jenkins-provider-support.md`
+- `docs/qube-jira-provider-support.md`
 - `docs/qube-linear-provider-support.md`
 - `docs/qube-paths-and-artifacts.md`
 - `docs/release/install-migration.md`

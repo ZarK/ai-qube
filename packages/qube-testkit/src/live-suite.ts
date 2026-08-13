@@ -67,14 +67,14 @@ export function runLiveProvisionerSuite(options: LiveSuiteOptions): void {
 
     it("rejects an unsupported provider with a loud error", () => {
       const gate = evaluateLiveGate({
-        adapter: { ...options.adapter, id: "jira" },
+        adapter: { ...options.adapter, id: "github" },
         env: { [LIVE_SUITE_ENV_VAR]: "1" },
         config: {},
         liveEnvVar: LIVE_SUITE_ENV_VAR,
       });
       assert.equal(gate.status, "error");
       assert.equal(gate.reason, "unsupported-provider");
-      assert.match(gate.summary, /does not support provider jira/);
+      assert.match(gate.summary, /does not support provider github/);
     });
 
     it("rejects an unsupported auth mode with a loud error", () => {
@@ -91,7 +91,7 @@ export function runLiveProvisionerSuite(options: LiveSuiteOptions): void {
       });
       assert.equal(gate.status, "error");
       assert.equal(gate.reason, "unsupported-auth-mode");
-      assert.match(gate.summary, /token-env/);
+      assert.match(gate.summary, /token-env or basic-env/);
     });
 
     it("constructs, verifies, and deconstructs with zero residue, or reports skipped", async () => {
