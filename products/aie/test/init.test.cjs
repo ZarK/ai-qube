@@ -163,6 +163,46 @@ describe('init service', () => {
     assert.equal(config.policy.supplyChain.pinCiActions, true);
   });
 
+  it('writes selected work, review, and CI providers into config and instructions', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      policy: { workProvider: 'jira', reviewProvider: 'gitlab', ciProvider: 'jenkins' },
+    });
+
+    assert.equal(result.ok, true);
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
+    assert.equal(config.providers.work.kind, 'jira');
+    assert.equal(config.providers.review.kind, 'gitlab');
+    assert.equal(config.providers.ci.kind, 'jenkins');
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(agents, /configured work provider is Jira and the configured review provider is GitLab/);
+    assert.match(agents, /Configured providers: work Jira, review GitLab, repository local git, CI Jenkins jobs, layout local filesystem/);
+    assert.doesNotMatch(agents, /configured work and review provider is GitHub/);
+  });
+
+  it('infers GitLab review when work is GitLab and review is omitted', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({
+      target: '.',
+      tool: 'opencode',
+      dryRun: false,
+      force: false,
+      cwd: repo,
+      policy: { workProvider: 'gitlab', ciProvider: 'gitlab' },
+    });
+
+    assert.equal(result.ok, true);
+    const config = JSON.parse(readFileSync(join(repo, '.qube/aie/config.json'), 'utf8'));
+    assert.equal(config.providers.work.kind, 'gitlab');
+    assert.equal(config.providers.review.kind, 'gitlab');
+    assert.equal(config.providers.ci.kind, 'gitlab');
+  });
+
   it('is idempotent after writing managed sections', async () => {
     const repo = makeGitRepo();
     await runInit({ target: '.', tool: 'opencode', dryRun: false, force: false, cwd: repo });
@@ -1167,11 +1207,12 @@ describe('init command metadata', () => {
     assert.equal(flagHelp.status, 0);
     assert.match(flagHelp.stdout, /Usage:/);
     assert.equal(json.status, 0);
-    assert.equal(JSON.parse(json.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    const usage = 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--defaults] [--yes] [--dry-run] [--force] [--json]';
+    assert.equal(JSON.parse(json.stdout).usage, usage);
     assert.equal(jsonWithTool.status, 0);
-    assert.equal(JSON.parse(jsonWithTool.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(JSON.parse(jsonWithTool.stdout).usage, usage);
     assert.equal(jsonWithListFlag.status, 0);
-    assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--defaults] [--yes] [--dry-run] [--force] [--json]');
+    assert.equal(JSON.parse(jsonWithListFlag.stdout).usage, usage);
     assert.equal(existsSync(join(repo, '.qube/aie/config.json')), false);
   });
 

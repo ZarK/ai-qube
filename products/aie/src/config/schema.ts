@@ -802,7 +802,7 @@ function readProviders(value: unknown, defaultValue: ProviderSelections, errors:
       const section = readPlainObject(value, 'ci', 'providers', errors);
       if (!section) return { ...defaultValue.ci };
       rejectUnknownKeys(section, ['kind', 'connection'], path, errors);
-      const selection = readProviderSelection(value, 'ci', defaultValue.ci, ['github'], errors, ['kind', 'connection']);
+      const selection = readProviderSelection(value, 'ci', defaultValue.ci, ['github', 'gitlab', 'jenkins'], errors, ['kind', 'connection']);
       const connection = readConnectionFields(section.connection, `${path}.connection`, selection.kind, errors);
       return {
         ...selection,

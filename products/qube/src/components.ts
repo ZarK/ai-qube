@@ -170,6 +170,7 @@ export const executorWorkProviders: readonly QubeDiscoveryOption[] = Object.free
 
 export const executorCiProviders: readonly QubeDiscoveryOption[] = Object.freeze([
   adapterOption(githubAdapterContract, "installed", "GitHub status checks, check runs, merge blockers, and review conversations use the GitHub adapter contract.", true),
+  adapterOption(gitLabAdapterContract, "optional", "GitLab merge request pipelines use the GitLab adapter contract without triggering or rerunning pipelines."),
   adapterOption(jenkinsAdapterContract, "optional", "Jenkins classic and folder job build state uses the Jenkins adapter contract without triggering or rerunning jobs."),
   hostOption({
     id: "local",

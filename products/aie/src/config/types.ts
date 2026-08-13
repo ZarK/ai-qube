@@ -5,7 +5,7 @@ export const DEFAULT_CONFIG_VERSION = 1;
 export type WorkProviderKind = 'github' | 'gitlab' | 'linear' | 'jira';
 export type ReviewProviderKind = 'github' | 'gitlab';
 export type RepositoryProviderKind = 'local-git';
-export type CiProviderKind = 'github';
+export type CiProviderKind = 'github' | 'gitlab' | 'jenkins';
 export type LayoutProviderKind = 'local';
 export type ConnectionProviderKind = 'github' | 'gitlab' | 'linear' | 'jira' | 'jenkins';
 

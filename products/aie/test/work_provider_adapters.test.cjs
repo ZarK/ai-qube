@@ -66,6 +66,21 @@ describe('work provider adapter boundary', () => {
     assert.equal(workProviderAdapterPackage('github'), '@tjalve/qube-adapter-github');
   });
 
+  it('lists GitHub, GitLab, and Jenkins CI adapter contracts', () => {
+    const { listCiProviderAdapters, ciProviderAdapterPackage } = require('../dist/providers/ci_provider_adapters.js');
+    const adapters = listCiProviderAdapters();
+    const byId = Object.fromEntries(adapters.map(adapter => [adapter.id, adapter]));
+
+    assert.deepEqual(adapters.map(adapter => adapter.id), ['github', 'gitlab', 'jenkins']);
+    assert.equal(byId.github.packageName, '@tjalve/qube-adapter-github');
+    assert.equal(byId.gitlab.packageName, '@tjalve/qube-adapter-gitlab');
+    assert.equal(byId.jenkins.packageName, '@tjalve/qube-adapter-jenkins');
+    assert.equal(byId.github.capabilities.triggerRun, false);
+    assert.equal(byId.gitlab.capabilities.readStatus, true);
+    assert.equal(byId.jenkins.capabilities.readArtifacts, true);
+    assert.equal(ciProviderAdapterPackage('jenkins'), '@tjalve/qube-adapter-jenkins');
+  });
+
   it('lists and loads GitLab review forge through the optional adapter boundary', async () => {
     const { createReviewForgeProvider, listReviewForgeAdapters, reviewForgeAdapterPackage } = require('../dist/providers/review_forge_adapters.js');
     const adapters = listReviewForgeAdapters();

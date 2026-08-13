@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  createGitLabCiProvider,
   createGitLabReviewForgeProvider,
   createGitLabWorkProvider,
   gitLabIssueToWorkItem,
+  mapGitLabPipelineStatus,
 } from "../dist/index.js";
 
 function makeGitLabIssue(overrides = {}) {
@@ -1457,5 +1459,30 @@ describe("GitLab review forge adapter", () => {
     assert.equal(summaries.includes("Prompt for AI Agents"), false);
     assert.match(summaries, /\[REDACTED\]/);
     assert.match(summaries, /\[local-path\]/);
+  });
+});
+
+describe("GitLab CI provider adapter", () => {
+  it("maps current-head pipeline states without coercing stale runs to passed", () => {
+    const head = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const passed = mapGitLabPipelineStatus({ id: 1, status: "success", sha: head, web_url: "https://gitlab.example.com/p/1" }, head);
+    const failed = mapGitLabPipelineStatus({ id: 2, status: "failed", sha: head, web_url: "https://gitlab.example.com/p/2" }, head);
+    const pending = mapGitLabPipelineStatus({ id: 3, status: "running", sha: head, web_url: "https://gitlab.example.com/p/3" }, head);
+    const stale = mapGitLabPipelineStatus({ id: 4, status: "success", sha: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", web_url: "https://gitlab.example.com/p/4" }, head);
+    const missingSha = mapGitLabPipelineStatus({ id: 5, status: "success", web_url: "https://gitlab.example.com/p/5" }, head);
+
+    assert.equal(passed.result, "passed");
+    assert.equal(failed.result, "failed");
+    assert.equal(pending.result, "pending");
+    assert.equal(stale.result, "unknown");
+    assert.equal(stale.reasonCode, "stale-head-pipeline");
+    assert.equal(missingSha.result, "unknown");
+    assert.equal(missingSha.reasonCode, "stale-head-pipeline");
+  });
+
+  it("reports trigger mutations as unsupported", async () => {
+    const provider = createGitLabCiProvider();
+    assert.equal(provider.capabilities().triggerRun, false);
+    await assert.rejects(() => provider.triggerRun(), /unsupported GitLab CI capability trigger-workflow-run/);
   });
 });

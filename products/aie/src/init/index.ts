@@ -53,8 +53,25 @@ function mergeNestedRecord(current: unknown, updates: Record<string, unknown>): 
   return { ...(isPlainObject(current) ? current : {}), ...updates };
 }
 
+function applyProviderPolicy(record: Record<string, unknown>, policy: InitPolicyOptions): void {
+  const reviewKind = policy.reviewProvider ?? (policy.workProvider === 'gitlab' ? 'gitlab' : undefined);
+  if (!policy.workProvider && !reviewKind && !policy.ciProvider) return;
+  const providers = mergeNestedRecord(record.providers, {});
+  record.providers = providers;
+  if (policy.workProvider) {
+    providers.work = mergeNestedRecord(providers.work, { kind: policy.workProvider });
+  }
+  if (reviewKind) {
+    providers.review = mergeNestedRecord(providers.review, { kind: reviewKind });
+  }
+  if (policy.ciProvider) {
+    providers.ci = mergeNestedRecord(providers.ci, { kind: policy.ciProvider });
+  }
+}
+
 function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicyOptions | undefined): void {
   if (!policy) return;
+  applyProviderPolicy(record, policy);
   const policyRecord = mergeNestedRecord(record.policy, {});
   record.policy = policyRecord;
 

@@ -1,0 +1,23 @@
+{
+  "passed": {
+    "id": 502,
+    "status": "success",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "web_url": "https://gitlab.example.com/acme/qube/-/pipelines/502",
+    "name": "GitLab pipeline"
+  },
+  "failed": {
+    "id": 503,
+    "status": "failed",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "web_url": "https://gitlab.example.com/acme/qube/-/pipelines/503",
+    "name": "GitLab pipeline"
+  },
+  "pending": {
+    "id": 504,
+    "status": "running",
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "web_url": "https://gitlab.example.com/acme/qube/-/pipelines/504",
+    "name": "GitLab pipeline"
+  }
+}

@@ -115,13 +115,25 @@ export function buildInstructionPolicyDiagnostics(config: Config, repoRoot: stri
   };
 }
 
+function isSupportedWorkProvider(kind: string): boolean {
+  return kind === 'github' || kind === 'gitlab' || kind === 'linear' || kind === 'jira';
+}
+
+function isSupportedReviewProvider(kind: string): boolean {
+  return kind === 'github' || kind === 'gitlab';
+}
+
+function isSupportedCiProvider(kind: string): boolean {
+  return kind === 'github' || kind === 'gitlab' || kind === 'jenkins';
+}
+
 export function buildProviderHealthDiagnostics(config: Config): ProviderHealthDiagnostics {
   const warnings: string[] = [];
   const providers = {
-    work: { kind: config.providers.work.kind, supported: config.providers.work.kind === 'github' || config.providers.work.kind === 'gitlab' || config.providers.work.kind === 'linear' || config.providers.work.kind === 'jira', required: config.providers.capabilities.work },
-    review: { kind: config.providers.review.kind, supported: config.providers.review.kind === 'github' || config.providers.review.kind === 'gitlab', required: config.providers.capabilities.review },
+    work: { kind: config.providers.work.kind, supported: isSupportedWorkProvider(config.providers.work.kind), required: config.providers.capabilities.work },
+    review: { kind: config.providers.review.kind, supported: isSupportedReviewProvider(config.providers.review.kind), required: config.providers.capabilities.review },
     repository: { kind: config.providers.repository.kind, supported: config.providers.repository.kind === 'local-git', required: config.providers.capabilities.repository },
-    ci: { kind: config.providers.ci.kind, supported: config.providers.ci.kind === 'github', required: config.providers.capabilities.ci },
+    ci: { kind: config.providers.ci.kind, supported: isSupportedCiProvider(config.providers.ci.kind), required: config.providers.capabilities.ci },
     layout: { kind: config.providers.layout.kind, supported: config.providers.layout.kind === 'local', required: config.providers.capabilities.layout },
   };
   for (const [name, provider] of Object.entries(providers)) {

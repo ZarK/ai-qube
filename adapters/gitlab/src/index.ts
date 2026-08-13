@@ -9,6 +9,19 @@ export type { GitLabIssue, GitLabIssueLink, GitLabLinkedIssue, GitLabMilestone, 
 export { createGitLabWorkProvider, GitLabWorkProvider } from "./gitlab_work_provider.js";
 export type { GitLabRestClient, GitLabFetch, GitLabWorkProviderOptions } from "./gitlab_work_provider.js";
 export {
+  createGitLabCiProvider,
+  GitLabCiProvider,
+  mapGitLabPipelineStatus,
+  unsupportedGitLabCiMutation,
+} from "./gitlab_ci_provider.js";
+export type {
+  GitLabCiProviderCapabilities,
+  GitLabCiProviderOptions,
+  GitLabPipelineCheckInput,
+  GitLabPipelineCheckResult,
+  GitLabPipelineCheckStatus,
+} from "./gitlab_ci_provider.js";
+export {
   createGitLabReviewForgeProvider,
   createGitLabReviewProvider,
   GitLabReviewForgeProvider,

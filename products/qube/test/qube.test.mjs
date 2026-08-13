@@ -304,7 +304,7 @@ describe("qube composer CLI", () => {
     assert.match(installHelp.stdout, /Default: github/);
     assert.match(installHelp.stdout, /github, gitlab, linear, jira, local/);
     assert.match(installHelp.stdout, /--ci-provider <value>/);
-    assert.match(installHelp.stdout, /github, jenkins, local/);
+    assert.match(installHelp.stdout, /github, gitlab, jenkins, local/);
 
     const makeItSoHelp = runCli(["make-it-so", "--help"]);
     assert.equal(makeItSoHelp.status, 0);
@@ -492,6 +492,7 @@ describe("qube composer CLI", () => {
       parsed.installPlan.options.ciProviders.map(option => [option.value, option.support, option.default, option.source]),
       [
         ["github", "installed", true, "adapter-contract"],
+        ["gitlab", "optional", false, "adapter-contract"],
         ["jenkins", "optional", false, "adapter-contract"],
         ["local", "unsupported", false, "local-option"]
       ]
@@ -1445,6 +1446,7 @@ describe("qube composer CLI", () => {
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "resolve-review-threads" && capability.support === "supported"));
     assert.ok(executor.capabilities.workProviders.find(provider => provider.id === "gitlab").capabilities.some(capability => capability.id === "sync-issue-status" && capability.support === "unsupported"));
     assert.ok(executor.capabilities.workProviders.some(provider => provider.id === "local" && provider.support === "unsupported"));
+    assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "gitlab" && provider.support === "optional"));
     assert.ok(executor.capabilities.ciProviders.some(provider => provider.id === "jenkins" && provider.support === "optional"));
     assert.match(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").summary, /without triggering or rerunning jobs/);
     assert.ok(executor.capabilities.ciProviders.find(provider => provider.id === "jenkins").capabilities.some(capability => capability.id === "trigger-ci-run" && capability.support === "unsupported"));
@@ -2457,7 +2459,14 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.selections.activeWorkProvider, "github");
     assert.equal(parsed.selections.activeCiProvider, "github");
     assert.equal(parsed.aie.length, 1);
-    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "claude-code", "--yes"]);
+    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "claude-code", "--work-provider", "github", "--review-provider", "github", "--ci-provider", "github", "--yes"]);
+    const splitRoot = mkdtempSync(path.join(tmpdir(), "qube-init-split-"));
+    const splitCwd = mkdtempSync(path.join(tmpdir(), "qube-init-split-cwd-"));
+    createJsonEnvelopeShim(splitRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(splitRoot, "aiu", { ok: true, command: "init" });
+    const split = runCli(["init", ".", "--host", "generic", "--work-provider", "jira", "--ci-provider", "jenkins", "--yes", "--json"], { cwd: splitCwd, env: initEnv(splitRoot) });
+    assert.equal(split.status, 0, split.stderr);
+    assert.deepEqual(JSON.parse(split.stdout).aie[0].args, ["init", ".", "--json", "--work-provider", "jira", "--review-provider", "github", "--ci-provider", "jenkins", "--yes"]);
     assert.equal(parsed.aiu.length, 1);
     assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "claude-code"]);
     assert.deepEqual(parsed.with, []);
@@ -2500,7 +2509,7 @@ describe("qube init composer orchestrator", () => {
     assert.equal(parsed.ok, true);
     assert.deepEqual(parsed.selections.hosts, ["grok-build"]);
     assert.equal(parsed.aie.length, 1);
-    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "grok-build", "--dry-run", "--yes"]);
+    assert.deepEqual(parsed.aie[0].args, ["init", ".", "--json", "--tool", "grok-build", "--work-provider", "github", "--review-provider", "github", "--ci-provider", "github", "--dry-run", "--yes"]);
     assert.equal(parsed.aiu.length, 1);
     assert.deepEqual(parsed.aiu[0].args, ["init", "--json", "--tool", "grok-build", "--dry-run"]);
     assert.equal(parsed.aie[0].args.includes("codex"), false);
