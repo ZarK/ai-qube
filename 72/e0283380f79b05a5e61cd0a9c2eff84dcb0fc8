@@ -1,0 +1,19 @@
+products/aie/src/app/review_feedback.ts
+  s_cfe4420639e4a4::t_5e88d3814751b3 4,113-114,116,120-121
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "72e0283380f79b05a5e61cd0a9c2eff84dcb0fc8",
+  "prompts": {},
+  "sessions": {
+    "s_cfe4420639e4a4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8d17a6e2-84c4-4929-ba3d-f10e6d4c01ee",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
