@@ -62,10 +62,11 @@ describe('review publisher setup guidance', () => {
     assert.match(help.stdout, /review setup token/);
     assert.match(help.stdout, /review doctor/);
     assert.match(help.stdout, /review gate/);
+    assert.match(help.stdout, /review feedback/);
     assert.equal(setupHelp.status, 0, setupHelp.stderr);
     assert.match(setupHelp.stdout, /review setup github-app/);
     assert.match(setupHelp.stdout, /review setup token/);
-    for (const command of ['review setup', 'review setup github-app', 'review setup token', 'review doctor', 'review gate']) {
+    for (const command of ['review setup', 'review setup github-app', 'review setup token', 'review doctor', 'review gate', 'review feedback']) {
       assert.ok(names.includes(command), `expected ${command} in schema`);
     }
     const appSetup = schema.commands.find(command => command.name === 'review setup github-app');

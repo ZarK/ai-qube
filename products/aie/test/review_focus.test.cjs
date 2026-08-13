@@ -103,6 +103,42 @@ describe('per-lane model tier defaults', () => {
     assert.equal(resolveLaneModelTier({}, 'issue-compliance'), 'review');
   });
 
+  it('omits opted-out lanes from the active focus set', () => {
+    const focuses = activeLocalReviewFocuses({
+      profile: 'local-focused',
+      lanes: [
+        { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+        { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+        { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      ],
+    });
+    assert.deepEqual(focuses, ['issue-compliance', 'performance']);
+  });
+
+  it('does not revive profile defaults when every configured focus is opted out', () => {
+    const focuses = activeLocalReviewFocuses({
+      profile: 'local-focused',
+      lanes: [
+        { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+        { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+      ],
+    });
+    assert.deepEqual(focuses, []);
+  });
+
+  it('does not revive an opted-out lane through profile defaults when no configured lane activates', () => {
+    const focuses = activeLocalReviewFocuses({
+      profile: 'local-focused',
+      lanes: [
+        { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+        { id: 'performance', required: 'when-matched', match: ['src/perf/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      ],
+      changedPaths: ['src/app.ts'],
+    });
+    assert.deepEqual(focuses, []);
+    assert.equal(focuses.includes('issue-compliance'), false);
+  });
+
   it('does not silently plan a judgment lane as economy without an explicit override', () => {
     assert.notEqual(resolveLaneModelTier({}, 'code-quality'), 'economy');
     assert.notEqual(defaultLaneModelTier('security'), 'economy');

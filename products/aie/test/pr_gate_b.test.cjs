@@ -655,6 +655,41 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.deepEqual(parserFindings.map(finding => finding.location.line).sort((a, b) => a - b), [10, 42]);
   });
 
+  it('exposes configured suppressions and injects learnings into planned lane prompts', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', suppress: ['vendor/**'], maxAdvisoryFindings: 1 },
+      { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+    ];
+    mkdirSync(join(repo, '.qube', 'aie'), { recursive: true });
+    writeFileSync(join(repo, '.qube', 'aie', 'review-learnings.json'), `${JSON.stringify({
+      version: 1,
+      entries: [{
+        id: 'learning:style',
+        disposition: 'rejected',
+        findingId: 'CQ-001',
+        lane: 'code-quality',
+        message: 'Brace style preference.',
+        guidance: 'Do not re-raise brace-style nits as blockers.',
+        paths: [],
+        prNumber: 12,
+        headSha: null,
+        recordedAt: '2026-08-13T00:00:00.000Z',
+      }],
+    }, null, 2)}\n`);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
+    assert.deepEqual(result.localReviewRunner.suppressions.optedOut, ['performance']);
+    const codeQualitySuppression = result.localReviewRunner.suppressions.lanes.find(entry => entry.lane === 'code-quality');
+    assert.deepEqual(codeQualitySuppression.suppress, ['vendor/**']);
+    assert.equal(codeQualitySuppression.maxAdvisoryFindings, 1);
+    assert.equal(result.localReviewRunner.lanes.some(lane => lane.lane === 'performance'), false);
+    const codeQuality = result.localReviewRunner.lanes.find(lane => lane.lane === 'code-quality');
+    assert.match(codeQuality.promptText, /Do not re-raise brace-style nits as blockers/);
+    assert.ok(codeQuality.promptFragmentIds.includes('repo-configured/review-learnings'));
+  });
+
   it('carries resolved review tier model and substitution in spawn contracts', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);

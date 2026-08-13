@@ -1,5 +1,6 @@
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, type LocalReviewLaneId } from './local_review_evidence.js';
+import { pathsTouchPatterns } from './risk_cards/glob.js';
 
 export interface SynthesisLaneInput {
   readonly laneId: LocalReviewLaneId;
@@ -16,6 +17,8 @@ export interface SynthesisPlanOptions {
    */
   readonly changedPaths?: readonly string[];
   readonly nitCap: number;
+  readonly laneSuppress?: Readonly<Record<string, readonly string[]>>;
+  readonly laneAdvisoryCaps?: Readonly<Record<string, number>>;
 }
 
 export interface LanePublicationPlan {
@@ -24,6 +27,8 @@ export interface LanePublicationPlan {
   readonly withheldDuplicates: number;
   readonly withheldOffDiff: number;
   readonly withheldByCap: number;
+  readonly withheldBySuppress: number;
+  readonly withheldByLaneCap: number;
   /**
    * True when at least one of this lane's original findings is published on
    * some lane's marker (this lane or the identity owner). A request-changes
@@ -105,10 +110,12 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
   const survivingByLane = new Map<LocalReviewLaneId, WorkingFinding[]>();
   const withheldDuplicatesByLane = new Map<LocalReviewLaneId, number>();
   const withheldOffDiffByLane = new Map<LocalReviewLaneId, number>();
+  const withheldBySuppressByLane = new Map<LocalReviewLaneId, number>();
   for (const lane of lanes) {
     survivingByLane.set(lane.laneId, []);
     withheldDuplicatesByLane.set(lane.laneId, 0);
     withheldOffDiffByLane.set(lane.laneId, 0);
+    withheldBySuppressByLane.set(lane.laneId, 0);
   }
 
   for (const lane of lanes) {
@@ -127,12 +134,35 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
         withheldOffDiffByLane.set(lane.laneId, (withheldOffDiffByLane.get(lane.laneId) ?? 0) + 1);
         continue;
       }
+      const suppressGlobs = options.laneSuppress?.[lane.laneId] ?? [];
+      if (finding.severity === 'advisory' && finding.location && suppressGlobs.length > 0 && pathsTouchPatterns([finding.location.path], suppressGlobs)) {
+        withheldBySuppressByLane.set(lane.laneId, (withheldBySuppressByLane.get(lane.laneId) ?? 0) + 1);
+        continue;
+      }
       const promotedConfidence = identityMaxConfidence.get(identity);
       const surviving = promotedConfidence !== undefined && promotedConfidence !== finding.confidence
         ? { ...finding, confidence: promotedConfidence }
         : finding;
       survivingByLane.get(lane.laneId)!.push({ laneId: lane.laneId, finding: surviving });
     }
+  }
+
+  const withheldByLaneCap = new Map<LocalReviewLaneId, number>();
+  for (const lane of lanes) withheldByLaneCap.set(lane.laneId, 0);
+  for (const lane of lanes) {
+    const cap = options.laneAdvisoryCaps?.[lane.laneId];
+    if (!Number.isSafeInteger(cap)) continue;
+    const surviving = survivingByLane.get(lane.laneId) ?? [];
+    const advisories = surviving.filter(entry => entry.finding.severity === 'advisory')
+      .sort((left, right) => {
+        const confidenceDelta = confidenceRank(right.finding) - confidenceRank(left.finding);
+        if (confidenceDelta !== 0) return confidenceDelta;
+        return left.finding.message.localeCompare(right.finding.message);
+      });
+    const kept = new Set(advisories.slice(0, Number(cap)));
+    const next = surviving.filter(entry => entry.finding.severity !== 'advisory' || kept.has(entry));
+    withheldByLaneCap.set(lane.laneId, advisories.length - kept.size);
+    survivingByLane.set(lane.laneId, next);
   }
 
   // Global nit cap: rank every surviving advisory finding by confidence
@@ -192,6 +222,8 @@ export function planFindingPublication(lanes: readonly SynthesisLaneInput[], opt
       withheldDuplicates: withheldDuplicatesByLane.get(lane.laneId) ?? 0,
       withheldOffDiff: withheldOffDiffByLane.get(lane.laneId) ?? 0,
       withheldByCap: plan.withheldByCap,
+      withheldBySuppress: withheldBySuppressByLane.get(lane.laneId) ?? 0,
+      withheldByLaneCap: withheldByLaneCap.get(lane.laneId) ?? 0,
       hasVisibleObligation,
     };
   });

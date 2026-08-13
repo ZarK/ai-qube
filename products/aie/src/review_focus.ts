@@ -119,17 +119,31 @@ export function activeLocalReviewFocuses(input: {
     const entries = input.lanes
       .map(lane => ({ lane, id: readFocusId(lane) }))
       .filter((entry): entry is { lane: ReviewLanePolicy; id: LocalReviewLaneId } => entry.id !== null);
-    const always = [...new Set(entries.filter(entry => entry.lane.required === 'always').map(entry => entry.id))];
+    const always = [...new Set(entries.filter(entry => entry.lane.required === 'always' && entry.lane.optOut !== true).map(entry => entry.id))];
     const matched = [...new Set(entries
-      .filter(entry => entry.lane.required === 'when-matched' && laneActivated(entry.lane, changedPaths))
+      .filter(entry => entry.lane.required === 'when-matched' && entry.lane.optOut !== true && laneActivated(entry.lane, changedPaths))
       .map(entry => entry.id)
       .filter(id => !always.includes(id)))];
-    if (always.length > 0 || matched.length > 0) {
+    if (entries.length > 0) {
+      if (always.length === 0 && matched.length === 0) return [];
       const matchedRoom = Math.max(0, maxActive - always.length);
       return [...always, ...matched.slice(0, matchedRoom)];
     }
   }
   return requiredLocalReviewLanes(input.profile);
+}
+
+export function reviewLanePublicationPolicy(lanes: readonly ReviewLanePolicy[]): {
+  laneSuppress: Record<string, string[]>;
+  laneAdvisoryCaps: Record<string, number>;
+} {
+  const laneSuppress: Record<string, string[]> = {};
+  const laneAdvisoryCaps: Record<string, number> = {};
+  for (const lane of lanes) {
+    if ((lane.suppress ?? []).length > 0) laneSuppress[lane.id] = [...lane.suppress];
+    if (typeof lane.maxAdvisoryFindings === 'number') laneAdvisoryCaps[lane.id] = lane.maxAdvisoryFindings;
+  }
+  return { laneSuppress, laneAdvisoryCaps };
 }
 
 export function activeLocalReviewFocusesForConfig(config: Config, changedPaths?: readonly string[]): readonly LocalReviewLaneId[] {

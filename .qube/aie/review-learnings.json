@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "learning:f798275d3d35",
+      "disposition": "rejected",
+      "findingId": "PERF-001",
+      "lane": "performance",
+      "message": "The review-learnings store has no entry-count or file-size bound: each first prompt load parses and maps every historical entry, and each append filters and rewrites the complete collection. The rendered prompt is capped at 20 entries, but parsing and serialization remain O(N) as the repo-owned history grows.",
+      "guidance": "The learnings file is repo-owned history. Prompt rendering is already capped and cached. Store compaction is not required for this issue.",
+      "paths": [
+        "products/aie/src/review_learnings.ts"
+      ],
+      "prNumber": 486,
+      "headSha": "4f10e861cbe14d4106f46c5fb8814632c4e0d99f",
+      "recordedAt": "2026-08-13T10:04:45.935Z"
+    }
+  ]
+}
