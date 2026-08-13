@@ -1,0 +1,41 @@
+products/aie/src/app/local_review_runner_support.ts
+  s_64a2949ae7e7cc::t_021428ba0a8034 11,36-37,384-440,518,1112,1174-1175
+products/aie/src/core/policy.ts
+  s_01502918d166a1::t_ac02e7d677b9ee 115
+products/aie/src/review_focus.ts
+  s_01f78647f3809a::t_f86e22972541ba 2,60-74
+products/aie/test/review_focus.test.cjs
+  s_01f78647f3809a::t_e6f0c148870724 86-110
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "00a77a5a17f2039e73ae92666be629a94b88ef45",
+  "prompts": {},
+  "sessions": {
+    "s_01502918d166a1": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019ff6fe-6585-72e3-b5ec-c1aed0db5590",
+        "model": "gpt-5.6-terra"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    },
+    "s_01f78647f3809a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "2d9863a7-72fc-4c25-b8c8-fe9fa9fab0f3",
+        "model": "unknown"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    },
+    "s_64a2949ae7e7cc": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "84eefc93-ecd0-4b75-9cd3-36966a6594d1",
+        "model": "claude-fable-5"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
