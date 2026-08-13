@@ -1,0 +1,18 @@
+products/aie/src/app/local_review_runner.ts
+  h_13eab01d19dfa9 304,375-376,401
+products/aie/src/app/local_review_runner_support.ts
+  h_13eab01d19dfa9 397-398,456-457,485-486,509,523,918,988
+products/aie/test/pr_gate_b.test.cjs
+  h_13eab01d19dfa9 840-876
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "db1d03f1455174eea249a83cc9edf23e8a5ae871",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
