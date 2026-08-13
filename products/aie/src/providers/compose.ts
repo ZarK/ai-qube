@@ -149,25 +149,22 @@ export function resolveCompositionFixturePath(root: string, relativePath: string
 
 export function compositionFixtureDigest(root: string | undefined, fixturePath: string | undefined): string | null {
   if (!fixturePath) return null;
-  if (root) {
-    const resolved = resolveCompositionFixturePath(root, fixturePath);
-    if (existsSync(resolved) && statSync(resolved).isFile()) {
-      return createHash('sha256').update(readFileSync(resolved)).digest('hex');
-    }
+  if (!root) return createHash('sha256').update(fixturePath).digest('hex');
+  const resolved = resolveCompositionFixturePath(root, fixturePath);
+  if (!existsSync(resolved) || !statSync(resolved).isFile()) {
+    throw new Error('Composition fixture file is missing or not a regular file.');
   }
-  return createHash('sha256').update(fixturePath).digest('hex');
+  return createHash('sha256').update(readFileSync(resolved)).digest('hex');
 }
 
 export async function composeProviderPermutation(config: Config, options: ComposeProviderOptions = {}): Promise<ProviderComposition> {
-  if (options.fixtureRoot && options.fixturePath) {
-    resolveCompositionFixturePath(options.fixtureRoot, options.fixturePath);
-  }
+  const fixtureDigest = compositionFixtureDigest(options.fixtureRoot, options.fixturePath);
 
   if (options.previousIdentity) {
     const preview = bindCompositionIdentity({
       headSha: options.headSha ?? null,
       configDigest: compositionConfigDigest(config),
-      fixtureDigest: compositionFixtureDigest(options.fixtureRoot, options.fixturePath),
+      fixtureDigest,
     });
     assertCurrentCompositionIdentity(options.previousIdentity, preview);
   }
@@ -190,7 +187,7 @@ export async function composeProviderPermutation(config: Config, options: Compos
   const identity = bindCompositionIdentity({
     headSha: options.headSha ?? null,
     configDigest: compositionConfigDigest(config),
-    fixtureDigest: compositionFixtureDigest(options.fixtureRoot, options.fixturePath),
+    fixtureDigest,
   });
 
   return {

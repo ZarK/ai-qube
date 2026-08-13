@@ -10,6 +10,7 @@ const {
   bindCompositionIdentity,
   composeProviderPermutation,
   compositionConfigDigest,
+  compositionFixtureDigest,
   compositionUsesSelectedKinds,
   resolveCompositionFixturePath,
 } = require('../dist/providers/compose.js');
@@ -179,6 +180,7 @@ describe('provider permutation composition', () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-permutation-'));
     writeFileSync(join(root, 'ok.json'), '{"ok":true}\n');
     assert.match(resolveCompositionFixturePath(root, 'ok.json'), /ok\.json$/);
+    assert.throws(() => compositionFixtureDigest(root, 'missing.json'), /missing or not a regular file/);
     assert.throws(() => resolveCompositionFixturePath(root, join(root, 'ok.json')), /must be relative/);
     assert.throws(() => resolveCompositionFixturePath(root, '../secret.json'), /parent-directory/);
     try {
