@@ -1,5 +1,5 @@
 import { existsSync, statSync } from "node:fs";
-import path from "node:path";
+import path, { posix as pathPosix } from "node:path";
 
 import { claudeCodeAdapterContract } from "@tjalve/qube-core";
 
@@ -125,6 +125,24 @@ const CLAUDE_INSTRUCTIONS: InstructionTarget = Object.freeze({
   description: "Always-loaded Executor instructions for Claude Code.",
 });
 
+const CLAUDE_MAKE_IT_SO_COMMAND: CommandTarget = Object.freeze({
+  id: "claude-make-it-so",
+  path: pathPosix.join(".claude", "commands", "make-it-so.md"),
+  description: "Claude Code project command that starts or resumes the autonomous Executor workflow.",
+  optional: false,
+  enabledBy: "always",
+  renderer: "make-it-so",
+});
+
+const CLAUDE_MAKE_IT_SO_SKILL: CommandTarget = Object.freeze({
+  id: "claude-make-it-so-skill",
+  path: pathPosix.join(".claude", "skills", "make-it-so", "SKILL.md"),
+  description: "Claude Code skill that starts or resumes the autonomous Executor workflow.",
+  optional: false,
+  enabledBy: "always",
+  renderer: "make-it-so",
+});
+
 const CLAUDE_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   id: "claude-review-focus-agent",
   path: ".claude/agents/qube-review-focus.md",
@@ -165,7 +183,7 @@ export const claudeCodeHostProfile: AgentHostProfile = Object.freeze({
   id: "claude-code",
   displayName: "Claude Code",
   instructionTargets: Object.freeze([CLAUDE_INSTRUCTIONS]),
-  commandTargets: Object.freeze([CLAUDE_REVIEW_FOCUS_AGENT, CLAUDE_REVIEW_EXPLORER_AGENT, CLAUDE_REVIEW_DIGEST_AGENT, CLAUDE_REVIEW_LIBRARIAN_AGENT]),
+  commandTargets: Object.freeze([CLAUDE_MAKE_IT_SO_COMMAND, CLAUDE_MAKE_IT_SO_SKILL, CLAUDE_REVIEW_FOCUS_AGENT, CLAUDE_REVIEW_EXPLORER_AGENT, CLAUDE_REVIEW_DIGEST_AGENT, CLAUDE_REVIEW_LIBRARIAN_AGENT]),
   todo: Object.freeze({
     tools: CLAUDE_CODE_TODO_TOOLS,
     fallback: "Use an explicit visible checklist if the host todo tools are unavailable.",
@@ -182,7 +200,7 @@ export const claudeCodeHostProfile: AgentHostProfile = Object.freeze({
     supported: true,
     description: "Claude Code hooks may exist in host settings; Executor init installs managed instructions only.",
   }),
-  supportsProjectCommands: false,
+  supportsProjectCommands: true,
 });
 
 interface ClaudeCodeOperationExtra {

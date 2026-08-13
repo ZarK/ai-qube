@@ -43,6 +43,32 @@ describe('init service', () => {
     assert.equal(existsSync(join(repo, 'AGENTS.md')), false);
   });
 
+  it('writes Claude Code command and skill assets without installing unselected review agents', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({ target: '.', tool: 'claude-code', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const command = readFileSync(join(repo, '.claude', 'commands', 'make-it-so.md'), 'utf8');
+    const skill = readFileSync(join(repo, '.claude', 'skills', 'make-it-so', 'SKILL.md'), 'utf8');
+    const claude = readFileSync(join(repo, 'CLAUDE.md'), 'utf8');
+    assert.match(command, /Continue repository development/);
+    assert.match(skill, /Continue repository development/);
+    assert.match(claude, /\.claude\/commands\/make-it-so\.md/);
+    assert.doesNotMatch(claude, /\.claude\/agents\/qube-review-focus\.md/);
+    assert.equal(existsSync(join(repo, '.claude', 'agents', 'qube-review-focus.md')), false);
+  });
+
+  it('writes the Codex make-it-so prompt for a Codex-only init', async () => {
+    const repo = makeGitRepo();
+    const result = await runInit({ target: '.', tool: 'codex', dryRun: false, force: false, cwd: repo });
+    assert.equal(result.ok, true);
+    const prompt = readFileSync(join(repo, '.codex', 'prompts', 'make-it-so.md'), 'utf8');
+    const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
+    assert.match(prompt, /Continue repository development/);
+    assert.match(agents, /\.codex\/prompts\/make-it-so\.md/);
+    assert.doesNotMatch(agents, /\.codex\/agents\/qube-review-focus\.toml/);
+    assert.equal(existsSync(join(repo, '.codex', 'agents', 'qube-review-focus.toml')), false);
+  });
+
   it('writes managed sections and preserves user-authored instruction content', async () => {
     const repo = makeGitRepo();
     const userContent = '# Project Rules\n\nKeep this local rule.   \n\n';
@@ -239,9 +265,12 @@ describe('init service', () => {
       'CLAUDE.md',
       opencodeCommandPath('make-it-so.md'),
       opencodeCommandPath('makeitso.md'),
+      pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
+      pathPosix.join('.claude', 'commands', 'make-it-so.md'),
+      pathPosix.join('.claude', 'skills', 'make-it-so', 'SKILL.md'),
     ]);
-    assert.match(planned.warnings.join('\n'), /Codex project command files are configured but none are enabled for the current review policy\./);
-    assert.match(planned.warnings.join('\n'), /Claude Code project command files are not installed; Claude Code uses the managed CLAUDE\.md always-loaded instructions\./);
+    assert.doesNotMatch(planned.warnings.join('\n'), /Codex project command files are configured but none are enabled/);
+    assert.doesNotMatch(planned.warnings.join('\n'), /Claude Code project command files are not installed/);
 
     const applied = await runInit({ target: '.', tool: 'all', dryRun: false, force: false, cwd: repo, policy: { opencodeCommandAlias: true } });
     assert.equal(applied.ok, true);
@@ -264,6 +293,7 @@ describe('init service', () => {
     assert.deepEqual(planned.actions.map(action => action.path), [
       join('.qube', 'aie', 'config.json'),
       'AGENTS.md',
+      pathPosix.join('.codex', 'prompts', 'make-it-so.md'),
       pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'),
       pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'),
       pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'),
@@ -621,7 +651,8 @@ describe('init service', () => {
     assert.match(agents, /Host capability profile:/);
     assert.match(agents, /OpenCode: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
     assert.match(agents, /Codex: instructions target `AGENTS\.md`, project commands or agents are installed when configured/);
-    assert.match(claude, /Claude Code: instructions target `CLAUDE\.md`, project command files are not installed by Executor for this host/);
+    assert.match(claude, /Claude Code: instructions target `CLAUDE\.md`, project commands or agents are installed when configured \(\.claude\/commands\/make-it-so\.md, \.claude\/skills\/make-it-so\/SKILL\.md\)/);
+    assert.doesNotMatch(claude, /\.claude\/agents\/qube-review-focus\.md/);
     assert.match(agents, /Protected workflow todo ids are `branch-check`, `ship`, `pr-review-wait`, `next`/);
     assert.match(agents, /BOOTSTRAP NEXT ISSUE - DO NOT COMPLETE UNTIL NEW TODOS EXIST/);
     assert.match(agents, /remain pending until new issue todos exist or the queue is confirmed empty or blocked/);
@@ -977,7 +1008,10 @@ describe('init service', () => {
     assert.equal(opencode.supportsProjectCommands, true);
     assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
     assert.equal(codex.supportsProjectCommands, true);
-    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'), pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'), pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'), pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml')]);
+    assert.deepEqual(codex.commandTargets.map(target => target.path), [pathPosix.join('.codex', 'prompts', 'make-it-so.md'), pathPosix.join('.codex', 'agents', 'qube-review-focus.toml'), pathPosix.join('.codex', 'agents', 'qube-review-explorer.toml'), pathPosix.join('.codex', 'agents', 'qube-review-digest.toml'), pathPosix.join('.codex', 'agents', 'qube-review-librarian.toml')]);
+    assert.ok(claude.commandTargets.some(target => target.path === pathPosix.join('.claude', 'commands', 'make-it-so.md')));
+    assert.ok(claude.commandTargets.some(target => target.path === pathPosix.join('.claude', 'skills', 'make-it-so', 'SKILL.md')));
+    assert.equal(claude.supportsProjectCommands, true);
     assert.equal(codex.todo.tools.includes('update_plan'), true);
     assert.equal(claude.instructionTargets[0].path, 'CLAUDE.md');
     const agentsHosts = await hostIdsForInstructionPath('AGENTS.md');

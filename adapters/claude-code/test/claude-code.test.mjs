@@ -26,7 +26,9 @@ describe("claude-code adapter", () => {
     assert.equal(claudeCodeHostProfile.id, "claude-code");
     assert.equal(claudeCodeHostProfile.instructionTargets[0].path, "CLAUDE.md");
     assert.deepEqual(claudeCodeHostProfile.todo.tools, ["TodoWrite", "TodoRead"]);
-    assert.equal(claudeCodeHostProfile.supportsProjectCommands, false);
+    assert.equal(claudeCodeHostProfile.supportsProjectCommands, true);
+    assert.ok(claudeCodeHostProfile.commandTargets.some((target) => target.path === ".claude/commands/make-it-so.md"));
+    assert.ok(claudeCodeHostProfile.commandTargets.some((target) => target.path === ".claude/skills/make-it-so/SKILL.md"));
   });
 
   it("reports claude-code capabilities from workspace inspection", () => {

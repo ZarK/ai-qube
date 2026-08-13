@@ -88,6 +88,15 @@ const AGENTS_INSTRUCTIONS: InstructionTarget = Object.freeze({
   description: "Always-loaded Executor instructions for AGENTS.md hosts.",
 });
 
+const CODEX_MAKE_IT_SO: CommandTarget = Object.freeze({
+  id: "codex-make-it-so",
+  path: pathPosix.join(".codex", "prompts", "make-it-so.md"),
+  description: "Codex project prompt that starts or resumes the autonomous Executor workflow.",
+  optional: false,
+  enabledBy: "always",
+  renderer: "make-it-so",
+});
+
 const CODEX_REVIEW_FOCUS_AGENT: CommandTarget = Object.freeze({
   id: "codex-review-focus-agent",
   path: pathPosix.join(".codex", "agents", "qube-review-focus.toml"),
@@ -128,7 +137,7 @@ export const codexHostProfile: AgentHostProfile = Object.freeze({
   id: "codex",
   displayName: "Codex",
   instructionTargets: Object.freeze([AGENTS_INSTRUCTIONS]),
-  commandTargets: Object.freeze([CODEX_REVIEW_FOCUS_AGENT, CODEX_REVIEW_EXPLORER_AGENT, CODEX_REVIEW_DIGEST_AGENT, CODEX_REVIEW_LIBRARIAN_AGENT]),
+  commandTargets: Object.freeze([CODEX_MAKE_IT_SO, CODEX_REVIEW_FOCUS_AGENT, CODEX_REVIEW_EXPLORER_AGENT, CODEX_REVIEW_DIGEST_AGENT, CODEX_REVIEW_LIBRARIAN_AGENT]),
   todo: Object.freeze({
     tools: Object.freeze(["update_plan"]),
     fallback: "If no local todo tool is exposed, maintain an equivalent visible checklist in the conversation and use GitHub issue checkboxes/comments for durable shared state.",

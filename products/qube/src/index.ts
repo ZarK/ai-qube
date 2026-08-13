@@ -50,6 +50,35 @@ export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
+export {
+  composeHostToolkitManifests,
+  createInitRecord,
+  formatHostToolkits,
+  formatPlannedHostToolkits,
+  parseInitRecord,
+  probeHostToolkits,
+  providerMcpConfigPresent,
+  readInitRecord,
+  writeInitRecord,
+  MCP_BYPASS_CAVEAT,
+  PROVIDER_MCP_CONFIG_PATHS,
+  QUBE_INIT_RECORD_PATH,
+} from "./host_toolkit.js";
+export type {
+  ComposeHostToolkitOptions,
+  HostToolkitComposition,
+  HostToolkitManifest,
+  HostToolkitProbe,
+  HostToolkitReport,
+  ProbeHostToolkitOptions,
+  QubeInitRecord,
+  ToolkitAsset,
+  ToolkitAssetKind,
+  ToolkitCliDependency,
+  ToolkitHostId,
+  ToolkitHostStatus,
+  ToolkitMcpState,
+} from "./host_toolkit.js";
 export { probeInstallState, instructionTargetsForHosts } from "./install_state.js";
 export type { InstallStateSelections, InstallStepState, InstallStepStatus } from "./install_state.js";
 export { planQubeCli, renderCommandSurfacesDoc, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";

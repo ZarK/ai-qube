@@ -12,6 +12,7 @@ describe("codex adapter", () => {
   it("exposes the codex host profile", () => {
     assert.equal(codexHostProfile.id, "codex");
     assert.ok(codexHostProfile.commandTargets.some((target) => target.id === "codex-review-focus-agent"));
+    assert.ok(codexHostProfile.commandTargets.some((target) => target.id === "codex-make-it-so"));
   });
 
   it("probes configured codex review capability", () => {

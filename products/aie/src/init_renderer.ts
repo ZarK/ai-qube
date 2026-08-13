@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
+import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
 import { economyCatalogAgent } from './review_catalog.js';
 
 export interface InitRenderContext {
@@ -44,15 +44,8 @@ function groupInstructionTargets(profiles: AgentHostProfile[]): GroupedInstructi
   return [...byPath.values()].sort((left, right) => left.target.path.localeCompare(right.target.path));
 }
 
-function hostLocalReviewEnabled(config: Config, hostId: AgentHostId): boolean {
-  return (config.reviewAdapter === 'local' || config.reviewAdapter === 'mixed') && config.localReviewAgents.includes(hostId);
-}
-
 function commandEnabled(config: Config, target: CommandTarget, hostId: AgentHostId): boolean {
-  if (target.enabledBy === 'always') return true;
-  if (target.enabledBy === 'opencodeCommandAlias') return config.opencodeCommandAlias;
-  if (target.enabledBy === 'hostLocalReview') return hostLocalReviewEnabled(config, hostId);
-  return false;
+  return commandTargetEnabled(config, target, hostId);
 }
 
 function commandBody(config: Config, target: CommandTarget, context: InitRenderContext): string {
