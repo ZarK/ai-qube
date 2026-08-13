@@ -628,7 +628,15 @@ export async function runModelReview(input: ModelReviewRunInput): Promise<ModelR
     // and artifacts for every status, so no post-validation gap check exists.
     const evidence = strictRoutedLane(normalizeSchemaOptionals(modelResult), input, provenance);
     if (!evidence) return { evidence: null, reasonCode: 'model-route-contract-mismatch', error: 'Model review result did not match the requested issue, pull request, head, lane, or evidence contract.' };
-    return { evidence, reasonCode: null, error: null };
+    return {
+      evidence: {
+        ...evidence,
+        modelTier: input.plan.tier,
+        ...(parsedHostOutput.usage ? { usage: parsedHostOutput.usage } : {}),
+      },
+      reasonCode: null,
+      error: null,
+    };
   } catch (error: unknown) {
     return { evidence: null, reasonCode: 'model-route-unavailable', error: sanitizedDiagnostic(error instanceof Error ? error.message : String(error)) };
   } finally {

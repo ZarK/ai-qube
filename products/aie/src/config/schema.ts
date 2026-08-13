@@ -1,8 +1,8 @@
 import { validateBranchPattern } from '../core/branch_rules.js';
 import { isRegisteredReviewHost, listReviewHostIds } from '../app/review_host_adapters.js';
-import { defaultCarryForwardContext } from '../review_focus.js';
+import { defaultCarryForwardContext, defaultLaneModelTier } from '../review_focus.js';
 import { gitLabConnectionContract, githubConnectionContract, jenkinsConnectionContract, jiraConnectionContract, linearConnectionContract, type ConnectionContract } from '@tjalve/qube-core';
-import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
+import type { MigrationPolicy, ReviewContextSources, ReviewFailoverPolicy, ReviewLanePolicy, ReviewLaneRequiredMode, ReviewLaneRereviewMode, ReviewModelTierId, ReviewModelsPolicy, ReviewProfileKind, ReviewPromptFragments, ReviewRoutePolicy, ReviewSeverityThreshold, ShippingPolicy } from '../core/policy.js';
 import { cloneConfigFile, cloneGate, configFromFile, DEFAULT_CONFIG_FILE } from './defaults.js';
 import { DEFAULT_CONFIG_VERSION, type AuditConfig, type BranchConfig, type ConfigFilePolicy, type ConfigFileShape, type ConfigValidationResult, type GateConfig, type GateKind, type GatePolicyConfig, type GateStage, type GitHubAppPublisherConfig, type GitHubReviewPublisherConfig, type GitHubReviewPublisherMode, type GitHubTokenPublisherConfig, type InstructionConfig, type JiraIssueLinkRuleConfig, type JiraLinkRelation, type JiraWorkflowSchemaConfig, type JiraWorkPriority, type JiraWorkProviderConfig, type JiraWorkStatus, type LabelConfig, type LifecycleConfig, type MigrationConfig, type MilestoneOrderingConfig, type MissingMilestonePolicy, type ProviderCapabilityPolicy, type ProviderSelection, type ProviderSelections, type ReviewConfig, type ReviewProviderSelection, type ReviewSourceConfig, type ReviewSourceIdentity, type ReviewSourceMarkers, type SupplyChainConfig, type ValidationError, type WorkProviderSelection } from './types.js';
 import type { ReviewAdapterKind } from '../core/policy.js';
@@ -282,7 +282,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext', 'tier'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
@@ -305,6 +305,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       rereview: readReviewRereviewMode(entry.rereview, defaultRereviewMode(id), `${lanePath}.rereview`, errors),
       route,
       carryForwardContext: readCarryForwardContext(entry.carryForwardContext, defaultCarryForwardContext(id), `${lanePath}.carryForwardContext`, errors),
+      tier: readLaneModelTier(entry.tier, defaultLaneModelTier(id), `${lanePath}.tier`, errors),
     });
   });
   return lanes;
@@ -395,6 +396,13 @@ function readReviewFailover(value: unknown, path: string, errors: ValidationErro
     return null;
   }
   return { faults, route };
+}
+
+function readLaneModelTier(value: unknown, defaultValue: ReviewModelTierId, path: string, errors: ValidationError[]): ReviewModelTierId {
+  if (value === undefined) return defaultValue;
+  if (value === 'review' || value === 'economy' || value === 'synthesis') return value;
+  errors.push({ kind: 'invalid', path, message: `${path} must be "review", "economy", or "synthesis"` });
+  return defaultValue;
 }
 
 function readCarryForwardContext(value: unknown, defaultValue: ReviewLanePolicy['carryForwardContext'], path: string, errors: ValidationError[]): ReviewLanePolicy['carryForwardContext'] {

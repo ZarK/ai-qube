@@ -663,10 +663,15 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
 
     const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, includeLocalReviewPrompts: true, exec });
 
-    const lane = result.localReviewRunner.lanes.find(entry => entry.spawnContract);
+    const lane = result.localReviewRunner.lanes.find(entry => entry.spawnContract && entry.modelTier === 'review');
     assert.equal(lane.spawnContract.model, 'gpt-5.5-codex');
     assert.equal(lane.spawnContract.effort, 'high');
     assert.equal(lane.spawnContract.tierSubstitution, null);
+    assert.equal(lane.spawnContract.modelTier, 'review');
+    const economyLane = result.localReviewRunner.lanes.find(entry => entry.lane === 'task-record-compliance');
+    assert.equal(economyLane.modelTier, 'economy');
+    assert.equal(economyLane.spawnContract.modelTier, 'economy');
+    assert.match(economyLane.spawnContract.tierSubstitution, /review tier model was substituted/);
 
     const fallbackConfig = localHostConfig(null);
     const fallbackExec = makePrExec({ prViews: [cleanLocalPr()] }).exec;
@@ -823,7 +828,129 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.equal(carriedEvidence.carriedForward.fromHeadSha, priorHead);
     assert.equal(carriedEvidence.carriedForward.priorRunId, 'test-review-task');
     assert.equal(carriedEvidence.headSha, currentHead);
+    assert.equal(carriedEvidence.usage, undefined);
     assert.equal(result.localReview.status, 'passed');
+    assert.equal(result.localReviewRunner.deltaTriage.modelTier, 'economy');
+    const triage = result.localReviewRunner.deltaTriage.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(triage.verdict, 'not-relevant');
+    assert.equal(triage.escalate, false);
+    assert.equal(triage.modelTier, 'economy');
+  });
+
+  it('plans default and explicit per-lane model tiers in pr gate json', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewModels = {
+      review: { grok: { model: 'grok-4.5', effort: null }, codex: { model: 'gpt-5.6-luna', effort: 'high' } },
+      economy: {},
+      synthesis: {},
+    };
+    config.reviewRoute = { host: 'grok', tier: 'review', timeoutSeconds: 600, maxTurns: 8 };
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'docs-instructions', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      { id: 'security', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', tier: 'economy' },
+      {
+        id: 'performance',
+        required: 'always',
+        match: [],
+        severityThreshold: 'high',
+        prompt: [],
+        tools: [],
+        runner: 'local-host',
+        tier: 'economy',
+        route: { host: 'codex', tier: 'review', timeoutSeconds: 600, maxTurns: 8 },
+      },
+    ];
+    const { exec } = makePrExec({ prViews: [cleanLocalPr()] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    const byLane = new Map(result.localReviewRunner.lanes.map(lane => [lane.lane, lane]));
+    assert.equal(byLane.get('code-quality').modelTier, 'review');
+    assert.equal(byLane.get('code-quality').route.tier, 'review');
+    assert.equal(byLane.get('docs-instructions').modelTier, 'economy');
+    assert.equal(byLane.get('docs-instructions').route.tier, 'economy');
+    assert.equal(byLane.get('security').modelTier, 'economy');
+    assert.equal(byLane.get('security').route.tier, 'economy');
+    assert.equal(byLane.get('performance').modelTier, 'review');
+    assert.equal(byLane.get('performance').route.tier, 'review');
+    assert.equal(byLane.get('performance').route.host, 'codex');
+  });
+
+  it('escalates a relevant delta instead of carrying the lane forward', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const evidence = localEvidence({ headSha: priorHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${priorHead}/code-quality.json`, sha256: null }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 2;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'touch source'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.notEqual(lane.status, 'completed');
+    assert.doesNotMatch(lane.summary, /Carried forward/);
+    const triage = result.localReviewRunner.deltaTriage.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(triage.verdict, 'relevant');
+    assert.equal(triage.escalate, true);
+    assert.equal(triage.modelTier, 'economy');
+  });
+
+  it('escalates an uncomputable prior-head delta instead of carrying the lane forward', async () => {
+    const repo = makeGitRepo();
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+    ];
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    const missingHead = 'deadbeefdeadbeefdeadbeefdeadbeefdeadbeef';
+    const evidence = localEvidence({ headSha: missingHead });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      artifacts: [{ kind: 'json', path: `.qube/aie/reviews/93/12/${missingHead}/code-quality.json`, sha256: null }],
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const result = await runPrGate(config, { prNumber: 12, repoRoot: repo, dryRun: true, exec });
+
+    const lane = result.localReviewRunner.lanes.find(entry => entry.lane === 'code-quality');
+    assert.notEqual(lane.status, 'completed');
+    assert.doesNotMatch(lane.summary, /Carried forward/);
+    const triage = result.localReviewRunner.deltaTriage.lanes.find(entry => entry.lane === 'code-quality');
+    assert.equal(triage.verdict, 'unsure');
+    assert.equal(triage.escalate, true);
+    assert.equal(triage.modelTier, 'economy');
   });
 
   it('carries scope-mode lanes across an instruction-doc-only delta while all-mode lanes rerun', async () => {

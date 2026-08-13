@@ -8,6 +8,7 @@ import { redact } from '../redact.js';
 import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForwardContextMode } from '../review_focus.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, localReviewEvidenceSha256, trustedLocalHostProvenancePath, verifyTrustedStoreChain, type LocalReviewContextReviewed, type LocalReviewLaneId, type LocalReviewProfile, type LocalReviewRecommendation, type LocalReviewRunnerProvenance, type LocalReviewSeverity, type LocalReviewStatus } from '../local_review_evidence.js';
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from '../core/policy.js';
+import { readHostUsage, type LaneUsage } from '../review_usage.js';
 import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/qube-core';
 import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
@@ -32,6 +33,8 @@ export interface LaneEvidence {
   completeness: string;
   preconditions: string[];
   runnerProvenance: LocalReviewRunnerProvenance | null;
+  modelTier?: ReviewModelTierId;
+  usage?: LaneUsage;
 }
 
 // Raw command output can echo environment secrets; well-known credential
@@ -378,6 +381,63 @@ async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: s
   }
 }
 
+export async function evaluateCarryForwardDecision(input: {
+  repoRoot: string;
+  issueNumber: number;
+  prNumber: number;
+  headSha: string;
+  lane: LocalReviewLaneId;
+  matchPatterns: readonly string[];
+  contextPatterns: readonly string[];
+  contextMode?: CarryForwardContextMode;
+  expectedFragmentDigest: string;
+  expectedCommandSuppliedIdentity?: string;
+  expectedAdapter: 'local-host' | 'local-command';
+  requiredCommand: string | null;
+}): Promise<{ source: CarryForwardSource | null; priorApproved: boolean; deltaComputed: boolean; deltaPaths: readonly string[] | null }> {
+  const source = await findCarryForwardSource(input);
+  if (source) return { source, priorApproved: true, deltaComputed: true, deltaPaths: [] };
+  const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
+  let headDirectories: string[] = [];
+  try {
+    headDirectories = readdirSync(prDirectory, { withFileTypes: true })
+      .filter(entry => entry.isDirectory() && entry.name !== safeSegment(input.headSha))
+      .map(entry => entry.name);
+  } catch {
+    return { source: null, priorApproved: false, deltaComputed: true, deltaPaths: [] };
+  }
+  let priorApproved = false;
+  let sawUnknownDelta = false;
+  let latest: { recordedAt: string; deltaPaths: string[] | null } | null = null;
+  for (const directoryName of headDirectories) {
+    const path = join(prDirectory, directoryName, `${input.lane}.json`);
+    if (!existsSync(path)) continue;
+    try {
+      const parsed: unknown = JSON.parse(readFileSync(path, 'utf8'));
+      if (!isRecord(parsed)) continue;
+      if ((parsed.version ?? parsed.schemaVersion) !== 1) continue;
+      if ((parsed.lane ?? parsed.id) !== input.lane) continue;
+      if (parsed.status !== 'passed' || parsed.recommendation !== 'approve') continue;
+      if (isRecord(parsed.carriedForward)) continue;
+      const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
+      if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
+      priorApproved = true;
+      const deltaPaths = await gitDeltaPaths(input.repoRoot, priorHeadSha, input.headSha);
+      if (deltaPaths === null) sawUnknownDelta = true;
+      const recordedAt = typeof parsed.recordedAt === 'string' ? parsed.recordedAt : '';
+      if (!latest || recordedAt >= latest.recordedAt) latest = { recordedAt, deltaPaths };
+    } catch {
+      continue;
+    }
+  }
+  return {
+    source: null,
+    priorApproved,
+    deltaComputed: !sawUnknownDelta || !priorApproved,
+    deltaPaths: latest?.deltaPaths ?? null,
+  };
+}
+
 export async function findCarryForwardSource(input: {
   repoRoot: string;
   issueNumber: number;
@@ -455,6 +515,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
       carriedForward: { fromHeadSha: source.fromHeadSha, priorRunId: source.priorRunId, deltaSummary: source.deltaSummary },
       recordedAt: new Date().toISOString(),
     };
+    Reflect.deleteProperty(body, 'usage');
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
     mkdirTrustedStoreSync(dirname(path), { repoRoot: repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
     writeReviewFileGuarded(path, `${JSON.stringify(body, null, 2)}\n`, { repoRoot, subtree: ['.qube', 'aie', 'reviews'] });
@@ -1048,6 +1109,7 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
   if (value.issueNumber !== issueNumber || value.prNumber !== prNumber || value.headSha !== headSha) return null;
   if (!isRecord(value.runnerProvenance)) return null;
   const status = readStatus(value.status);
+  const usage = readHostUsage(value.usage);
   return {
     id,
     status,
@@ -1109,6 +1171,8 @@ export function normalizeExternalLane(value: unknown, lane: LocalReviewLaneId, i
       invocationId: typeof value.runnerProvenance.invocationId === 'string' ? redact(value.runnerProvenance.invocationId) : null,
       routeSource: value.runnerProvenance.routeSource === 'configured' || value.runnerProvenance.routeSource === 'fallback' ? value.runnerProvenance.routeSource : null,
     },
+    ...(value.modelTier === 'review' || value.modelTier === 'economy' || value.modelTier === 'synthesis' ? { modelTier: value.modelTier } : {}),
+    ...(usage ? { usage } : {}),
   };
 }
 

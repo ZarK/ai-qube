@@ -7,6 +7,8 @@ import { carryForwardDeltaTouched, defaultCarryForwardContext, type CarryForward
 import { acceptedProviderLane } from './provider_lane_evidence.js';
 import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evidence.js';
 import { redact } from './redact.js';
+import type { ReviewModelTierId } from './core/policy.js';
+import { readHostUsage, type LaneUsage } from './review_usage.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
 export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
@@ -88,6 +90,8 @@ export interface LocalReviewLane {
   carriedForward: LocalReviewCarriedForward | null;
   runnerProvenance: LocalReviewRunnerProvenance | null;
   origin?: 'local' | 'trusted-provider';
+  modelTier?: ReviewModelTierId;
+  usage?: LaneUsage;
 }
 
 export interface LocalReviewCarriedForward {
@@ -217,6 +221,17 @@ const REQUIRED_TASK_CONTEXT: readonly LocalReviewContextKind[] = [
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function readOptionalLaneObservability(entry: Record<string, unknown>): { modelTier?: ReviewModelTierId; usage?: LaneUsage } {
+  const modelTier = entry.modelTier === 'review' || entry.modelTier === 'economy' || entry.modelTier === 'synthesis'
+    ? entry.modelTier
+    : undefined;
+  const usage = readHostUsage(entry.usage);
+  return {
+    ...(modelTier ? { modelTier } : {}),
+    ...(usage ? { usage } : {}),
+  };
 }
 
 function stringValue(value: unknown, fallback: string): string {
@@ -721,6 +736,7 @@ function readLanes(value: unknown, fallbackProvenance: LocalReviewRunnerProvenan
       preconditions: Array.isArray(entry.preconditions) ? stringArray(entry.preconditions) : null,
       carriedForward: readCarriedForward(entry.carriedForward),
       runnerProvenance: readRunnerProvenance(entry.runnerProvenance) ?? fallbackProvenance,
+      ...readOptionalLaneObservability(entry),
     });
   }
   return lanes;
@@ -1061,6 +1077,7 @@ function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, 
         preconditions: Array.isArray(parsed.preconditions) ? stringArray(parsed.preconditions) : null,
         carriedForward: readCarriedForward(parsed.carriedForward),
         runnerProvenance: readRunnerProvenance(parsed.runnerProvenance),
+        ...readOptionalLaneObservability(parsed),
       },
     };
   } catch {

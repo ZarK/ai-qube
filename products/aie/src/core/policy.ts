@@ -112,6 +112,7 @@ export interface ReviewLanePolicy {
   rereview: ReviewLaneRereviewMode;
   route: ReviewRoutePolicy | null;
   carryForwardContext: 'all' | 'config' | 'scope';
+  tier: ReviewModelTierId;
 }
 
 export interface ReviewPolicy {

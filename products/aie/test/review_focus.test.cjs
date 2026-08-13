@@ -83,7 +83,31 @@ describe('review focus selection', () => {
   });
 });
 
-const { carryForwardDeltaTouched, defaultCarryForwardContext } = require('../dist/review_focus.js');
+const { carryForwardDeltaTouched, defaultCarryForwardContext, defaultLaneModelTier, resolveLaneModelTier } = require('../dist/review_focus.js');
+
+describe('per-lane model tier defaults', () => {
+  it('defaults judgment lanes to review and docs/task-record lanes to economy', () => {
+    assert.equal(defaultLaneModelTier('issue-compliance'), 'review');
+    assert.equal(defaultLaneModelTier('code-quality'), 'review');
+    assert.equal(defaultLaneModelTier('security'), 'review');
+    assert.equal(defaultLaneModelTier('final-gate'), 'review');
+    assert.equal(defaultLaneModelTier('docs-instructions'), 'economy');
+    assert.equal(defaultLaneModelTier('task-record-compliance'), 'economy');
+  });
+
+  it('resolves route.tier over lane.tier over the lane default', () => {
+    assert.equal(resolveLaneModelTier({ tier: 'economy' }, 'code-quality'), 'economy');
+    assert.equal(resolveLaneModelTier({ tier: 'economy', route: { tier: 'review' } }, 'code-quality'), 'review');
+    assert.equal(resolveLaneModelTier({ tier: 'review', route: { tier: 'economy' } }, 'docs-instructions'), 'economy');
+    assert.equal(resolveLaneModelTier(undefined, 'docs-instructions'), 'economy');
+    assert.equal(resolveLaneModelTier({}, 'issue-compliance'), 'review');
+  });
+
+  it('does not silently plan a judgment lane as economy without an explicit override', () => {
+    assert.notEqual(resolveLaneModelTier({}, 'code-quality'), 'economy');
+    assert.notEqual(defaultLaneModelTier('security'), 'economy');
+  });
+});
 
 describe('carry-forward context modes', () => {
   const contextPatterns = ['AGENTS.md', '**/AGENTS.md', 'docs/spec.md'];

@@ -2,6 +2,9 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ReviewModelEffort } from '../core/policy.js';
 import { redact } from '../redact.js';
+import { readHostUsage, type LaneUsage } from '../review_usage.js';
+
+export { readHostUsage, type LaneUsage } from '../review_usage.js';
 
 export type ModelHostExecutable = string | { executable: string; prefixArgs: string[] };
 
@@ -16,6 +19,7 @@ export interface ReviewHostParsedEnvelope {
   text: string;
   sessionId: string | null;
   priorTexts?: string[];
+  usage?: LaneUsage;
 }
 
 export interface ReviewHostInvocationContext {
@@ -100,9 +104,24 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function usageFromCodexEvent(record: Record<string, unknown>): LaneUsage | undefined {
+  const direct = readHostUsage(record.usage);
+  if (direct) return direct;
+  if (record.type === 'token_count') {
+    return readHostUsage(isRecord(record.info) ? record.info : record);
+  }
+  if (record.type === 'event_msg' && isRecord(record.payload) && record.payload.type === 'token_count') {
+    const info = isRecord(record.payload.info) ? record.payload.info : record.payload;
+    return readHostUsage(info.total_token_usage ?? info.last_token_usage ?? info);
+  }
+  if (isRecord(record.item) && record.item.type === 'usage') return readHostUsage(record.item);
+  return undefined;
+}
+
 function parseCodexOutput(stdout: string): ReviewHostParsedEnvelope | null {
   const messages: string[] = [];
   let sessionId: string | null = null;
+  let usage: LaneUsage | undefined;
   for (const line of stdout.split(/\r?\n/).filter(line => line.trim() !== '')) {
     let event: unknown;
     try { event = JSON.parse(line); } catch { continue; }
@@ -113,8 +132,10 @@ function parseCodexOutput(stdout: string): ReviewHostParsedEnvelope | null {
       const item = record.item as Record<string, unknown>;
       if (item.type === 'agent_message' && typeof item.text === 'string') messages.push(item.text);
     }
+    const eventUsage = usageFromCodexEvent(record);
+    if (eventUsage) usage = eventUsage;
   }
-  return messages.length === 1 ? { text: messages[0], sessionId } : null;
+  return messages.length === 1 ? { text: messages[0], sessionId, ...(usage ? { usage } : {}) } : null;
 }
 
 function jsonObjectSequence(text: string): string[] | null {
@@ -166,7 +187,8 @@ function parseGrokOutput(stdout: string): ReviewHostParsedEnvelope | null {
     const record = value as Record<string, unknown>;
     if (typeof record.text !== 'string') return null;
     const objects = jsonObjectSequence(record.text);
-    return objects ? { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId: typeof record.sessionId === 'string' ? record.sessionId : null } : null;
+    const usage = readHostUsage(record.usage) ?? readHostUsage(record.tokenUsage) ?? (isRecord(record.tokens) ? readHostUsage(record.tokens) : undefined);
+    return objects ? { text: objects.at(-1)!, priorTexts: objects.slice(0, -1), sessionId: typeof record.sessionId === 'string' ? record.sessionId : null, ...(usage ? { usage } : {}) } : null;
   } catch {
     return null;
   }
