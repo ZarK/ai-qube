@@ -248,6 +248,45 @@ describe('cross-lane finding synthesis', () => {
     assert.equal(later.hasVisibleObligation, true, 'the identity is visible on the owner marker');
   });
 
+  it('withholds advisories whose path matches a lane suppress glob', () => {
+    const plans = planFindingPublication(
+      [{ laneId: 'code-quality', findings: [finding({ location: { path: 'vendor/lib.js' } }), finding({ id: 'keep', message: 'Keep me.', location: { path: 'src/app.ts' } })] }],
+      { nitCap: 10, laneSuppress: { 'code-quality': ['vendor/**'] } },
+    );
+    assert.equal(plans[0].published.length, 1);
+    assert.equal(plans[0].published[0].id, 'keep');
+    assert.equal(plans[0].withheldBySuppress, 1);
+  });
+
+  it('does not suppress blocking findings that match a lane suppress glob', () => {
+    const plans = planFindingPublication(
+      [{
+        laneId: 'code-quality',
+        findings: [finding({ id: 'block', severity: 'blocking', message: 'Vendor crash.', location: { path: 'vendor/lib.js' } })],
+      }],
+      { nitCap: 10, laneSuppress: { 'code-quality': ['vendor/**'] } },
+    );
+    assert.equal(plans[0].published.length, 1);
+    assert.equal(plans[0].published[0].id, 'block');
+    assert.equal(plans[0].withheldBySuppress, 0);
+  });
+
+  it('applies a per-lane advisory cap before the global nit cap', () => {
+    const plans = planFindingPublication(
+      [{
+        laneId: 'code-quality',
+        findings: [
+          finding({ id: 'a', message: 'A', confidence: 0.9, location: { path: 'src/a.ts' } }),
+          finding({ id: 'b', message: 'B', confidence: 0.8, location: { path: 'src/b.ts' } }),
+        ],
+      }],
+      { nitCap: 10, laneAdvisoryCaps: { 'code-quality': 1 } },
+    );
+    assert.equal(plans[0].published.length, 1);
+    assert.equal(plans[0].published[0].id, 'a');
+    assert.equal(plans[0].withheldByLaneCap, 1);
+  });
+
   it('throws a plain Error for an invalid nitCap', () => {
     for (const invalid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
       assert.throws(

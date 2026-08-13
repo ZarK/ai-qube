@@ -92,6 +92,15 @@ export interface LocalReviewRunResult {
   economyCatalog: EconomyCatalogTierResolution[];
   headDigest: LocalReviewHeadDigestResult | null;
   deltaTriage: { modelTier: 'economy'; lanes: DeltaTriageLaneResult[] };
+  suppressions: {
+    optedOut: string[];
+    lanes: Array<{
+      lane: string;
+      optOut: boolean;
+      suppress: string[];
+      maxAdvisoryFindings: number | null;
+    }>;
+  };
   lanes: LocalReviewLaneRun[];
   written: string[];
   unavailable: string[];
@@ -296,8 +305,8 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   }
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments);
-  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand), riskCardFragments);
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot);
+  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand), riskCardFragments, repoRoot);
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
@@ -368,7 +377,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     matchPatterns: lanePolicy?.match ?? [],
     contextPatterns,
     contextMode: lanePolicy?.carryForwardContext ?? defaultCarryForwardContext(lane),
-    expectedFragmentDigest: expectedLaneFragmentDigest(lane),
+    expectedFragmentDigest: expectedLaneFragmentDigest(lane, input.repoRoot),
     expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
     expectedAdapter: runner,
     requiredCommand: command,
@@ -455,6 +464,17 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
   const opencode = await probeOpenCodeReviewCapability();
   const profile = effectiveProfile(config, input.required, input.shadow);
   const requiredLanes = [...activeLocalReviewFocusesForConfig(config, input.changedPaths)];
+  const suppressions = {
+    optedOut: config.reviewLanes.filter(lane => lane.optOut === true).map(lane => lane.id),
+    lanes: config.reviewLanes
+      .filter(lane => lane.optOut === true || (lane.suppress ?? []).length > 0 || lane.maxAdvisoryFindings !== undefined && lane.maxAdvisoryFindings !== null)
+      .map(lane => ({
+        lane: lane.id,
+        optOut: lane.optOut === true,
+        suppress: [...(lane.suppress ?? [])],
+        maxAdvisoryFindings: lane.maxAdvisoryFindings ?? null,
+      })),
+  };
   const evidenceRoot = join(input.repoRoot, '.qube', 'aie', 'reviews');
   const aiqFindings = loadAiqReviewFindings(input.repoRoot, input.changedPaths ?? []);
   // Layout facts are optional lane context; inspection failure degrades to a
@@ -507,10 +527,10 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     },
   }));
   if (!input.required && !input.shadow) {
-    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
+    return { required: false, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'disabled', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: [], summary: 'Local review runner is disabled by the selected review adapter.' };
   }
   if (input.issueNumbers.length === 0 || requiredLanes.length === 0) {
-    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
+    return { required: input.required, dryRun: input.dryRun, profile, prNumber: input.prNumber, headSha: input.headSha, status: 'pending', evidenceRoot, codex, opencode, modelTiers, economyCatalog, headDigest: null, deltaTriage: { modelTier: 'economy', lanes: [] }, suppressions, lanes: [], written: [], unavailable: ['No linked issue or required local review lanes were available.'], summary: 'Local review runner could not plan lanes without a linked issue and required lane set.' };
   }
 
   const primaryIssueNumber = input.issueNumbers[0];
@@ -624,7 +644,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             continue;
           }
           const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
-          const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand), riskCardFragments);
+          const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand), riskCardFragments, input.repoRoot);
           // Defer execution to the bounded pool; the placeholder keeps the lane's
           // deterministic position and is replaced in the serial completion phase.
           // The job reads route and routeSource at execution time so the probe
@@ -832,6 +852,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
     economyCatalog,
     headDigest,
     deltaTriage: { modelTier: 'economy', lanes: deltaTriage },
+    suppressions,
     lanes,
     written,
     unavailable,

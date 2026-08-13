@@ -147,6 +147,16 @@ export const REVIEW_GATE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 
+export const REVIEW_FEEDBACK_FLAG_DETAILS: CommandFlagSchema[] = [
+  { name: '--json', type: 'boolean', description: 'Emit machine-readable review feedback output', default: false },
+  { name: '--dry-run', type: 'boolean', description: 'Show the learning that would be recorded without writing the learnings file', default: false },
+  { name: '--accept', type: 'string', description: 'Current-head finding id to record as accepted team guidance' },
+  { name: '--reject', type: 'string', description: 'Current-head finding id to record as rejected, with required guidance' },
+  { name: '--guidance', type: 'string', description: 'Team guidance stored with the learning and injected into later lane prompts' },
+  { name: '--list', type: 'boolean', description: 'List recorded learnings without writing', default: false },
+  { name: '--help', type: 'boolean', description: 'Show command help' },
+];
+
 export const REVIEW_STATS_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable review convergence stats', default: false },
   { name: '--window', type: 'integer', description: 'Recent merged or closed pull requests to inspect; maximum 50', default: 20 },

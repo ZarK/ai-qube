@@ -11,6 +11,7 @@ import { formatPrView, runPrViewService } from './app/pr_view.js';
 import { formatReviewStats, reviewStatsFailure, runReviewStats } from './app/review_stats.js';
 import { formatPrTriage, runPrTriageService } from './app/pr_triage.js';
 import { formatPrBatch, runPrBatchService } from './app/pr_batch.js';
+import { formatReviewFeedback, runReviewFeedback } from './app/review_feedback.js';
 import { buildStatus, createStatusContext } from './app/status_service.js';
 import { formatUiAudit, parseAuditIssueNumber, runUiAudit } from './audit.js';
 import { runBranchCommand } from './branch.js';
@@ -600,6 +601,48 @@ async function handlePrTriage(context: Parameters<RuntimeCommandHandler>[0]) {
   }
 }
 
+async function handleReviewFeedback(context: Parameters<RuntimeCommandHandler>[0]) {
+  const pr = stringArg(context, 'pr');
+  if (isHelpToken(pr)) {
+    return usageResult(context, 'review feedback', 'aie review feedback [<pr>] [--accept <id>|--reject <id> --guidance <text>|--list] [--dry-run] [--json]', [
+      'Usage: aie review feedback [<pr>] [--accept <id>|--reject <id> --guidance <text>|--list] [--dry-run] [--json]',
+      '',
+      'Record accepted or rejected current-head findings and team guidance into the repo-owned learnings file.',
+      'Later lane prompts include that file as a repo-configured fragment with trust repo-doc.',
+      'Examples:',
+      ...commandExamples('review feedback').map(example => `  ${example}`),
+    ]);
+  }
+  let prNumber: number | undefined;
+  if (pr && pr.trim() !== '') {
+    try {
+      prNumber = parsePrNumber(pr) ?? undefined;
+    } catch (err: unknown) {
+      const cause = err instanceof Error ? err.message : String(err);
+      const message = `Failed to parse pull request. Likely cause: ${cause}. Next action: run \`aie review feedback 12 --list\` or \`aie review feedback --help\`.`;
+      return commandFailure(context, { ok: false, command: 'review feedback', error: message }, message);
+    }
+  }
+  const loaded = await loadConfigFile();
+  if (!loaded.ok) return configLoadFailure(context, 'review feedback', loaded, 'Fix the selected Executor config, then record review feedback again.');
+  try {
+    const result = await runReviewFeedback(loaded.config ?? getDefaults(), {
+      prNumber,
+      accept: stringFlag(context, 'accept'),
+      reject: stringFlag(context, 'reject'),
+      guidance: stringFlag(context, 'guidance'),
+      list: readBooleanFlag(context, 'list'),
+      dryRun: readBooleanFlag(context, 'dry-run'),
+      repoRoot: loaded.root,
+    });
+    return commandResult(context, result, formatReviewFeedback(result));
+  } catch (err: unknown) {
+    const cause = err instanceof Error ? err.message : String(err);
+    const message = `Failed to record review feedback. Likely cause: ${cause}. Next action: run \`aie pr batch <pr>\` and pass a listed finding id.`;
+    return commandFailure(context, { ok: false, command: 'review feedback', error: message }, message);
+  }
+}
+
 async function handlePrReviewPublish(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
   const lane = stringFlag(context, 'lane');
@@ -870,6 +913,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
     '  aie review doctor            Validate publisher readiness and permissions.',
     '  aie review stats             Compute bounded review convergence metrics.',
     '  aie review gate <issue>      Render host-run review prompts and evidence requirements.',
+    '  aie review feedback          Record accepted or rejected findings into repo-owned learnings.',
     'When using QUBE, `qube review ...` is the equivalent short surface.',
     'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.',
   ]),
@@ -884,6 +928,7 @@ export const RUNTIME_HANDLERS: Readonly<Record<string, RuntimeCommandHandler>> =
   'review doctor': handleReviewDoctor,
   'review stats': context => handleConfigCommand(context, 'review stats'),
   'review gate': context => handleConfigCommand(context, 'review gate'),
+  'review feedback': handleReviewFeedback,
   schema: handleSchema,
   start: handleStart,
   status: async context => {

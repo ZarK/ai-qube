@@ -1,6 +1,6 @@
 import type { Config } from '../config/index.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, type LocalReviewLaneId } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgeRoundSummaryPublishResult } from '../providers/review_forge_provider.js';
@@ -25,6 +25,8 @@ export interface PrReviewSummaryPublishOptions {
   changedPaths?: readonly string[] | null;
   deltaBaseRef?: string;
   nitCap?: number;
+  laneSuppress?: Readonly<Record<string, readonly string[]>>;
+  laneAdvisoryCaps?: Readonly<Record<string, number>>;
 }
 
 export interface PrReviewSummaryPublishResult {
@@ -83,7 +85,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   }
 
   const synthesisLanes: SynthesisLaneInput[] = validatedLanes.map(lane => ({ laneId: lane.laneId, findings: lane.findings }));
-  const plans = planFindingPublication(synthesisLanes, { changedPaths, nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP });
+  const plans = planFindingPublication(synthesisLanes, { changedPaths, nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP, laneSuppress: options.laneSuppress, laneAdvisoryCaps: options.laneAdvisoryCaps });
   const planByLane = new Map(plans.map(plan => [plan.laneId, plan] as const));
 
   const roundSummaryLanes: RoundSummaryLaneInput[] = validatedLanes.map(lane => {
@@ -159,6 +161,7 @@ export async function runPrReviewSummaryPublishService(config: Config, options: 
     changedPaths: options.changedPaths,
     deltaBaseRef: options.deltaBaseRef ?? `${config.baseRemote}/${config.baseBranch}`,
     nitCap: options.nitCap ?? config.reviewNitCap,
+    ...reviewLanePublicationPolicy(config.reviewLanes),
   });
 }
 

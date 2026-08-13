@@ -23,6 +23,7 @@ import {
   REVIEW_SETUP_GITHUB_APP_FLAG_DETAILS,
   REVIEW_SETUP_TOKEN_FLAG_DETAILS,
   REVIEW_STATS_FLAG_DETAILS,
+  REVIEW_FEEDBACK_FLAG_DETAILS,
 } from './command_flag_details.js';
 import { defineExecutorCommands } from './command_definition.js';
 import { RUN_COMMAND_DEFINITIONS } from './command_catalog_run.js';
@@ -292,7 +293,19 @@ const COMMAND_DEFINITIONS = [
     mutationTargets: [],
     supportsJson: false,
     supportsDryRun: false,
-    examples: ['aie review', 'aie review setup github-app', 'aie review setup token', 'aie review doctor --json', 'aie review stats --window 20 --json', 'aie review gate 93 --prompt'],
+    examples: ['aie review', 'aie review setup github-app', 'aie review setup token', 'aie review doctor --json', 'aie review stats --window 20 --json', 'aie review gate 93 --prompt', 'aie review feedback 12 --reject CQ-001 --guidance Keep this advisory'],
+  },
+  {
+    name: 'review feedback',
+    description: 'Record accepted or rejected review findings and team guidance into the repo-owned learnings file used by later lane prompts.',
+    args: ['pr'],
+    flags: REVIEW_FEEDBACK_FLAG_DETAILS.map(flag => flag.name),
+    flagDetails: REVIEW_FEEDBACK_FLAG_DETAILS,
+    mutationTargets: ['local-files'],
+    supportsJson: true,
+    supportsDryRun: true,
+    stableErrorKinds: ['invalid-command-usage', 'config-error', 'github-error', ...CONFIG_ERROR_KINDS],
+    examples: ['aie review feedback --list --json', 'aie review feedback 12 --accept CQ-001 --json', 'aie review feedback 12 --reject CQ-001 --guidance This is a style preference --dry-run'],
   },
   {
     name: 'review setup',

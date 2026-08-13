@@ -13,6 +13,7 @@ import type { RepoAffectedResult, RepoPathSignal, ReviewFinding } from '@tjalve/
 import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
+import { loadReviewLearningsFragment } from '../review_learnings.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -368,8 +369,8 @@ export function priorRiskCardCommandIdentity(promptStackEntries: unknown): strin
   return hash(JSON.stringify(ids));
 }
 
-export function expectedLaneFragmentDigest(lane: LocalReviewLaneId): string {
-  return builtinFragmentDigest(promptStack(lane).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
+export function expectedLaneFragmentDigest(lane: LocalReviewLaneId, repoRoot?: string): string {
+  return builtinFragmentDigest(promptStack(lane, [`Run local review lane ${lane}.`], [], repoRoot).promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sha256: fragment.sha256 })));
 }
 
 async function gitDeltaPaths(repoRoot: string, fromHeadSha: string, toHeadSha: string): Promise<string[] | null> {
@@ -900,8 +901,9 @@ export function promptStack(
   lane: LocalReviewLaneId,
   contextLines: readonly string[] = [`Run local review lane ${lane}.`],
   riskCardFragments: readonly string[] = [],
+  repoRoot?: string,
 ) {
-  return renderAgentPrompt({
+  const rendered = renderAgentPrompt({
     hostId: 'codex',
     descriptorId: 'qa-reviewer',
     categoryId: 'review',
@@ -910,6 +912,17 @@ export function promptStack(
     commandFragments: riskCardFragments,
     outputContract: 'Return JSON local review lane evidence for the requested lane, including runnerProvenance for the fresh independent reviewer context. Report admissible blocking findings first, then at most a few high-confidence advisories; a blocker must cite a violated acceptance criterion or a defect introduced by this diff. Include a completeness self-check that states what you inspected and what you did not have capacity to inspect.',
   });
+  if (!repoRoot) return rendered;
+  const learnings = loadReviewLearningsFragment(repoRoot);
+  if (!learnings) return rendered;
+  return {
+    ...rendered,
+    promptStack: [...rendered.promptStack, learnings],
+    orderedFragmentIds: [...rendered.orderedFragmentIds, learnings.id],
+    sourcePaths: [...rendered.sourcePaths, learnings.path],
+    hashes: [...rendered.hashes, learnings.sha256],
+    text: `${rendered.text}\n\n## ${learnings.id}\n${learnings.text}`,
+  };
 }
 
 export interface LocalReviewSpawnContract {
@@ -1267,7 +1280,7 @@ function writeReviewBundle(input: {
 }
 
 export async function runExternalLane(command: string, lane: LocalReviewLaneId, issueNumber: number, prNumber: number, headSha: string, profile: LocalReviewProfile, runnerKind: 'local-command' | 'local-host', expectedPromptStackHash: string, repoRoot: string, evidencePath: string, contextLines: readonly string[], publishCommand: string, exec?: PrGateExec, riskCardFragments: readonly string[] = []): Promise<LaneEvidence | null> {
-  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments);
+  const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], prNumber, headSha, [evidencePath], contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot);
   const bundlePath = writeReviewBundle({
     repoRoot,
     issueNumber,

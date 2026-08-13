@@ -209,6 +209,21 @@ describe('config validation', () => {
     assert.ok(invalidResult.errors.some(error => error.path === 'policy.reviews.lanes[0].tier'));
   });
 
+  it('parses per-lane suppress globs, advisory caps, and opt-outs', () => {
+    const input = defaultFile();
+    input.policy.reviews.lanes = [
+      { id: 'code-quality', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', suppress: ['vendor/**'], maxAdvisoryFindings: 2 },
+      { id: 'performance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+    ];
+    const result = validateConfig(input);
+    assert.equal(result.ok, true);
+    const byId = new Map(result.config.reviewLanes.map(lane => [lane.id, lane]));
+    assert.deepEqual(byId.get('code-quality').suppress, ['vendor/**']);
+    assert.equal(byId.get('code-quality').maxAdvisoryFindings, 2);
+    assert.equal(byId.get('code-quality').optOut, false);
+    assert.equal(byId.get('performance').optOut, true);
+  });
+
   it('validates review concurrency bounds', () => {
     const valid = defaultFile();
     valid.policy.reviews.concurrency = 4;

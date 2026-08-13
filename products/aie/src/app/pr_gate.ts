@@ -21,7 +21,7 @@ import {
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { buildFixBatch, gitDeltaPathsSync, readCurrentHeadLaneEvidence, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
-import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewLaneRun, type LocalReviewRunResult } from './local_review_runner.js';
 import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
@@ -883,7 +883,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
           // The head is rechecked after disclosure so drift between disclosure
           // and mutation withholds the publish, exactly like the batch loop.
           if (await (options.resolveModelHead ?? resolveModelReviewHead)(repoRoot) !== finalSnapshot.pr.headRefOid) return;
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap });
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.lane, expectedLanes: activeFocuses, issueNumber: lane.issueNumber, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: gitDeltaPathsSync(repoRoot, `${config.baseRemote}/${config.baseBranch}`, 'HEAD'), nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
           const publishFailure = prReviewPublishFailureMessage(published);
           if (publishFailure) streamedFailuresByLane.set(`${lane.issueNumber} ${lane.lane}`, `${lane.lane}: ${publishFailure}`);
         } catch (error: unknown) {
@@ -1010,7 +1010,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
               // head, never the subset that happened to produce evidence: a
               // partial round must declare the full set it belongs to, or its
               // markers would mint a smaller round that reads as complete.
-              const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap });
+              const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: publishDeltaPaths, nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
               const publishFailure = prReviewPublishFailureMessage(published);
               if (publishFailure) {
                 publishUnavailable.push(`${lane.id}: ${publishFailure}`);
@@ -1082,7 +1082,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
         try {
           // The same declared active set as the fresh-lane loop: every marker
           // at one head must agree on the round's expected lane set.
-          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap });
+          const published = await runPrReviewPublishWithProvider(provider, { prNumber: options.prNumber, lane: lane.id, expectedLanes: activeFocuses, providerReuseLanes: evidence.lanes.filter(entry => entry.origin === 'trusted-provider').map(entry => entry.id), issueNumber: evidence.issueNumber ?? undefined, headSha: finalSnapshot.pr.headRefOid, repoRoot, exec: options.exec, carryForwardScope, changedPaths: carriedPublishDeltaPaths, nitCap: config.reviewNitCap, ...reviewLanePublicationPolicy(config.reviewLanes) });
           const carriedFailure = prReviewPublishFailureMessage(published);
           if (carriedFailure) {
             publishUnavailable.push(`${lane.id}: ${carriedFailure}`);

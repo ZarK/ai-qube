@@ -113,6 +113,9 @@ export interface ReviewLanePolicy {
   route: ReviewRoutePolicy | null;
   carryForwardContext: 'all' | 'config' | 'scope';
   tier: ReviewModelTierId;
+  suppress: string[];
+  maxAdvisoryFindings: number | null;
+  optOut: boolean;
 }
 
 export interface ReviewPolicy {

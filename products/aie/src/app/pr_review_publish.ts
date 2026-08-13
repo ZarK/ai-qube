@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
@@ -48,6 +48,8 @@ export interface PrReviewPublishOptions {
   deltaBaseRef?: string;
   /** Global advisory publication cap for cross-lane synthesis; defaults to DEFAULT_REVIEW_NIT_CAP. */
   nitCap?: number;
+  laneSuppress?: Readonly<Record<string, readonly string[]>>;
+  laneAdvisoryCaps?: Readonly<Record<string, number>>;
 }
 
 export interface PrReviewPublishResult {
@@ -600,6 +602,8 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   const synthesisPlan = planFindingPublication(synthesisLanes, {
     changedPaths,
     nitCap: options.nitCap ?? DEFAULT_REVIEW_NIT_CAP,
+    laneSuppress: options.laneSuppress,
+    laneAdvisoryCaps: options.laneAdvisoryCaps,
   }).find(plan => plan.laneId === options.lane);
   if (!synthesisPlan) {
     throw new Error(`publish lane review failed. Likely cause: cross-lane synthesis returned no plan for lane ${options.lane}. Next action: rerun the lane review for the current head.`);
@@ -658,6 +662,7 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
     changedPaths: options.changedPaths,
     deltaBaseRef: options.deltaBaseRef ?? `${config.baseRemote}/${config.baseBranch}`,
     nitCap: options.nitCap ?? config.reviewNitCap,
+    ...reviewLanePublicationPolicy(config.reviewLanes),
   });
 }
 

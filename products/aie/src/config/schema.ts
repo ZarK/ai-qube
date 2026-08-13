@@ -282,7 +282,7 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       errors.push({ kind: 'invalid', path: lanePath, message: `${lanePath} must be an object` });
       return;
     }
-    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext', 'tier'], lanePath, errors);
+    rejectUnknownKeys(entry, ['id', 'required', 'match', 'severityThreshold', 'prompt', 'tools', 'runner', 'command', 'rereview', 'route', 'carryForwardContext', 'tier', 'suppress', 'maxAdvisoryFindings', 'optOut'], lanePath, errors);
     const id = typeof entry.id === 'string' && entry.id.trim() !== '' ? entry.id.trim() : undefined;
     if (!id) {
       errors.push({ kind: 'invalid', path: `${lanePath}.id`, message: `${lanePath}.id must be a non-empty string` });
@@ -306,6 +306,11 @@ function readReviewLanes(value: unknown, defaultValue: ReviewLanePolicy[], path:
       route,
       carryForwardContext: readCarryForwardContext(entry.carryForwardContext, defaultCarryForwardContext(id), `${lanePath}.carryForwardContext`, errors),
       tier: readLaneModelTier(entry.tier, defaultLaneModelTier(id), `${lanePath}.tier`, errors),
+      suppress: readStringArray(entry, 'suppress', [], lanePath, errors),
+      maxAdvisoryFindings: entry.maxAdvisoryFindings === undefined || entry.maxAdvisoryFindings === null
+        ? null
+        : readBoundedInteger(entry, 'maxAdvisoryFindings', 10, 0, Number.MAX_SAFE_INTEGER, lanePath, errors),
+      optOut: readBoolean(entry, 'optOut', false, lanePath, errors),
     });
   });
   return lanes;
