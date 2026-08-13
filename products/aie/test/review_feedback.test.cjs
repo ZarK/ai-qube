@@ -85,6 +85,30 @@ describe('review feedback', () => {
     assert.equal(loadReviewLearnings(repo), null);
   });
 
+  it('redacts tokens from persisted guidance and finding messages', async () => {
+    const repo = tempRepo();
+    const result = await runReviewFeedback(getDefaults(), {
+      prNumber: 12,
+      reject: 'SEC-001',
+      guidance: 'Do not store ghp_abcdefghijklmnopqrstuvwxyz012345 in learnings.',
+      repoRoot: repo,
+      resolveFinding: async findingId => ({
+        findingId,
+        message: 'Token ghp_abcdefghijklmnopqrstuvwxyz012345 leaked.',
+        laneId: 'security',
+        path: 'src/app.ts',
+        headSha: 'abc123',
+      }),
+    });
+    assert.match(result.entry.message, /\[REDACTED\]/);
+    assert.doesNotMatch(result.entry.message, /ghp_abcdefghijklmnopqrstuvwxyz012345/);
+    assert.match(result.entry.guidance, /\[REDACTED\]/);
+    assert.doesNotMatch(result.entry.guidance, /ghp_abcdefghijklmnopqrstuvwxyz012345/);
+    const file = loadReviewLearnings(repo);
+    assert.match(file.entries[0].guidance, /\[REDACTED\]/);
+    assert.doesNotMatch(file.entries[0].guidance, /ghp_abcdefghijklmnopqrstuvwxyz012345/);
+  });
+
   it('fails closed when a finding id is not on the current head', async () => {
     await assert.rejects(
       () => runReviewFeedback(getDefaults(), {

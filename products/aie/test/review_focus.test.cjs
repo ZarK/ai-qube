@@ -126,6 +126,19 @@ describe('per-lane model tier defaults', () => {
     assert.deepEqual(focuses, []);
   });
 
+  it('does not revive an opted-out lane through profile defaults when no configured lane activates', () => {
+    const focuses = activeLocalReviewFocuses({
+      profile: 'local-focused',
+      lanes: [
+        { id: 'issue-compliance', required: 'always', match: [], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', optOut: true },
+        { id: 'performance', required: 'when-matched', match: ['src/perf/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host' },
+      ],
+      changedPaths: ['src/app.ts'],
+    });
+    assert.deepEqual(focuses, []);
+    assert.equal(focuses.includes('issue-compliance'), false);
+  });
+
   it('does not silently plan a judgment lane as economy without an explicit override', () => {
     assert.notEqual(resolveLaneModelTier({}, 'code-quality'), 'economy');
     assert.notEqual(defaultLaneModelTier('security'), 'economy');

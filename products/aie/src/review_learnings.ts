@@ -177,7 +177,8 @@ export function writeReviewLearnings(repoRoot: string, file: ReviewLearningsFile
 
 export function appendReviewLearning(repoRoot: string, entry: ReviewLearningEntry): ReviewLearningsFile {
   const current = loadReviewLearnings(repoRoot) ?? emptyReviewLearnings();
-  const next = { version: 1 as const, entries: [...current.entries.filter(item => item.id !== entry.id), entry] };
+  const safeEntry = { ...entry, message: redact(entry.message), guidance: redact(entry.guidance) };
+  const next = { version: 1 as const, entries: [...current.entries.filter(item => item.id !== safeEntry.id), safeEntry] };
   writeReviewLearnings(repoRoot, next);
   return next;
 }

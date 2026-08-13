@@ -124,8 +124,8 @@ export function activeLocalReviewFocuses(input: {
       .filter(entry => entry.lane.required === 'when-matched' && entry.lane.optOut !== true && laneActivated(entry.lane, changedPaths))
       .map(entry => entry.id)
       .filter(id => !always.includes(id)))];
-    if (entries.length > 0 && entries.every(entry => entry.lane.optOut === true)) return [];
-    if (always.length > 0 || matched.length > 0) {
+    if (entries.length > 0) {
+      if (always.length === 0 && matched.length === 0) return [];
       const matchedRoom = Math.max(0, maxActive - always.length);
       return [...always, ...matched.slice(0, matchedRoom)];
     }

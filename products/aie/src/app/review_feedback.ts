@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { Config } from '../config/index.js';
 import { runPrBatchService } from './pr_batch.js';
+import { redact } from '../redact.js';
 import {
   REVIEW_LEARNINGS_RELATIVE_PATH,
   appendReviewLearning,
@@ -109,13 +110,15 @@ export async function runReviewFeedback(config: Config, options: ReviewFeedbackO
     headSha = finding.headSha ?? null;
   }
   if (message.trim() === '') throw new Error('review feedback requires a finding or --guidance text.');
+  const safeMessage = redact(message.trim());
+  const safeGuidance = redact(guidance);
   const entry: ReviewLearningEntry = {
-    id: learningId(disposition, findingId, message),
+    id: learningId(disposition, findingId, safeMessage),
     disposition,
     findingId,
     lane,
-    message,
-    guidance,
+    message: safeMessage,
+    guidance: safeGuidance,
     paths,
     prNumber,
     headSha,
