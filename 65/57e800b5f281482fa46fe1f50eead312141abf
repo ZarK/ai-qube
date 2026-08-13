@@ -1,0 +1,21 @@
+adapters/gitlab/src/gitlab_review_client.ts
+  s_867d8afebeba1a::t_4461512e6da614 54,63,157
+adapters/gitlab/src/gitlab_review_types.ts
+  s_867d8afebeba1a::t_7d1f95d7f988c5 69-70,81-82
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6557e800b5f281482fa46fe1f50eead312141abf",
+  "prompts": {},
+  "sessions": {
+    "s_867d8afebeba1a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "236623c8-07eb-4f55-b734-a3017e4eccc9",
+        "model": "unknown"
+      },
+      "human_author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
