@@ -1,4 +1,4 @@
-import type { GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, SupplyChainConfig } from '../config/index.js';
+import type { CiProviderKind, GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
 import type { InitTool } from '../init_content.js';
 import type { LegacyCategory } from '../legacy.js';
 
@@ -58,6 +58,9 @@ export interface InitPolicySummary {
 }
 
 export interface InitPolicyOptions {
+  workProvider?: WorkProviderKind;
+  reviewProvider?: ReviewProviderKind;
+  ciProvider?: CiProviderKind;
   priorityLabels?: string[];
   statusLabels?: string[];
   componentLabels?: string[];

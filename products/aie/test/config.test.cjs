@@ -334,10 +334,19 @@ describe('config validation', () => {
     assert.ok(invalidResult.errors.some(error => error.path === 'providers.work.connection.teemId' && error.kind === 'unknown'));
     assert.ok(invalidResult.errors.some(error => error.path === 'providers.work.connection.apiToken' && error.kind === 'invalid'));
 
-    const futureCiProvider = defaultFile();
-    futureCiProvider.providers.ci = { kind: 'jenkins', connection: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
-    const futureResult = validateConfig(futureCiProvider);
-    assert.equal(futureResult.ok, false);
+    const jenkinsCiProvider = defaultFile();
+    jenkinsCiProvider.providers.ci = { kind: 'jenkins', connection: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
+    const jenkinsResult = validateConfig(jenkinsCiProvider);
+    assert.equal(jenkinsResult.ok, true);
+    assert.equal(jenkinsResult.config.providers.ci.kind, 'jenkins');
+    assert.deepEqual(jenkinsResult.config.providers.ci.connection, { baseUrl: 'https://jenkins.example.com', user: 'ci' });
+
+    const gitlabCiProvider = defaultFile();
+    gitlabCiProvider.providers.ci = { kind: 'gitlab', connection: { baseUrl: 'https://gitlab.example.com', projectId: 'acme/qube' } };
+    const gitlabResult = validateConfig(gitlabCiProvider);
+    assert.equal(gitlabResult.ok, true);
+    assert.equal(gitlabResult.config.providers.ci.kind, 'gitlab');
+
     const probeOnlyJenkins = defaultFile();
     probeOnlyJenkins.providers.connections = { jenkins: { baseUrl: 'https://jenkins.example.com', user: 'ci' } };
     const probeOnlyResult = validateConfig(probeOnlyJenkins);
@@ -349,7 +358,57 @@ describe('config validation', () => {
     const wrongTypeResult = validateConfig(wrongType);
     assert.equal(wrongTypeResult.ok, false);
     assert.ok(wrongTypeResult.errors.some(error => error.path === 'providers.work.connection.teamId' && error.kind === 'invalid'));
-    assert.ok(futureResult.errors.some(error => error.path === 'providers.ci.kind'));
+  });
+
+  it('accepts every supported work, review, and CI permutation', () => {
+    const workKinds = ['github', 'gitlab', 'linear', 'jira'];
+    const reviewKinds = ['github', 'gitlab'];
+    const ciKinds = ['github', 'gitlab', 'jenkins'];
+    for (const work of workKinds) {
+      for (const review of reviewKinds) {
+        for (const ci of ciKinds) {
+          const input = defaultFile();
+          input.providers.work = { kind: work };
+          input.providers.review = { kind: review };
+          input.providers.ci = { kind: ci };
+          const result = validateConfig(input);
+          assert.equal(result.ok, true, `${work}/${review}/${ci} must be expressible`);
+          assert.equal(result.config.providers.work.kind, work);
+          assert.equal(result.config.providers.review.kind, review);
+          assert.equal(result.config.providers.ci.kind, ci);
+        }
+      }
+    }
+  });
+
+  it('rejects unknown work, review, and CI kinds without coercing to GitHub', () => {
+    const unknownWork = defaultFile();
+    unknownWork.providers.work = { kind: 'azure-devops' };
+    const workResult = validateConfig(unknownWork);
+    assert.equal(workResult.ok, false);
+    assert.equal(workResult.config, undefined);
+    assert.ok(workResult.errors.some(error => error.path === 'providers.work.kind' && /azure-devops/.test(error.message)));
+
+    const unknownReview = defaultFile();
+    unknownReview.providers.review = { kind: 'jenkins' };
+    const reviewResult = validateConfig(unknownReview);
+    assert.equal(reviewResult.ok, false);
+    assert.equal(reviewResult.config, undefined);
+    assert.ok(reviewResult.errors.some(error => error.path === 'providers.review.kind' && /jenkins/.test(error.message)));
+
+    const unknownCi = defaultFile();
+    unknownCi.providers.ci = { kind: 'circleci' };
+    const ciResult = validateConfig(unknownCi);
+    assert.equal(ciResult.ok, false);
+    assert.equal(ciResult.config, undefined);
+    assert.ok(ciResult.errors.some(error => error.path === 'providers.ci.kind' && /circleci/.test(error.message)));
+
+    const localCi = defaultFile();
+    localCi.providers.ci = { kind: 'local' };
+    const localResult = validateConfig(localCi);
+    assert.equal(localResult.ok, false);
+    assert.equal(localResult.config, undefined);
+    assert.ok(localResult.errors.some(error => error.path === 'providers.ci.kind' && /local/.test(error.message)));
   });
 
   it('preserves omitted Jira workflow schema fields so adapter defaults still apply', () => {

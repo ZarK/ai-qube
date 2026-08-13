@@ -228,6 +228,9 @@ importers:
       '@tjalve/qube-adapter-gitlab':
         specifier: workspace:*
         version: link:../../adapters/gitlab
+      '@tjalve/qube-adapter-jenkins':
+        specifier: workspace:*
+        version: link:../../adapters/jenkins
       '@tjalve/qube-adapter-jira':
         specifier: workspace:*
         version: link:../../adapters/jira

@@ -87,7 +87,7 @@ type InstallScope = "local" | "global";
 type InstallPackageManager = "pnpm" | "npm";
 type InstallHost = "generic" | "codex" | "opencode" | "claude-code" | "grok-build";
 type InstallWorkProvider = "github" | "gitlab" | "linear" | "jira" | "local";
-type InstallCiProvider = "github" | "jenkins" | "local";
+type InstallCiProvider = "github" | "gitlab" | "jenkins" | "local";
 type InstallLifecycleScripts = "disabled" | "review";
 type InstallMigration = "none" | "standalone-globals";
 type YesNo = "yes" | "no";
@@ -1585,9 +1585,12 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
+  if (options.workProvider && options.workProvider !== "local") args.push("--work-provider", options.workProvider);
+  if (options.reviewProvider) args.push("--review-provider", options.reviewProvider);
+  if (options.ciProvider && options.ciProvider !== "local") args.push("--ci-provider", options.ciProvider);
   if (options.dryRun) args.push("--dry-run");
   if (options.force) args.push("--force");
   if (options.yes) args.push("--yes");
@@ -1629,7 +1632,16 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
 
   const aieToolTargets = resolveAieInitToolTargets(hosts);
   const aiuToolTargets = resolveAiuInitToolTargets(hosts);
-  const aieOptions = { dryRun, force, yes, defaults };
+  const reviewProvider = workProviders[0] === "gitlab" ? "gitlab" : "github";
+  const aieOptions = {
+    dryRun,
+    force,
+    yes,
+    defaults,
+    workProvider: workProviders[0],
+    reviewProvider,
+    ciProvider: ciProviders[0],
+  };
   const aiuOptions = { dryRun, force };
   const aieRuns = aieToolTargets.length === 0
     ? [dispatchInitChild("aie", buildAieInitArgs(target, undefined, aieOptions), environment)]

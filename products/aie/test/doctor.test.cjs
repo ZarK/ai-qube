@@ -81,11 +81,25 @@ describe('doctor diagnostics', () => {
 
     assert.equal(health.providers.work.kind, 'github');
     assert.equal(health.providers.work.supported, true);
+    assert.equal(health.providers.ci.kind, 'github');
+    assert.equal(health.providers.ci.supported, true);
     assert.equal(health.providers.repository.kind, 'local-git');
     assert.equal(health.providers.repository.supported, true);
     assert.equal(health.normalizedPolicy.priorityLabels, 1);
     assert.equal(health.normalizedPolicy.baseRef, 'origin/main');
     assert.deepEqual(health.warnings, []);
+  });
+
+  it('treats GitLab and Jenkins CI kinds as supported provider health', () => {
+    const gitlab = getDefaults();
+    gitlab.providers.ci.kind = 'gitlab';
+    const jenkins = getDefaults();
+    jenkins.providers.ci.kind = 'jenkins';
+
+    assert.equal(buildProviderHealthDiagnostics(gitlab).providers.ci.supported, true);
+    assert.equal(buildProviderHealthDiagnostics(jenkins).providers.ci.supported, true);
+    assert.deepEqual(buildProviderHealthDiagnostics(gitlab).warnings, []);
+    assert.deepEqual(buildProviderHealthDiagnostics(jenkins).warnings, []);
   });
 
   it('reports actionable warnings for required unsupported provider kinds', () => {

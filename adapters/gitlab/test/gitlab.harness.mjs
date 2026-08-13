@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   bindFixtureSubject,
   defineAdapterHarness,
+  defineCiProviderHarness,
   defineReviewForgeHarness,
   defineWorkProviderHarness,
   markFixtureTransport,
@@ -14,6 +15,7 @@ import {
   createGitLabReviewForgeProvider,
   createGitLabWorkProvider,
   gitLabAdapter,
+  mapGitLabPipelineStatus,
   probeGitLabConnection,
   renderGitLabIssueDraft,
 } from "../dist/index.js";
@@ -21,6 +23,7 @@ import {
 const fixtureRoot = dirname(fileURLToPath(import.meta.url));
 const workCorpus = readFixture("./fixtures/conformance-work-items.json");
 const reviewCorpus = readFixture("./fixtures/conformance-review.json");
+const checkFixture = readFixture("./fixtures/conformance-checks.json");
 const connectionFixture = readFixture("./fixtures/connection-pass.json");
 const issues = workCorpus.issues;
 const currentHeadSha = reviewCorpus.mergeRequest.sha;
@@ -246,28 +249,8 @@ const review = defineReviewForgeHarness({
         assert.equal(item.key.providerId, "gitlab");
         assert.equal(item.key.id, String(reviewCorpus.mergeRequest.iid));
         assert.ok(item.conversations.length > 0);
-      },
-    },
-    {
-      capabilityId: "read-ci-status",
-      name: "maps head pipeline status into gate evidence",
-      run: async provider => {
-        const snapshot = await provider.loadReviewSnapshot({ providerId: "gitlab", id: String(reviewCorpus.mergeRequest.iid) });
-        assert.ok(snapshot.ciDiagnostics.length > 0);
-        assert.ok(snapshot.item.checks.length > 0);
-        assert.equal(snapshot.item.checks[0].result, "passed");
-      },
-    },
-
-    {
-      capabilityId: "diagnose-ci-status",
-      name: "diagnoses pipeline mapping for the current head",
-      run: async provider => {
-        const snapshot = await provider.loadReviewSnapshot({ providerId: "gitlab", id: String(reviewCorpus.mergeRequest.iid) });
-        const diagnostic = snapshot.ciDiagnostics[0];
-        assert.ok(diagnostic.reasonCode);
-        assert.ok(diagnostic.summary);
-        assert.ok(diagnostic.mappedToCurrentHeadWorkflowRun === true || diagnostic.status === "mapped");
+        assert.ok(item.checks.length > 0);
+        assert.equal(item.checks[0].result, "passed");
       },
     },
     {
@@ -299,11 +282,27 @@ const review = defineReviewForgeHarness({
   ],
 });
 
+const ci = defineCiProviderHarness({
+  fixtureRoot,
+  fixtureFiles: ["fixtures/conformance-checks.json"],
+  createFixtureTransport: () => checkFixture,
+  createSubject: fixture => ({
+    fixture,
+    mapCheck: check => mapGitLabPipelineStatus(check, check.headSha ?? currentHeadSha),
+  }),
+  ciScenarios: {
+    passedCheck: checkFixture.passed,
+    failedCheck: checkFixture.failed,
+    pendingCheck: checkFixture.pending,
+  },
+});
+
 export const gitlabHarness = defineAdapterHarness({
   adapter: gitLabAdapter,
   roles: {
     work,
     review,
+    ci,
     connection: {
       fixtureRoot,
       fixtureFile: "fixtures/connection-pass.json",

@@ -33,6 +33,37 @@ function yesNo(value: boolean): string {
   return value ? 'enabled' : 'disabled';
 }
 
+function providerDisplayName(kind: string): string {
+  if (kind === 'github') return 'GitHub';
+  if (kind === 'gitlab') return 'GitLab';
+  if (kind === 'linear') return 'Linear';
+  if (kind === 'jira') return 'Jira';
+  if (kind === 'jenkins') return 'Jenkins';
+  if (kind === 'local-git') return 'local git';
+  if (kind === 'local') return 'local filesystem';
+  return kind;
+}
+
+function ciProviderDisplayName(kind: string): string {
+  if (kind === 'github') return 'GitHub checks';
+  if (kind === 'gitlab') return 'GitLab pipelines';
+  if (kind === 'jenkins') return 'Jenkins jobs';
+  return providerDisplayName(kind);
+}
+
+function renderWorkReviewIntro(config: Config): string {
+  const work = providerDisplayName(config.providers.work.kind);
+  const review = providerDisplayName(config.providers.review.kind);
+  if (work === review) {
+    return `The configured work and review provider is ${work}, so work from ${work} issues and pull requests through \`aie\` commands.`;
+  }
+  return `The configured work provider is ${work} and the configured review provider is ${review}, so work from those providers through \`aie\` commands.`;
+}
+
+function renderConfiguredProvidersLine(config: Config): string {
+  return `Configured providers: work ${providerDisplayName(config.providers.work.kind)}, review ${providerDisplayName(config.providers.review.kind)}, repository local git, CI ${ciProviderDisplayName(config.providers.ci.kind)}, layout local filesystem.`;
+}
+
 function renderQualityGateText(config: Config): string {
   const structured = config.gates.map(gate => `${gate.name} (${gate.kind}/${gate.stage}): \`${gate.command}\``);
   const legacy = config.qualityGates.map(command => `\`${command}\``);
@@ -455,13 +486,13 @@ export function renderAgentInstructions(config: Config, hosts: AgentHostProfile[
   const audit = getUiAuditInstructionComponents();
   return `## Executor Issue Workflow
 
-This repository uses Executor for issue-driven autonomous development. The configured work and review provider is GitHub, so work from GitHub issues and pull requests through \`aie\` commands. Local todos are working memory and continuation state; GitHub issue checkboxes and comments are the durable shared task record.
+This repository uses Executor for issue-driven autonomous development. ${renderWorkReviewIntro(config)} Local todos are working memory and continuation state; ${providerDisplayName(config.providers.work.kind)} issue checkboxes and comments are the durable shared task record.
 
 ${renderAutonomousAuthority(config, workspaceRunner)}
 
 Repository policy:
 
-- Configured providers: work GitHub, review GitHub, repository local git, CI GitHub checks, layout local filesystem.
+- ${renderConfiguredProvidersLine(config)}
 - Base branch: \`${config.baseRemote}/${config.baseBranch}\`.
 - Issue branches follow \`${config.branchNaming}\`.
 - Linked worktree execution is ${yesNo(!config.noWorktree)}.

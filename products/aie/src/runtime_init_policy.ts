@@ -12,6 +12,12 @@ function splitList(values: string[]): string[] {
 
 export function policyFromRuntimeFlags(context: RuntimeCommandContext): InitPolicyOptions {
   const policy: InitPolicyOptions = {};
+  const workProvider = stringFlag(context, 'work-provider');
+  if (workProvider !== undefined) policy.workProvider = workProvider as InitPolicyOptions['workProvider'];
+  const reviewProvider = stringFlag(context, 'review-provider');
+  if (reviewProvider !== undefined) policy.reviewProvider = reviewProvider as InitPolicyOptions['reviewProvider'];
+  const ciProvider = stringFlag(context, 'ci-provider');
+  if (ciProvider !== undefined && ciProvider !== 'local') policy.ciProvider = ciProvider as InitPolicyOptions['ciProvider'];
   const setBoolean = (flag: string, assign: (value: boolean) => void) => {
     const value = readBooleanFlag(context, flag);
     if (value !== undefined) assign(value);
