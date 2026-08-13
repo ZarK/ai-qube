@@ -1,0 +1,16 @@
+products/qube/src/install_state.ts
+  h_13eab01d19dfa9 13,91,143-155,157
+products/qube/test/qube.test.mjs
+  h_13eab01d19dfa9 607
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "3a416ad8b276bcb7c8daf5276ef79ee2d6b98134",
+  "prompts": {},
+  "humans": {
+    "h_13eab01d19dfa9": {
+      "author": "Tjalve Aarflot <tjalve.github@proton.me>"
+    }
+  }
+}
