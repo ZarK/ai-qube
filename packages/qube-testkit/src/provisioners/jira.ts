@@ -180,16 +180,27 @@ class JiraProvisionerClient {
   async searchProjects(query: string): Promise<JiraProject[]> {
     const projects: JiraProject[] = [];
     let startAt = 0;
+    let nextPath: string | undefined;
     for (let page = 0; page < 20; page += 1) {
-      const payload = await this.request<JiraProjectSearch>(
-        "GET",
-        `/rest/api/3/project/search?query=${encodeURIComponent(query)}&startAt=${startAt}&maxResults=50`,
-      );
+      const path = nextPath
+        ?? `/rest/api/3/project/search?query=${encodeURIComponent(query)}&startAt=${startAt}&maxResults=50`;
+      nextPath = undefined;
+      const payload = await this.request<JiraProjectSearch>("GET", path);
       const values = payload.values ?? [];
       const maxResults = payload.maxResults ?? 50;
       projects.push(...values);
-      if (values.length === 0 || payload.isLast === true) return projects;
+      if (payload.isLast === true) return projects;
       if (typeof payload.total === "number" && projects.length >= payload.total) return projects;
+      const sameOriginNext = jiraSearchPath(this.baseUrl, payload.nextPage);
+      if (sameOriginNext) {
+        nextPath = sameOriginNext;
+        continue;
+      }
+      if (values.length === 0) {
+        if (payload.isLast !== false) return projects;
+        startAt = (typeof payload.startAt === "number" ? payload.startAt : startAt) + maxResults;
+        continue;
+      }
       if (payload.isLast !== false && values.length < maxResults) return projects;
       startAt += values.length;
     }
@@ -332,6 +343,19 @@ export function jiraProjectKey(runId: string): string {
   const hex = runId.replace(/[^a-fA-F0-9]/g, "").toUpperCase();
   if (hex.length < 4) throw new Error("Jira provisioner run id must include at least 4 hex characters.");
   return `Q${hex}`.slice(0, 10);
+}
+
+function jiraSearchPath(baseUrl: string, nextPage: string | undefined): string | undefined {
+  if (typeof nextPage !== "string" || nextPage.trim() === "") return undefined;
+  try {
+    const next = new URL(nextPage, `${baseUrl}/`);
+    const base = new URL(`${baseUrl}/`);
+    if (next.origin !== base.origin) return undefined;
+    if (!next.pathname.includes("/rest/api/3/project/search")) return undefined;
+    return `${next.pathname}${next.search}`;
+  } catch {
+    return undefined;
+  }
 }
 
 function normalizeBaseUrl(value: string): string {

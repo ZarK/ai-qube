@@ -121,7 +121,7 @@ async function verifySandbox(
 ): Promise<readonly string[]> {
   const manifest = options.manifest ?? SHARED_SEED_MANIFEST;
   if (provisioner.verify) {
-    return provisioner.verify(sandbox, manifest);
+    return assertVerifiedObservations(sandbox, manifest, await provisioner.verify(sandbox, manifest));
   }
   if (!options.createWorkProvider) {
     throw new Error("Live verify requires a work provider or a provisioner verify hook.");
@@ -367,6 +367,37 @@ async function fetchConnectionThroughBudget(
 
 function present(value: string | undefined): boolean {
   return typeof value === "string" && value.trim() !== "";
+}
+
+function acceptedVerifyIds(sandbox: ProvisionerSandbox, manifest: SeedManifest): Set<string> {
+  const ids = new Set<string>();
+  for (const seed of manifest.workItems) ids.add(seed.id);
+  for (const [seedId, workId] of Object.entries(sandbox.workIds)) {
+    ids.add(seedId);
+    if (workId) ids.add(workId);
+  }
+  for (const resource of sandbox.resources) ids.add(resource.id);
+  for (const jobPath of sandbox.jobPaths ?? []) ids.add(jobPath);
+  if (sandbox.projectId) ids.add(sandbox.projectId);
+  if (sandbox.folderPath) ids.add(sandbox.folderPath);
+  if (sandbox.reviewId) ids.add(sandbox.reviewId);
+  if (sandbox.teamId) ids.add(sandbox.teamId);
+  return ids;
+}
+
+function assertVerifiedObservations(
+  sandbox: ProvisionerSandbox,
+  manifest: SeedManifest,
+  observed: readonly string[],
+): readonly string[] {
+  const accepted = acceptedVerifyIds(sandbox, manifest);
+  const verified = [...new Set(
+    observed.filter(id => typeof id === "string" && id !== "" && accepted.has(id)),
+  )];
+  if (verified.length < 2) {
+    throw new Error("Live verify did not observe at least two seeded resources.");
+  }
+  return verified;
 }
 
 function classifyLifecycleError(error: unknown): LiveSuiteReason {

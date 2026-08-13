@@ -621,6 +621,88 @@ describe("provisioner lifecycle", () => {
     assert.equal(leftover.length, 0);
   });
 
+  it("continues Jira sweep after an empty non-final search page", async () => {
+    const remaining = [
+      { id: "31", key: "QEEE5555", name: "qube-testkit-eee" },
+      { id: "32", key: "QFFF6666", name: "qube-testkit-fff" },
+    ];
+    const deleted = [];
+    const fetchImpl = async (url, init = {}) => {
+      const parsed = new URL(String(url));
+      const method = String(init.method ?? "GET").toUpperCase();
+      if (method === "GET" && parsed.pathname.endsWith("/rest/api/3/project/search")) {
+        const startAt = Number(parsed.searchParams.get("startAt") ?? "0");
+        const item = startAt === 0 ? undefined : remaining[startAt - 1];
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: () => null },
+          async json() {
+            return {
+              values: item ? [item] : [],
+              startAt,
+              maxResults: 1,
+              total: remaining.length,
+              isLast: false,
+              nextPage: remaining[startAt]
+                ? `https://fixture.atlassian.net/rest/api/3/project/search?query=qube-testkit-&startAt=${startAt + 1}&maxResults=1`
+                : startAt === 0
+                  ? "https://fixture.atlassian.net/rest/api/3/project/search?query=qube-testkit-&startAt=1&maxResults=1"
+                  : undefined,
+            };
+          },
+        };
+      }
+      if (method === "DELETE" && parsed.pathname.includes("/rest/api/3/project/")) {
+        const key = decodeURIComponent(parsed.pathname.split("/").pop() ?? "");
+        deleted.push(key);
+        const index = remaining.findIndex(project => project.key === key);
+        if (index >= 0) remaining.splice(index, 1);
+        return { ok: true, status: 204, headers: { get: () => null }, async json() { return undefined; } };
+      }
+      throw new Error(`unexpected ${method} ${parsed.pathname}`);
+    };
+    const leftover = await createJiraProvisioner({
+      adapter: { id: "jira", packageName: "@tjalve/qube-adapter-jira" },
+      env: { JIRA_EMAIL: "fixture@example.com", JIRA_API_TOKEN: "fixture-token", JIRA_BASE_URL: "https://fixture.atlassian.net" },
+      config: { baseUrl: "https://fixture.atlassian.net" },
+      budget: new RequestBudget(),
+      fetchImpl,
+    }).sweep("qube-testkit-");
+    assert.deepEqual(deleted, ["QEEE5555", "QFFF6666"]);
+    assert.equal(leftover.length, 0);
+  });
+
+  it("does not report passed when the verify hook returns fabricated ids", async () => {
+    const options = liveOptions();
+    const result = await runProvisionerLifecycle({
+      ...options,
+      createProvisioner: () => ({
+        ...options.memory.provisioner,
+        verify: async () => ["fake-1", "fake-2"],
+      }),
+    });
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.reason, "verify-failed");
+    assert.match(result.summary, /Live verify did not observe at least two seeded resources/);
+  });
+
+  it("accepts a verify hook that returns seeded resource ids", async () => {
+    const options = liveOptions();
+    const result = await runProvisionerLifecycle({
+      ...options,
+      createProvisioner: () => ({
+        ...options.memory.provisioner,
+        verify: async sandbox => sandbox.resources
+          .filter(resource => resource.kind === "issue")
+          .map(resource => resource.id)
+          .slice(0, 2),
+      }),
+    });
+    assert.equal(result.status, "passed", result.summary);
+    assert.deepEqual(result.verifiedWork, ["ENG-ready-high", "ENG-in-progress-critical"]);
+  });
+
   it("sweeps leftover Jenkins folders that still match the live-suite tag prefix", async () => {
     const remaining = new Map([
       ["qube-testkit-a", { name: "qube-testkit-a" }],
