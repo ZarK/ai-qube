@@ -15,18 +15,21 @@ Prefer project-local installs for automation:
 ```sh
 qube install
 qube install --yes --dry-run --json
+qube install --apply --yes
 qube install --scope local --package-manager pnpm --host codex --work-provider github --yes
 qube install --scope local --package-manager pnpm --host claude-code --work-provider github --yes
 qube install --scope local --package-manager pnpm --host codex --work-provider linear --yes
 qube install --scope local --package-manager pnpm --host codex --work-provider gitlab --yes
 ```
 
-`qube install` is a guided installer planner. It asks about project-local versus
-global use, package manager, host surface, work provider, lifecycle-script
-posture, docs/config notes, and migration from standalone package globals. In
-agent and CI contexts, pass explicit flags or `--yes` for safe defaults. The
-command prints a plan and copyable commands; it does not run package managers or
-install hidden dependencies.
+`qube install` is a guided installer planner by default. It asks about
+project-local versus global use, package manager, host surface, work provider,
+lifecycle-script posture, docs/config notes, and migration from standalone
+package globals. In agent and CI contexts, pass explicit flags or `--yes` for
+safe defaults. Plan mode prints copyable commands and does not run package
+managers. `--apply` executes the remaining pinned install delta after a TTY
+confirmation, or immediately with `--yes`. `--json` without `--yes` stays
+plan-only. Apply finishes with `qube components --json` and `qube doctor`.
 
 ```sh
 pnpm add -D --save-exact --ignore-scripts @tjalve/qube@0.2.0

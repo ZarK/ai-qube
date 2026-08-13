@@ -37,7 +37,26 @@ export const expectedComponentRows = componentFixtures.map(({ id, command, name,
 
 export const aibVersion = dependencyVersion("@tjalve/aib");
 
-export const qubePnpmAddCommand = `pnpm add -D --save-exact --ignore-scripts @tjalve/qube@${qubePackageVersion}`;
+export const adapterPackageVersions = Object.freeze({
+  "@tjalve/qube-adapter-claude-code": "0.1.3",
+  "@tjalve/qube-adapter-codex": "0.1.3",
+  "@tjalve/qube-adapter-github": "0.1.3",
+  "@tjalve/qube-adapter-gitlab": "0.1.3",
+  "@tjalve/qube-adapter-jenkins": "0.1.3",
+  "@tjalve/qube-adapter-jira": "0.1.3",
+  "@tjalve/qube-adapter-linear": "0.1.3",
+  "@tjalve/qube-adapter-opencode": "0.1.3"
+});
+
+export function qubePnpmAddCommandWith(...adapterNames) {
+  const specs = [
+    `${qubePackageName}@${qubePackageVersion}`,
+    ...[...adapterNames].sort().map(name => `${name}@${adapterPackageVersions[name]}`)
+  ];
+  return `pnpm add -D --save-exact --ignore-scripts ${specs.join(" ")}`;
+}
+
+export const qubePnpmAddCommand = qubePnpmAddCommandWith("@tjalve/qube-adapter-github");
 
 export const qubeNpmGlobalInstallPattern = new RegExp(
   `npm install --global --ignore-scripts @tjalve\\/qube@${escapeRegExp(qubePackageVersion)}`

@@ -4,9 +4,11 @@ import { appendFileSync, copyFileSync, cpSync, existsSync, lstatSync, mkdirSync,
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { createCliError } from "@tjalve/qube-cli/errors";
 import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
+import { promptConfirm } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
@@ -28,6 +30,7 @@ import {
   type HostToolkitReport,
 } from "./host_toolkit.js";
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
+import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -142,7 +145,7 @@ interface InstallPlan {
   };
   readonly selections: InstallSelections;
   readonly options: InstallOptionGroups;
-  readonly mode: "copy-commands";
+  readonly mode: "copy-commands" | "apply";
   readonly dryRun: boolean;
   readonly steps: readonly InstallCommandStep[];
   readonly commands: readonly InstallCommandStep[];
@@ -517,14 +520,21 @@ const migrationChoices = defineInstallerChoiceGroup({
   ]
 });
 
+const applyFlag = defineFlag({
+  name: "apply",
+  description: "Execute the remaining install delta after confirmation. Pass --yes to skip the confirmation prompt.",
+  type: "boolean"
+});
+
 const installCommand = defineCommand({
   kind: "command",
   name: "install",
-  description: "Build a guided, supply-chain-safe QUBE install plan.",
+  description: "Build a guided, supply-chain-safe QUBE install plan and optionally apply it.",
   flags: [
     jsonFlag,
     dryRunFlag,
     yesFlag,
+    applyFlag,
     defineFlag({
       name: "scope",
       description: "Install scope to plan.",
@@ -588,6 +598,10 @@ const installCommand = defineCommand({
     {
       description: "Render a global npm install plan.",
       command: "qube install --scope global --package-manager npm --yes"
+    },
+    {
+      description: "Apply the remaining install delta without prompting.",
+      command: "qube install --apply --yes"
     }
   ],
   output: {
@@ -603,6 +617,9 @@ const installCommand = defineCommand({
     nonInteractive: true,
     ttyPrompt: true
   },
+  mutation: defineMutationMetadata({
+    categories: mutationCategories("dependency", "local-files")
+  }),
   supplyChain: {
     sensitive: true,
     reason: "Installer output contains package-manager commands and dependency setup guidance.",
@@ -1335,11 +1352,7 @@ function createQubeCli(environment: CliEnvironment) {
         return { stdout: renderComponents() };
       }),
       createRuntimeCommand(installCommand, async ({ flags }) => {
-        const plan = createInstallPlan(await resolveInstallSelections(flags), flags["dry-run"] === true);
-        if (flags.json === true) {
-          return { json: { installPlan: plan } };
-        }
-        return { stdout: renderInstallPlan(plan) };
+        return executeQubeInstall(flags, environment);
       }),
       createRuntimeCommand(initCommand, ({ flags, args }) => executeQubeInit(flags, args, environment)),
       createRuntimeCommand(doctorCommand, ({ flags }) => executeQubeDoctor(flags.json === true, flags.offline === true, environment)),
@@ -4504,6 +4517,317 @@ function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): 
   return { args: definition.mapArgs(args) };
 }
 
+interface InstallApplyStepResult {
+  readonly stage: InstallCommandStage;
+  readonly command: string;
+  readonly status: "executed" | "skipped" | "failed";
+  readonly exitCode?: number;
+  readonly error?: string;
+}
+
+interface InstallApplyReport {
+  readonly confirmed: true;
+  readonly executed: readonly InstallApplyStepResult[];
+  readonly components?: unknown;
+  readonly doctor?: unknown;
+  readonly mismatches: readonly string[];
+  readonly findings: readonly string[];
+}
+
+function shouldStayPlanOnly(flags: Readonly<Record<string, unknown>>): boolean {
+  return flags.apply !== true || flags["dry-run"] === true || (flags.json === true && flags.yes !== true);
+}
+
+function unsupportedApplySelections(selections: InstallSelections): readonly string[] {
+  const reasons: string[] = [];
+  for (const [label, ids, catalog] of [
+    ["host", selections.hosts, executorHostSurfaces],
+    ["work-provider", selections.workProviders, executorWorkProviders],
+    ["ci-provider", selections.ciProviders, executorCiProviders]
+  ] as const) {
+    for (const id of ids) {
+      const option = catalog.find(candidate => candidate.id === id);
+      if (option?.support === "unsupported") {
+        reasons.push(`${label} ${id}`);
+      }
+    }
+  }
+  return Object.freeze(reasons);
+}
+
+function applyConfirmMessage(plan: InstallPlan): string {
+  const commands = plan.commands.filter(step => step.stage !== "verify");
+  const listed = commands.length === 0
+    ? "No remaining install delta. Verification will still run."
+    : commands.map((step, index) => `${index + 1}. ${step.command}`).join("\n");
+  return `Apply these install commands?\n${listed}\nThen verify with qube components --json and qube doctor.`;
+}
+
+function remainingApplySteps(selections: InstallSelections, cwd: string): readonly InstallCommandStep[] {
+  return createInstallCommands(selections, cwd).filter(step => step.stage !== "verify" && (step.status === "missing" || step.status === "stale"));
+}
+
+function collectInstallMismatches(selections: InstallSelections, environment: CliEnvironment): readonly string[] {
+  const mismatches: string[] = [];
+  const packageState = probeInstallState(environment.cwd, selections).find(step => step.stage === "package-install");
+  if (packageState && packageState.status !== "satisfied") {
+    mismatches.push(packageState.reason);
+  }
+  for (const component of qubeComponents) {
+    const resolution = resolveComponentCommand(component, environment);
+    if (!resolution) {
+      mismatches.push(`Missing ${component.packageName}@${component.packageVersion}.`);
+      continue;
+    }
+    if (resolution.error) {
+      mismatches.push(resolution.error);
+      continue;
+    }
+    if (resolution.packageVersion && resolution.packageVersion !== component.packageVersion) {
+      mismatches.push(`Expected ${component.packageName}@${component.packageVersion}, found ${resolution.packageVersion}.`);
+    }
+  }
+  return Object.freeze(mismatches);
+}
+
+function doctorFindings(payload: unknown): readonly string[] {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return Object.freeze(["Doctor did not return a JSON object."]);
+  }
+  const record = payload as Record<string, unknown>;
+  if (typeof record.error === "string" && record.error.trim() !== "") {
+    return Object.freeze([record.error]);
+  }
+  const findings: string[] = [];
+  if (record.ok === false) {
+    findings.push("Doctor reported a failed verification.");
+  }
+  if (record.connectionStatus === "fail") {
+    findings.push("A configured provider connection failed.");
+  }
+  const hosts = record.hosts;
+  if (hosts && typeof hosts === "object" && !Array.isArray(hosts)) {
+    const status = (hosts as { status?: unknown }).status;
+    if (status === "missing" || status === "partial") {
+      findings.push(`Host toolkit status is ${status}.`);
+    }
+  }
+  return Object.freeze(findings);
+}
+
+async function runApplyPackageInstall(selections: InstallSelections, environment: CliEnvironment): Promise<InstallApplyStepResult> {
+  const command = formatPackageInstallCommand(selections);
+  const argv = packageInstallArgv(selections);
+  const commandPath = resolveCommandFromEntries(argv.command, [
+    path.join(environment.cwd, "node_modules", ".bin"),
+    ...pathEntries(environment.env)
+  ], environment);
+  if (!commandPath) {
+    return {
+      stage: "package-install",
+      command,
+      status: "failed",
+      error: `Cannot find ${argv.command} on PATH. Install the selected package manager or pass a PATH that includes it.`
+    };
+  }
+  const spawned = await spawnCapturedPath(commandPath, argv.args, environment);
+  if (spawned.exitCode !== 0) {
+    return {
+      stage: "package-install",
+      command,
+      status: "failed",
+      exitCode: spawned.exitCode,
+      error: spawned.stderr.trim() || spawned.stdout.trim() || `${argv.command} exited with code ${spawned.exitCode}.`
+    };
+  }
+  return { stage: "package-install", command, status: "executed", exitCode: spawned.exitCode };
+}
+
+async function runApplyWorkspaceInit(selections: InstallSelections, environment: CliEnvironment): Promise<InstallApplyStepResult> {
+  const command = buildQubeInitCommand(selections);
+  const result = await executeQubeInit({
+    json: true,
+    yes: true,
+    host: selections.hosts.join(","),
+    "work-provider": selections.workProviders.join(","),
+    "ci-provider": selections.ciProviders.join(","),
+    ...(selections.withComponents.length > 0 ? { with: selections.withComponents.join(",") } : {})
+  }, { target: "." }, environment);
+  if ((result.exitCode ?? 0) !== 0) {
+    return {
+      stage: "workspace-init",
+      command,
+      status: "failed",
+      exitCode: result.exitCode,
+      error: result.stderr?.trim() || "qube init did not report success."
+    };
+  }
+  return { stage: "workspace-init", command, status: "executed", exitCode: result.exitCode ?? 0 };
+}
+
+async function runApplyProviderSetup(step: InstallCommandStep, environment: CliEnvironment): Promise<InstallApplyStepResult> {
+  const result = await executeQubeDispatch("aie", ["labels", "setup"], environment);
+  if ((result.exitCode ?? 0) !== 0) {
+    return {
+      stage: "provider-setup",
+      command: step.command,
+      status: "failed",
+      exitCode: result.exitCode,
+      error: result.stderr?.trim() || "Provider setup did not report success."
+    };
+  }
+  return { stage: "provider-setup", command: step.command, status: "executed", exitCode: result.exitCode ?? 0 };
+}
+
+async function collectApplyVerification(selections: InstallSelections, environment: CliEnvironment): Promise<{
+  readonly components: unknown;
+  readonly doctor: unknown;
+  readonly mismatches: readonly string[];
+  readonly findings: readonly string[];
+}> {
+  const mismatches = collectInstallMismatches(selections, environment);
+  const doctorResult = await executeQubeDoctor(true, false, environment);
+  let doctorPayload: unknown;
+  if (typeof doctorResult.jsonStdout === "string" && doctorResult.jsonStdout.trim() !== "") {
+    try {
+      doctorPayload = JSON.parse(doctorResult.jsonStdout);
+    } catch {
+      doctorPayload = { error: "Doctor returned invalid JSON." };
+    }
+  } else {
+    const detail = doctorResult.stderr?.trim() ?? "";
+    doctorPayload = { error: detail === "" ? "Doctor did not return a JSON envelope." : detail };
+  }
+  return {
+    components: Object.freeze({ components: qubeComponents }),
+    doctor: doctorPayload,
+    mismatches,
+    findings: doctorFindings(doctorPayload)
+  };
+}
+
+function renderApplyReport(report: InstallApplyReport): string {
+  const executed = report.executed.length === 0
+    ? ["- No remaining install delta was applied."]
+    : report.executed.map(step => `- ${step.stage}: ${step.status}${step.error ? ` — ${step.error}` : ` (${step.command})`}`);
+  const mismatches = report.mismatches.length === 0 ? ["- none"] : report.mismatches.map(item => `- ${item}`);
+  const findings = report.findings.length === 0 ? ["- none"] : report.findings.map(item => `- ${item}`);
+  return [
+    "Apply result:",
+    ...executed,
+    "",
+    "Component mismatches:",
+    ...mismatches,
+    "",
+    "Doctor findings:",
+    ...findings,
+    ""
+  ].join("\n");
+}
+
+async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, environment: CliEnvironment): Promise<RuntimeCommandResult> {
+  const json = flags.json === true;
+  const validationError = validateInstallFlagChoices(flags);
+  if (validationError) {
+    throw createCliError({
+      command: "install",
+      kind: "invalid-command-usage",
+      operation: "validate install flags",
+      likelyCause: validationError.stderr.trim(),
+      suggestedNextAction: "Use a supported install option value.",
+      category: "usage"
+    });
+  }
+  const selections = await resolveInstallSelections(flags);
+  const plan = createInstallPlan(selections, flags["dry-run"] === true, environment.cwd);
+  if (shouldStayPlanOnly(flags)) {
+    if (json) {
+      return { json: { installPlan: plan } };
+    }
+    return { stdout: renderInstallPlan(plan) };
+  }
+
+  const unsupported = unsupportedApplySelections(selections);
+  if (unsupported.length > 0) {
+    throw createCliError({
+      command: "install",
+      kind: "unsupported-install-selection",
+      operation: "apply install plan",
+      likelyCause: `Apply does not support ${unsupported.join(", ")}.`,
+      suggestedNextAction: "Choose supported host, work-provider, and ci-provider values, or stay in plan mode.",
+      category: "validation"
+    });
+  }
+
+  if (flags.yes !== true) {
+    const confirmed = await promptConfirm({
+      command: installCommand,
+      promptName: "apply install plan",
+      jsonMode: json,
+      yes: false,
+      clack: {
+        message: applyConfirmMessage(plan)
+      }
+    });
+    if (confirmed !== true) {
+      throw createCliError({
+        command: "install",
+        kind: "prompt-cancelled",
+        operation: "apply install plan",
+        likelyCause: "Install apply was not confirmed.",
+        suggestedNextAction: "Rerun qube install --apply and confirm, or pass --yes for a non-interactive apply.",
+        category: "usage"
+      });
+    }
+  }
+
+  const executed: InstallApplyStepResult[] = [];
+  const packageStep = remainingApplySteps(selections, environment.cwd).find(step => step.stage === "package-install");
+  if (packageStep) {
+    const result = await runApplyPackageInstall(selections, environment);
+    executed.push(result);
+  }
+  const workspaceStep = executed.some(step => step.status === "failed")
+    ? undefined
+    : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "workspace-init");
+  if (workspaceStep) {
+    const result = await runApplyWorkspaceInit(selections, environment);
+    executed.push(result);
+  }
+  const providerStep = executed.some(step => step.status === "failed")
+    ? undefined
+    : remainingApplySteps(selections, environment.cwd).find(step => step.stage === "provider-setup");
+  if (providerStep) {
+    executed.push(await runApplyProviderSetup(providerStep, environment));
+  }
+
+  const verification = await collectApplyVerification(selections, environment);
+  const failedStep = executed.some(step => step.status === "failed");
+  const exitCode = failedStep || verification.mismatches.length > 0 ? 1 : 0;
+  const appliedPlan: InstallPlan = { ...plan, mode: "apply", dryRun: false };
+  const apply: InstallApplyReport = {
+    confirmed: true,
+    executed,
+    components: verification.components,
+    doctor: verification.doctor,
+    mismatches: verification.mismatches,
+    findings: verification.findings
+  };
+  if (json) {
+    return {
+      exitCode,
+      json: {
+        installPlan: appliedPlan,
+        apply
+      }
+    };
+  }
+  return {
+    exitCode,
+    stdout: `${renderInstallPlan(appliedPlan)}\n${renderApplyReport(apply)}`
+  };
+}
+
 function planQubeInstall(args: readonly string[]): CliExecution {
   const parsed = parseInstallArgs(args);
   if ("error" in parsed) {
@@ -4887,18 +5211,8 @@ function buildQubeInitCommand(selections: InstallSelections): string {
 }
 
 function createPackageInstallCommand(selections: InstallSelections, status: InstallStepStatus, reason: string): InstallCommandStep {
-  const packageSpec = `${packageName}@${packageVersion}`;
   const label = selections.scope === "global" ? "Install QUBE globally for manual shell use." : "Install QUBE in the current project.";
-  if (selections.packageManager === "pnpm" && selections.scope === "local") {
-    return { stage: "package-install", label, command: `pnpm add -D --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
-  }
-  if (selections.packageManager === "pnpm" && selections.scope === "global") {
-    return { stage: "package-install", label, command: `pnpm add --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
-  }
-  if (selections.packageManager === "npm" && selections.scope === "local") {
-    return { stage: "package-install", label, command: `npm install --save-dev --save-exact ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
-  }
-  return { stage: "package-install", label, command: `npm install --global ${lifecycleFlag(selections)} ${packageSpec}`.replace(/\s+/g, " ").trim(), status, reason };
+  return { stage: "package-install", label, command: formatPackageInstallCommand(selections), status, reason };
 }
 
 function createProviderSetupCommands(selections: InstallSelections, status: InstallStepStatus, reason: string): readonly InstallCommandStep[] {
@@ -5056,7 +5370,7 @@ function renderInstallPlan(plan: InstallPlan): string {
     ...plan.notes.map(note => `- ${note}`),
     ...(plan.files.length > 0 ? ["", "Docs/config notes to add:", ...plan.files.map(file => `- ${file}`)] : []),
     "",
-    "No commands were run.",
+    plan.mode === "apply" ? "Install apply finished." : "No commands were run.",
     ""
   ].join("\n");
 }
@@ -5082,13 +5396,6 @@ function renderInstallConnection(connection: ConnectionContract): readonly strin
 
 function renderOptionSummary(label: string, options: readonly InstallOptionSummary[]): string {
   return `${label}: ${options.map(option => `${option.value}${option.default ? " (default)" : ""}:${option.support}`).join(", ")}`;
-}
-
-function lifecycleFlag(selections: InstallSelections): string {
-  if (selections.lifecycleScripts === "disabled" || selections.lifecycleScripts === "review") {
-    return "--ignore-scripts";
-  }
-  return "";
 }
 
 function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): CliExecution | undefined {
@@ -5125,6 +5432,13 @@ function validateInstallFlagChoices(flags: Readonly<Record<string, unknown>>): C
       continue;
     }
     const tokens = splitCsvOption(value);
+    if (tokens.length === 0) {
+      return {
+        exitCode: 2,
+        stdout: "",
+        stderr: `Invalid install option --${group.key}=. Use one or more of: ${group.choices.map(choice => choice.value).join(", ")}.\n`
+      };
+    }
     const invalid = tokens.filter(token => !group.choices.some(choice => choice.value === token));
     if (invalid.length === 0) {
       continue;
@@ -5190,6 +5504,10 @@ function parseInstallArgs(args: readonly string[]):
     }
     if (token === "--yes" || token === "-y") {
       flags.yes = true;
+      continue;
+    }
+    if (token === "--apply") {
+      flags.apply = true;
       continue;
     }
     if (token === "--docs") {
@@ -5381,6 +5699,61 @@ function dispatchCommand(request: DispatchRequest): Promise<number> {
 }
 
 const CAPTURED_DISPATCH_MAX_CHARS = 16 * 1024 * 1024;
+
+function spawnCapturedPath(
+  commandPath: string,
+  args: readonly string[],
+  environment: CliEnvironment
+): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
+  return new Promise(resolve => {
+    let command: string;
+    let spawnArgs: string[];
+    try {
+      [command, spawnArgs] = spawnInput({
+        component: qubeComponents[0]!,
+        commandPath,
+        resolution: { commandPath, source: "path" },
+        args
+      });
+    } catch (err: unknown) {
+      resolve({ exitCode: 2, stdout: "", stderr: `${err instanceof Error ? err.message : String(err)}\n`, truncated: false });
+      return;
+    }
+    const child = spawn(command, spawnArgs, {
+      cwd: environment.cwd,
+      env: environment.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      shell: false,
+      windowsHide: true
+    });
+    let stdout = "";
+    let stderr = "";
+    let truncated = false;
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    const append = (existing: string, chunk: string): string => {
+      const remaining = CAPTURED_DISPATCH_MAX_CHARS - existing.length;
+      if (chunk.length <= remaining) return existing + chunk;
+      truncated = true;
+      return existing + chunk.slice(0, Math.max(0, remaining));
+    };
+    child.stdout.on("data", chunk => { stdout = append(stdout, chunk); });
+    child.stderr.on("data", chunk => { stderr = append(stderr, chunk); });
+    child.on("exit", (code, signal) => {
+      if (signal) {
+        process.kill(process.pid, signal);
+        return;
+      }
+      resolve({ exitCode: code ?? 1, stdout, stderr, truncated });
+    });
+    child.on("error", error => resolve({
+      exitCode: 1,
+      stdout,
+      stderr: `${stderr}${error instanceof Error ? error.message : String(error)}\n`,
+      truncated
+    }));
+  });
+}
 
 function dispatchCommandCaptured(request: DispatchRequest): Promise<{ exitCode: number; stdout: string; stderr: string; truncated: boolean }> {
   return new Promise(resolve => {

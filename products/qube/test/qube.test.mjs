@@ -3,7 +3,7 @@ import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { describe, it } from "node:test";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -33,6 +33,7 @@ import {
   listGrokBuildHostCapabilities,
   listGrokBuildInstallFiles,
   listGrokBuildInstallNotes,
+  adapterPackageVersions as runtimeAdapterPackageVersions,
   planQubeCli,
   probeHostToolkits,
   composeHostToolkitManifests,
@@ -48,6 +49,8 @@ import {
   resolveComponentCommand,
 } from "../dist/index.js";
 import {
+  adapterPackageVersions,
+  componentFixtures,
   aibExpectedPathPattern,
   aibUnableVerifyPattern,
   aibVersion,
@@ -56,6 +59,7 @@ import {
   qubePackageVersion,
   qubeNpmGlobalInstallPattern,
   qubePnpmAddCommand,
+  qubePnpmAddCommandWith,
   qubePnpmAddPattern,
 } from "./workspace-versions.mjs";
 
@@ -264,7 +268,7 @@ describe("qube composer CLI", () => {
     assert.match(help.stdout, /Usage:\n  qube <command> \[flags\]/);
     assert.match(help.stdout, /Commands:/);
     assert.match(help.stdout, /components\s+List QUBE component packages and commands\./);
-    assert.match(help.stdout, /install\s+Build a guided, supply-chain-safe QUBE install plan\./);
+    assert.match(help.stdout, /install\s+Build a guided, supply-chain-safe QUBE install plan and optionally apply it\./);
     assert.match(help.stdout, /autoresearch\s+Run a safety-bounded local autoresearch arena lifecycle\./);
     assert.match(help.stdout, /oneshot\s+Create a bounded local artifact without the normal issue, PR, or review-gate workflow\./);
     assert.match(help.stdout, /make-it-so\s+Map an intent to the safest real QUBE workflow\./);
@@ -296,6 +300,7 @@ describe("qube composer CLI", () => {
     assert.equal(installHelp.status, 0);
     assert.match(installHelp.stdout, /Usage:\n  qube install/);
     assert.match(installHelp.stdout, /Dry run: supported/);
+    assert.match(installHelp.stdout, /--apply/);
     assert.match(installHelp.stdout, /Supply chain: sensitive \(dependency, package-manager\)/);
     assert.match(installHelp.stdout, /--host <value>/);
     assert.match(installHelp.stdout, /Default: generic/);
@@ -565,6 +570,128 @@ describe("qube composer CLI", () => {
     } else if (options.managed !== false) {
       writeManagedSection(path.join(root, "AGENTS.md"), "Team rules.");
     }
+  }
+
+  function writeNodeShim(binDir, name, source) {
+    const scriptPath = path.join(binDir, `${name}.mjs`);
+    writeFileSync(scriptPath, source);
+    if (process.platform === "win32") {
+      writeFileSync(path.join(binDir, `${name}.cmd`), `@echo off\r\nnode "${scriptPath}" %*\r\n`);
+    } else {
+      writeFileSync(path.join(binDir, name), `#!/usr/bin/env node\n${source}`);
+      chmodSync(path.join(binDir, name), 0o755);
+    }
+  }
+
+  function createInstallApplyHarness(root) {
+    const cwd = path.join(root, "repo");
+    const tools = path.join(root, "tools");
+    const packageRootDir = path.join(root, "qube-root");
+    const binDir = path.join(packageRootDir, "node_modules", ".bin");
+    const pmLog = path.join(root, "pm.log");
+    mkdirSync(cwd, { recursive: true });
+    mkdirSync(tools, { recursive: true });
+    mkdirSync(binDir, { recursive: true });
+    writeNodeShim(tools, "pnpm", `
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const log = process.env.QUBE_TEST_PM_LOG;
+if (log) appendFileSync(log, process.argv.slice(2).join(" ") + "\\n");
+if (process.argv[2] === "root") {
+  process.stdout.write(path.join(process.cwd(), "global-root") + "\\n");
+  process.exit(0);
+}
+const specs = process.argv.slice(2).flatMap((token) => {
+  const match = token.match(/^(@[^/]+\\/[^@]+)@(.+)$/) || token.match(/^([^@-]+[^@]*)@(\\d+\\.\\d+\\.\\d+)$/);
+  return match ? [{ name: match[1], version: match[2] }] : [];
+});
+if (specs.length === 0) process.exit(0);
+const manifestPath = path.join(process.cwd(), "package.json");
+const manifest = existsSync(manifestPath)
+  ? JSON.parse(readFileSync(manifestPath, "utf8"))
+  : { name: "blank-app", version: "0.0.0", private: true, devDependencies: {} };
+manifest.devDependencies = manifest.devDependencies ?? {};
+for (const spec of specs) {
+  manifest.devDependencies[spec.name] = spec.version;
+  const dir = path.join(process.cwd(), "node_modules", ...spec.name.split("/"));
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: spec.name, version: spec.version }, null, 2) + "\\n");
+}
+writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + "\\n");
+`);
+    writeNodeShim(tools, "gh", `process.stdout.write("logged in\\n");`);
+    const initConfig = JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        repository: { kind: "local-git" },
+        ci: { kind: "github" },
+        layout: { kind: "local" }
+      }
+    }, null, 2);
+    writeNodeShim(binDir, "aie", `
+import { createHash } from "node:crypto";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
+const args = process.argv.slice(2).join(" ");
+if (args.includes("init")) {
+  const cwd = process.cwd();
+  mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+  writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), ${JSON.stringify(`${initConfig}\n`)});
+  const body = "Team rules.\\n";
+  const digest = createHash("sha256").update(body).digest("hex");
+  writeFileSync(path.join(cwd, "AGENTS.md"), [
+    "<!-- BEGIN EXECUTOR MANAGED SECTION -->",
+    "<!-- executor-managed-version: 1 -->",
+    "<!-- executor-managed-checksum: " + digest + " -->",
+    "Team rules.",
+    "<!-- END EXECUTOR MANAGED SECTION -->",
+    ""
+  ].join("\\n"));
+  process.stdout.write(JSON.stringify({ ok: true, command: "init" }) + "\\n");
+  process.exit(0);
+}
+if (args.includes("labels")) {
+  process.stdout.write(JSON.stringify({ ok: true, command: "labels setup" }) + "\\n");
+  process.exit(0);
+}
+process.stdout.write(JSON.stringify({
+  ok: true,
+  command: "doctor",
+  workflowReadiness: {
+    stages: [],
+    review: { state: "fallback-only", fallbackPromptAvailable: true, fallbackEnforcesReview: false },
+    shipping: { mode: "manual" },
+    selectedHosts: []
+  }
+}) + "\\n");
+`);
+    writeNodeShim(binDir, "aiu", `
+const args = process.argv.slice(2).join(" ");
+if (args.includes("init")) {
+  process.stdout.write(JSON.stringify({ ok: true, command: "init" }) + "\\n");
+  process.exit(0);
+}
+process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\\n");
+`);
+    writeNodeShim(binDir, "aiq", `process.stdout.write(JSON.stringify({ ok: true, command: "doctor" }) + "\\n");`);
+    writeNodeShim(binDir, "aib", `process.stdout.write(JSON.stringify({ ok: true, command: "init" }) + "\\n");`);
+    for (const component of componentFixtures) {
+      const dir = path.join(packageRootDir, "node_modules", ...component.name.split("/"));
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(path.join(dir, "package.json"), `${JSON.stringify({ name: component.name, version: component.version }, null, 2)}\n`);
+    }
+    return {
+      cwd,
+      pmLog,
+      env: {
+        ...process.env,
+        PATH: `${tools}${path.delimiter}${process.env.PATH ?? ""}`,
+        QUBE_TEST_PACKAGE_ROOT: packageRootDir,
+        QUBE_TEST_PM_LOG: pmLog
+      }
+    };
   }
 
   it("reports every step satisfied and a no-op command list for a configured repo", () => {
@@ -1409,6 +1536,189 @@ describe("qube composer CLI", () => {
     assert.equal(missingValue.exitCode, 2);
     assert.match(missingValue.stderr, /Missing value for install option --scope/);
     assert.match(missingValue.stderr, /local, global/);
+
+    const emptyHost = runCli(["install", "--host", "", "--yes", "--json"]);
+    assert.equal(emptyHost.status, 2);
+    const emptyParsed = JSON.parse(emptyHost.stdout);
+    assert.match(emptyParsed.error.likelyCause, /Invalid install option --host=/);
+  });
+
+  it("includes every selected adapter at an exact pin in the same package command", () => {
+    const result = runCli([
+      "install",
+      "--yes",
+      "--dry-run",
+      "--json",
+      "--host",
+      "opencode",
+      "--work-provider",
+      "linear",
+      "--ci-provider",
+      "jenkins"
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const command = JSON.parse(result.stdout).installPlan.commands.find(step => step.stage === "package-install").command;
+    assert.equal(command, qubePnpmAddCommandWith(
+      "@tjalve/qube-adapter-jenkins",
+      "@tjalve/qube-adapter-linear",
+      "@tjalve/qube-adapter-opencode"
+    ));
+    assert.match(command, /--ignore-scripts/);
+    assert.match(command, /--save-exact/);
+  });
+
+  it("keeps --apply --json without --yes in plan mode", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-json-plan-"));
+    const result = runCli([
+      "install",
+      "--apply",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.mode, "copy-commands");
+    assert.equal(parsed.apply, undefined);
+    assert.equal(existsSync(path.join(root, "package.json")), false);
+  });
+
+  it("keeps --apply --yes --dry-run in plan mode", () => {
+    const result = runCli(["install", "--apply", "--yes", "--dry-run", "--json"]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.mode, "copy-commands");
+    assert.equal(parsed.installPlan.dryRun, true);
+    assert.equal(parsed.apply, undefined);
+  });
+
+  it("refuses apply for unsupported local providers", () => {
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "local",
+      "--ci-provider",
+      "local",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ]);
+    assert.equal(result.status, 3);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.error.kind, "unsupported-install-selection");
+    assert.match(parsed.error.likelyCause, /work-provider local/);
+    assert.match(parsed.error.likelyCause, /ci-provider local/);
+  });
+
+  it("blocks human --apply without confirmation", () => {
+    const result = runCli([
+      "install",
+      "--apply",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { env: { ...process.env, CI: "true" } });
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /prompt-blocked|Prompts are disabled/);
+  });
+
+  it("applies a blank repo install, init, and verification end to end", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-blank-"));
+    const harness = createInstallApplyHarness(root);
+    const applyArgs = [
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ];
+    const first = runCli(applyArgs, { cwd: harness.cwd, env: harness.env });
+    assert.equal(first.status, 0, `${first.stdout}\n${first.stderr}`);
+    const parsed = JSON.parse(first.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.installPlan.mode, "apply");
+    assert.deepEqual(parsed.apply.executed.map(step => step.stage), ["package-install", "workspace-init"]);
+    assert.equal(parsed.apply.executed.every(step => step.status === "executed"), true);
+    assert.equal(readFileSync(harness.pmLog, "utf8").trim(), qubePnpmAddCommand.replace(/^pnpm /, ""));
+    const manifest = JSON.parse(readFileSync(path.join(harness.cwd, "package.json"), "utf8"));
+    assert.equal(manifest.devDependencies[qubePackageName], qubePackageVersion);
+    assert.equal(manifest.devDependencies["@tjalve/qube-adapter-github"], adapterPackageVersions["@tjalve/qube-adapter-github"]);
+    assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
+    assert.ok(parsed.apply.components);
+    assert.equal(typeof parsed.apply.doctor, "object");
+    assert.ok(parsed.apply.doctor !== null);
+
+    const second = runCli(applyArgs, { cwd: harness.cwd, env: harness.env });
+    assert.equal(second.status, 0, `${second.stdout}\n${second.stderr}`);
+    const secondParsed = JSON.parse(second.stdout);
+    assert.deepEqual(secondParsed.apply.executed, []);
+    assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
+  });
+
+  it("pins every workspace adapter package in the shipped catalog", () => {
+    const adaptersRoot = path.resolve(packageRoot, "..", "..", "adapters");
+    const names = readdirSync(adaptersRoot, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => entry.name);
+    assert.ok(names.length > 0);
+    for (const name of names) {
+      const manifestPath = path.join(adaptersRoot, name, "package.json");
+      if (!existsSync(manifestPath)) continue;
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      assert.equal(runtimeAdapterPackageVersions[manifest.name], manifest.version, manifest.name);
+      assert.equal(adapterPackageVersions[manifest.name], manifest.version, manifest.name);
+    }
   });
 
   it("lists standalone components without replacing them", () => {
