@@ -146,7 +146,18 @@ class GitLabProvisionerClient {
   }
 
   async searchProjects(search: string): Promise<GitLabProject[]> {
-    return this.request<GitLabProject[]>("GET", `/projects?owned=true&simple=true&search=${encodeURIComponent(search)}&per_page=100`);
+    const projects: GitLabProject[] = [];
+    let page: string | null = "1";
+    for (let pages = 0; page && pages < 20; pages += 1) {
+      const result: { value: GitLabProject[]; nextPage: string | null } = await this.requestPage<GitLabProject[]>(
+        "GET",
+        `/projects?owned=true&simple=true&search=${encodeURIComponent(search)}&per_page=100&page=${page}`,
+      );
+      projects.push(...(result.value ?? []));
+      page = result.nextPage;
+    }
+    if (page) throw new Error("GitLab provisioner sweep exceeded the project page bound.");
+    return projects;
   }
 
   async createIssue(projectId: string, input: { readonly title: string; readonly description: string; readonly labels: string }): Promise<GitLabIssue> {
@@ -195,6 +206,15 @@ class GitLabProvisionerClient {
     body?: unknown,
     options: { readonly allowMissing?: boolean } = {},
   ): Promise<T> {
+    return (await this.requestPage<T>(method, path, body, options)).value;
+  }
+
+  private async requestPage<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    options: { readonly allowMissing?: boolean } = {},
+  ): Promise<{ value: T; nextPage: string | null }> {
     const response = await this.fetchImpl(`${this.apiBase}${path}`, {
       method,
       headers: {
@@ -205,12 +225,17 @@ class GitLabProvisionerClient {
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(this.timeoutMs),
     });
-    if (options.allowMissing && (response.status === 404 || response.status === 204)) return undefined as T;
+    if (options.allowMissing && (response.status === 404 || response.status === 204)) {
+      return { value: undefined as T, nextPage: null };
+    }
     if (!response.ok) {
       throw new Error(`GitLab provisioner ${method} ${path} failed with HTTP ${response.status}.`);
     }
-    if (response.status === 204) return undefined as T;
-    return await response.json() as T;
+    if (response.status === 204) return { value: undefined as T, nextPage: null };
+    return {
+      value: await response.json() as T,
+      nextPage: response.headers.get("x-next-page")?.trim() || null,
+    };
   }
 }
 

@@ -4,6 +4,7 @@ import { describe, it } from "node:test";
 import {
   RequestBudget,
   SHARED_SEED_MANIFEST,
+  createGitLabProvisioner,
   evaluateLiveGate,
   resourceTag,
   runProvisionerLifecycle,
@@ -182,6 +183,16 @@ describe("provisioner lifecycle", () => {
     assert.match(result.summary, /skipped: no live credentials/);
   });
 
+  it("skips when the live flag is set but credentials are missing", async () => {
+    const result = await runProvisionerLifecycle(liveOptions({
+      env: { QUBE_TESTKIT_LIVE: "1" },
+      config: {},
+    }));
+    assert.equal(result.status, "skipped");
+    assert.equal(result.reason, "no-live-credentials");
+    assert.notEqual(result.status, "passed");
+  });
+
   it("skips without the live flag", async () => {
     const result = await runProvisionerLifecycle(liveOptions({
       env: { LINEAR_API_KEY: "fixture-key", LINEAR_TEAM_ID: "team-fixture" },
@@ -269,5 +280,74 @@ describe("provisioner lifecycle", () => {
     budget.consume();
     const fetchImpl = budget.wrapFetch(async () => ({ ok: true, status: 200, json: async () => ({}) }));
     await assert.rejects(() => fetchImpl("https://example.test"), /request budget/);
+  });
+
+  it("counts the connection probe against the request budget", async () => {
+    const budget = new RequestBudget({ maxRequests: 1, timeoutMs: 4321 });
+    budget.consume();
+    let observedTimeout;
+    const result = await runProvisionerLifecycle(liveOptions({
+      budget,
+      probe: async options => {
+        observedTimeout = options.timeoutMs;
+        return passingProbe();
+      },
+    }));
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.reason, "budget-exceeded");
+    assert.equal(observedTimeout, undefined);
+  });
+
+  it("bounds the connection probe with the live suite timeout", async () => {
+    const budget = new RequestBudget({ maxRequests: 8, timeoutMs: 4321 });
+    let observedTimeout;
+    const result = await runProvisionerLifecycle(liveOptions({
+      budget,
+      probe: async options => {
+        observedTimeout = options.timeoutMs;
+        return passingProbe();
+      },
+    }));
+    assert.equal(result.status, "passed", result.summary);
+    assert.equal(observedTimeout, 4321);
+    assert.ok(budget.requestCount >= 1);
+  });
+
+  it("follows GitLab project pages during sweep instead of treating the first page as complete", async () => {
+    const deleted = [];
+    const remaining = new Map([
+      [11, { id: 11, path: "qube-testkit-a" }],
+      [12, { id: 12, path: "qube-testkit-b" }],
+    ]);
+    const fetchImpl = async (url) => {
+      const parsed = new URL(String(url));
+      const path = parsed.pathname.replace(/\/api\/v4/, "");
+      if (path === "/projects") {
+        const page = parsed.searchParams.get("page") || "1";
+        const all = [...remaining.values()];
+        const items = page === "1" ? all.slice(0, 1) : all.slice(1);
+        return {
+          ok: true,
+          status: 200,
+          headers: { get: name => String(name).toLowerCase() === "x-next-page" ? (page === "1" && all.length > 1 ? "2" : "") : null },
+          async json() { return items; },
+        };
+      }
+      if (path.startsWith("/projects/")) {
+        deleted.push(path);
+        remaining.delete(Number(path.split("/")[2]));
+        return { ok: true, status: 204, headers: { get: () => null }, async json() { return undefined; } };
+      }
+      throw new Error(`unexpected ${path}`);
+    };
+    const leftover = await createGitLabProvisioner({
+      adapter: { id: "gitlab", packageName: "@tjalve/qube-adapter-gitlab" },
+      env: { GITLAB_TOKEN: "fixture-token" },
+      config: {},
+      budget: new RequestBudget(),
+      fetchImpl,
+    }).sweep("qube-testkit-");
+    assert.deepEqual(deleted, ["/projects/11", "/projects/12"]);
+    assert.equal(leftover.length, 0);
   });
 });

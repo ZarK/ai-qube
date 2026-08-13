@@ -1,6 +1,7 @@
 import type {
   ConnectionAuthMethod,
   ConnectionContract,
+  ConnectionHttpRequest,
   ConnectionProbeOptions,
   ConnectionProbeResult,
   QubeAdapterContract,
@@ -136,6 +137,7 @@ export async function runProvisionerLifecycle(options: LiveSuiteOptions): Promis
   const liveEnvVar = options.liveEnvVar ?? "QUBE_TESTKIT_LIVE";
   const budget = options.budget ?? new RequestBudget();
   const fetchImpl = options.fetchImpl ?? fetch;
+  const provisionerFetch = budget.wrapFetch(fetchImpl);
   const gate = evaluateLiveGate({
     adapter: options.adapter,
     env,
@@ -146,12 +148,28 @@ export async function runProvisionerLifecycle(options: LiveSuiteOptions): Promis
     return emptyResult(options.adapter.id, gate.status, gate.reason, gate.summary, budget.requestCount);
   }
 
-  const probe = await options.probe({
-    mode: options.probeOptions?.mode ?? "live",
-    env,
-    config,
-    ...options.probeOptions,
-  });
+  let probe;
+  try {
+    budget.consume("probe");
+    const probeFetch = options.probeOptions?.fetch
+      ? async (request: ConnectionHttpRequest) => {
+        budget.consume("probe-http");
+        return options.probeOptions!.fetch!(request);
+      }
+      : undefined;
+    probe = await options.probe({
+      mode: options.probeOptions?.mode ?? "live",
+      env,
+      config,
+      ...options.probeOptions,
+      timeoutMs: options.probeOptions?.timeoutMs ?? budget.timeoutMs,
+      ...(probeFetch ? { fetch: probeFetch } : {}),
+    });
+  } catch (error) {
+    const reason = classifyLifecycleError(error);
+    const summary = error instanceof Error ? error.message : String(error);
+    return emptyResult(options.adapter.id, "failed", reason, summary, budget.requestCount);
+  }
   if (probe.status === "fail") {
     return emptyResult(options.adapter.id, "failed", "probe-failed", probe.summary, budget.requestCount);
   }
@@ -164,7 +182,7 @@ export async function runProvisionerLifecycle(options: LiveSuiteOptions): Promis
     env,
     config,
     budget,
-    fetchImpl: budget.wrapFetch(fetchImpl),
+    fetchImpl: provisionerFetch,
   };
   const provisioner = options.createProvisioner(context);
   if (provisioner.providerId !== options.adapter.id) {

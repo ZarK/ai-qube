@@ -22,6 +22,11 @@ interface LinearIssueNode {
   readonly title: string;
 }
 
+interface LinearPageInfo {
+  readonly hasNextPage?: boolean | null;
+  readonly endCursor?: string | null;
+}
+
 export function createLinearProvisioner(context: LiveSuiteContext): ProviderProvisioner {
   const teamId = required(stringValue(context.config.teamId) ?? context.env.LINEAR_TEAM_ID, "LINEAR_TEAM_ID");
   const apiKey = required(context.env.LINEAR_API_KEY, "LINEAR_API_KEY");
@@ -130,11 +135,19 @@ class LinearProvisionerClient {
   }
 
   async listLabels(teamId: string): Promise<LinearLabel[]> {
-    const data = await this.query<{ team?: { labels?: { nodes?: LinearLabel[] } } }>(
-      "query QubeTestkitLabels($teamId: String!) { team(id: $teamId) { labels(first: 250) { nodes { id name } } } }",
-      { teamId },
-    );
-    return data.team?.labels?.nodes ?? [];
+    const labels: LinearLabel[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const data: { team?: { labels?: { nodes?: LinearLabel[]; pageInfo?: LinearPageInfo } } } = await this.query(
+        "query QubeTestkitLabels($teamId: String!, $first: Int!, $after: String) { team(id: $teamId) { labels(first: $first, after: $after) { nodes { id name } pageInfo { hasNextPage endCursor } } } }",
+        { teamId, first: 100, after },
+      );
+      labels.push(...(data.team?.labels?.nodes ?? []));
+      const pageInfo: LinearPageInfo | undefined = data.team?.labels?.pageInfo;
+      if (!pageInfo?.hasNextPage || !pageInfo.endCursor) return labels;
+      after = pageInfo.endCursor;
+    }
+    throw new Error("Linear provisioner sweep exceeded the label page bound.");
   }
 
   async listStates(teamId: string): Promise<LinearState[]> {
@@ -185,11 +198,19 @@ class LinearProvisionerClient {
   }
 
   async listIssuesForLabel(teamId: string, labelId: string): Promise<readonly { readonly id: string }[]> {
-    const data = await this.query<{ team?: { issues?: { nodes?: { id: string }[] } } }>(
-      "query QubeTestkitLabeled($teamId: String!, $labelId: ID!) { team(id: $teamId) { issues(first: 50, filter: { labels: { id: { eq: $labelId } }, archivedAt: { null: true } }) { nodes { id } } } }",
-      { teamId, labelId },
-    );
-    return data.team?.issues?.nodes ?? [];
+    const issues: { readonly id: string }[] = [];
+    let after: string | null = null;
+    for (let page = 0; page < 20; page += 1) {
+      const data: { team?: { issues?: { nodes?: { id: string }[]; pageInfo?: LinearPageInfo } } } = await this.query(
+        "query QubeTestkitLabeled($teamId: String!, $labelId: ID!, $first: Int!, $after: String) { team(id: $teamId) { issues(first: $first, after: $after, filter: { labels: { id: { eq: $labelId } }, archivedAt: { null: true } }) { nodes { id } pageInfo { hasNextPage endCursor } } } }",
+        { teamId, labelId, first: 50, after },
+      );
+      issues.push(...(data.team?.issues?.nodes ?? []));
+      const pageInfo: LinearPageInfo | undefined = data.team?.issues?.pageInfo;
+      if (!pageInfo?.hasNextPage || !pageInfo.endCursor) return issues;
+      after = pageInfo.endCursor;
+    }
+    throw new Error("Linear provisioner sweep exceeded the issue page bound.");
   }
 
   private async query<T>(
@@ -207,15 +228,22 @@ class LinearProvisionerClient {
       signal: AbortSignal.timeout(this.timeoutMs),
     });
     if (!response.ok) {
-      if (options.allowMissing && (response.status === 404 || response.status === 400)) return {} as T;
+      if (options.allowMissing && response.status === 404) return {} as T;
       throw new Error(`Linear provisioner GraphQL request failed with HTTP ${response.status}.`);
     }
     const payload = await response.json() as { data?: T; errors?: Array<{ message?: string }> };
-    if (payload.errors?.length && !options.allowMissing) {
+    if (payload.errors?.length) {
+      if (options.allowMissing && payload.errors.every(error => isNotFoundMessage(error.message))) {
+        return payload.data ?? ({} as T);
+      }
       throw new Error(`Linear provisioner GraphQL errors: ${payload.errors.map(error => error.message ?? "unknown").join("; ")}.`);
     }
     return payload.data ?? ({} as T);
   }
+}
+
+function isNotFoundMessage(message: string | undefined): boolean {
+  return /not found|could not find|entity not found/i.test(message ?? "");
 }
 
 function linearPriority(priority: string): number {

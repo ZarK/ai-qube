@@ -23,6 +23,17 @@ export function runLiveProvisionerSuite(options: LiveSuiteOptions): void {
       assertSkipped(result);
     });
 
+    it("skips when the live flag is set but credentials are missing", async () => {
+      const result = await runProvisionerLifecycle({
+        ...options,
+        env: { [LIVE_SUITE_ENV_VAR]: "1" },
+        config: {},
+        liveEnvVar: LIVE_SUITE_ENV_VAR,
+      });
+      assertSkipped(result);
+      assert.equal(result.reason, "no-live-credentials");
+    });
+
     it("skips without the live flag even when credentials are present", async () => {
       const result = await runProvisionerLifecycle({
         ...options,
