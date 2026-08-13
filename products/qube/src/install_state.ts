@@ -5,7 +5,7 @@ import { isAbsolute, join, relative } from "node:path";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders } from "./components.js";
 import { packageName, packageVersion } from "./package.js";
 
-export type InstallStepStatus = "satisfied" | "stale" | "missing";
+export type InstallStepStatus = "satisfied" | "stale" | "missing" | "unknown";
 
 export interface InstallStateSelections {
   readonly scope: "local" | "global";
@@ -92,6 +92,11 @@ export function instructionTargetsForHosts(hosts: readonly string[]): readonly s
   return [...targets];
 }
 
+function normalizeForChecksum(body: string): string {
+  const lines = body.replace(/\r\n?/g, "\n").split("\n").map(line => line.replace(/[ \t]+$/, ""));
+  return `${lines.join("\n").trimEnd()}\n`;
+}
+
 function managedSectionStatus(content: string): InstallStepStatus | "absent" {
   const start = content.indexOf(MANAGED_START);
   const end = content.indexOf(MANAGED_END);
@@ -106,8 +111,18 @@ function managedSectionStatus(content: string): InstallStepStatus | "absent" {
     .replace(CHECKSUM_PATTERN, "")
     .replace(/^\s*\n/, "")
     .trimEnd();
-  const expected = createHash("sha256").update(`${body}\n`).digest("hex");
-  return expected === checksumMatch[1] ? "satisfied" : "stale";
+  const expected = createHash("sha256").update(normalizeForChecksum(`${body}\n`)).digest("hex");
+  const legacy = createHash("sha256").update(`${body.replace(/\r\n/g, "\n").trimEnd()}\n`).digest("hex");
+  return expected === checksumMatch[1] || legacy === checksumMatch[1] ? "satisfied" : "stale";
+}
+
+function installedPackageVersion(cwd: string, name: string): string | null {
+  const relativePath = `node_modules/${name}/package.json`;
+  const path = resolveContained(cwd, relativePath);
+  if (!existsSync(path)) return null;
+  const parsedResult = tryReadJsonFile(path);
+  if (!parsedResult.ok || !isRecord(parsedResult.value) || typeof parsedResult.value.version !== "string") return null;
+  return parsedResult.value.version;
 }
 
 function probePackageInstall(cwd: string, selections: InstallStateSelections): InstallStepState {
@@ -126,16 +141,25 @@ function probePackageInstall(cwd: string, selections: InstallStateSelections): I
   if (parsed.name === packageName) {
     return { stage: "package-install", status: "missing", reason: "This working directory is the QUBE package itself, not a consumer install." };
   }
+  if (selections.scope === "global") {
+    return { stage: "package-install", status: "missing", reason: "Global package presence is not observed from a local working directory." };
+  }
   const declared = declaredPackageVersion(parsed, packageName);
   if (declared !== packageVersion) {
     return { stage: "package-install", status: "missing", reason: `package.json does not declare ${packageName}@${packageVersion}.` };
   }
+  const installed = installedPackageVersion(cwd, packageName);
+  if (installed !== packageVersion) {
+    return { stage: "package-install", status: "missing", reason: `${packageName}@${packageVersion} is declared but not installed in node_modules.` };
+  }
   for (const adapterName of selectedAdapterPackages(selections)) {
-    if (!declaredPackageVersion(parsed, adapterName)) {
-      return { stage: "package-install", status: "missing", reason: `Selected adapter ${adapterName} is not declared in package.json.` };
+    const declaredAdapter = declaredPackageVersion(parsed, adapterName);
+    const installedAdapter = installedPackageVersion(cwd, adapterName);
+    if (!declaredAdapter || declaredAdapter !== installedAdapter) {
+      return { stage: "package-install", status: "missing", reason: `Selected adapter ${adapterName} is not installed at the declared version.` };
     }
   }
-  return { stage: "package-install", status: "satisfied", reason: "The selected QUBE and adapter packages are already declared at the expected versions." };
+  return { stage: "package-install", status: "satisfied", reason: "The selected QUBE and adapter packages are installed at the expected versions." };
 }
 
 function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): InstallStepState {
@@ -179,14 +203,14 @@ function probeProviderSetup(cwd: string, selections: InstallStateSelections): In
   if (!existsSync(configPath)) {
     return { stage: "provider-setup", status: "missing", reason: "GitHub labels setup still needs a configured workspace." };
   }
-  return { stage: "provider-setup", status: "satisfied", reason: "Workspace config is present; GitHub labels setup is already planned as part of a configured repo." };
+  return { stage: "provider-setup", status: "unknown", reason: "Local config does not prove that GitHub status labels exist on the provider." };
 }
 
 export function probeInstallState(cwd: string, selections: InstallStateSelections): readonly InstallStepState[] {
   const packageInstall = probePackageInstall(cwd, selections);
   const workspaceInit = probeWorkspaceInit(cwd, selections);
   const providerSetup = probeProviderSetup(cwd, selections);
-  const earlierSatisfied = packageInstall.status === "satisfied" && workspaceInit.status === "satisfied" && providerSetup.status === "satisfied";
+  const earlierSatisfied = packageInstall.status === "satisfied" && workspaceInit.status === "satisfied";
   const verify: InstallStepState = earlierSatisfied
     ? { stage: "verify", status: "satisfied", reason: "Earlier install steps are already satisfied; doctor is not required on this plan." }
     : { stage: "verify", status: "missing", reason: "Doctor still needs to verify the remaining setup delta." };

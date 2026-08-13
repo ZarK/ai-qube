@@ -4738,7 +4738,7 @@ function createInstallPlan(selections: InstallSelections, dryRun: boolean, cwd =
     mode: "copy-commands",
     dryRun,
     steps,
-    commands: steps.filter(step => step.status !== "satisfied"),
+    commands: steps.filter(step => step.status === "missing" || step.status === "stale"),
     connections: createInstallConnections(selections),
     files: createInstallFiles(selections),
     notes: createInstallNotes(selections)
