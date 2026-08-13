@@ -6,6 +6,7 @@ const { join } = require('node:path');
 
 const {
   buildReviewHeadDigest,
+  RELATED_TEST_PATH_LIMIT,
   relatedTestPaths,
   requirementSectionsFromIssueBody,
   reviewHeadDigestContextLines,
@@ -58,6 +59,14 @@ describe('review head digest', () => {
     writeFileSync(join(repo, 'foo.test.ts'), 'test("foo", () => {});\n');
     assert.deepEqual(siblingTestCandidates('src/foo.ts'), ['src/foo.test.ts', 'src/foo.spec.ts']);
     assert.deepEqual(relatedTestPaths(repo, ['foo.ts', 'test/unit.cjs']), ['foo.test.ts', 'test/unit.cjs']);
+  });
+
+  it('caps related-test discovery instead of probing an unbounded changed-path list', () => {
+    const repo = mkdtempSync(join(tmpdir(), 'aie-digest-cap-'));
+    const paths = Array.from({ length: RELATED_TEST_PATH_LIMIT + 25 }, (_, index) => `test/case-${index}.cjs`);
+    const related = relatedTestPaths(repo, paths);
+    assert.equal(related.length, RELATED_TEST_PATH_LIMIT);
+    assert.deepEqual(related, paths.slice(0, RELATED_TEST_PATH_LIMIT));
   });
 
   it('builds a hash-audited digest with provenance and omits raw PR notes', () => {

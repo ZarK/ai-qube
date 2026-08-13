@@ -75,6 +75,8 @@ export interface ReviewHeadDigestInput {
 const REQUIREMENT_HEADING = /requirement|acceptance|context|goal|scope|criteria/i;
 const TEST_PATH = /(^|\/)(?:test|tests|__tests__)\//i;
 const TEST_FILE = /\.(?:test|spec)\.[^.]+$/i;
+export const RELATED_TEST_PATH_LIMIT = 40;
+export const DIGEST_CHANGED_PATH_LIMIT = 80;
 
 function sha256Text(value: string): string {
   return createHash('sha256').update(value).digest('hex');
@@ -126,13 +128,16 @@ export function siblingTestCandidates(path: string): string[] {
 export function relatedTestPaths(repoRoot: string, changedPaths: readonly string[]): string[] {
   const related = new Set<string>();
   for (const path of changedPaths) {
+    if (related.size >= RELATED_TEST_PATH_LIMIT) break;
     const normalized = path.replace(/\\/g, '/');
     if (isReviewTestPath(normalized)) related.add(normalized);
+    if (related.size >= RELATED_TEST_PATH_LIMIT) break;
     for (const candidate of siblingTestCandidates(normalized)) {
+      if (related.size >= RELATED_TEST_PATH_LIMIT) break;
       if (existsSync(join(repoRoot, candidate))) related.add(candidate);
     }
   }
-  return [...related];
+  return [...related].slice(0, RELATED_TEST_PATH_LIMIT);
 }
 
 function safeSegment(value: string): string {
@@ -185,7 +190,7 @@ export function buildReviewHeadDigest(input: ReviewHeadDigestInput): ReviewHeadD
     }
   }
 
-  const files = input.changedPaths.map(path => path.replace(/\\/g, '/'));
+  const files = input.changedPaths.map(path => path.replace(/\\/g, '/')).slice(0, DIGEST_CHANGED_PATH_LIMIT);
   const layoutStatus: ReviewHeadDigestFreshness = input.layout ? 'current' : 'unavailable';
   const changedPathMap = {
     files,
