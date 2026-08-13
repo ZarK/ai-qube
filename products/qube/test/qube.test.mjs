@@ -545,6 +545,17 @@ describe("qube composer CLI", () => {
     assert.deepEqual(JSON.parse(second.stdout).installPlan.commands, []);
   });
 
+  it("does not treat a version-only config as a configured workspace", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-version-only-"));
+    writeConfiguredRepo(root);
+    writeFileSync(path.join(root, ".qube", "aie", "config.json"), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+    const result = runCli(["install", "--yes", "--dry-run", "--json", "--host", "codex", "--work-provider", "github", "--ci-provider", "github"], { cwd: root });
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.installPlan.steps.find(step => step.stage === "workspace-init").status, "missing");
+    assert.ok(parsed.installPlan.commands.some(step => step.stage === "workspace-init"));
+  });
+
   it("plans workspace init when existing config does not match the selected providers", () => {
     const root = mkdtempSync(path.join(tmpdir(), "qube-install-provider-mismatch-"));
     writeConfiguredRepo(root);

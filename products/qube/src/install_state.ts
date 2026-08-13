@@ -204,6 +204,9 @@ function probeWorkspaceInit(cwd: string, selections: InstallStateSelections): In
   const providers = isRecord(parsed.providers) ? parsed.providers : null;
   const workKind = providers && isRecord(providers.work) && typeof providers.work.kind === "string" ? providers.work.kind : null;
   const ciKind = providers && isRecord(providers.ci) && typeof providers.ci.kind === "string" ? providers.ci.kind : workKind;
+  if (!workKind) {
+    return { stage: "workspace-init", status: "missing", reason: ".qube/aie/config.json does not name a work provider." };
+  }
   if (workKind && !selections.workProviders.includes(workKind)) {
     return { stage: "workspace-init", status: "missing", reason: `Workspace work provider is ${workKind}, not one of the selected providers.` };
   }
