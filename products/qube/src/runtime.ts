@@ -4590,6 +4590,17 @@ function collectInstallMismatches(selections: InstallSelections, environment: Cl
   return Object.freeze(mismatches);
 }
 
+function isVerificationError(payload: unknown): boolean {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return true;
+  }
+  const record = payload as Record<string, unknown>;
+  if (typeof record.error === "string" && record.command === undefined) {
+    return true;
+  }
+  return record.ok === false && record.command === "components";
+}
+
 function doctorFindings(payload: unknown): readonly string[] {
   if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
     return Object.freeze(["Doctor did not return a JSON object."]);
@@ -4831,7 +4842,10 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
 
   const verification = await collectApplyVerification(selections, environment);
   const failedStep = executed.some(step => step.status === "failed");
-  const exitCode = failedStep || verification.mismatches.length > 0 ? 1 : 0;
+  const verificationFailed = verification.mismatches.length > 0
+    || isVerificationError(verification.components)
+    || isVerificationError(verification.doctor);
+  const exitCode = failedStep || verificationFailed ? 1 : 0;
   const appliedPlan: InstallPlan = { ...plan, mode: "apply", dryRun: false };
   const apply: InstallApplyReport = {
     confirmed: true,
@@ -4844,10 +4858,12 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
   if (json) {
     return {
       exitCode,
-      json: {
+      jsonStdout: `${JSON.stringify({
+        ok: exitCode === 0,
+        command: "install",
         installPlan: appliedPlan,
         apply
-      }
+      })}\n`
     };
   }
   return {

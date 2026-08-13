@@ -1744,8 +1744,9 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       "--migration",
       "none"
     ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SKIP_QUBE_BIN: "1" } });
-    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
     const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
     assert.equal(parsed.apply.components.error, "Cannot find qube to run components --json after apply.");
   });
 
