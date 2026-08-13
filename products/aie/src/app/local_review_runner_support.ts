@@ -394,6 +394,8 @@ export async function evaluateCarryForwardDecision(input: {
   expectedCommandSuppliedIdentity?: string;
   expectedAdapter: 'local-host' | 'local-command';
   requiredCommand: string | null;
+  expectedModelTier?: ReviewModelTierId;
+  expectedHost?: string | null;
 }): Promise<{ source: CarryForwardSource | null; priorApproved: boolean; deltaComputed: boolean; deltaPaths: readonly string[] | null }> {
   const source = await findCarryForwardSource(input);
   if (source) return { source, priorApproved: true, deltaComputed: true, deltaPaths: [] };
@@ -451,6 +453,8 @@ export async function findCarryForwardSource(input: {
   expectedCommandSuppliedIdentity?: string;
   expectedAdapter: 'local-host' | 'local-command';
   requiredCommand: string | null;
+  expectedModelTier?: ReviewModelTierId;
+  expectedHost?: string | null;
 }): Promise<CarryForwardSource | null> {
   const expectedCommandIdentity = input.expectedCommandSuppliedIdentity ?? riskCardCommandIdentity([]);
   const prDirectory = join(input.repoRoot, '.qube', 'aie', 'reviews', String(input.issueNumber), String(input.prNumber));
@@ -478,6 +482,8 @@ export async function findCarryForwardSource(input: {
       const priorHeadSha = typeof parsed.headSha === 'string' ? parsed.headSha.trim() : '';
       if (priorHeadSha === '' || priorHeadSha === input.headSha) continue;
       if (!isRecord(parsed.runnerProvenance)) continue;
+      if (input.expectedModelTier && parsed.modelTier !== undefined && parsed.modelTier !== input.expectedModelTier) continue;
+      if (input.expectedHost && parsed.runnerProvenance.host !== input.expectedHost) continue;
       if (!Array.isArray(parsed.promptStack) || builtinFragmentDigest(parsed.promptStack.filter(isRecord)) !== input.expectedFragmentDigest) continue;
       if (priorRiskCardCommandIdentity(parsed.promptStack) !== expectedCommandIdentity) continue;
       const provenance = parsed.runnerProvenance;
@@ -500,7 +506,7 @@ export async function findCarryForwardSource(input: {
   return null;
 }
 
-export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, source: CarryForwardSource): string | null {
+export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, source: CarryForwardSource, modelTier?: ReviewModelTierId): string | null {
   const priorPath = laneEvidencePath(repoRoot, issueNumber, prNumber, source.fromHeadSha, lane);
   try {
     const prior: unknown = JSON.parse(readFileSync(priorPath, 'utf8'));
@@ -514,6 +520,7 @@ export function writeCarriedForwardLane(repoRoot: string, issueNumber: number, p
       preconditions: [...(Array.isArray(prior.preconditions) ? prior.preconditions.filter((item): item is string => typeof item === 'string') : []), carriedNote],
       carriedForward: { fromHeadSha: source.fromHeadSha, priorRunId: source.priorRunId, deltaSummary: source.deltaSummary },
       recordedAt: new Date().toISOString(),
+      ...(modelTier ? { modelTier } : {}),
     };
     Reflect.deleteProperty(body, 'usage');
     const path = laneEvidencePath(repoRoot, issueNumber, prNumber, headSha, lane);
@@ -908,7 +915,7 @@ export function promptStack(
 export interface LocalReviewSpawnContract {
   agentType: string;
   forkContext: false;
-  modelTier: 'review' | 'economy';
+  modelTier: 'review' | 'economy' | 'synthesis';
   model: string | null;
   effort: string | null;
   tierSubstitution: string | null;
@@ -978,7 +985,7 @@ export function buildLocalReviewSpawnContract(input: {
   promptStackHash: string;
   promptText: string;
   publishCommand: string;
-  modelTier?: 'review' | 'economy';
+  modelTier?: 'review' | 'economy' | 'synthesis';
   tierResolution?: ReviewModelTierResolution;
 }): LocalReviewSpawnContract {
   return {

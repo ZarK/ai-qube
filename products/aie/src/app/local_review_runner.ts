@@ -301,7 +301,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
-    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, modelTier: plannedTier === 'synthesis' ? 'review' : plannedTier, tierResolution })
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, modelTier: plannedTier, tierResolution })
     : null;
   return {
     issueNumber,
@@ -372,6 +372,8 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
     expectedCommandSuppliedIdentity: riskCardCommandIdentity(riskCardFragments),
     expectedAdapter: runner,
     requiredCommand: command,
+    expectedModelTier: plannedLaneModelTier(config, lane),
+    expectedHost: runner === 'local-host' ? (resolveModelReviewPlan(config, lane)?.host ?? 'codex') : null,
   });
   if (decision.source) {
     deltaTriage.push({
@@ -396,7 +398,7 @@ async function carryForwardLaneRun(config: Config, input: LocalReviewRunnerInput
   if (input.dryRun) {
     return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'skipped', path, `Carry-forward planned from approved review at ${source.fromHeadSha}; the PR gate records carried evidence without spawning a reviewer (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedTier), evidenceSource: 'local' };
   }
-  const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source);
+  const writtenPath = writeCarriedForwardLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, source, plannedTier);
   if (!writtenPath) return null;
   written.push(writtenPath);
   return { ...laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, `Carried forward from approved review at ${source.fromHeadSha} (${source.deltaSummary}).`, null, cliPrefix, contextLines, false, linkedIssueNumbers, [path], undefined, riskCardFragments, null, true, plannedTier), evidenceSource: 'local' };
