@@ -62,14 +62,23 @@ describe('init service', () => {
     const planned = await buildInitPlan({ target: '.', tool: 'grok-build', dryRun: true, force: false, cwd: repo });
     assert.equal(planned.ok, true);
     assert.deepEqual(planned.selectedTools, ['grok-build']);
-    assert.deepEqual(planned.actions.map(action => action.path), [join('.qube', 'aie', 'config.json'), 'AGENTS.md']);
+    assert.deepEqual(planned.actions.map(action => action.path), [
+      join('.qube', 'aie', 'config.json'),
+      'AGENTS.md',
+      '.grok/commands/make-it-so.md',
+      '.grok/skills/make-it-so/SKILL.md',
+    ]);
 
     const result = await runInit({ target: '.', tool: 'grok-build', dryRun: false, force: false, cwd: repo });
     assert.equal(result.ok, true);
     const agents = readFileSync(join(repo, 'AGENTS.md'), 'utf8');
     assert.match(agents, /Grok Build:/);
     assert.match(agents, /Do not invent a Grok todo tool/);
+    assert.match(agents, /\.grok\/commands\/make-it-so\.md/);
+    assert.match(agents, /\.grok\/skills\/make-it-so\/SKILL.md/);
     assert.doesNotMatch(agents, /\.codex\//);
+    assert.equal(existsSync(join(repo, '.grok', 'commands', 'make-it-so.md')), true);
+    assert.equal(existsSync(join(repo, '.grok', 'skills', 'make-it-so', 'SKILL.md')), true);
     assert.equal(existsSync(join(repo, '.codex')), false);
     assert.equal(existsSync(join(repo, '.claude')), false);
     assert.equal(existsSync(join(repo, 'CLAUDE.md')), false);
@@ -1044,7 +1053,11 @@ describe('init service', () => {
     assert.ok(opencode);
     assert.ok(codex);
     assert.ok(claude);
-    assert.ok(profiles.find(profile => profile.id === 'grok-build'));
+    const grok = profiles.find(profile => profile.id === 'grok-build');
+    assert.ok(grok);
+    assert.equal(grok.supportsProjectCommands, true);
+    assert.ok(grok.commandTargets.some(target => target.path === pathPosix.join('.grok', 'commands', 'make-it-so.md')));
+    assert.ok(grok.commandTargets.some(target => target.path === pathPosix.join('.grok', 'skills', 'make-it-so', 'SKILL.md')));
     assert.equal(opencode.supportsProjectCommands, true);
     assert.deepEqual(opencode.commandTargets.map(target => target.path), [pathPosix.join('.opencode', 'commands', 'make-it-so.md'), pathPosix.join('.opencode', 'commands', 'makeitso.md'), pathPosix.join('.opencode', 'agent', 'qube-review-focus.md'), pathPosix.join('.opencode', 'agent', 'qube-review-explorer.md'), pathPosix.join('.opencode', 'agent', 'qube-review-digest.md'), pathPosix.join('.opencode', 'agent', 'qube-review-librarian.md')]);
     assert.equal(codex.supportsProjectCommands, true);

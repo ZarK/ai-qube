@@ -167,6 +167,13 @@ function opencodeAssets(): readonly ToolkitAsset[] {
 function grokBuildAssets(): readonly ToolkitAsset[] {
   return Object.freeze([
     asset("grok-instructions", "instruction", "aie", "Always-loaded Grok Build instructions.", { path: "AGENTS.md" }),
+    asset("grok-make-it-so", "command", "aie", "Grok Build make-it-so project command.", { path: path.posix.join(".grok", "commands", "make-it-so.md") }),
+    asset("grok-make-it-so-skill", "skill", "aie", "Grok Build make-it-so skill.", { path: path.posix.join(".grok", "skills", "make-it-so", "SKILL.md") }),
+    asset("grok-review-focus", "subagent", "aie", "Grok Build review-focus subagent.", { path: path.posix.join(".grok", "agents", "qube-review-focus.md"), required: false }),
+    asset("grok-review-explorer", "subagent", "aie", "Grok Build review-explorer subagent.", { path: path.posix.join(".grok", "agents", "qube-review-explorer.md"), required: false }),
+    asset("grok-review-digest", "subagent", "aie", "Grok Build review-digest subagent.", { path: path.posix.join(".grok", "agents", "qube-review-digest.md"), required: false }),
+    asset("grok-review-librarian", "subagent", "aie", "Grok Build review-librarian subagent.", { path: path.posix.join(".grok", "agents", "qube-review-librarian.md"), required: false }),
+    asset("grok-stop-hook", "hook", "aiu", "Grok Build AI Umpire Stop hook.", { path: path.posix.join(".grok", "hooks", "ai-umpire.json") }),
   ]);
 }
 

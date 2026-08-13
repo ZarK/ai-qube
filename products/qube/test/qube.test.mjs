@@ -2637,6 +2637,15 @@ describe("host toolkit manifests", () => {
       writeFileSync(path.join(cwd, ".claude", "skills", "make-it-so", "SKILL.md"), "make it so\n");
       writeFileSync(path.join(cwd, ".claude", "settings.json"), "{}\n");
     }
+    if (host === "grok-build") {
+      writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
+      mkdirSync(path.join(cwd, ".grok", "commands"), { recursive: true });
+      mkdirSync(path.join(cwd, ".grok", "skills", "make-it-so"), { recursive: true });
+      mkdirSync(path.join(cwd, ".grok", "hooks"), { recursive: true });
+      writeFileSync(path.join(cwd, ".grok", "commands", "make-it-so.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".grok", "skills", "make-it-so", "SKILL.md"), "make it so\n");
+      writeFileSync(path.join(cwd, ".grok", "hooks", "ai-umpire.json"), "{}\n");
+    }
     if (host === "codex") {
       writeFileSync(path.join(cwd, "AGENTS.md"), "instructions\n");
       mkdirSync(path.join(cwd, ".codex", "prompts"), { recursive: true });
@@ -2702,6 +2711,62 @@ describe("host toolkit manifests", () => {
       "plugins/ai-umpire/skills/ai-umpire/SKILL.md",
     ]);
     assert.ok(!codexPaths.some((item) => item.includes(".claude")));
+  });
+
+  it("plans Grok Build instruction, command, and skill assets and reports completeness", () => {
+    const grok = composeHostToolkitManifests(["grok-build"], { workProviders: ["github"], mcpOptIn: false });
+    const grokRequired = grok.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path);
+    assert.deepEqual(grokRequired, [
+      "AGENTS.md",
+      ".grok/commands/make-it-so.md",
+      ".grok/skills/make-it-so/SKILL.md",
+      ".grok/hooks/ai-umpire.json",
+    ]);
+    assert.ok(grok.manifests[0].assets.some((asset) => asset.kind === "subagent" && asset.required === false));
+
+    const packageRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-pkg-"));
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-cwd-"));
+    createJsonEnvelopeShim(packageRoot, "aie", { ok: true, command: "init", actions: [] });
+    createJsonEnvelopeShim(packageRoot, "aiu", { ok: true, command: "init" });
+    const planned = runCli([
+      "init", ".", "--host", "grok-build", "--yes", "--dry-run", "--json",
+    ], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: packageRoot } });
+    assert.equal(planned.status, 0, planned.stderr);
+    const parsed = JSON.parse(planned.stdout);
+    assert.deepEqual(
+      parsed.hosts.manifests[0].assets.filter((asset) => asset.required).map((asset) => asset.path),
+      grokRequired,
+    );
+    assert.equal(parsed.selections.mcp, false);
+    for (const mcpPath of PROVIDER_MCP_CONFIG_PATHS) {
+      assert.equal(existsSync(path.join(cwd, ...mcpPath.split("/"))), false);
+    }
+
+    const completeRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-complete-"));
+    writeRequiredAssets(completeRoot, "grok-build");
+    writeInitRecord(completeRoot, createInitRecord({
+      hosts: ["grok-build"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const complete = probeHostToolkits({ cwd: completeRoot, env: { PATH: "" }, offline: true });
+    assert.equal(complete.hosts[0].status, "complete");
+    assert.equal(complete.hosts[0].missing.length, 0);
+
+    const missingRoot = mkdtempSync(path.join(tmpdir(), "qube-toolkit-grok-missing-"));
+    writeFileSync(path.join(missingRoot, "AGENTS.md"), "instructions\n");
+    writeInitRecord(missingRoot, createInitRecord({
+      hosts: ["grok-build"],
+      workProviders: ["github"],
+      ciProviders: ["github"],
+      mcpOptIn: false,
+    }));
+    const missing = probeHostToolkits({ cwd: missingRoot, env: { PATH: "" }, offline: true });
+    assert.equal(missing.hosts[0].status, "missing");
+    assert.ok(missing.hosts[0].missing.includes(".grok/commands/make-it-so.md"));
+    assert.ok(!existsSync(path.join(completeRoot, ".codex")));
+    assert.ok(!existsSync(path.join(completeRoot, ".claude", "commands")));
   });
 
   it("does not write provider MCP config without an explicit --mcp opt-in", () => {
