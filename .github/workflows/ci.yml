@@ -76,6 +76,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
 
+      - name: Check publishable package manifests
+        run: pnpm run verify:manifests
+
       - name: Build core packages
         run: |
           pnpm --filter @tjalve/qube-core run build

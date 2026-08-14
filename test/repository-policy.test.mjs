@@ -53,6 +53,12 @@ describe("repository policy", () => {
     assert.match(workspace, /- undici@6\.27\.0/m);
     assert.match(qubePackage.scripts.prepack, /resolve-publish-dependencies\.mjs/);
     assert.match(qubePackage.scripts.prepack, /check-publish-manifest\.mjs/);
+    const rootPackage = JSON.parse(read("package.json"));
+    const workflow = read(".github/workflows/ci.yml");
+    assert.match(rootPackage.scripts["verify:manifests"], /check-strict-package-json\.mjs/);
+    assert.match(rootPackage.scripts.verify, /verify:manifests/);
+    assert.match(qubePackage.scripts.verify, /check-strict-package-json\.mjs/);
+    assert.match(workflow, /pnpm run verify:manifests/);
     assert.match(qubePackage.scripts.postpack, /restore-publish-dependencies\.mjs/);
   });
 
