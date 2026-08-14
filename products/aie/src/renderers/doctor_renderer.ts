@@ -18,14 +18,14 @@ function pushInstructionAndGateState(lines: string[], diagnostics: DoctorDiagnos
   lines.push(`Migration readiness: state=${diagnostics.migrationReadiness.legacyState}, detected=${diagnostics.migrationReadiness.detectedPaths}, categories=${diagnostics.migrationReadiness.detectedCategories.join(', ') || 'none'}, cleanup=${diagnostics.migrationReadiness.cleanupStatus}, conflicts=${diagnostics.migrationReadiness.conflicts}`);
   lines.push(`Compatibility wrappers: installed=${diagnostics.migrationReadiness.wrapperState.installed}, stale=${diagnostics.migrationReadiness.wrapperState.stale}`);
   lines.push(`Remaining legacy references: ${diagnostics.migrationReadiness.remainingLegacyReferences.count}`);
-  lines.push(`Manual UI audit: ${readiness.audit.manualUiAudit ? readiness.audit.readiness : 'disabled'}; agent-browser=${readiness.audit.agentBrowser.available ? 'available' : 'missing'}; screenshot upload=${readiness.audit.screenshotUpload}`);
+  lines.push(`Manual UI audit: ${readiness.audit.manualUiAudit ? readiness.audit.readiness : 'disabled'}; agent-browser=${readiness.audit.agentBrowser.state}; screenshot upload=${readiness.audit.screenshotUpload}`);
   lines.push(`Review-agent gate: reviewers=${readiness.reviewAgent.reviewers.join(', ')}, fallback=${readiness.reviewAgent.fallbackPromptAvailable ? 'available' : 'missing'}, external-services=${readiness.reviewAgent.externalServices.length}`);
   lines.push(`PR review gate: ${readiness.prReview.readiness}; reviewers=${readiness.prReview.reviewers.length}; wait=${readiness.prReview.reviewWaitMinutes} minutes; gh=${readiness.prReview.ghAuthenticated ? 'authenticated' : 'not authenticated'}`);
   lines.push(`Review preflight: ${readiness.reviewPreflight.readiness}; disk=${readiness.reviewPreflight.checks.disk.readiness}; dist=${readiness.reviewPreflight.checks.dist.readiness}; loose-objects=${readiness.reviewPreflight.checks.gitObjects.readiness}; gh-review-auth=${readiness.reviewPreflight.checks.githubReviewAuth.readiness}; route-probes=${readiness.reviewPreflight.checks.routeProbes.readiness}`);
   for (const route of readiness.reviewPreflight.checks.routeProbes.routes) {
     lines.push(`Review route probe: host=${route.host}, model=${route.model ?? 'host-default'}, status=${route.status}${route.version ? `, version=${route.version}` : ''}${route.status === 'blocked' && route.nextAction ? `; ${route.nextAction}` : ''}`);
   }
-  lines.push(`Quality Control gate: ${readiness.aiq.enabled ? readiness.aiq.readiness : 'disabled'}; aiq=${readiness.aiq.tool.available ? 'available' : 'missing'}`);
+  lines.push(`Quality Control gate: ${readiness.aiq.enabled ? readiness.aiq.readiness : 'disabled'}; aiq=${readiness.aiq.tool.state}`);
   lines.push(`Supply-chain gates: policy=${readiness.supplyChain.readiness}, sensitive=${readiness.supplyChain.supplyChainSensitiveGates.length}, lifecycle-scripts=${readiness.supplyChain.disableLifecycleScripts ? 'disabled' : 'not disabled'}`);
   lines.push(`External services: ${readiness.externalServices.length > 0 ? readiness.externalServices.join(', ') : 'none configured'}`);
 }

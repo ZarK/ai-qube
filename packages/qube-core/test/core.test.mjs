@@ -30,6 +30,12 @@ describe("qube core contracts", () => {
     assert.equal(manifest.publishConfig?.registry, "https://registry.npmjs.org/");
   });
 
+  it("exports a shared executable resolver", () => {
+    assert.equal(typeof core.resolveExecutable, "function");
+    assert.equal(typeof core.probeExecutable, "function");
+    assert.equal(typeof core.executableExistsOnPath, "function");
+  });
+
   it("keeps product contracts standalone and provider-neutral", () => {
     assert.deepEqual(qubeProductContracts.map((product) => product.id), [
       "bootstrap",

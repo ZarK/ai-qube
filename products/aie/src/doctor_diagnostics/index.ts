@@ -1,6 +1,6 @@
-import { execFileSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
+import { probeExecutable, type ResolveExecutableOptions } from '@tjalve/qube-core';
 import { suggestBranchName, validateBranchPattern } from '../branch.js';
 import type { Config, GateKind, GateStage } from '../config/index.js';
 import type { BaseRefStatus, InstructionStatus } from '../repo/index.js';
@@ -13,8 +13,8 @@ import { requiredLocalReviewLanes } from '../local_review_evidence.js';
 import { buildDescriptorSummary } from '../agent_descriptors.js';
 import { probeCodexReviewCapabilitySync, probeOpenCodeReviewCapabilitySync } from '../app/local_review_runner.js';
 import { buildReviewPreflightDiagnostics } from './review_preflight.js';
-export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
-import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
+export type { DoctorDiagnostics, DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, DoctorToolLookupState, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
+import type { DoctorOkInputs, DoctorReadinessStatus, DoctorToolAvailability, DoctorToolLookupState, GateReadinessDiagnostics, InstallCheck, InstructionPolicyDiagnostics, LifecycleDiagnostics, ProviderHealthDiagnostics, RepositoryPolicyDiagnostics } from './types.js';
 export { buildReviewPreflightDiagnostics } from './review_preflight.js';
 export { buildWorkflowReadiness, buildReviewReadiness, selectedAgentHosts } from './workflow_readiness.js';
 export type { WorkflowReadinessDiagnostics, WorkflowReadinessInput, WorkflowReviewReadiness, WorkflowReviewSourceReadiness, WorkflowReviewState, WorkflowStage, WorkflowStageId, WorkflowStageStatus, WorkflowEvidenceState, WorkflowDirtyState, WorkflowShippingReadiness } from './workflow_readiness.js';
@@ -168,19 +168,32 @@ export function buildRepositoryPolicyDiagnostics(config: Config): RepositoryPoli
   };
 }
 
-function toolAvailability(command: string, required: boolean): DoctorToolAvailability {
-  let available = false;
-  try {
-    execFileSync('which', [command], { stdio: 'ignore' });
-    available = true;
-  } catch {
-    available = false;
-  }
+function toolAvailability(command: string, required: boolean, lookup: ResolveExecutableOptions = {}): DoctorToolAvailability {
+  const probed = probeExecutable(command, { ...lookup, timeoutMs: 4_000 });
+  const state: DoctorToolLookupState = probed.probeStatus === 'ok'
+    ? 'available'
+    : probed.status === 'found'
+      ? 'present-but-failing'
+      : probed.status === 'unresolvable'
+        ? 'unresolvable'
+        : 'missing';
+  const available = state === 'available';
+  const reasonCode = state === 'present-but-failing' ? 'present-but-failing' : probed.reasonCode;
+  const nextAction = available || !required
+    ? null
+    : state === 'present-but-failing'
+      ? `${command} was found but its capability probe failed. Repair the install or update repository config before relying on this integration.`
+      : state === 'unresolvable'
+        ? `Command ${command} is not a valid executable name.`
+        : `Install ${command} or update repository config before relying on this integration.`;
   return {
     command,
     available,
     required,
-    nextAction: available || !required ? null : `Install ${command} or update repository config before relying on this integration.`,
+    state,
+    resolvedPath: probed.resolvedPath,
+    reasonCode,
+    nextAction,
   };
 }
 
@@ -207,7 +220,7 @@ function reviewerExternalService(name: string): string | null {
   return `custom-pr-reviewer:${redact(id)}`;
 }
 
-export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthenticated: boolean; evidenceRoot?: string } = { ghAuthenticated: false }): GateReadinessDiagnostics {
+export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthenticated: boolean; evidenceRoot?: string; env?: NodeJS.ProcessEnv; platform?: NodeJS.Platform; pathDelimiter?: string } = { ghAuthenticated: false }): GateReadinessDiagnostics {
   const gates = configuredGates(config);
   const gatePlan = buildGatePlan(config);
   const gateStatus = buildGateStatus(config, { evidenceRoot: options.evidenceRoot });
@@ -232,9 +245,10 @@ export function buildGateReadinessDiagnostics(config: Config, options: { ghAuthe
   const effectiveReviewProfile = localReviewShadow ? 'local-shadow' : (localReviewEnabled && config.reviewProfile === 'remote-compatible') ? 'local-standard' : config.reviewProfile;
   const localEvidenceRoot = '.qube/aie/reviews';
   const reviewPreflight = buildReviewPreflightDiagnostics(config, { repoRoot: options.evidenceRoot ?? process.cwd() });
-  const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit);
-  const fallbackBrowserAutomation = toolAvailability('playwright', false);
-  const aiqTool = toolAvailability('aiq', config.qualityControl);
+  const lookup = { env: options.env, platform: options.platform, pathDelimiter: options.pathDelimiter };
+  const agentBrowser = toolAvailability('agent-browser', config.manualUiAudit, lookup);
+  const fallbackBrowserAutomation = toolAvailability('playwright', false, lookup);
+  const aiqTool = toolAvailability('aiq', config.qualityControl, lookup);
   const aiqCommands = gatePlan.gates.filter(gate => gate.kind === 'aiq').map(gate => gate.command);
   const aiqConfigured = aiqCommands.length > 0;
   const aiqReadiness: DoctorReadinessStatus = !config.qualityControl

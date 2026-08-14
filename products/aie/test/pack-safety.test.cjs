@@ -1,5 +1,5 @@
 const assert = require('node:assert/strict');
-const { copyFileSync, cpSync, existsSync, mkdtempSync, readFileSync } = require('node:fs');
+const { copyFileSync, cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -46,6 +46,9 @@ describe('package publish surface safety', () => {
     assert.ok(pkg.files.includes('dist/'));
     cpSync(join(packageRoot, 'dist'), join(stagedRoot, 'dist'), { recursive: true });
     copyFileSync(join(packageRoot, 'package.json'), join(stagedRoot, 'package.json'));
+    const stagedCore = join(stagedRoot, 'node_modules', '@tjalve', 'qube-core');
+    mkdirSync(join(stagedRoot, 'node_modules', '@tjalve'), { recursive: true });
+    cpSync(join(packageRoot, '..', '..', 'packages', 'qube-core'), stagedCore, { recursive: true });
 
     const routedRuntime = await import(pathToFileURL(join(stagedRoot, 'dist', 'app', 'model_review_runner.js')).href);
     assert.equal(typeof routedRuntime.runModelReview, 'function');

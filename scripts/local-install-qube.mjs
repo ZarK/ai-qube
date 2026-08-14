@@ -17,6 +17,7 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { probeExecutable } from "../packages/qube-core/dist/index.js";
 
 export const COMPONENT_LINKS = Object.freeze([
   { id: "qube", command: "qube", packageDir: "products/qube", bin: "bin/run" },
@@ -446,21 +447,7 @@ function prefixCommandPath(binDir, command) {
   return names.map(name => path.join(binDir, name)).find(candidate => existsSync(candidate)) ?? null;
 }
 
-function verifyCommandOnPath(command, childPath, cwd, binDir) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  const located = spawnSync(locator, [command], {
-    cwd,
-    env: { ...process.env, PATH: childPath },
-    encoding: "utf8",
-    shell: false,
-    windowsHide: true,
-  });
-  if (located.status !== 0) {
-    throw Object.assign(new Error(`Fresh shell cannot resolve ${command} on PATH.`), {
-      reasonCode: "verify-failed",
-      command,
-    });
-  }
+function verifyCommandOnPath(command, childPath, binDir) {
   const shim = prefixCommandPath(binDir, command);
   if (!shim) {
     throw Object.assign(new Error(`Missing ${command} shim in the install prefix.`), {
@@ -468,20 +455,24 @@ function verifyCommandOnPath(command, childPath, cwd, binDir) {
       command,
     });
   }
-  const invoked = spawnSync(command, ["--help"], {
-    cwd,
+  const probe = probeExecutable(command, {
     env: { ...process.env, PATH: childPath },
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    timeout: 30_000,
-    windowsHide: true,
+    probeArgs: ["--help"],
+    timeoutMs: 30_000,
   });
-  if (invoked.status !== 0) {
-    throw Object.assign(
-      new Error((invoked.stderr ?? "").trim() || (invoked.stdout ?? "").trim() || `${command} --help failed in a fresh shell.`),
-      { reasonCode: "verify-failed", command }
-    );
+  if (probe.status !== "found" || probe.resolvedPath === null) {
+    throw Object.assign(new Error(`Fresh shell cannot resolve ${command} on PATH.`), {
+      reasonCode: "verify-failed",
+      command,
+    });
   }
+  if (probe.probeStatus !== "ok") {
+    throw Object.assign(new Error(`${command} --help failed in a fresh shell.`), {
+      reasonCode: "verify-failed",
+      command,
+    });
+  }
+  return probe.resolvedPath;
 }
 
 function verifyComponentVersions(repoRoot, envelope) {
@@ -569,11 +560,13 @@ function verifyFreshShell(prefix, repoRoot, qubeScriptPath, commands) {
   }
   parsed.componentVersions = verifyComponentVersions(repoRoot, parsed);
   const resolvedCommands = [];
+  const resolvedPaths = {};
   for (const command of commands) {
-    verifyCommandOnPath(command, childPath, cwd, binDir);
+    resolvedPaths[command] = verifyCommandOnPath(command, childPath, binDir);
     resolvedCommands.push(command);
   }
   parsed.resolvedCommands = resolvedCommands;
+  parsed.resolvedPaths = resolvedPaths;
   return parsed;
 }
 

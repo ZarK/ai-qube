@@ -246,8 +246,20 @@ class DoctorDiagnosticsBuilder {
   private addGateReadinessRecommendations(gateReadiness: ReturnType<typeof buildGateReadinessDiagnostics>, recommendations: string[]): void {
     if (gateReadiness.gates.invalidCommands.length > 0) recommendations.push(`Configured gates have invalid commands: ${gateReadiness.gates.invalidCommands.join(', ')}. Fix the selected Executor config before using gate readiness output.`);
     if (gateReadiness.gates.supplyChainSensitive > 0) recommendations.push(`Supply-chain-sensitive gates detected: ${gateReadiness.gates.supplyChainSensitiveGates.join(', ')}. Review canonical supply-chain guard evidence before running those commands.`);
-    if (gateReadiness.audit.readiness === 'needs-action') recommendations.push('Manual UI audit is enabled but agent-browser was not found on PATH. Install agent-browser or use fallback browser automation manually.');
-    if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') recommendations.push('Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.');
+    if (gateReadiness.audit.readiness === 'needs-action') {
+      recommendations.push(
+        gateReadiness.audit.agentBrowser.state === 'present-but-failing'
+          ? 'Manual UI audit is enabled but agent-browser failed its capability probe. Repair the install or use fallback browser automation manually.'
+          : 'Manual UI audit is enabled but agent-browser was not found on PATH. Install agent-browser or use fallback browser automation manually.',
+      );
+    }
+    if (gateReadiness.aiq.enabled && gateReadiness.aiq.readiness === 'missing') {
+      recommendations.push(
+        gateReadiness.aiq.tool.state === 'present-but-failing'
+          ? 'Quality Control is enabled but `aiq` failed its capability probe. Repair the install before relying on that gate.'
+          : 'Quality Control is enabled but aiq readiness is missing. Configure an aiq gate and ensure `aiq` is available before relying on that gate.',
+      );
+    }
     if (gateReadiness.prReview.readiness === 'missing') recommendations.push('PR review gates need authenticated GitHub CLI access. Run `gh auth login` before requesting or inspecting PR reviewers.');
     for (const nextAction of gateReadiness.reviewPreflight.nextActions) recommendations.push(`Review preflight: ${nextAction}`);
     if (gateReadiness.reviewAgent.localRunner.readiness === 'unavailable') recommendations.push('Local review-agent adapter is configured without a local runner. Record repository-scoped local evidence manually before relying on local review gates.');

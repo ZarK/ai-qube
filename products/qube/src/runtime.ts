@@ -14,7 +14,7 @@ import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, 
 import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "./model_routing_local.js";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
 import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
-import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
+import { qubeCommandSurfaceContracts, resolveExecutable } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
@@ -4233,13 +4233,14 @@ function resolveNodeScriptForCommand(commandPath: string): string | undefined {
 }
 
 function resolveCommandFromEntries(command: string, entries: readonly string[], environment: CliEnvironment): string | undefined {
-  for (const entry of entries) {
-    for (const name of commandNames(command, environment)) {
-      const candidate = path.join(entry, name);
-      if (isRegularFile(candidate)) return candidate;
-    }
-  }
-  return undefined;
+  const windows = process.platform === "win32" || String(environment.env.OS ?? "").toLowerCase().includes("windows");
+  const delimiter = windows ? ";" : ":";
+  const found = resolveExecutable(command, {
+    env: { ...environment.env, PATH: entries.filter(entry => entry.trim() !== "").join(delimiter) },
+    platform: windows ? "win32" : process.platform,
+    pathDelimiter: delimiter,
+  });
+  return found.resolvedPath ?? undefined;
 }
 
 function defaultEnvironment(): CliEnvironment {
@@ -5993,13 +5994,6 @@ function findNearestPackageJson(commandPath: string): string | undefined {
     if (next === current) return undefined;
     current = next;
   }
-}
-
-function commandNames(command: string, environment: CliEnvironment): readonly string[] {
-  if ((environment.env.OS ?? "").toLowerCase().includes("windows") || process.platform === "win32") {
-    return [`${command}.cmd`, `${command}.exe`, `${command}.bat`, command];
-  }
-  return [command];
 }
 
 function dispatchCommand(request: DispatchRequest): Promise<number> {
