@@ -28,10 +28,10 @@ function runName(context: Parameters<RuntimeCommandHandler>[0]): string {
 
 function readRunCommand(context: Parameters<RuntimeCommandHandler>[0]): string[] {
   const separatorIndex = context.argv.indexOf('--');
-  const tokens = separatorIndex >= 0
-    ? context.argv.slice(separatorIndex + 1)
-    : RUN_COMMAND_ARG_NAMES.map(name => stringArg(context, name)).filter((value): value is string => typeof value === 'string' && value.length > 0);
-  return tokens.filter(token => token.length > 0);
+  if (separatorIndex >= 0) {
+    return context.argv.slice(separatorIndex + 1);
+  }
+  return RUN_COMMAND_ARG_NAMES.map(name => stringArg(context, name)).filter((value): value is string => typeof value === 'string' && value.length > 0);
 }
 
 export const handleRunStart: RuntimeCommandHandler = async context => {

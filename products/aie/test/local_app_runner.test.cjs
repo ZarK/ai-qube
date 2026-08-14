@@ -209,6 +209,15 @@ describe('local app runner CLI', () => {
     assert.deepEqual(parsed.spawnPlan.args, parsed.commandLine.slice(1));
   });
 
+  it('forwards an empty application argument after --', () => {
+    const root = repo();
+    const result = binRun(['run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--', 'node', 'app.mjs', '', '--dev'], root);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(result.status, 0);
+    assert.deepEqual(parsed.commandLine, ['node', 'app.mjs', '', '--dev']);
+    assert.deepEqual(parsed.spawnPlan.args, ['app.mjs', '', '--dev']);
+  });
+
   it('still rejects unknown AIE flags before the command separator', () => {
     const root = repo();
     const result = binRun(['run', 'start', '--dev', '--', 'node', 'app.mjs'], root);
