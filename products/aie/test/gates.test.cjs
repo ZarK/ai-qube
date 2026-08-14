@@ -303,6 +303,17 @@ describe('focused gate tier', () => {
     { glob: 'packages/qube-cli/**', commands: ['pnpm --dir packages/qube-cli run test'] },
   ];
 
+  it('reads nested policy.gates.focusedSelectors when the top-level alias is empty', () => {
+    const config = getDefaults();
+    config.gates = definitions;
+    config.focusedSelectors = [];
+    config.policy.gates.focusedSelectors = selectors;
+    const plan = buildGatePlan(config, { round: 'fix', changedPaths: ['products/aie/src/gates/index.ts'] });
+    assert.equal(plan.tier, 'focused');
+    assert.equal(plan.tierReason, 'all-paths-matched');
+    assert.deepEqual(plan.selectedCommands, ['node --test products/aie/test/gates.test.cjs']);
+  });
+
   it('selects focused commands when every changed path matches a configured glob', () => {
     const config = getDefaults();
     config.gates = definitions;

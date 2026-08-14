@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'fs';
 import { join } from 'path';
-import { Config, GateConfig, GateKind, GateStage } from '../config/index.js';
+import { Config, type FocusedGateSelector, GateConfig, GateKind, GateStage } from '../config/index.js';
 import { isVerifiedGateEvidence, normalizeGateEvidence, type EvidenceSource, type EvidenceTrust, type GateEvidence, type GateEvidenceReasonCode, type GateResult } from '../core/gate_evidence.js';
 import type { JsonObject } from '../core/json_value.js';
 import { expandGateConfigs } from '../gate_config.js';
@@ -132,6 +132,12 @@ export function configuredGates(config: Config): GateConfig[] {
   return expandGateConfigs(config.gates, config.qualityGates, config.qualityControl);
 }
 
+function focusedSelectorsFromConfig(config: Config): FocusedGateSelector[] {
+  const topLevel = config.focusedSelectors ?? [];
+  const nested = config.policy?.gates.focusedSelectors ?? [];
+  return topLevel.length > 0 ? topLevel : nested;
+}
+
 function stageMatches(gate: GateConfig, stage: GateStage | null): boolean {
   return stage === null || gate.stage === stage || gate.stage === 'all';
 }
@@ -175,7 +181,7 @@ export function buildGatePlan(config: Config, options: {
   const selection = selectFocusedTier({
     round: options.round,
     changedPaths: options.changedPaths,
-    selectors: config.focusedSelectors ?? config.policy.gates.focusedSelectors ?? [],
+    selectors: focusedSelectorsFromConfig(config),
     fullCommands: gates.map(gate => gate.command),
   });
   const warnings: string[] = [];
