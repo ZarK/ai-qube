@@ -535,7 +535,10 @@ export async function runPrReviewPublishWithProvider(provider: ReviewForgeProvid
   if (!options.expectedLanes || options.expectedLanes.length === 0) {
     throw new Error('publish lane review failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the lane review.');
   }
-  if (provider.capabilities().publishLaneReview !== true) {
+  const declaredLanePublish = typeof provider.capabilities === 'function'
+    ? provider.capabilities().publishLaneReview
+    : undefined;
+  if (declaredLanePublish === false) {
     return {
       ok: true,
       command: 'pr review publish',

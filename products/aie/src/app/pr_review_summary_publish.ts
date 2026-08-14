@@ -145,8 +145,8 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   if (!options.expectedLanes || options.expectedLanes.length === 0) {
     throw new Error('publish round review summary failed. Likely cause: no expected lane set was provided. Next action: resolve the active review lanes for this change before publishing the round summary.');
   }
-  const declaredCapabilities = provider.capabilities();
-  if (!provider.publishRoundReviewSummary || declaredCapabilities.publishRoundReviewSummary !== true) {
+  const declaredCapabilities = typeof provider.capabilities === 'function' ? provider.capabilities() : null;
+  if ((declaredCapabilities && declaredCapabilities.publishRoundReviewSummary !== true) || !provider.publishRoundReviewSummary) {
     return {
       ok: true,
       command: 'pr review publish-summary',
