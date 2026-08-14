@@ -10,6 +10,7 @@ import { LANE_ARTIFACT_REQUIREMENT, type LocalReviewLaneId, type LocalReviewProf
 import { redact } from '../redact.js';
 import { normalizeExternalLane, type LaneEvidence } from './local_review_runner_support.js';
 import { getReviewHostAdapter, type ModelHostExecutable, type ReviewHostInvocationContext } from './review_host_adapters.js';
+import { buildDeltaPromptSection, type ReviewScopeSelection } from './review_delta_scope.js';
 
 export type { ModelHostExecutable } from './review_host_adapters.js';
 
@@ -70,6 +71,7 @@ export interface ModelReviewRunInput {
   promptText: string;
   promptStack: LaneEvidence['promptStack'];
   coverageAreas?: readonly string[];
+  reviewScope?: ReviewScopeSelection;
   routeSource?: 'configured' | 'fallback';
   resolveExecutable?: (host: RoutedReviewHostId) => Promise<ModelHostExecutable>;
   resolveHead?: (repoRoot: string) => Promise<string>;
@@ -173,8 +175,9 @@ export function buildModelReviewPrompt(input: ModelReviewRunInput): string {
   return [
     'You are an isolated read-only QUBE review lane runner.',
     `You have at most ${input.plan.maxTurns} turns. Batch read-only inspection, never create scratch files or use shell redirection, and reserve the final turn for the required JSON result.`,
-    'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority.',
+    'Do not read any path under .qube/aie/reviews/**. Prior-head lane evidence is not review input. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section.',
     reviewResultContract(input),
+    input.reviewScope ? buildDeltaPromptSection(input.reviewScope) : 'Inspect the full current-head diff for this lane.',
     '',
     '--- EXACT QUBE LANE PROMPT START ---',
     input.promptText,

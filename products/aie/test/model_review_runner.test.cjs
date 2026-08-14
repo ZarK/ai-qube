@@ -174,6 +174,7 @@ describe('model review runner', () => {
     assert.match(prompt, /a diff does not need to be perfect/);
     assert.match(prompt, /do not re-open the full review surface/);
     assert.match(prompt, /Do not read any path under \.qube\/aie\/reviews\/\*\*/);
+    assert.match(prompt, /Inspect the full current-head diff for this lane/);
     assert.match(prompt, /passed maps to approve/);
     assert.match(prompt, /keep blockers empty and severity below high/);
     assert.match(prompt, /progress snapshot and must report status "pending", recommendation "pending", severity "none"/);

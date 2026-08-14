@@ -193,6 +193,7 @@ export interface PrGateOptions {
   prNumber: number;
   dryRun?: boolean;
   includeLocalReviewPrompts?: boolean;
+  forceFullReview?: boolean;
   repoRoot?: string;
   exec?: PrGateExec;
   sleep?: (milliseconds: number) => Promise<void>;
@@ -905,6 +906,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
     exec: options.exec,
     contextLines: localReviewContextLines,
     includePrompts: options.includeLocalReviewPrompts === true,
+    forceFullReview: options.forceFullReview === true,
     changedPaths,
     riskCardIssueText,
     issueChecklists,

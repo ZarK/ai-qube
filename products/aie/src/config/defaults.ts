@@ -93,6 +93,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       requestText: '',
       carryForwardPublish: 'note',
       nitCap: 10,
+      deltaFullEvery: 3,
       models: { review: {}, economy: {}, synthesis: {} },
       route: null,
       failover: null,

@@ -965,7 +965,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
       localAgents: [...defaultValue.localAgents],
     };
   }
-  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'models', 'route', 'failover'], 'policy.reviews', errors);
+  rejectUnknownKeys(value, ['adapter', 'profile', 'severityThreshold', 'promptFragments', 'contextSources', 'lanes', 'sources', 'agents', 'localAgents', 'waitMinutes', 'concurrency', 'requestText', 'carryForwardPublish', 'nitCap', 'deltaFullEvery', 'models', 'route', 'failover'], 'policy.reviews', errors);
   return {
     adapter: readReviewAdapter(value.adapter, defaultValue.adapter, 'policy.reviews.adapter', errors),
     profile: readReviewProfile(value.profile, defaultValue.profile, 'policy.reviews.profile', errors),
@@ -981,6 +981,7 @@ function readReviews(value: unknown, defaultValue: ReviewConfig, errors: Validat
     requestText: readString(value, 'requestText', defaultValue.requestText, 'policy.reviews', errors, { allowEmpty: true }),
     carryForwardPublish: readCarryForwardPublish(value.carryForwardPublish, defaultValue.carryForwardPublish, 'policy.reviews.carryForwardPublish', errors),
     nitCap: readBoundedInteger(value, 'nitCap', defaultValue.nitCap, 1, Number.MAX_SAFE_INTEGER, 'policy.reviews', errors),
+    deltaFullEvery: readBoundedInteger(value, 'deltaFullEvery', defaultValue.deltaFullEvery, 1, Number.MAX_SAFE_INTEGER, 'policy.reviews', errors),
     models: readReviewModels(value.models, 'policy.reviews.models', errors),
     route: readReviewRoute(value.route, 'policy.reviews.route', errors),
     failover: readReviewFailover(value.failover, 'policy.reviews.failover', errors),

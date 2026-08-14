@@ -171,6 +171,7 @@ export interface ReviewConfig {
   requestText: string;
   carryForwardPublish: 'note' | 'none';
   nitCap: number;
+  deltaFullEvery: number;
   models: ReviewModelsPolicy;
   route: ReviewRoutePolicy | null;
   failover: ReviewFailoverPolicy | null;
