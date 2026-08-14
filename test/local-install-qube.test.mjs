@@ -69,6 +69,8 @@ describe("source-checkout QUBE install", () => {
         const row = first.components.components.find(item => item.command === command);
         assert.ok(row, command);
         assert.equal(row.packageVersion, "0.0.0", command);
+        const expectedName = process.platform === "win32" ? `${command}.cmd` : command;
+        assertPathEqual(first.components.resolvedPaths[command], path.join(prefix, "bin", expectedName));
       }
       assert.match(readTrackedStatus(fixture.root), /^$/);
       assert.equal(existsTarball(fixture.root), false);
@@ -83,6 +85,34 @@ describe("source-checkout QUBE install", () => {
       assert.match(readTrackedStatus(fixture.root), /^$/);
     } finally {
       await fixture.cleanup();
+    }
+  });
+
+  it("skips a non-executable PATH decoy when verifying installed commands", {
+    skip: process.platform === "win32",
+  }, async () => {
+    const fixture = await createFixture();
+    const decoyDir = await mkdtemp(path.join(os.tmpdir(), "qube-local-install-decoy-"));
+    const previousPath = process.env.PATH;
+    try {
+      writeFileSync(path.join(decoyDir, "qube"), "#!/bin/sh\nexit 0\n");
+      process.env.PATH = `${decoyDir}${path.delimiter}${previousPath}`;
+      const result = await runLocalQubeInstall({
+        repoRoot: fixture.root,
+        prefix: fixture.prefix,
+        skipBuild: true,
+        lockDir: fixture.lockDir,
+      });
+      assert.equal(result.ok, true, result.error);
+      assertPathEqual(result.components.resolvedPaths.qube, path.join(fixture.prefix, "bin", "qube"));
+      assert.notEqual(
+        path.normalize(result.components.resolvedPaths.qube).toLowerCase(),
+        path.normalize(path.join(decoyDir, "qube")).toLowerCase()
+      );
+    } finally {
+      process.env.PATH = previousPath;
+      await fixture.cleanup();
+      await rm(decoyDir, { recursive: true, force: true });
     }
   });
 
@@ -445,6 +475,10 @@ function readFileUtf8(filePath) {
 function existsTarball(root) {
   const dir = path.join(root, "products", "qube");
   return existsSync(dir) && readdirSync(dir).some(name => /^tjalve-.*\.tgz$/i.test(name));
+}
+
+function assertPathEqual(actual, expected) {
+  assert.equal(path.normalize(String(actual)).toLowerCase(), path.normalize(expected).toLowerCase());
 }
 
 function readTrackedStatus(root) {

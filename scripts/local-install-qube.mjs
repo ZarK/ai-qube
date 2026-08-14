@@ -11,13 +11,13 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
-  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { probeExecutable } from "../packages/qube-core/dist/index.js";
 
 export const COMPONENT_LINKS = Object.freeze([
   { id: "qube", command: "qube", packageDir: "products/qube", bin: "bin/run" },
@@ -447,38 +447,9 @@ function prefixCommandPath(binDir, command) {
   return names.map(name => path.join(binDir, name)).find(candidate => existsSync(candidate)) ?? null;
 }
 
-function resolveCommandOnPath(command, pathValue, env = process.env) {
-  const windows = process.platform === "win32";
-  const delimiter = windows ? ";" : ":";
-  const extensions = windows
-    ? (env.PATHEXT && env.PATHEXT.trim() !== "" ? env.PATHEXT : ".COM;.EXE;.BAT;.CMD")
-      .split(";")
-      .map(entry => entry.trim())
-      .filter(entry => entry.length > 0)
-    : [];
-  const currentExt = path.extname(command);
-  const names = !windows
-    ? [command]
-    : currentExt && extensions.some(extension => extension.toLowerCase() === currentExt.toLowerCase())
-      ? [command]
-      : [...extensions.map(extension => `${command}${extension}`), command];
-  for (const entry of pathValue.split(delimiter)) {
-    const directory = entry.trim();
-    if (directory.length === 0) continue;
-    for (const name of names) {
-      const candidate = path.join(directory, name);
-      try {
-        if (statSync(candidate).isFile()) return candidate;
-      } catch {}
-    }
-  }
-  return null;
-}
-
-function verifyCommandOnPath(command, childPath, cwd, binDir) {
-  const located = resolveCommandOnPath(command, childPath, process.env);
-  if (!located) {
-    throw Object.assign(new Error(`Fresh shell cannot resolve ${command} on PATH.`), {
+function verifyCommandOnPath(command, childPath, binDir) {
+  if (typeof binDir !== "string" || typeof childPath !== "string") {
+    throw Object.assign(new Error(`verifyCommandOnPath received invalid paths for ${command}.`), {
       reasonCode: "verify-failed",
       command,
     });
@@ -490,20 +461,24 @@ function verifyCommandOnPath(command, childPath, cwd, binDir) {
       command,
     });
   }
-  const invoked = spawnSync(command, ["--help"], {
-    cwd,
+  const probe = probeExecutable(command, {
     env: { ...process.env, PATH: childPath },
-    encoding: "utf8",
-    shell: process.platform === "win32",
-    timeout: 30_000,
-    windowsHide: true,
+    probeArgs: ["--help"],
+    timeoutMs: 30_000,
   });
-  if (invoked.status !== 0) {
-    throw Object.assign(
-      new Error((invoked.stderr ?? "").trim() || (invoked.stdout ?? "").trim() || `${command} --help failed in a fresh shell.`),
-      { reasonCode: "verify-failed", command }
-    );
+  if (probe.status !== "found" || probe.resolvedPath === null) {
+    throw Object.assign(new Error(`Fresh shell cannot resolve ${command} on PATH.`), {
+      reasonCode: "verify-failed",
+      command,
+    });
   }
+  if (probe.probeStatus !== "ok") {
+    throw Object.assign(new Error(`${command} --help failed in a fresh shell.`), {
+      reasonCode: "verify-failed",
+      command,
+    });
+  }
+  return probe.resolvedPath;
 }
 
 function verifyComponentVersions(repoRoot, envelope) {
@@ -591,11 +566,13 @@ function verifyFreshShell(prefix, repoRoot, qubeScriptPath, commands) {
   }
   parsed.componentVersions = verifyComponentVersions(repoRoot, parsed);
   const resolvedCommands = [];
+  const resolvedPaths = {};
   for (const command of commands) {
-    verifyCommandOnPath(command, childPath, cwd, binDir);
+    resolvedPaths[command] = verifyCommandOnPath(command, childPath, binDir);
     resolvedCommands.push(command);
   }
   parsed.resolvedCommands = resolvedCommands;
+  parsed.resolvedPaths = resolvedPaths;
   return parsed;
 }
 
