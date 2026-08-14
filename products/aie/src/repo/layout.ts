@@ -213,7 +213,7 @@ async function inspectRepoSignals(options: RepoInspectOptions): Promise<{
   return {
     root,
     remotes: remoteResult.exitCode === 0 ? parseRemoteLines(remoteResult.stdout) : [],
-    generatedPathSignals: root && existsSync(join(root, 'dist')) && containedProjectPath(root, join(root, 'dist')) === 'dist' ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
+    generatedPathSignals: root && isContainedDirectory(root, 'dist') ? [{ path: 'dist', reason: 'Generated package build output path exists.' }] : [],
     warnings,
   };
 }
@@ -1364,10 +1364,7 @@ function detectCiHints(root: string | null): RepoCiHint[] {
 
 function pathSignals(root: string | null, names: readonly string[], reason: string): RepoPathSignal[] {
   if (!root) return [];
-  return names.filter(path => {
-    const candidate = join(root, path);
-    return existsSync(candidate) && containedProjectPath(root, candidate) === path;
-  }).map(path => ({ path, reason }));
+  return names.filter(path => isContainedDirectory(root, path)).map(path => ({ path, reason }));
 }
 
 function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoProject[] {

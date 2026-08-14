@@ -1854,6 +1854,18 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.kind, 'generated-vendor-heavy');
   });
 
+  it('does not classify a vendor file without a vendor directory as generated-vendor-heavy', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'fixture-vendor-file', private: true }, null, 2));
+    writeFileSync(join(repo, 'vendor'), 'not a directory\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.notEqual(result.kind, 'generated-vendor-heavy');
+    assert.equal(result.vendorPaths.some(signal => signal.path === 'vendor'), false);
+  });
+
   it('does not classify a lockfile-only root as generated-vendor-heavy', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'package-lock.json'), '{}\n');
