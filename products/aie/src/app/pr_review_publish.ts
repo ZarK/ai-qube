@@ -3,7 +3,7 @@ import { lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import type { ReviewFinding } from '@tjalve/qube-core';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, LANE_ARTIFACT_REQUIREMENT, gitDeltaPathsSync, laneArtifactViolation, localReviewEvidenceSha256, recommendationStatusRule, trustedLocalHostProvenancePath, validRecommendationStatus, verifyTrustedStoreChain, type CarryForwardScope, type LocalReviewLaneId, type LocalReviewStatus } from '../local_review_evidence.js';
-import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardDeltaTouched, carryForwardScopeFromConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeLaneReviewPublishResult, ReviewForgeLocalReviewRecommendation, ReviewForgeProvider, ReviewForgeSnapshot } from '../providers/review_forge_provider.js';
@@ -659,6 +659,7 @@ export async function runPrReviewPublishService(config: Config, options: PrRevie
     repoRoot,
     expectedLanes,
     carryForwardPublish: options.carryForwardPublish ?? config.reviewCarryForwardPublish,
+    carryForwardScope: options.carryForwardScope ?? carryForwardScopeFromConfig(config),
     changedPaths: options.changedPaths,
     deltaBaseRef: options.deltaBaseRef ?? `${config.baseRemote}/${config.baseBranch}`,
     nitCap: options.nitCap ?? config.reviewNitCap,

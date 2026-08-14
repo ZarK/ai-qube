@@ -1,6 +1,6 @@
 import type { Config } from '../config/index.js';
 import { changedReviewPaths } from './pr_gate.js';
-import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig } from '../review_focus.js';
 import { buildFixBatch, readLocalReviewGate, type FixBatch } from '../local_review_evidence.js';
 import { ghFailureMessage, runGh, type GhExec } from '../providers/github_adapter_exports.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -52,11 +52,7 @@ export async function runPrBatchService(config: Config, options: PrBatchOptions)
   // shared carry-forward scope) so the batch matches what the gate would report.
   const changedPaths = await changedReviewPaths(config, repoRoot);
   const activeFocuses = activeLocalReviewFocusesForConfig(config, changedPaths);
-  const carryForwardScope = {
-    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
-    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
-    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
-  };
+  const carryForwardScope = carryForwardScopeFromConfig(config);
   const localReview = readLocalReviewGate({
     repoRoot,
     issueNumbers: pr.issueNumbers,
