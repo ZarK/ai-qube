@@ -362,6 +362,35 @@ describe("output and error helpers", () => {
     });
   });
 
+  it("consumes a leading command separator before passthrough arguments", async () => {
+    const { createCli, createCommand, createCommandRegistry, runCli } = await import("../dist/index.js");
+    const command = {
+      kind: "command",
+      name: "dispatch",
+      description: "Forward arguments to another executable.",
+      arguments: [
+        { name: "target", description: "Executable to dispatch.", required: true },
+        { name: "args", description: "Arguments for the executable.", multiple: true }
+      ],
+      examples: [{ description: "Forward after an explicit separator.", command: "fixture dispatch aib -- status --json" }],
+      extensions: { passthrough: { minArguments: 1 } }
+    };
+    const cli = createCli({
+      bin: "fixture",
+      registry: createCommandRegistry({ commands: [command] }),
+      commands: [createCommand(command, ({ args }) => ({
+        stdout: `${JSON.stringify({ target: args.target, args: args.args ?? [] })}\n`
+      }))]
+    });
+
+    const result = await runCli(cli, ["dispatch", "aib", "--", "status", "--json"]);
+    assert.equal(result.exitCode, 0);
+    assert.deepEqual(JSON.parse(result.stdout), {
+      target: "aib",
+      args: ["status", "--json"]
+    });
+  });
+
   it("normalizes default command input without hiding global help and version", async () => {
     const { normalizeDefaultCommandInput } = await import("../dist/index.js");
 

@@ -35,6 +35,16 @@ describe("run start passthrough", () => {
     assert.deepEqual(parsed.commandLine, ["node", "app.mjs", "--dev"]);
   });
 
+  it("does not forward a leading -- after qube run <component>", () => {
+    const result = runQube([
+      "run", "aie", "--", "run", "start", "--name", "ui-audit", "--dry-run", "--json", "--",
+      "node", "app.mjs", "--dev",
+    ]);
+    assert.equal(result.status, 0, result.stderr);
+    const parsed = JSON.parse(result.stdout);
+    assert.deepEqual(parsed.commandLine, ["node", "app.mjs", "--dev"]);
+  });
+
   it("forwards app flags after -- through qube app start", () => {
     const result = runQube([
       "app", "start", "--name", "ui-audit", "--dry-run", "--json", "--",

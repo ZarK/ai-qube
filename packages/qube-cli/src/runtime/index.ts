@@ -419,7 +419,10 @@ function splitVariadicArgv(
     }
 
     if (token === "--") {
-      if (consumedFixedPositionals >= fixedPositionalCount) {
+      // Keep a mid-stream `--` so child CLIs can stop their own flag parsing.
+      // A leading `--` after QUBE flags or fixed positionals is this parser's
+      // end-of-options marker and is not forwarded.
+      if (values.length > 0 && consumedFixedPositionals >= fixedPositionalCount) {
         values.push(token);
       }
       for (const rest of argv.slice(index + 1)) {
