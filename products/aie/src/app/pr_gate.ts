@@ -21,7 +21,7 @@ import {
 import type { ReviewConversation, ReviewFeedback, ReviewItem, ReviewMergeBlock } from '../core/review_item.js';
 import { buildFixBatch, gitDeltaPathsSync, readCurrentHeadLaneEvidence, readLocalReviewGate, type FixBatch, type LocalReviewGate, type LocalReviewStatus } from '../local_review_evidence.js';
 import { readTrustedProviderLanes, type ProviderLaneReuse } from '../provider_lane_evidence.js';
-import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, reviewLanePublicationPolicy } from '../review_focus.js';
+import { activeLocalReviewFocusesForConfig, carryForwardScopeFromConfig, reviewLanePublicationPolicy } from '../review_focus.js';
 import { resolveModelReviewPlan, runLocalReviewRunner, type LocalReviewLaneRun, type LocalReviewRunResult } from './local_review_runner.js';
 import { acquireReviewSessionLock, clearReviewSessionLock, findReviewSessionLocks, type ReviewSessionLockReport } from './local_review_runner_support.js';
 import { resolveModelReviewHead, type ModelHostExecutable, type ModelRouteProcess } from './model_review_runner.js';
@@ -858,11 +858,7 @@ export async function runPrGateService(config: Config, options: PrGateOptions): 
   // Fail closed: lanes execute only while this gate provably holds the lock.
   const sessionLockBlocksExecution = !dryRun && !gateSessionLockHeld;
   try {
-  const carryForwardScope = {
-    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
-    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
-    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
-  };
+  const carryForwardScope = carryForwardScopeFromConfig(config);
   // Prompt per-lane publication: every routed lane with terminal validated
   // evidence publishes the moment its evidence lands, so a blocking lane is
   // provider-visible while slower or failed siblings are still running. The

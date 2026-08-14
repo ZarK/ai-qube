@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { ReviewLanePolicy, ReviewModelTierId } from './core/policy.js';
-import { type LocalReviewLaneId, type LocalReviewProfile, requiredLocalReviewLanes } from './local_review_evidence.js';
+import { type CarryForwardScope, type LocalReviewLaneId, type LocalReviewProfile, requiredLocalReviewLanes } from './local_review_evidence.js';
 import { pathsTouchPatterns as sharedPathsTouchPatterns, simpleGlobMatch } from './risk_cards/glob.js';
 
 const DEFAULT_MAX_ACTIVE_FOCUSES = 5;
@@ -76,6 +76,14 @@ export function defaultCarryForwardContext(laneId: string): CarryForwardContextM
   if (laneId === 'issue-compliance' || laneId === 'final-gate' || laneId === 'task-record-compliance') return 'all';
   if (laneId === 'security' || laneId === 'release-ci-supply-chain') return 'config';
   return 'scope';
+}
+
+export function carryForwardScopeFromConfig(config: Config): CarryForwardScope {
+  return {
+    laneMatchPatterns: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, [...lane.match]])),
+    contextPatterns: [...config.reviewContextSources.instructions, ...config.reviewContextSources.requirements],
+    laneContextModes: Object.fromEntries(config.reviewLanes.map(lane => [lane.id, lane.carryForwardContext ?? defaultCarryForwardContext(lane.id)])),
+  };
 }
 
 export function carryForwardDeltaTouched(deltaPaths: readonly string[], matchPatterns: readonly string[], contextPatterns: readonly string[], contextMode: CarryForwardContextMode = 'all'): boolean {

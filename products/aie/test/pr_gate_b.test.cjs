@@ -1455,6 +1455,133 @@ describe('PR gate service: provider reuse and publication', { concurrency: 4 }, 
     assert.match(result.publish.nextAction, /Carried-forward lane publishing is disabled by policy/);
   });
 
+  function scopedCodeQualityConfig() {
+    const config = localHostConfig(null);
+    config.reviewLanes = [
+      { id: 'code-quality', required: 'always', match: ['src/**'], severityThreshold: 'high', prompt: [], tools: [], runner: 'local-host', carryForwardContext: 'scope' },
+    ];
+    return config;
+  }
+
+  function writeApprovedCodeQuality(repo, headSha) {
+    const evidence = localEvidence({ headSha });
+    evidence.lanes = evidence.lanes.filter(lane => lane.id === 'code-quality').map(lane => ({
+      ...lane,
+      contextReviewed: [
+        { kind: 'agents', source: 'AGENTS.md', trust: 'policy', freshness: 'current' },
+        { kind: 'diff', source: 'git diff origin/main...HEAD', trust: 'local-evidence', freshness: 'current' },
+      ],
+      toolsUsed: ['codex'],
+    }));
+    writeLocalEvidence(repo, evidence);
+  }
+
+  function writeCarriedCodeQuality(repo, priorHead, currentHead) {
+    writeApprovedCodeQuality(repo, priorHead);
+    const priorPath = join(repo, '.qube', 'aie', 'reviews', '93', '12', priorHead, 'code-quality.json');
+    const currentDir = join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead);
+    mkdirSync(currentDir, { recursive: true });
+    const priorLane = JSON.parse(readFileSync(priorPath, 'utf8'));
+    writeFileSync(join(currentDir, 'code-quality.json'), `${JSON.stringify({
+      ...priorLane,
+      headSha: currentHead,
+      carriedForward: { fromHeadSha: priorHead, deltaSummary: 'out of lane scope' },
+    }, null, 2)}\n`);
+  }
+
+  it('standalone publish of a carried lane succeeds when the delta is exempt under the configured context mode', async () => {
+    const repo = makeGitRepo();
+    const config = scopedCodeQualityConfig();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    writeFileSync(join(repo, 'notes.md'), 'release notes\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'docs only'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    writeCarriedCodeQuality(repo, priorHead, currentHead);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    const omitted = await runPrReviewPublishService(config, {
+      prNumber: 12,
+      issueNumber: 93,
+      headSha: currentHead,
+      lane: 'code-quality',
+      dryRun: true,
+      repoRoot: repo,
+      exec,
+      changedPaths: ['notes.md'],
+    });
+    const { carryForwardScopeFromConfig } = await import('../dist/review_focus.js');
+    const supplied = await runPrReviewPublishService(config, {
+      prNumber: 12,
+      issueNumber: 93,
+      headSha: currentHead,
+      lane: 'code-quality',
+      dryRun: true,
+      repoRoot: repo,
+      exec,
+      changedPaths: ['notes.md'],
+      carryForwardScope: carryForwardScopeFromConfig(config),
+    });
+
+    assert.equal(omitted.publish.status, 'planned');
+    assert.equal(supplied.publish.status, omitted.publish.status);
+    assert.equal(supplied.publish.body, omitted.publish.body);
+  });
+
+  it('standalone publish of a tampered carried lane still fails validation', async () => {
+    const repo = makeGitRepo();
+    const config = scopedCodeQualityConfig();
+    mkdirSync(join(repo, 'src'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 1;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'initial'], { cwd: repo, stdio: 'ignore' });
+    const priorHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    execFileSync('git', ['update-ref', 'refs/remotes/origin/main', priorHead], { cwd: repo, stdio: 'ignore' });
+    writeFileSync(join(repo, 'src', 'app.js'), 'module.exports = 2;\n');
+    execFileSync('git', ['add', '-A'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['commit', '-m', 'change lane scope'], { cwd: repo, stdio: 'ignore' });
+    const currentHead = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: repo, encoding: 'utf8' }).trim();
+    writeCarriedCodeQuality(repo, priorHead, currentHead);
+    const { exec } = makePrExec({ prViews: [cleanLocalPr({ headRefOid: currentHead })] });
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, {
+        prNumber: 12,
+        issueNumber: 93,
+        headSha: currentHead,
+        lane: 'code-quality',
+        dryRun: true,
+        repoRoot: repo,
+        exec,
+      }),
+      /head delta touches the code-quality lane scope or review context/,
+    );
+
+    const staleDir = join(repo, '.qube', 'aie', 'reviews', '93', '12', currentHead);
+    const currentPath = join(staleDir, 'code-quality.json');
+    const currentLane = JSON.parse(readFileSync(currentPath, 'utf8'));
+    currentLane.carriedForward.fromHeadSha = 'f'.repeat(40);
+    writeFileSync(currentPath, `${JSON.stringify(currentLane, null, 2)}\n`);
+
+    await assert.rejects(
+      () => runPrReviewPublishService(config, {
+        prNumber: 12,
+        issueNumber: 93,
+        headSha: currentHead,
+        lane: 'code-quality',
+        dryRun: true,
+        repoRoot: repo,
+        exec,
+      }),
+      /carried-forward runnerProvenance must reference the prior head it claims/,
+    );
+  });
+
   it('reruns lanes with an always-rerun policy instead of carrying forward', async () => {
     const repo = makeGitRepo();
     const config = localHostConfig(null);
