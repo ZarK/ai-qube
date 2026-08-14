@@ -1291,6 +1291,166 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'ios'), false);
   });
 
+  it('inspects an infrastructure repo layout with modules and local signals', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'infrastructure-repo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/app', 'modules/network']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-infra');
+    assert.equal(result.projects.find(project => project.path === 'modules/network').packageName, 'network');
+    assert.equal(result.projects.find(project => project.path === 'modules/app').packageName, 'app');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'main.tf'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected infrastructure modules and suggested gates', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['modules/network/main.tf', 'modules/app/main.tf', 'main.tf'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'infrastructure-repo');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-infra', 'app', 'network']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture-infra').changedPaths, ['main.tf']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'network').gates.includes('dependency-review'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'app').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps an infrastructure repo when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'infrastructure-repo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'modules/app', 'modules/network']);
+  });
+
+  it('reports an ambiguous layout when infrastructure and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify nested Terraform modules without a root proof as an infrastructure repo', async () => {
+    const repo = makeFixtureRepo('ambiguous-infrastructure-repo');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['modules/network']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root Terraform')));
+  });
+
+  it('classifies a root Pulumi stack as an infrastructure repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'Pulumi.yaml'), 'name: fixture-pulumi\nruntime: nodejs\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'infrastructure-repo');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-pulumi');
+  });
+
+  it('does not treat commented Terraform module sources as declared members', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    mkdirSync(join(repo, 'modules', 'old'), { recursive: true });
+    writeFileSync(join(repo, 'modules', 'old', 'main.tf'), 'variable "old" { type = string }\n');
+    writeFileSync(join(repo, 'main.tf'), 'locals {\n  name = "fixture-infra"\n}\n\n# source = "./modules/old"\n\nmodule "network" {\n  source = "./modules/network"\n}\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'infrastructure-repo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/network']);
+    assert.equal(result.projects.some(project => project.path === 'modules/old'), false);
+  });
+
+  it('maps Ansible playbook changes to the infrastructure dependency-review gate', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'playbook.yml'), '- hosts: all\n  tasks: []\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['playbook.yml'],
+    });
+
+    assert.equal(result.layout.kind, 'infrastructure-repo');
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('does not classify a lone Terraform file without modules as an infrastructure repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'main.tf'), 'locals { name = "lone" }\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'infrastructure-repo');
+  });
+
+  it('keeps generated Terraform paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    mkdirSync(join(repo, '.terraform'), { recursive: true });
+    writeFileSync(join(repo, '.terraform', 'providers.json'), '{}\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['.terraform/providers.json'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand Terraform module members outside the repository root', async () => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    const outside = join(repo, '..', 'outside-infra-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'main.tf'), 'variable "leak" { type = string }\n');
+    writeFileSync(join(repo, 'main.tf'), 'locals {\n  name = "fixture-infra"\n}\n\nmodule "network" {\n  source = "./modules/network"\n}\n\nmodule "leak" {\n  source = "../outside-infra-leak"\n}\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/network']);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink infrastructure members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('infrastructure-repo');
+    const outside = join(repo, '..', 'outside-infra-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'main.tf'), 'variable "escape" { type = string }\n');
+    const link = join(repo, 'modules', 'app');
+    try {
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'modules/app'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
