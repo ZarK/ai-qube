@@ -243,8 +243,10 @@ describe("packed QUBE install smoke", () => {
     assert.equal(firstParsed.apply.components.ok, true);
     assert.equal(firstParsed.apply.components.command, "components");
     assert.ok(Array.isArray(firstParsed.apply.components.components));
-    assert.equal(typeof firstParsed.apply.doctor, "object");
-    assert.ok(firstParsed.apply.doctor !== null);
+    assert.equal(firstParsed.apply.doctor !== null && typeof firstParsed.apply.doctor === "object", true);
+    assert.equal(firstParsed.apply.doctor.command, "doctor");
+    assert.equal(typeof firstParsed.apply.doctor.error, "undefined");
+    assert.deepEqual(firstParsed.apply.mismatches, []);
 
     const second = await runPackedQube(qubeBin, applyArgs, { cwd: target, env });
     const secondParsed = JSON.parse(second.stdout);
