@@ -1638,6 +1638,18 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.warnings.some(warning => warning.includes('no contained extra git checkout')));
   });
 
+  it('warns when modules checkout-shaped directories lack extra git proof', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'modules', 'api', 'src'), { recursive: true });
+    writeFileSync(join(repo, 'modules', 'api', 'src', 'index.ts'), 'export {}\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+    assert.ok(result.warnings.some(warning => warning.includes('modules/api') && warning.includes('no contained extra git checkout')));
+  });
+
   it('does not classify a single-root app as a polyrepo multi-checkout', async () => {
     const repo = makeFixtureRepo('single-app-service');
 

@@ -1311,7 +1311,7 @@ function hasPolyrepoWorkspaceBoundary(signals: PolyrepoWorkspaceSignals): boolea
 
 function polyrepoCheckoutShapedPaths(root: string | null): string[] {
   if (!root) return [];
-  return (['repos', 'checkouts', 'externals'] as const).flatMap(directoryName => {
+  return POLYREPO_CHECKOUT_DIRS.flatMap(directoryName => {
     const directory = join(root, directoryName);
     if (!existsSync(directory)) return [];
     return readdirSync(directory, { withFileTypes: true })
@@ -1620,7 +1620,7 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
   if ((docsWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasDocsWorkspaceBoundary(docsWorkspaceSignals)) warnings.push(`Docs content marker(s) were detected (${docsWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Docusaurus, MkDocs, Hugo, Sphinx, or mdBook proof was found; workspace layout is ambiguous.`);
   if (kind === 'docs-content-repo' && docsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Docs content signals were detected, but no docs or content roots were resolved.');
   const polyrepoShapedPaths = polyrepoCheckoutShapedPaths(root);
-  if ((polyrepoWorkspaceSignals.markerPaths.includes('.gitmodules') || polyrepoShapedPaths.length > 0) && !hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals)) warnings.push(`Polyrepo checkout marker(s) were detected (${[...new Set([...polyrepoWorkspaceSignals.markerPaths, ...polyrepoWorkspaceSignals.declaredPatterns, ...polyrepoShapedPaths])].join(', ')}) but no contained extra git checkout or .gitmodules member was found; workspace layout is ambiguous.`);
+  if ((polyrepoWorkspaceSignals.markerPaths.includes('.gitmodules') || (kind === 'unknown' && polyrepoShapedPaths.length > 0)) && !hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals)) warnings.push(`Polyrepo checkout marker(s) were detected (${[...new Set([...polyrepoWorkspaceSignals.markerPaths, ...polyrepoWorkspaceSignals.declaredPatterns, ...polyrepoShapedPaths])].join(', ')}) but no contained extra git checkout or .gitmodules member was found; workspace layout is ambiguous.`);
   if (kind === 'polyrepo-multi-checkout' && polyrepoWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Polyrepo multi-checkout signals were detected, but no contained checkout roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
