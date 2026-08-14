@@ -934,14 +934,17 @@ function directoryLooksLikeIos(root: string, relativePath: string): boolean {
 }
 
 function expoConfigName(root: string): string | null {
-  const text = readTextFile(root, 'app.json');
-  if (!text) return null;
-  try {
-    const parsed = JSON.parse(text) as { name?: unknown; expo?: { name?: unknown } };
-    if (typeof parsed.expo?.name === 'string' && parsed.expo.name.trim()) return parsed.expo.name.trim();
-    if (typeof parsed.name === 'string' && parsed.name.trim()) return parsed.name.trim();
-  } catch {
-    return null;
+  for (const path of MOBILE_EXPO_CONFIG_FILES) {
+    const text = readTextFile(root, path);
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text) as { name?: unknown; expo?: { name?: unknown } };
+      if (typeof parsed.expo?.name === 'string' && parsed.expo.name.trim()) return parsed.expo.name.trim();
+      if (typeof parsed.name === 'string' && parsed.name.trim()) return parsed.name.trim();
+    } catch {
+      const named = firstMatch(text, /(?:expo\s*:\s*\{[\s\S]*?)?name\s*:\s*["']([^"']+)["']/);
+      if (named) return named;
+    }
   }
   return null;
 }
@@ -969,14 +972,17 @@ function detectMobileWorkspaceSignals(root: string | null): MobileWorkspaceSigna
   const iosMembers = platformDirs.filter(path => path === 'ios' || directoryLooksLikeIos(root, path));
   const packageSwift = readTextFile(root, 'Package.swift');
   const hasAndroidProof = settingsPaths.length > 0 && androidMembers.length > 0;
-  const hasIosProof = xcodeBundles.length > 0 || supporting.includes('Podfile') || Boolean(packageSwift && packageSwiftLooksMobile(packageSwift));
+  const hasMobilePackageSwift = Boolean(packageSwift && packageSwiftLooksMobile(packageSwift));
+  const hasIosProof = xcodeBundles.length > 0 || supporting.includes('Podfile') || hasMobilePackageSwift;
   const hasExpoProof = expoConfigs.length > 0 && platformDirs.length > 0;
   const hasProof = hasAndroidProof || hasIosProof || hasExpoProof;
   const markerPaths = [...new Set([
     ...xcodeBundles,
     ...(hasAndroidProof ? settingsPaths : []),
-    ...expoConfigs,
-    ...supporting,
+    ...(hasExpoProof ? expoConfigs : []),
+    ...(supporting.includes('Podfile') ? ['Podfile'] : []),
+    ...(supporting.includes('Podfile.lock') && hasIosProof ? ['Podfile.lock'] : []),
+    ...(hasMobilePackageSwift ? ['Package.swift'] : []),
   ])].sort();
   const provenMembers = [...new Set([...androidMembers, ...iosMembers])];
   const nestedPlatforms = MOBILE_PLATFORM_DIRS.flatMap(directoryName => {

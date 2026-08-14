@@ -1161,6 +1161,24 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.find(project => project.path === '.').packageName, 'native-android');
   });
 
+  it('does not classify a lone Expo config without platform trees as a mobile app', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ name: 'config-only', expo: { name: 'config-only' } }, null, 2));
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'mobile-app-repo');
+  });
+
+  it('does not classify a non-mobile Package.swift as a mobile app repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'Package.swift'), '// swift-tools-version: 5.9\nimport PackageDescription\nlet package = Package(name: "Lib")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'mobile-app-repo');
+  });
+
   it('does not classify a generic Java/Kotlin workspace as a mobile app repo', async () => {
     const repo = makeFixtureRepo('java-kotlin-gradle');
 
