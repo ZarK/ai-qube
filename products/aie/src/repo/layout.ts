@@ -83,6 +83,12 @@ interface CmakeWorkspaceSignals {
   readonly hasFetchContent: boolean;
 }
 
+interface MobileWorkspaceSignals {
+  readonly declaredPatterns: readonly string[];
+  readonly markerPaths: readonly string[];
+  readonly resolvedProjectPaths: readonly string[];
+}
+
 const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
   { path: 'package.json', markerKind: 'package', projectKind: 'app', packageManager: null },
   { path: 'pyproject.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
@@ -116,6 +122,10 @@ const BAZEL_GENERATED_PATHS = ['bazel-bin', 'bazel-out', 'bazel-testlogs', 'baze
 const CMAKE_SUPPORTING_MARKERS = ['CMakePresets.json', 'CMakeUserPresets.json'] as const;
 const CMAKE_PROJECT_DIRS = ['apps', 'packages', 'services', 'libs', 'src', 'modules'] as const;
 const CMAKE_GENERATED_PATHS = ['cmake-build-debug', 'cmake-build-release', '_deps'] as const;
+const MOBILE_EXPO_CONFIG_FILES = ['app.json', 'app.config.js', 'app.config.ts'] as const;
+const MOBILE_PLATFORM_DIRS = ['android', 'ios'] as const;
+const MOBILE_SUPPORTING_MARKERS = ['Podfile', 'Podfile.lock', 'Package.swift'] as const;
+const MOBILE_GENERATED_PATHS = ['DerivedData'] as const;
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -901,7 +911,147 @@ function cmakeProjectName(root: string, relativePath: string): string | null {
   return portablePath(relativePath).split('/').filter(Boolean).pop() ?? null;
 }
 
-function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals): RepoRootMarker[] {
+function listRootXcodeBundles(root: string): string[] {
+  return readdirSync(root, { withFileTypes: true })
+    .filter(entry => entry.name.endsWith('.xcodeproj') || entry.name.endsWith('.xcworkspace'))
+    .map(entry => entry.name)
+    .sort();
+}
+
+function directoryLooksLikeAndroid(root: string, relativePath: string): boolean {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return false;
+  if (existsSync(join(directory, 'src', 'main', 'AndroidManifest.xml')) || existsSync(join(directory, 'AndroidManifest.xml'))) return true;
+  const gradle = readTextFile(root, `${relativePath === '.' ? '' : `${relativePath}/`}build.gradle`)
+    ?? readTextFile(root, `${relativePath === '.' ? '' : `${relativePath}/`}build.gradle.kts`);
+  return Boolean(gradle && /com\.android\.(application|library)/.test(gradle));
+}
+
+function directoryLooksLikeIos(root: string, relativePath: string): boolean {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return false;
+  return readdirSync(directory, { withFileTypes: true }).some(entry => entry.name.endsWith('.xcodeproj') || entry.name.endsWith('.xcworkspace') || entry.name === 'Podfile');
+}
+
+function childProjectPaths(root: string, relativePath: string): string[] {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const child = relativePath === '.' ? entry.name : `${relativePath}/${entry.name}`;
+      return containedProjectPath(root, join(root, child)) === child ? child : null;
+    })
+    .filter((path): path is string => path !== null);
+}
+
+function directoryTreeLooksLikeAndroid(root: string, relativePath: string): boolean {
+  return directoryLooksLikeAndroid(root, relativePath) || childProjectPaths(root, relativePath).some(path => directoryLooksLikeAndroid(root, path));
+}
+
+function directoryTreeLooksLikeIos(root: string, relativePath: string): boolean {
+  return directoryLooksLikeIos(root, relativePath) || childProjectPaths(root, relativePath).some(path => directoryLooksLikeIos(root, path));
+}
+
+function directoryContainsFiles(root: string, relativePath: string): boolean {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return false;
+  const entries = readdirSync(directory, { withFileTypes: true });
+  if (entries.some(entry => entry.isFile())) return true;
+  return childProjectPaths(root, relativePath).some(path => directoryContainsFiles(root, path));
+}
+
+function expoConfigName(root: string): string | null {
+  for (const path of MOBILE_EXPO_CONFIG_FILES) {
+    const text = readTextFile(root, path);
+    if (!text) continue;
+    try {
+      const parsed = JSON.parse(text) as { name?: unknown; expo?: { name?: unknown } };
+      if (typeof parsed.expo?.name === 'string' && parsed.expo.name.trim()) return parsed.expo.name.trim();
+      if (typeof parsed.name === 'string' && parsed.name.trim()) return parsed.name.trim();
+    } catch {
+      const named = firstMatch(text, /(?:expo\s*:\s*\{[\s\S]*?)?name\s*:\s*["']([^"']+)["']/);
+      if (named) return named;
+    }
+  }
+  return null;
+}
+
+function packageSwiftLooksMobile(text: string): boolean {
+  return /\.iOS\b|\.macOS\b|\.tvOS\b|\.watchOS\b|platform:\s*\.iOS/i.test(text);
+}
+
+function detectMobileWorkspaceSignals(root: string | null): MobileWorkspaceSignals {
+  if (!root) return { declaredPatterns: [], markerPaths: [], resolvedProjectPaths: [] };
+  const settingsPaths = JAVA_KOTLIN_SETTINGS_FILES.filter(path => existsSync(join(root, path)));
+  const settingsPatterns = settingsPaths.flatMap(path => {
+    const text = readTextFile(root, path);
+    return text ? gradleIncludePaths(text) : [];
+  });
+  const expoConfigs = MOBILE_EXPO_CONFIG_FILES.filter(path => existsSync(join(root, path)));
+  const xcodeBundles = listRootXcodeBundles(root);
+  const supporting = MOBILE_SUPPORTING_MARKERS.filter(path => existsSync(join(root, path)));
+  const platformDirs = MOBILE_PLATFORM_DIRS.filter(path => containedProjectPath(root, join(root, path)) === path && existsSync(join(root, path)));
+  const gradleMembers = [...new Set([
+    ...settingsPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'build.gradle.kts')),
+    ...settingsPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'build.gradle')),
+  ])].filter(path => path !== '.');
+  const androidMembers = [...new Set([
+    ...gradleMembers.filter(path => directoryLooksLikeAndroid(root, path)),
+    ...platformDirs.filter(path => directoryTreeLooksLikeAndroid(root, path)),
+  ])];
+  const iosMembers = platformDirs.filter(path => directoryTreeLooksLikeIos(root, path));
+  const expoPlatformMembers = platformDirs.filter(path => directoryContainsFiles(root, path));
+  const packageSwift = readTextFile(root, 'Package.swift');
+  const hasAndroidProof = settingsPaths.length > 0 && androidMembers.length > 0;
+  const hasMobilePackageSwift = Boolean(packageSwift && packageSwiftLooksMobile(packageSwift));
+  const hasIosProof = xcodeBundles.length > 0 || supporting.includes('Podfile') || hasMobilePackageSwift;
+  const hasExpoProof = expoConfigs.length > 0 && expoPlatformMembers.length > 0;
+  const hasProof = hasAndroidProof || hasIosProof || hasExpoProof;
+  const markerPaths = [...new Set([
+    ...xcodeBundles,
+    ...(hasAndroidProof ? settingsPaths : []),
+    ...(hasExpoProof ? expoConfigs : []),
+    ...(supporting.includes('Podfile') ? ['Podfile'] : []),
+    ...(supporting.includes('Podfile.lock') && hasIosProof ? ['Podfile.lock'] : []),
+    ...(hasMobilePackageSwift ? ['Package.swift'] : []),
+  ])].sort();
+  const provenMembers = [...new Set([
+    ...androidMembers,
+    ...iosMembers,
+    ...((hasExpoProof || hasIosProof) ? expoPlatformMembers : []),
+  ])];
+  const nestedPlatforms = MOBILE_PLATFORM_DIRS.flatMap(directoryName => {
+    const relative = containedProjectPath(root, join(root, directoryName));
+    return relative && existsSync(join(root, relative))
+      && (directoryTreeLooksLikeAndroid(root, relative) || directoryTreeLooksLikeIos(root, relative) || directoryContainsFiles(root, relative))
+      ? [relative]
+      : [];
+  });
+  const resolvedProjectPaths = [...new Set(hasProof ? provenMembers.filter(path => path !== '.') : nestedPlatforms)].sort();
+  return { declaredPatterns: [...new Set([...settingsPatterns, ...platformDirs])].sort(), markerPaths, resolvedProjectPaths };
+}
+
+function hasMobileWorkspaceBoundary(signals: MobileWorkspaceSignals): boolean {
+  return signals.markerPaths.some(path => path.endsWith('.xcodeproj') || path.endsWith('.xcworkspace') || MOBILE_EXPO_CONFIG_FILES.includes(path as typeof MOBILE_EXPO_CONFIG_FILES[number]) || path === 'Podfile' || path === 'Package.swift' || JAVA_KOTLIN_SETTINGS_FILES.includes(path as typeof JAVA_KOTLIN_SETTINGS_FILES[number]));
+}
+
+function mobileProjectName(root: string, relativePath: string): string | null {
+  if (relativePath === '.') {
+    const expoName = expoConfigName(root);
+    if (expoName) return expoName;
+    const settingsName = JAVA_KOTLIN_SETTINGS_FILES
+      .map(path => firstMatch(readTextFile(root, path), /rootProject\.name\s*=\s*["']([^"']+)["']/))
+      .find(name => name);
+    if (settingsName) return settingsName;
+    const xcode = listRootXcodeBundles(root)[0];
+    if (xcode) return xcode.replace(/\.(xcodeproj|xcworkspace)$/i, '');
+    return rootDirectoryName(root);
+  }
+  return portablePath(relativePath).split('/').filter(Boolean).pop() ?? null;
+}
+
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
@@ -917,6 +1067,7 @@ function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildS
     ...dotnetWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...bazelWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...cmakeWorkspaceSignals.markerPaths.filter(path => path !== 'CMakeLists.txt').map(path => ({ path, kind: 'workspace' as const })),
+    ...mobileWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
@@ -937,23 +1088,27 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals): RepoProject[] {
   const rootPackage = readPackageJson(root);
   const rootPyProject = readPyProject(root);
   const rootCargo = readCargoProject(root);
   const rootGo = readGoModule(root);
-  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths, ...rustWorkspaceSignals.resolvedProjectPaths, ...goWorkspaceSignals.resolvedProjectPaths, ...javaKotlinWorkspaceSignals.resolvedProjectPaths, ...dotnetWorkspaceSignals.resolvedProjectPaths, ...bazelWorkspaceSignals.resolvedProjectPaths, ...cmakeWorkspaceSignals.resolvedProjectPaths])].sort();
+  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths, ...rustWorkspaceSignals.resolvedProjectPaths, ...goWorkspaceSignals.resolvedProjectPaths, ...javaKotlinWorkspaceSignals.resolvedProjectPaths, ...dotnetWorkspaceSignals.resolvedProjectPaths, ...bazelWorkspaceSignals.resolvedProjectPaths, ...cmakeWorkspaceSignals.resolvedProjectPaths, ...mobileWorkspaceSignals.resolvedProjectPaths])].sort();
   const projects: RepoProject[] = [];
   const jsWorkspace = Boolean(rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals));
   const pythonWorkspace = Boolean(rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals));
   const rustWorkspace = Boolean(rootCargo && hasRustWorkspaceSignals(rustWorkspaceSignals));
   const goWorkspace = goWorkspaceSignals.markerPaths.includes('go.work');
-  const javaWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals);
+  const mobileWorkspace = hasMobileWorkspaceBoundary(mobileWorkspaceSignals);
+  const javaWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals) && !mobileWorkspace;
   const dotnetWorkspace = hasDotnetSolutionBoundary(dotnetWorkspaceSignals);
   const bazelWorkspace = hasBazelWorkspaceBoundary(bazelWorkspaceSignals);
   const cmakeWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
-  const winner = resolveProvenWorkspace({ js: jsWorkspace, python: pythonWorkspace, rust: rustWorkspace, go: goWorkspace, java: javaWorkspace, dotnet: dotnetWorkspace, bazel: bazelWorkspace, cmake: cmakeWorkspace }, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals);
-  if (winner === 'cmake') {
+  const winner = resolveProvenWorkspace({ js: jsWorkspace, python: pythonWorkspace, rust: rustWorkspace, go: goWorkspace, java: javaWorkspace, dotnet: dotnetWorkspace, bazel: bazelWorkspace, cmake: cmakeWorkspace, mobile: mobileWorkspace }, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals);
+  if (winner === 'mobile') {
+    const packageName = mobileProjectName(root, '.');
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (winner === 'cmake') {
     const packageName = cmakeProjectName(root, '.');
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (winner === 'bazel') {
@@ -998,6 +1153,9 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   } else if (cmakeWorkspace) {
     const packageName = cmakeProjectName(root, '.');
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (mobileWorkspace) {
+    const packageName = mobileProjectName(root, '.');
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);
@@ -1008,16 +1166,16 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
     const pyProject = readPyProject(root, `${path}/pyproject.toml`);
     const cargo = readCargoProject(root, `${path}/Cargo.toml`);
     const goModule = readGoModule(root, `${path}/go.mod`);
-    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? cargo?.name ?? goModule?.name ?? javaKotlinProjectName(root, path) ?? dotnetProjectName(root, path) ?? bazelProjectName(root, path) ?? cmakeProjectName(root, path);
+    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? cargo?.name ?? goModule?.name ?? javaKotlinProjectName(root, path) ?? dotnetProjectName(root, path) ?? bazelProjectName(root, path) ?? cmakeProjectName(root, path) ?? mobileProjectName(root, path);
     projects.push({ id: projectId(path, packageName), path, kind: 'package', packageName, packageManager: packageJson ? packageManagerForPath(packageManagers, path) : null, gates: gatesForProject(path) });
   }
   return projects;
 }
 
-type ProvenWorkspace = 'javascript' | 'python' | 'rust' | 'go' | 'java' | 'dotnet' | 'bazel' | 'cmake' | 'conflict' | 'none';
+type ProvenWorkspace = 'javascript' | 'python' | 'rust' | 'go' | 'java' | 'dotnet' | 'bazel' | 'cmake' | 'mobile' | 'conflict' | 'none';
 
 function resolveProvenWorkspace(
-  present: { js: boolean; python: boolean; rust: boolean; go: boolean; java: boolean; dotnet: boolean; bazel: boolean; cmake: boolean },
+  present: { js: boolean; python: boolean; rust: boolean; go: boolean; java: boolean; dotnet: boolean; bazel: boolean; cmake: boolean; mobile: boolean },
   jsWorkspaceSignals: JsWorkspaceSignals,
   pythonWorkspaceSignals: PythonWorkspaceSignals,
   rustWorkspaceSignals: RustWorkspaceSignals,
@@ -1026,6 +1184,7 @@ function resolveProvenWorkspace(
   dotnetWorkspaceSignals: DotnetWorkspaceSignals,
   bazelWorkspaceSignals: BazelWorkspaceSignals,
   cmakeWorkspaceSignals: CmakeWorkspaceSignals,
+  mobileWorkspaceSignals: MobileWorkspaceSignals,
 ): ProvenWorkspace {
   const withMembers: ProvenWorkspace[] = [];
   if (present.js && jsWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('javascript');
@@ -1036,27 +1195,29 @@ function resolveProvenWorkspace(
   if (present.dotnet && dotnetWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('dotnet');
   if (present.bazel && bazelWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('bazel');
   if (present.cmake && cmakeWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('cmake');
+  if (present.mobile && mobileWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('mobile');
   if (withMembers.length > 1) return 'conflict';
   if (withMembers.length === 1) return withMembers[0];
-  const presentKinds = [present.js && 'javascript', present.python && 'python', present.rust && 'rust', present.go && 'go', present.java && 'java', present.dotnet && 'dotnet', present.bazel && 'bazel', present.cmake && 'cmake'].filter((value): value is Exclude<ProvenWorkspace, 'conflict' | 'none'> => Boolean(value));
+  const presentKinds = [present.js && 'javascript', present.python && 'python', present.rust && 'rust', present.go && 'go', present.java && 'java', present.dotnet && 'dotnet', present.bazel && 'bazel', present.cmake && 'cmake', present.mobile && 'mobile'].filter((value): value is Exclude<ProvenWorkspace, 'conflict' | 'none'> => Boolean(value));
   if (presentKinds.length === 1) return presentKinds[0];
   if (presentKinds.length > 1) return 'conflict';
   return 'none';
 }
 
-function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals): RepoLayoutKind {
+function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
   const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
   const goRootWorkspace = goWorkspaceSignals.markerPaths.includes('go.work');
-  const javaRootWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals);
+  const mobileRootWorkspace = hasMobileWorkspaceBoundary(mobileWorkspaceSignals);
+  const javaRootWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals) && !mobileRootWorkspace;
   const dotnetRootWorkspace = hasDotnetSolutionBoundary(dotnetWorkspaceSignals);
   const bazelRootWorkspace = hasBazelWorkspaceBoundary(bazelWorkspaceSignals);
   const cmakeRootWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
   const proven = resolveProvenWorkspace(
-    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace },
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace },
     jsWorkspaceSignals,
     pythonWorkspaceSignals,
     rustWorkspaceSignals,
@@ -1065,6 +1226,7 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
     dotnetWorkspaceSignals,
     bazelWorkspaceSignals,
     cmakeWorkspaceSignals,
+    mobileWorkspaceSignals,
   );
   if (proven === 'javascript') return 'javascript-typescript-workspace';
   if (proven === 'python') return 'python-workspace-monorepo';
@@ -1074,24 +1236,26 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
   if (proven === 'dotnet') return 'dotnet-solution';
   if (proven === 'bazel') return 'bazel-pants-buck-monorepo';
   if (proven === 'cmake') return 'c-cpp-cmake-superbuild';
+  if (proven === 'mobile') return 'mobile-app-repo';
   if (proven === 'conflict') return 'unknown';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals): string[] {
   const warnings: string[] = [];
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
   const rustRootWorkspace = hasRustWorkspaceSignals(rustWorkspaceSignals) && rootSignals.some(signal => signal.path === 'Cargo.toml');
   const goRootWorkspace = goWorkspaceSignals.markerPaths.includes('go.work');
-  const javaRootWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals);
+  const mobileRootWorkspace = hasMobileWorkspaceBoundary(mobileWorkspaceSignals);
+  const javaRootWorkspace = hasJavaKotlinWorkspaceBoundary(javaKotlinWorkspaceSignals) && !mobileRootWorkspace;
   const dotnetRootWorkspace = hasDotnetSolutionBoundary(dotnetWorkspaceSignals);
   const bazelRootWorkspace = hasBazelWorkspaceBoundary(bazelWorkspaceSignals);
   const cmakeRootWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
   const proven = resolveProvenWorkspace(
-    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace },
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace },
     jsWorkspaceSignals,
     pythonWorkspaceSignals,
     rustWorkspaceSignals,
@@ -1100,11 +1264,12 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
     dotnetWorkspaceSignals,
     bazelWorkspaceSignals,
     cmakeWorkspaceSignals,
+    mobileWorkspaceSignals,
   );
-  const present = [jsRootWorkspace && 'JavaScript', pythonRootWorkspace && 'Python', rustRootWorkspace && 'Rust', goRootWorkspace && 'Go', javaRootWorkspace && 'Java/Kotlin', dotnetRootWorkspace && '.NET', bazelRootWorkspace && 'Bazel/Pants/Buck', cmakeRootWorkspace && 'CMake'].filter((value): value is string => Boolean(value));
+  const present = [jsRootWorkspace && 'JavaScript', pythonRootWorkspace && 'Python', rustRootWorkspace && 'Rust', goRootWorkspace && 'Go', javaRootWorkspace && 'Java/Kotlin', dotnetRootWorkspace && '.NET', bazelRootWorkspace && 'Bazel/Pants/Buck', cmakeRootWorkspace && 'CMake', mobileRootWorkspace && 'Mobile'].filter((value): value is string => Boolean(value));
   if (present.length > 1) {
     const names = present.length === 2 ? `Both ${present[0]} and ${present[1]}` : present.join(', ');
-    const provenLabel = proven === 'javascript' ? 'JavaScript' : proven === 'python' ? 'Python' : proven === 'rust' ? 'Rust' : proven === 'go' ? 'Go' : proven === 'java' ? 'Java/Kotlin' : proven === 'dotnet' ? '.NET' : proven === 'bazel' ? 'Bazel/Pants/Buck' : proven === 'cmake' ? 'CMake' : null;
+    const provenLabel = proven === 'javascript' ? 'JavaScript' : proven === 'python' ? 'Python' : proven === 'rust' ? 'Rust' : proven === 'go' ? 'Go' : proven === 'java' ? 'Java/Kotlin' : proven === 'dotnet' ? '.NET' : proven === 'bazel' ? 'Bazel/Pants/Buck' : proven === 'cmake' ? 'CMake' : proven === 'mobile' ? 'Mobile' : null;
     warnings.push(proven === 'conflict' || !provenLabel
       ? `${names} root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.`
       : `${names} root workspace declarations were detected; layout classification used the ${provenLabel} workspace because only it resolves member projects.`);
@@ -1128,9 +1293,11 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
   if (kind === 'bazel-pants-buck-monorepo') warnings.push('Affected scope maps to BUILD/BUCK package directories; Bazel, Pants, and Buck target graphs are not inferred from filenames.');
   if ((cmakeWorkspaceSignals.resolvedProjectPaths.length > 0 || CMAKE_SUPPORTING_MARKERS.some(path => cmakeWorkspaceSignals.markerPaths.includes(path))) && !hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals)) warnings.push(`CMake project marker(s) were detected (${[...cmakeWorkspaceSignals.markerPaths, ...cmakeWorkspaceSignals.resolvedProjectPaths].join(', ')}) but no root CMakeLists.txt add_subdirectory or FetchContent proof was found; workspace layout is ambiguous.`);
   if (kind === 'c-cpp-cmake-superbuild' && cmakeWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('CMake superbuild signals were detected, but no member project roots were resolved.');
+  if ((mobileWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasMobileWorkspaceBoundary(mobileWorkspaceSignals)) warnings.push(`Mobile platform marker(s) were detected (${mobileWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Android settings, Xcode project, Podfile, Package.swift, or Expo/React Native config was found; workspace layout is ambiguous.`);
+  if (kind === 'mobile-app-repo' && mobileWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Mobile app signals were detected, but no platform project roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
-  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'rust-workspace' && kind !== 'go-workspace' && kind !== 'java-kotlin-multi-project' && kind !== 'dotnet-solution' && kind !== 'bazel-pants-buck-monorepo' && kind !== 'c-cpp-cmake-superbuild' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
+  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'rust-workspace' && kind !== 'go-workspace' && kind !== 'java-kotlin-multi-project' && kind !== 'dotnet-solution' && kind !== 'bazel-pants-buck-monorepo' && kind !== 'c-cpp-cmake-superbuild' && kind !== 'mobile-app-repo' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
     warnings.push('Affected-scope mapping is conservative for this layout kind.');
   }
   return warnings;
@@ -1152,14 +1319,15 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const dotnetWorkspaceSignals = detectDotnetWorkspaceSignals(root);
   const bazelWorkspaceSignals = detectBazelWorkspaceSignals(root);
   const cmakeWorkspaceSignals = detectCmakeWorkspaceSignals(root);
-  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals);
-  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals) : [];
+  const mobileWorkspaceSignals = detectMobileWorkspaceSignals(root);
+  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
-    ...pathSignals(root, ['dist', 'build', 'coverage', 'generated', 'target', '.gradle', 'bin', 'obj', ...BAZEL_GENERATED_PATHS, ...CMAKE_GENERATED_PATHS], 'Generated output path exists.'),
+    ...pathSignals(root, ['dist', 'build', 'coverage', 'generated', 'target', '.gradle', 'bin', 'obj', ...BAZEL_GENERATED_PATHS, ...CMAKE_GENERATED_PATHS, ...MOBILE_GENERATED_PATHS], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals);
+  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals);
   return {
     kind,
     root,
@@ -1171,7 +1339,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals)],
   };
 }
 
@@ -1197,9 +1365,9 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\//i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
-  if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|bzl)$/.test(path)) return ['build', 'typecheck', 'test'];
+  if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|bzl|swift|m|mm)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx)$/.test(path)) return ['docs'];
   return ['test'];
 }
