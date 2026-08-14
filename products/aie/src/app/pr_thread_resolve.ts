@@ -1,3 +1,4 @@
+import { loginsMatch } from '@tjalve/qube-core';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import { getDefaults, loadConfig } from '../config/index.js';
 import { resolveGitHubReviewPublisher, type GhExec } from '../providers/github_adapter_exports.js';
@@ -52,10 +53,7 @@ export async function runPrThreadResolveService(options: PrThreadResolveOptions)
     if (options.includeOtherAuthors === true) {
       threadIds = resolvable.map(thread => thread.id);
     } else {
-      const matchesPublisher = (author: string | null | undefined): boolean => {
-        if (!publisherLogin || typeof author !== 'string') return false;
-        return author.trim().replace(/^@/, '').toLowerCase() === publisherLogin.trim().replace(/^@/, '').toLowerCase();
-      };
+      const matchesPublisher = (author: string | null | undefined): boolean => loginsMatch(author, publisherLogin);
       threadIds = resolvable.filter(thread => matchesPublisher(thread.author)).map(thread => thread.id);
       skippedOtherAuthorIds = resolvable.filter(thread => !matchesPublisher(thread.author)).map(thread => thread.id);
     }

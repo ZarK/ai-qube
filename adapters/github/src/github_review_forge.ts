@@ -2654,6 +2654,37 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
     if (sameRoundRecord) {
       if (sameRoundRecord.findingDigest === input.findingDigest) {
+        let lifecycleFailure: string | null = null;
+        try {
+          const existingThreads = findingThreadsFromRaw(await this.getReviewThreads(repositoryName, input.prNumber));
+          const lifecycleActions = planReviewThreadLifecycle({
+            findings: input.inlineFindings.map((entry) => entry.finding),
+            threads: existingThreads,
+            publisherLogins: trustedPublisherLogins(trustedMarkerAuthor),
+            headSha: input.headSha,
+            round: input.round,
+            dispositions: input.dispositions ?? {},
+          });
+          lifecycleFailure = await this.applyThreadLifecycle(
+            repositoryName,
+            input.prNumber,
+            lifecycleActions,
+            publisher.identity,
+          );
+        } catch (error: unknown) {
+          lifecycleFailure = redact(error instanceof Error ? error.message : String(error));
+        }
+        if (lifecycleFailure) {
+          return roundSummaryPublishResult({
+            status: 'failed',
+            marker: input.marker,
+            publisherDowngradeReason,
+            supersededPriorSummaries,
+            publisher: publisher.identity,
+            failure: lifecycleFailure,
+            nextAction: `The round summary body is unchanged, but thread lifecycle did not complete: ${lifecycleFailure}`,
+          });
+        }
         return roundSummaryPublishResult({
           status: 'skipped',
           marker: input.marker,

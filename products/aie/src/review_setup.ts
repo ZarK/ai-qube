@@ -119,9 +119,9 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
     mode: 'github-app',
     title: 'GitHub App reviewer publisher setup (preferred)',
     summary: 'Use a GitHub App installation as a distinct provider publishing identity for formal pull request review events.',
-    requiredPermissions: ['Pull requests: Read and write', 'Contents: Read-only'],
+    requiredPermissions: ['Pull requests: Read and write', 'Contents: Read and write'],
     steps: [
-      'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read-only repository permissions.',
+      'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
       'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',

@@ -113,6 +113,37 @@ describe('GitHub round summary publish', () => {
     assert.ok(reviewPost, 'expected a POST to create the pull request review');
   });
 
+  it('does not skip a same-round republish when thread lifecycle still fails', async () => {
+    const current = findingAnchor();
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({
+      prViews: [basePr({ reviews: [publishedReview], latestReviews: [publishedReview] })],
+      pullReviews: [publishedReview],
+      resolveThreadResults: [{ exitCode: 1, stdout: '', stderr: 'contents write denied' }],
+      threads: [{
+        id: 'PRRT_stuck',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_stuck',
+          databaseId: 77,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /resolve review thread/i);
+  });
+
   it('skip-matches an unchanged same-round republish', async () => {
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
     const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
