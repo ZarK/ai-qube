@@ -1194,6 +1194,59 @@ describe("GitLab review forge adapter", () => {
     assert.equal(snapshot.item.feedback[0].trust, "untrusted");
   });
 
+  it("fails lane publish closed when publisher identity cannot be resolved", async () => {
+    const notes = [{
+      id: 4,
+      body: "QUBE_REVIEW_METADATA {\"version\":1,\"kind\":\"lane-review\",\"head\":\"head-sha\",\"lane\":\"security\",\"round\":\"round-security-1\",\"profile\":\"focused\",\"runId\":\"run\",\"recommendation\":\"request-changes\",\"status\":\"complete\",\"summary\":\"First review.\",\"prNumber\":12}\nFirst",
+      author: { username: "executor" },
+      web_url: "https://gitlab.example.com/note/4",
+    }];
+    const created = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return notes;
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          created.push(body);
+          return { id: 5, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/5" };
+        },
+        async updateMergeRequestNote() {
+          throw new Error("should not update");
+        },
+        async getCurrentUser() {
+          throw new Error("GitLab API request failed while reading /user. Cause: HTTP 401.");
+        },
+      },
+    });
+    const result = await provider.publishLaneReviewFeedbackForPullRequest({
+      dryRun: false,
+      prNumber: 12,
+      headSha: "head-sha",
+      lane: "security",
+      expectedLanes: ["security"],
+      round: "round-security-1",
+      profile: "focused",
+      status: "complete",
+      recommendation: "request-changes",
+      host: "codex",
+      issueNumber: 185,
+      summary: "Retry.",
+      findings: ["Still broken."],
+      evidencePath: ".qube/aie/reviews/185/12/head-sha/security.json",
+    });
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /publisher identity could not be resolved/);
+    assert.deepEqual(created, []);
+  });
+
   it("follows paginated GitLab merge request note and discussion reads", async () => {
     const originalFetch = globalThis.fetch;
     const urls = [];

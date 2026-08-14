@@ -451,8 +451,16 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
   // changed content updates the existing note in place. A client without
   // note-update support fails the publish closed instead of creating a
   // second same-round marker.
+  private async requirePublisherLogin(): Promise<string> {
+    const login = await this.trustedMarkerAuthor();
+    if (!login) {
+      throw new Error("GitLab publisher identity could not be resolved; failing closed instead of creating an unverified review note. Confirm GITLAB_TOKEN can call /user, then rerun publish.");
+    }
+    return login;
+  }
+
   private async findSameRoundNote(notes: GitLabNote[] | null, input: ReviewLaneReviewPublishInput): Promise<{ note: GitLabNote; metadata: GitLabMetadata } | undefined> {
-    const trustedAuthor = await this.trustedMarkerAuthor();
+    const trustedAuthor = await this.requirePublisherLogin();
     const candidates = notes ?? await this.client.listMergeRequestNotes({ projectId: this.projectId, iid: String(input.prNumber) });
     for (const note of candidates) {
       if (note.id === undefined || note.id === null) continue;
