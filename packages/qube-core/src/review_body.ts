@@ -286,7 +286,7 @@ export function renderLaneChips(lanes: readonly ReviewLaneRenderInput[], expecte
     if (!lane) return `${laneId}: not run (no evidence at this head)`;
     return `${laneId}: ${laneChipLabel(lane)}`;
   });
-  return chips.join(" · ");
+  return chips.join(" | ");
 }
 
 function renderDeltaLine(delta: ReviewRoundDelta): string {
@@ -473,7 +473,7 @@ export function renderInlineReviewComment(
   const fence = renderSuggestionFence(input, profile);
   const lines = [
     `**${claim}**`,
-    `${input.finding.severity} · ${input.laneId}`,
+    `${input.finding.severity} | ${input.laneId}`,
   ];
   if (fence) lines.push("", fence);
   return lines.join("\n");
