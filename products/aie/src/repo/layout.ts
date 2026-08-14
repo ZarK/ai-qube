@@ -1,6 +1,6 @@
-import { spawnSync } from 'child_process';
-import { existsSync, readFileSync, readdirSync } from 'fs';
-import { isAbsolute, join, relative, resolve } from 'path';
+import { spawnSync } from 'node:child_process';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoProjectKind, RepoRootMarker } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import type { GitExec, GitRunResult } from '../providers/local/local_git_provider.js';
