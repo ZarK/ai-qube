@@ -11,6 +11,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   unlinkSync,
   writeFileSync,
 } from "node:fs";
@@ -446,16 +447,37 @@ function prefixCommandPath(binDir, command) {
   return names.map(name => path.join(binDir, name)).find(candidate => existsSync(candidate)) ?? null;
 }
 
+function resolveCommandOnPath(command, pathValue, env = process.env) {
+  const windows = process.platform === "win32";
+  const delimiter = windows ? ";" : ":";
+  const extensions = windows
+    ? (env.PATHEXT && env.PATHEXT.trim() !== "" ? env.PATHEXT : ".COM;.EXE;.BAT;.CMD")
+      .split(";")
+      .map(entry => entry.trim())
+      .filter(entry => entry.length > 0)
+    : [];
+  const currentExt = path.extname(command);
+  const names = !windows
+    ? [command]
+    : currentExt && extensions.some(extension => extension.toLowerCase() === currentExt.toLowerCase())
+      ? [command]
+      : [...extensions.map(extension => `${command}${extension}`), command];
+  for (const entry of pathValue.split(delimiter)) {
+    const directory = entry.trim();
+    if (directory.length === 0) continue;
+    for (const name of names) {
+      const candidate = path.join(directory, name);
+      try {
+        if (statSync(candidate).isFile()) return candidate;
+      } catch {}
+    }
+  }
+  return null;
+}
+
 function verifyCommandOnPath(command, childPath, cwd, binDir) {
-  const locator = process.platform === "win32" ? "where.exe" : "which";
-  const located = spawnSync(locator, [command], {
-    cwd,
-    env: { ...process.env, PATH: childPath },
-    encoding: "utf8",
-    shell: false,
-    windowsHide: true,
-  });
-  if (located.status !== 0) {
+  const located = resolveCommandOnPath(command, childPath, process.env);
+  if (!located) {
     throw Object.assign(new Error(`Fresh shell cannot resolve ${command} on PATH.`), {
       reasonCode: "verify-failed",
       command,

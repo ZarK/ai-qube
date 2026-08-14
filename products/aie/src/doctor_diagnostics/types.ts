@@ -133,12 +133,15 @@ export interface ReviewSessionLockDiagnostics {
   cleanupCommand: string;
 }
 
+export type DoctorToolLookupState = 'available' | 'missing' | 'unresolvable' | 'present-but-failing';
+
 export interface DoctorToolAvailability {
   command: string;
   available: boolean;
   required: boolean;
-  state: 'available' | 'missing' | 'present-but-failing';
+  state: DoctorToolLookupState;
   resolvedPath: string | null;
+  reasonCode: string;
   nextAction: string | null;
 }
 

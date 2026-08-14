@@ -61,14 +61,7 @@ export function probeExecutable(command: string, options: ProbeExecutableOptions
     return { ...lookup, probeStatus: "not-probed", probeExitCode: null };
   }
   const probeArgs = options.probeArgs ?? ["--help"];
-  const invoked = spawnSync(lookup.resolvedPath, [...probeArgs], {
-    env: options.env ?? process.env,
-    encoding: "utf8",
-    timeout: options.timeoutMs ?? 10_000,
-    windowsHide: true,
-    shell: usesWindowsShell(lookup.resolvedPath),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const invoked = spawnProbe(lookup.resolvedPath, probeArgs, options);
   if (invoked.error || invoked.status !== 0) {
     return {
       ...lookup,
@@ -106,9 +99,27 @@ function candidateNames(command: string, env: NodeJS.ProcessEnv, windows: boolea
   const extensions = pathExtEntries(env);
   const currentExt = path.extname(command);
   if (currentExt && extensions.some(extension => extension.toLowerCase() === currentExt.toLowerCase())) {
-    return [command];
+    return uniqueNames([command, currentExt === currentExt.toLowerCase() ? command : `${command.slice(0, -currentExt.length)}${currentExt.toLowerCase()}`]);
   }
-  return [...extensions.map(extension => `${command}${extension}`), command];
+  const names: string[] = [];
+  for (const extension of extensions) {
+    names.push(`${command}${extension}`);
+    const lower = `${command}${extension.toLowerCase()}`;
+    if (lower !== `${command}${extension}`) names.push(lower);
+  }
+  names.push(command);
+  return uniqueNames(names);
+}
+
+function uniqueNames(names: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const name of names) {
+    if (seen.has(name)) continue;
+    seen.add(name);
+    result.push(name);
+  }
+  return result;
 }
 
 function pathExtEntries(env: NodeJS.ProcessEnv): string[] {
@@ -134,4 +145,40 @@ function isResolvableFile(candidate: string, windows: boolean): boolean {
 
 function usesWindowsShell(resolvedPath: string): boolean {
   return [".cmd", ".bat"].includes(path.extname(resolvedPath).toLowerCase());
+}
+
+function spawnProbe(resolvedPath: string, probeArgs: readonly string[], options: ProbeExecutableOptions) {
+  const env = probeEnvironment(options.env ?? process.env);
+  const common = {
+    env,
+    encoding: "utf8" as const,
+    timeout: options.timeoutMs ?? 10_000,
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"] as ["ignore", "pipe", "pipe"],
+  };
+  if (!usesWindowsShell(resolvedPath)) {
+    return spawnSync(resolvedPath, [...probeArgs], { ...common, shell: false });
+  }
+  const comspec = env.ComSpec || env.COMSPEC || process.env.ComSpec || process.env.COMSPEC || "cmd.exe";
+  const commandLine = [quoteWindowsCmdArg(resolvedPath), ...probeArgs.map(arg => quoteWindowsCmdArg(arg))].join(" ");
+  return spawnSync(comspec, ["/d", "/s", "/c", `"${commandLine}"`], {
+    ...common,
+    shell: false,
+    windowsVerbatimArguments: true,
+  });
+}
+
+function probeEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const merged = { ...env };
+  for (const key of ["ComSpec", "COMSPEC", "SystemRoot", "SYSTEMROOT", "WINDIR", "windir", "TEMP", "TMP"]) {
+    if (merged[key] === undefined && process.env[key] !== undefined) {
+      merged[key] = process.env[key];
+    }
+  }
+  return merged;
+}
+
+function quoteWindowsCmdArg(value: string): string {
+  if (!/[\s"]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
 }

@@ -2,9 +2,9 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync, spawnSync } = require('node:child_process');
-const { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
+const { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { delimiter, join } = require('node:path');
+const { basename, delimiter, join } = require('node:path');
 
 const { getDefaults } = require('../dist/config/index.js');
 const { runInit } = require('../dist/init/index.js');
@@ -806,6 +806,33 @@ describe('staged workflow readiness', () => {
     }
   });
 
+  it('names a present-but-failing agent-browser in the ui-audit stage', () => {
+    const fixtureBin = mkdtempSync(join(tmpdir(), 'aie-doctor-workflow-probe-'));
+    try {
+      const windows = process.platform === 'win32';
+      const file = join(fixtureBin, windows ? 'agent-browser.cmd' : 'agent-browser');
+      if (windows) writeFileSync(file, '@echo off\r\nexit /b 7\r\n');
+      else {
+        writeFileSync(file, '#!/bin/sh\nexit 7\n');
+        chmodSync(file, 0o755);
+      }
+      const config = getDefaults();
+      config.manualUiAudit = true;
+      const gateReadiness = buildGateReadinessDiagnostics(config, {
+        ghAuthenticated: true,
+        env: windows ? { OS: 'Windows_NT', PATH: fixtureBin, PATHEXT: '.CMD;.EXE' } : { PATH: fixtureBin },
+        platform: process.platform,
+        pathDelimiter: delimiter,
+      });
+      const workflow = buildWorkflowReadiness(workflowInput(config, gateReadiness));
+      const stage = stagesById(workflow)['ui-audit'];
+      assert.equal(stage.status, 'needs-action');
+      assert.match(stage.detail, /capability probe/);
+    } finally {
+      rmSync(fixtureBin, { recursive: true, force: true });
+    }
+  });
+
   it('reports zero configured gates as unconfigured, not implicitly healthy', () => {
     const config = getDefaults();
     const gateReadiness = buildGateReadinessDiagnostics(config, { ghAuthenticated: true });
@@ -1156,12 +1183,16 @@ describe('doctor executable lookup', () => {
   it('reports a working agent-browser as available without which on PATH', () => {
     const fixture = createLookupFixture('agent-browser', 0);
     try {
+      assert.equal(existsSync(join(fixture.bin, 'which')), false);
+      assert.equal(existsSync(join(fixture.bin, 'which.exe')), false);
       const config = getDefaults();
       config.manualUiAudit = true;
       const readiness = buildGateReadinessDiagnostics(config, fixture.options);
       assert.equal(readiness.audit.agentBrowser.available, true);
       assert.equal(readiness.audit.agentBrowser.state, 'available');
+      assert.equal(readiness.audit.agentBrowser.reasonCode, 'found');
       assert.ok(readiness.audit.agentBrowser.resolvedPath);
+      assert.equal(readiness.audit.readiness, 'ready');
     } finally {
       fixture.cleanup();
     }
@@ -1175,7 +1206,10 @@ describe('doctor executable lookup', () => {
       const readiness = buildGateReadinessDiagnostics(config, fixture.options);
       assert.equal(readiness.audit.agentBrowser.available, false);
       assert.equal(readiness.audit.agentBrowser.state, 'present-but-failing');
+      assert.equal(readiness.audit.agentBrowser.reasonCode, 'present-but-failing');
       assert.notEqual(readiness.audit.agentBrowser.state, 'missing');
+      assert.equal(readiness.audit.readiness, 'needs-action');
+      assert.match(readiness.audit.agentBrowser.nextAction, /capability probe/);
     } finally {
       fixture.cleanup();
     }
@@ -1196,8 +1230,31 @@ describe('doctor executable lookup', () => {
       });
       assert.equal(readiness.audit.agentBrowser.available, false);
       assert.equal(readiness.audit.agentBrowser.state, 'missing');
+      assert.equal(readiness.audit.agentBrowser.reasonCode, 'missing');
+      assert.equal(readiness.audit.agentBrowser.resolvedPath, null);
     } finally {
       rmSync(empty, { recursive: true, force: true });
+    }
+  });
+
+  it('resolves a Windows .cmd agent-browser through PATH/PATHEXT without which', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-doctor-win-cmd-'));
+    try {
+      const bin = join(root, 'Program Files', 'Qube Tools');
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(join(bin, 'agent-browser.cmd'), '@echo off\r\nexit /b 0\r\n');
+      const config = getDefaults();
+      config.manualUiAudit = true;
+      const readiness = buildGateReadinessDiagnostics(config, {
+        ghAuthenticated: false,
+        env: { OS: 'Windows_NT', PATH: [bin, bin].join(';'), PATHEXT: '.CMD;.EXE' },
+        platform: 'win32',
+        pathDelimiter: ';',
+      });
+      assert.equal(basename(String(readiness.audit.agentBrowser.resolvedPath)).toLowerCase(), 'agent-browser.cmd');
+      assert.notEqual(readiness.audit.agentBrowser.state, 'missing');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

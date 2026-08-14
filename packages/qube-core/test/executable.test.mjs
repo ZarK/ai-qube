@@ -127,6 +127,13 @@ describe("resolveExecutable", () => {
     assert.equal(found.status, "unresolvable");
     assert.equal(found.reasonCode, "invalid-command");
   });
+
+  it("rejects an empty command name", () => {
+    const found = resolveExecutable("   ");
+    assert.equal(found.status, "unresolvable");
+    assert.equal(found.reasonCode, "empty-command");
+    assert.equal(found.resolvedPath, null);
+  });
 });
 
 describe("probeExecutable", () => {
@@ -154,6 +161,28 @@ describe("probeExecutable", () => {
       assert.equal(found.probeStatus, "present-but-failing");
       assert.equal(found.probeExitCode, 7);
       assert.notEqual(found.reasonCode, "missing");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("probes a Windows .cmd from a PATH entry that contains spaces", {
+    skip: process.platform !== "win32",
+  }, () => {
+    const root = mkdtempSync(path.join(os.tmpdir(), "qube-exec-space-probe-"));
+    try {
+      const bin = path.join(root, "Program Files", "Qube Tools");
+      mkdirSync(bin, { recursive: true });
+      writeFileSync(path.join(bin, "spaced.cmd"), "@echo off\r\nexit /b 0\r\n");
+      const found = probeExecutable("spaced", {
+        platform: "win32",
+        pathDelimiter: ";",
+        env: { OS: "Windows_NT", PATH: bin, PATHEXT: ".CMD;.EXE" },
+        probeArgs: [],
+      });
+      assert.equal(found.status, "found");
+      assert.equal(found.probeStatus, "ok");
+      assertPathEqual(found.resolvedPath, path.join(bin, "spaced.cmd"));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

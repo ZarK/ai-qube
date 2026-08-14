@@ -321,6 +321,14 @@ function buildUiAuditStage(input: WorkflowReadinessInput): WorkflowStage {
   if (audit.readiness === 'ready') {
     return { stage: 'ui-audit', status: 'ready', detail: 'Manual UI audit is enabled and agent-browser is available.', nextAction: null };
   }
+  if (audit.agentBrowser.state === 'present-but-failing') {
+    return {
+      stage: 'ui-audit',
+      status: 'needs-action',
+      detail: 'Manual UI audit is enabled but agent-browser failed its capability probe.',
+      nextAction: 'Repair the agent-browser install or use fallback browser automation manually.',
+    };
+  }
   return {
     stage: 'ui-audit',
     status: 'needs-action',
