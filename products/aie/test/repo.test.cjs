@@ -1571,6 +1571,186 @@ describe('repo layout inspection and affected scope', () => {
     assert.equal(result.projects.some(project => project.path === 'docs'), false);
   });
 
+  it('inspects a polyrepo multi-checkout layout with contained checkout projects and local signals', async () => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'polyrepo-multi-checkout');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'repos/api', 'repos/web']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === 'repos/api').packageName, 'api');
+    assert.equal(result.projects.find(project => project.path === 'repos/web').packageName, 'web');
+    assert.ok(result.rootMarkers.some(marker => marker.path === '.gitmodules'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected polyrepo checkouts and suggested gates', async () => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['repos/api/src/index.ts', '.gitmodules'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'polyrepo-multi-checkout');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.path), ['.', 'repos/api']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.path === '.').changedPaths, ['.gitmodules']);
+    assert.ok(result.affectedProjects.find(project => project.project.path === '.').gates.includes('dependency-review'));
+    assert.ok(result.affectedProjects.find(project => project.project.path === 'repos/api').gates.includes('typecheck'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a polyrepo multi-checkout when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'polyrepo-multi-checkout');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'repos/api', 'repos/web']);
+  });
+
+  it('reports an ambiguous layout when polyrepo and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify nested checkout-shaped directories without extra git proof as a polyrepo', async () => {
+    const repo = makeFixtureRepo('ambiguous-polyrepo-multi-checkout');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+    assert.deepEqual(result.projects.map(project => project.path), []);
+    assert.ok(result.warnings.some(warning => warning.includes('no contained extra git checkout')));
+  });
+
+  it('does not classify a single-root app as a polyrepo multi-checkout', async () => {
+    const repo = makeFixtureRepo('single-app-service');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+  });
+
+  it('does not classify multiple remotes without extra contained checkouts as a polyrepo', async () => {
+    const repo = makeGitRepo();
+    execFileSync('git', ['remote', 'add', 'origin', 'https://example.invalid/app.git'], { cwd: repo, stdio: 'ignore' });
+    execFileSync('git', ['remote', 'add', 'fork', 'https://example.invalid/fork.git'], { cwd: repo, stdio: 'ignore' });
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+    assert.ok(result.remotes.length >= 1);
+  });
+
+  it('classifies conventional checkout directories that contain extra git roots as a polyrepo', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'repos', 'api', 'src'), { recursive: true });
+    mkdirSync(join(repo, 'checkouts', 'web', 'src'), { recursive: true });
+    writeFileSync(join(repo, 'repos', 'api', 'src', 'index.ts'), 'export {}\n');
+    writeFileSync(join(repo, 'checkouts', 'web', 'src', 'index.ts'), 'export {}\n');
+    writeFileSync(join(repo, 'repos', 'api', '.git'), 'gitdir: ../../.git/modules/repos/api\n');
+    writeFileSync(join(repo, 'checkouts', 'web', '.git'), 'gitdir: ../../.git/modules/checkouts/web\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'polyrepo-multi-checkout');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'checkouts/web', 'repos/api']);
+  });
+
+  it('does not classify a Gradle includeBuild path without a contained git checkout as a polyrepo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'settings.gradle.kts'), 'includeBuild("externals/lib")\n');
+    mkdirSync(join(repo, 'externals', 'lib', 'src'), { recursive: true });
+    writeFileSync(join(repo, 'externals', 'lib', 'src', 'Lib.kt'), 'object Lib\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+  });
+
+  it('does not classify a generic JavaScript workspace as a polyrepo multi-checkout', async () => {
+    const repo = makeFixtureRepo('js-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'javascript-typescript-workspace');
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+  });
+
+  it('does not classify a Go workspace as a polyrepo multi-checkout', async () => {
+    const repo = makeFixtureRepo('go-workspace');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'go-workspace');
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+  });
+
+  it('keeps generated polyrepo paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+    mkdirSync(join(repo, 'dist'), { recursive: true });
+    writeFileSync(join(repo, 'dist', 'index.js'), 'export {}\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['dist/index.js'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not follow escaped .gitmodules paths out of the repository root', async () => {
+    const repo = makeGitRepo();
+    const outside = join(repo, '..', 'outside-polyrepo-checkout');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'index.ts'), 'export {}\n');
+    writeFileSync(join(repo, '.gitmodules'), '[submodule "escape"]\n\tpath = ../outside-polyrepo-checkout\n\turl = https://example.invalid/escape.git\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'polyrepo-multi-checkout');
+    assert.equal(result.projects.some(project => String(project.path).includes('outside') || String(project.path).includes('..')), false);
+    assert.ok(result.warnings.some(warning => warning.includes('no contained extra git checkout')));
+  });
+
+  it('does not follow symlink polyrepo members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('polyrepo-multi-checkout');
+    const outside = join(repo, '..', 'outside-polyrepo-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'index.ts'), 'export {}\n');
+    const link = join(repo, 'repos', 'api');
+    try {
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'repos/api'), false);
+    assert.equal(result.projects.some(project => project.path === 'repos/web'), true);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));

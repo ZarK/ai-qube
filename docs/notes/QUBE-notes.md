@@ -113,7 +113,7 @@ Repository layout matrix:
 | Mobile app repo | Android Gradle files, Xcode `.xcodeproj`/`.xcworkspace`, CocoaPods/SwiftPM, Expo/React Native configs. | Require configured device/simulator/manual UI gates when deterministic local gates are insufficient. |
 | Infrastructure repo | Terraform/OpenTofu modules, Helm charts, Kubernetes manifests, Ansible, Pulumi/CDK. | Treat plan/apply/deploy commands as high-risk; default to validation/plan-only gates and supply-chain/secret checks. |
 | Docs/content repo | Docusaurus, MkDocs, Hugo, Sphinx, mdBook, Astro content, docs-only roots. | Use link/build/lint gates and avoid code-style assumptions. |
-| Polyrepo or multi-checkout workspace | Multiple git remotes, sibling repos, Git submodules, Gradle composite builds, Go workspaces, external source dependencies. | Core should support one primary repo at first, then explicit multi-repo workspaces; never mutate sibling repos without policy. |
+| Polyrepo or multi-checkout workspace | Root `.gitmodules` with contained checkout paths, extra contained `.git` under `repos/`/`checkouts/`/`externals/`/`modules/`, or Gradle `includeBuild` with its own `.git`. Multiple remotes alone are not proof. | Map changed paths to contained checkout directories. Do not follow checkout URLs or mutate sibling checkouts outside the root. |
 | Generated/vendor-heavy repo | `vendor/`, generated clients, lockfiles, `dist/`, vendored subtrees, generated code markers. | Quality-control should classify generated/vendor paths and keep implementation changes out unless policy allows. |
 
 Layout provider requirements:

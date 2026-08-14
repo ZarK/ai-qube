@@ -32,5 +32,7 @@ Current fixture shapes:
 - `ambiguous-infrastructure-repo`: negative infrastructure fixture with a nested Terraform module but no root Terraform, Helm, Kubernetes, Ansible, Pulumi, or CDK proof.
 - `docs-content-repo`: positive docs content fixture with root `mkdocs.yml`, a `docs/` tree, and a GitHub Actions workflow.
 - `ambiguous-docs-content-repo`: negative docs fixture with a nested docs tree but no root MkDocs, Docusaurus, Hugo, Sphinx, or mdBook proof.
+- `polyrepo-multi-checkout`: positive polyrepo fixture with root `.gitmodules`, two contained checkout directories, and a GitHub Actions workflow.
+- `ambiguous-polyrepo-multi-checkout`: negative polyrepo fixture with a nested `repos/` checkout-shaped directory but no extra contained `.git` or `.gitmodules` member.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.

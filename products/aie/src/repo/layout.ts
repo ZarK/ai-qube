@@ -101,6 +101,12 @@ interface DocsWorkspaceSignals {
   readonly resolvedProjectPaths: readonly string[];
 }
 
+interface PolyrepoWorkspaceSignals {
+  readonly declaredPatterns: readonly string[];
+  readonly markerPaths: readonly string[];
+  readonly resolvedProjectPaths: readonly string[];
+}
+
 const ROOT_BUILD_SIGNAL_FILES: readonly RootBuildSignal[] = Object.freeze([
   { path: 'package.json', markerKind: 'package', projectKind: 'app', packageManager: null },
   { path: 'pyproject.toml', markerKind: 'package', projectKind: 'app', packageManager: null },
@@ -146,6 +152,7 @@ const INFRASTRUCTURE_PROOF_FILES = ['Chart.yaml', 'kustomization.yaml', 'kustomi
 const DOCS_PROOF_FILES = ['docusaurus.config.js', 'docusaurus.config.ts', 'mkdocs.yml', 'mkdocs.yaml', 'hugo.toml', 'hugo.yaml', 'hugo.json', 'book.toml', 'conf.py'] as const;
 const DOCS_CONTENT_DIRS = ['docs', 'website', 'content', 'book'] as const;
 const DOCS_GENERATED_PATHS = ['_build'] as const;
+const POLYREPO_CHECKOUT_DIRS = ['repos', 'checkouts', 'externals', 'modules'] as const;
 
 export interface RepoInspectOptions {
   readonly config: Config;
@@ -1230,7 +1237,97 @@ function docsProjectName(root: string, relativePath: string): string | null {
   return portablePath(relativePath).split('/').filter(Boolean).pop() ?? null;
 }
 
-function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals): RepoRootMarker[] {
+function gitmodulePaths(text: string): string[] {
+  const paths: string[] = [];
+  for (const match of text.matchAll(/^\s*path\s*=\s*(.+)$/gm)) {
+    const path = portablePath(match[1].trim().replace(/\s+#.*$/, '').replace(/^["']|["']$/g, '')).replace(/\/+$/, '');
+    if (path && !path.startsWith('$') && !path.startsWith('<')) paths.push(path);
+  }
+  return [...new Set(paths)].sort();
+}
+
+function gradleIncludeBuildPaths(text: string): string[] {
+  const paths: string[] = [];
+  for (const match of text.matchAll(/\bincludeBuild\s*\(\s*["']([^"']+)["']/g)) {
+    const path = portablePath(match[1].trim()).replace(/\/+$/, '');
+    if (path) paths.push(path);
+  }
+  return [...new Set(paths)].sort();
+}
+
+function isContainedDirectory(root: string, relativePath: string): boolean {
+  if (relativePath === '.' || relativePath === '') return false;
+  const directory = resolve(root, relativePath);
+  const relative = containedProjectPath(root, directory);
+  if (relative === null || relative === '.') return false;
+  try {
+    readdirSync(directory);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isContainedGitCheckout(root: string, relativePath: string): boolean {
+  if (!isContainedDirectory(root, relativePath)) return false;
+  return existsSync(join(root, relativePath, '.git'));
+}
+
+function containedChildGitCheckouts(root: string, directoryName: string): string[] {
+  const directory = join(root, directoryName);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const relativePath = containedProjectPath(root, resolve(directory, entry.name));
+      return relativePath !== null && isContainedGitCheckout(root, relativePath) ? relativePath : null;
+    })
+    .filter((path): path is string => path !== null)
+    .sort();
+}
+
+function detectPolyrepoWorkspaceSignals(root: string | null): PolyrepoWorkspaceSignals {
+  if (!root) return { declaredPatterns: [], markerPaths: [], resolvedProjectPaths: [] };
+  const modulesText = readTextFile(root, '.gitmodules');
+  const settingsText = JAVA_KOTLIN_SETTINGS_FILES.map(path => readTextFile(root, path)).find(text => text !== null) ?? null;
+  const gitmoduleDeclared = modulesText ? gitmodulePaths(modulesText) : [];
+  const includeBuildDeclared = settingsText ? gradleIncludeBuildPaths(settingsText) : [];
+  const gitmoduleMembers = gitmoduleDeclared.filter(path => isContainedDirectory(root, path));
+  const includeBuildMembers = includeBuildDeclared.filter(path => isContainedGitCheckout(root, path));
+  const declaredMembers = [...new Set([...gitmoduleMembers, ...includeBuildMembers])].sort();
+  const conventionalMembers = POLYREPO_CHECKOUT_DIRS.flatMap(directoryName => containedChildGitCheckouts(root, directoryName));
+  const resolvedProjectPaths = [...new Set(declaredMembers.length > 0 ? declaredMembers : conventionalMembers)].sort();
+  const markerPaths = modulesText !== null ? ['.gitmodules'] : [];
+  return {
+    declaredPatterns: [...new Set([...gitmoduleDeclared, ...includeBuildDeclared])].sort(),
+    markerPaths,
+    resolvedProjectPaths,
+  };
+}
+
+function hasPolyrepoWorkspaceBoundary(signals: PolyrepoWorkspaceSignals): boolean {
+  return signals.resolvedProjectPaths.length > 0;
+}
+
+function polyrepoCheckoutShapedPaths(root: string | null): string[] {
+  if (!root) return [];
+  return (['repos', 'checkouts', 'externals'] as const).flatMap(directoryName => {
+    const directory = join(root, directoryName);
+    if (!existsSync(directory)) return [];
+    return readdirSync(directory, { withFileTypes: true })
+      .filter(entry => entry.isDirectory())
+      .map(entry => containedProjectPath(root, resolve(directory, entry.name)))
+      .filter((path): path is string => path !== null)
+      .sort();
+  });
+}
+
+function polyrepoProjectName(root: string, relativePath: string): string | null {
+  if (relativePath === '.') return rootDirectoryName(root);
+  return portablePath(relativePath).split('/').filter(Boolean).pop() ?? null;
+}
+
+function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoRootMarker[] {
   if (!root) return [];
   const candidates: RepoRootMarker[] = [
     { path: '.git', kind: 'git' },
@@ -1249,6 +1346,7 @@ function detectRootMarkers(root: string | null, rootSignals: readonly RootBuildS
     ...mobileWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...infrastructureWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...docsWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
+    ...polyrepoWorkspaceSignals.markerPaths.map(path => ({ path, kind: 'workspace' as const })),
     ...rootSignals.map(signal => ({ path: signal.path, kind: signal.markerKind })),
   ];
   return candidates
@@ -1269,12 +1367,12 @@ function pathSignals(root: string | null, names: readonly string[], reason: stri
   return names.filter(path => existsSync(join(root, path))).map(path => ({ path, reason }));
 }
 
-function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals): RepoProject[] {
+function workspaceProjects(root: string, packageManagers: readonly RepoPackageManager[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoProject[] {
   const rootPackage = readPackageJson(root);
   const rootPyProject = readPyProject(root);
   const rootCargo = readCargoProject(root);
   const rootGo = readGoModule(root);
-  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths, ...rustWorkspaceSignals.resolvedProjectPaths, ...goWorkspaceSignals.resolvedProjectPaths, ...javaKotlinWorkspaceSignals.resolvedProjectPaths, ...dotnetWorkspaceSignals.resolvedProjectPaths, ...bazelWorkspaceSignals.resolvedProjectPaths, ...cmakeWorkspaceSignals.resolvedProjectPaths, ...mobileWorkspaceSignals.resolvedProjectPaths, ...infrastructureWorkspaceSignals.resolvedProjectPaths, ...docsWorkspaceSignals.resolvedProjectPaths])].sort();
+  const paths = [...new Set([...jsWorkspaceSignals.resolvedProjectPaths, ...pythonWorkspaceSignals.resolvedProjectPaths, ...rustWorkspaceSignals.resolvedProjectPaths, ...goWorkspaceSignals.resolvedProjectPaths, ...javaKotlinWorkspaceSignals.resolvedProjectPaths, ...dotnetWorkspaceSignals.resolvedProjectPaths, ...bazelWorkspaceSignals.resolvedProjectPaths, ...cmakeWorkspaceSignals.resolvedProjectPaths, ...mobileWorkspaceSignals.resolvedProjectPaths, ...infrastructureWorkspaceSignals.resolvedProjectPaths, ...docsWorkspaceSignals.resolvedProjectPaths, ...polyrepoWorkspaceSignals.resolvedProjectPaths])].sort();
   const projects: RepoProject[] = [];
   const jsWorkspace = Boolean(rootPackage && hasJsWorkspaceSignals(jsWorkspaceSignals));
   const pythonWorkspace = Boolean(rootPyProject && hasPythonWorkspaceSignals(pythonWorkspaceSignals));
@@ -1287,8 +1385,12 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   const cmakeWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
   const infrastructureWorkspace = hasInfrastructureWorkspaceBoundary(infrastructureWorkspaceSignals);
   const docsWorkspace = hasDocsWorkspaceBoundary(docsWorkspaceSignals);
-  const winner = resolveProvenWorkspace({ js: jsWorkspace, python: pythonWorkspace, rust: rustWorkspace, go: goWorkspace, java: javaWorkspace, dotnet: dotnetWorkspace, bazel: bazelWorkspace, cmake: cmakeWorkspace, mobile: mobileWorkspace, infra: infrastructureWorkspace, docs: docsWorkspace }, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals);
-  if (winner === 'docs') {
+  const polyrepoWorkspace = hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals);
+  const winner = resolveProvenWorkspace({ js: jsWorkspace, python: pythonWorkspace, rust: rustWorkspace, go: goWorkspace, java: javaWorkspace, dotnet: dotnetWorkspace, bazel: bazelWorkspace, cmake: cmakeWorkspace, mobile: mobileWorkspace, infra: infrastructureWorkspace, docs: docsWorkspace, polyrepo: polyrepoWorkspace }, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals, polyrepoWorkspaceSignals);
+  if (winner === 'polyrepo') {
+    const packageName = polyrepoProjectName(root, '.');
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (winner === 'docs') {
     const packageName = docsProjectName(root, '.');
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (winner === 'infra') {
@@ -1351,6 +1453,9 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
   } else if (docsWorkspace) {
     const packageName = docsProjectName(root, '.');
     projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
+  } else if (polyrepoWorkspace) {
+    const packageName = polyrepoProjectName(root, '.');
+    projects.push({ id: projectId('.', packageName), path: '.', kind: 'workspace', packageName, packageManager: null, gates: gatesForProject('.') });
   } else if (paths.length === 0 && rootSignals.length > 0) {
     const primarySignal = rootSignals[0];
     const packageName = rootProjectName(root, primarySignal);
@@ -1361,16 +1466,16 @@ function workspaceProjects(root: string, packageManagers: readonly RepoPackageMa
     const pyProject = readPyProject(root, `${path}/pyproject.toml`);
     const cargo = readCargoProject(root, `${path}/Cargo.toml`);
     const goModule = readGoModule(root, `${path}/go.mod`);
-    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? cargo?.name ?? goModule?.name ?? javaKotlinProjectName(root, path) ?? dotnetProjectName(root, path) ?? bazelProjectName(root, path) ?? cmakeProjectName(root, path) ?? mobileProjectName(root, path) ?? infrastructureProjectName(root, path) ?? docsProjectName(root, path);
+    const packageName = typeof packageJson?.name === 'string' ? packageJson.name : pyProject?.name ?? cargo?.name ?? goModule?.name ?? javaKotlinProjectName(root, path) ?? dotnetProjectName(root, path) ?? bazelProjectName(root, path) ?? cmakeProjectName(root, path) ?? mobileProjectName(root, path) ?? infrastructureProjectName(root, path) ?? docsProjectName(root, path) ?? polyrepoProjectName(root, path);
     projects.push({ id: projectId(path, packageName), path, kind: 'package', packageName, packageManager: packageJson ? packageManagerForPath(packageManagers, path) : null, gates: gatesForProject(path) });
   }
   return projects;
 }
 
-type ProvenWorkspace = 'javascript' | 'python' | 'rust' | 'go' | 'java' | 'dotnet' | 'bazel' | 'cmake' | 'mobile' | 'infra' | 'docs' | 'conflict' | 'none';
+type ProvenWorkspace = 'javascript' | 'python' | 'rust' | 'go' | 'java' | 'dotnet' | 'bazel' | 'cmake' | 'mobile' | 'infra' | 'docs' | 'polyrepo' | 'conflict' | 'none';
 
 function resolveProvenWorkspace(
-  present: { js: boolean; python: boolean; rust: boolean; go: boolean; java: boolean; dotnet: boolean; bazel: boolean; cmake: boolean; mobile: boolean; infra: boolean; docs: boolean },
+  present: { js: boolean; python: boolean; rust: boolean; go: boolean; java: boolean; dotnet: boolean; bazel: boolean; cmake: boolean; mobile: boolean; infra: boolean; docs: boolean; polyrepo: boolean },
   jsWorkspaceSignals: JsWorkspaceSignals,
   pythonWorkspaceSignals: PythonWorkspaceSignals,
   rustWorkspaceSignals: RustWorkspaceSignals,
@@ -1381,7 +1486,7 @@ function resolveProvenWorkspace(
   cmakeWorkspaceSignals: CmakeWorkspaceSignals,
   mobileWorkspaceSignals: MobileWorkspaceSignals,
   infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals,
-  docsWorkspaceSignals: DocsWorkspaceSignals,
+  docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals,
 ): ProvenWorkspace {
   const withMembers: ProvenWorkspace[] = [];
   if (present.js && jsWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('javascript');
@@ -1395,15 +1500,16 @@ function resolveProvenWorkspace(
   if (present.mobile && mobileWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('mobile');
   if (present.infra && infrastructureWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('infra');
   if (present.docs && docsWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('docs');
+  if (present.polyrepo && polyrepoWorkspaceSignals.resolvedProjectPaths.length > 0) withMembers.push('polyrepo');
   if (withMembers.length > 1) return 'conflict';
   if (withMembers.length === 1) return withMembers[0];
-  const presentKinds = [present.js && 'javascript', present.python && 'python', present.rust && 'rust', present.go && 'go', present.java && 'java', present.dotnet && 'dotnet', present.bazel && 'bazel', present.cmake && 'cmake', present.mobile && 'mobile', present.infra && 'infra', present.docs && 'docs'].filter((value): value is Exclude<ProvenWorkspace, 'conflict' | 'none'> => Boolean(value));
+  const presentKinds = [present.js && 'javascript', present.python && 'python', present.rust && 'rust', present.go && 'go', present.java && 'java', present.dotnet && 'dotnet', present.bazel && 'bazel', present.cmake && 'cmake', present.mobile && 'mobile', present.infra && 'infra', present.docs && 'docs', present.polyrepo && 'polyrepo'].filter((value): value is Exclude<ProvenWorkspace, 'conflict' | 'none'> => Boolean(value));
   if (presentKinds.length === 1) return presentKinds[0];
   if (presentKinds.length > 1) return 'conflict';
   return 'none';
 }
 
-function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals): RepoLayoutKind {
+function detectLayoutKind(root: string | null, projects: readonly RepoProject[], generatedPaths: readonly RepoPathSignal[], vendorPaths: readonly RepoPathSignal[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): RepoLayoutKind {
   if (!root) return 'unknown';
   if (vendorPaths.length > 0 || generatedPaths.length > 1) return 'generated-vendor-heavy';
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
@@ -1417,8 +1523,9 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
   const cmakeRootWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
   const infrastructureRootWorkspace = hasInfrastructureWorkspaceBoundary(infrastructureWorkspaceSignals);
   const docsRootWorkspace = hasDocsWorkspaceBoundary(docsWorkspaceSignals);
+  const polyrepoRootWorkspace = hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals);
   const proven = resolveProvenWorkspace(
-    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace, infra: infrastructureRootWorkspace, docs: docsRootWorkspace },
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace, infra: infrastructureRootWorkspace, docs: docsRootWorkspace, polyrepo: polyrepoRootWorkspace },
     jsWorkspaceSignals,
     pythonWorkspaceSignals,
     rustWorkspaceSignals,
@@ -1430,6 +1537,7 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
     mobileWorkspaceSignals,
     infrastructureWorkspaceSignals,
     docsWorkspaceSignals,
+    polyrepoWorkspaceSignals,
   );
   if (proven === 'javascript') return 'javascript-typescript-workspace';
   if (proven === 'python') return 'python-workspace-monorepo';
@@ -1442,13 +1550,14 @@ function detectLayoutKind(root: string | null, projects: readonly RepoProject[],
   if (proven === 'mobile') return 'mobile-app-repo';
   if (proven === 'infra') return 'infrastructure-repo';
   if (proven === 'docs') return 'docs-content-repo';
+  if (proven === 'polyrepo') return 'polyrepo-multi-checkout';
   if (proven === 'conflict') return 'unknown';
   if (rootSignals.length === 1) return 'single-app-service';
   if (rootSignals.length > 1) return 'unknown';
   return 'unknown';
 }
 
-function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals): string[] {
+function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: readonly RepoProject[], rootSignals: readonly RootBuildSignal[], jsWorkspaceSignals: JsWorkspaceSignals, pythonWorkspaceSignals: PythonWorkspaceSignals, rustWorkspaceSignals: RustWorkspaceSignals, goWorkspaceSignals: GoWorkspaceSignals, javaKotlinWorkspaceSignals: JavaKotlinWorkspaceSignals, dotnetWorkspaceSignals: DotnetWorkspaceSignals, bazelWorkspaceSignals: BazelWorkspaceSignals, cmakeWorkspaceSignals: CmakeWorkspaceSignals, mobileWorkspaceSignals: MobileWorkspaceSignals, infrastructureWorkspaceSignals: InfrastructureWorkspaceSignals, docsWorkspaceSignals: DocsWorkspaceSignals, polyrepoWorkspaceSignals: PolyrepoWorkspaceSignals): string[] {
   const warnings: string[] = [];
   const jsRootWorkspace = hasJsWorkspaceSignals(jsWorkspaceSignals) && rootSignals.some(signal => signal.path === 'package.json');
   const pythonRootWorkspace = hasPythonWorkspaceSignals(pythonWorkspaceSignals) && rootSignals.some(signal => signal.path === 'pyproject.toml');
@@ -1461,8 +1570,9 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
   const cmakeRootWorkspace = hasCmakeSuperbuildBoundary(cmakeWorkspaceSignals);
   const infrastructureRootWorkspace = hasInfrastructureWorkspaceBoundary(infrastructureWorkspaceSignals);
   const docsRootWorkspace = hasDocsWorkspaceBoundary(docsWorkspaceSignals);
+  const polyrepoRootWorkspace = hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals);
   const proven = resolveProvenWorkspace(
-    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace, infra: infrastructureRootWorkspace, docs: docsRootWorkspace },
+    { js: jsRootWorkspace, python: pythonRootWorkspace, rust: rustRootWorkspace, go: goRootWorkspace, java: javaRootWorkspace, dotnet: dotnetRootWorkspace, bazel: bazelRootWorkspace, cmake: cmakeRootWorkspace, mobile: mobileRootWorkspace, infra: infrastructureRootWorkspace, docs: docsRootWorkspace, polyrepo: polyrepoRootWorkspace },
     jsWorkspaceSignals,
     pythonWorkspaceSignals,
     rustWorkspaceSignals,
@@ -1474,11 +1584,12 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
     mobileWorkspaceSignals,
     infrastructureWorkspaceSignals,
     docsWorkspaceSignals,
+    polyrepoWorkspaceSignals,
   );
-  const present = [jsRootWorkspace && 'JavaScript', pythonRootWorkspace && 'Python', rustRootWorkspace && 'Rust', goRootWorkspace && 'Go', javaRootWorkspace && 'Java/Kotlin', dotnetRootWorkspace && '.NET', bazelRootWorkspace && 'Bazel/Pants/Buck', cmakeRootWorkspace && 'CMake', mobileRootWorkspace && 'Mobile', infrastructureRootWorkspace && 'Infrastructure', docsRootWorkspace && 'Docs'].filter((value): value is string => Boolean(value));
+  const present = [jsRootWorkspace && 'JavaScript', pythonRootWorkspace && 'Python', rustRootWorkspace && 'Rust', goRootWorkspace && 'Go', javaRootWorkspace && 'Java/Kotlin', dotnetRootWorkspace && '.NET', bazelRootWorkspace && 'Bazel/Pants/Buck', cmakeRootWorkspace && 'CMake', mobileRootWorkspace && 'Mobile', infrastructureRootWorkspace && 'Infrastructure', docsRootWorkspace && 'Docs', polyrepoRootWorkspace && 'Polyrepo'].filter((value): value is string => Boolean(value));
   if (present.length > 1) {
     const names = present.length === 2 ? `Both ${present[0]} and ${present[1]}` : present.join(', ');
-    const provenLabel = proven === 'javascript' ? 'JavaScript' : proven === 'python' ? 'Python' : proven === 'rust' ? 'Rust' : proven === 'go' ? 'Go' : proven === 'java' ? 'Java/Kotlin' : proven === 'dotnet' ? '.NET' : proven === 'bazel' ? 'Bazel/Pants/Buck' : proven === 'cmake' ? 'CMake' : proven === 'mobile' ? 'Mobile' : proven === 'infra' ? 'Infrastructure' : proven === 'docs' ? 'Docs' : null;
+    const provenLabel = proven === 'javascript' ? 'JavaScript' : proven === 'python' ? 'Python' : proven === 'rust' ? 'Rust' : proven === 'go' ? 'Go' : proven === 'java' ? 'Java/Kotlin' : proven === 'dotnet' ? '.NET' : proven === 'bazel' ? 'Bazel/Pants/Buck' : proven === 'cmake' ? 'CMake' : proven === 'mobile' ? 'Mobile' : proven === 'infra' ? 'Infrastructure' : proven === 'docs' ? 'Docs' : proven === 'polyrepo' ? 'Polyrepo' : null;
     warnings.push(proven === 'conflict' || !provenLabel
       ? `${names} root workspace declarations were detected and both or neither resolve member projects; repository layout is ambiguous.`
       : `${names} root workspace declarations were detected; layout classification used the ${provenLabel} workspace because only it resolves member projects.`);
@@ -1508,9 +1619,12 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
   if (kind === 'infrastructure-repo' && infrastructureWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Infrastructure signals were detected, but no module or chart roots were resolved.');
   if ((docsWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasDocsWorkspaceBoundary(docsWorkspaceSignals)) warnings.push(`Docs content marker(s) were detected (${docsWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Docusaurus, MkDocs, Hugo, Sphinx, or mdBook proof was found; workspace layout is ambiguous.`);
   if (kind === 'docs-content-repo' && docsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Docs content signals were detected, but no docs or content roots were resolved.');
+  const polyrepoShapedPaths = polyrepoCheckoutShapedPaths(root);
+  if ((polyrepoWorkspaceSignals.markerPaths.includes('.gitmodules') || polyrepoShapedPaths.length > 0) && !hasPolyrepoWorkspaceBoundary(polyrepoWorkspaceSignals)) warnings.push(`Polyrepo checkout marker(s) were detected (${[...new Set([...polyrepoWorkspaceSignals.markerPaths, ...polyrepoWorkspaceSignals.declaredPatterns, ...polyrepoShapedPaths])].join(', ')}) but no contained extra git checkout or .gitmodules member was found; workspace layout is ambiguous.`);
+  if (kind === 'polyrepo-multi-checkout' && polyrepoWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Polyrepo multi-checkout signals were detected, but no contained checkout roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');
-  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'rust-workspace' && kind !== 'go-workspace' && kind !== 'java-kotlin-multi-project' && kind !== 'dotnet-solution' && kind !== 'bazel-pants-buck-monorepo' && kind !== 'c-cpp-cmake-superbuild' && kind !== 'mobile-app-repo' && kind !== 'infrastructure-repo' && kind !== 'docs-content-repo' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
+  if (kind !== 'javascript-typescript-workspace' && kind !== 'python-workspace-monorepo' && kind !== 'rust-workspace' && kind !== 'go-workspace' && kind !== 'java-kotlin-multi-project' && kind !== 'dotnet-solution' && kind !== 'bazel-pants-buck-monorepo' && kind !== 'c-cpp-cmake-superbuild' && kind !== 'mobile-app-repo' && kind !== 'infrastructure-repo' && kind !== 'docs-content-repo' && kind !== 'polyrepo-multi-checkout' && kind !== 'single-app-service' && kind !== 'generated-vendor-heavy') {
     warnings.push('Affected-scope mapping is conservative for this layout kind.');
   }
   return warnings;
@@ -1535,14 +1649,15 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
   const mobileWorkspaceSignals = detectMobileWorkspaceSignals(root);
   const infrastructureWorkspaceSignals = detectInfrastructureWorkspaceSignals(root);
   const docsWorkspaceSignals = detectDocsWorkspaceSignals(root);
-  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals);
-  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals) : [];
+  const polyrepoWorkspaceSignals = detectPolyrepoWorkspaceSignals(root);
+  const rootMarkers = detectRootMarkers(root, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals, polyrepoWorkspaceSignals);
+  const projects = root ? workspaceProjects(root, packageManagers, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals, polyrepoWorkspaceSignals) : [];
   const generatedPaths = [
     ...repoState.generatedPathSignals.map(signal => ({ path: portablePath(signal.path), reason: signal.reason })),
     ...pathSignals(root, ['dist', 'build', 'coverage', 'generated', 'target', '.gradle', 'bin', 'obj', ...BAZEL_GENERATED_PATHS, ...CMAKE_GENERATED_PATHS, ...MOBILE_GENERATED_PATHS, ...INFRASTRUCTURE_GENERATED_PATHS, ...DOCS_GENERATED_PATHS], 'Generated output path exists.'),
   ].filter((signal, index, signals) => signals.findIndex(other => other.path === signal.path) === index);
   const vendorPaths = pathSignals(root, ['vendor', 'third_party'], 'Vendored dependency path exists.');
-  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals);
+  const kind = detectLayoutKind(root, projects, generatedPaths, vendorPaths, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals, polyrepoWorkspaceSignals);
   return {
     kind,
     root,
@@ -1554,7 +1669,7 @@ export async function inspectRepoLayout(options: RepoInspectOptions): Promise<Re
     ciHints: detectCiHints(root),
     generatedPaths,
     vendorPaths,
-    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals)],
+    warnings: [...repoState.warnings, ...warningsForLayout(root, kind, projects, rootSignals, jsWorkspaceSignals, pythonWorkspaceSignals, rustWorkspaceSignals, goWorkspaceSignals, javaKotlinWorkspaceSignals, dotnetWorkspaceSignals, bazelWorkspaceSignals, cmakeWorkspaceSignals, mobileWorkspaceSignals, infrastructureWorkspaceSignals, docsWorkspaceSignals, polyrepoWorkspaceSignals)],
   };
 }
 
@@ -1580,7 +1695,7 @@ function containsPath(layoutKind: RepoLayoutKind, projectPath: string, changedPa
 
 function gatesForChangedPath(path: string): string[] {
   if (path.startsWith('.github/workflows/')) return ['ci'];
-  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\/|\.tf$|\.tofu$|Chart\.yaml$|kustomization\.ya?ml$|Pulumi\.yaml$|cdk\.json$|ansible\.cfg$|(?:^|\/)(?:playbook|site)\.yml$|mkdocs\.ya?ml$|docusaurus\.config\.(js|ts)$|hugo\.(toml|ya?ml|json)$|book\.toml$|(?:^|\/)conf\.py$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
+  if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\/|\.tf$|\.tofu$|Chart\.yaml$|kustomization\.ya?ml$|Pulumi\.yaml$|cdk\.json$|ansible\.cfg$|(?:^|\/)(?:playbook|site)\.yml$|mkdocs\.ya?ml$|docusaurus\.config\.(js|ts)$|hugo\.(toml|ya?ml|json)$|book\.toml$|(?:^|\/)conf\.py$|(?:^|\/)\.gitmodules$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|bzl|swift|m|mm)$/.test(path)) return ['build', 'typecheck', 'test'];
   if (/\.(md|mdx|rst)$/i.test(path)) return ['docs'];
