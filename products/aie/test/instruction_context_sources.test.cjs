@@ -6,6 +6,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const {
   defaultInstructionContextSources,
+  listAgentHostAdapters,
   registeredInstructionPaths,
 } = require('../dist/agent_host_adapters.js');
 const { getDefaults } = require('../dist/config/defaults.js');
@@ -22,9 +23,10 @@ describe('instruction context sources from host targets', () => {
   it('locks default instruction sources to the host adapter registry', () => {
     assert.deepEqual(getDefaults().reviewContextSources.instructions, defaultInstructionContextSources());
     const registered = registeredInstructionPaths();
-    assert.ok(registered.includes('CLAUDE.md'));
-    assert.ok(registered.includes('AGENTS.md'));
-    for (const path of registered) {
+    const adapterPaths = listAgentHostAdapters().flatMap(adapter => adapter.instructionPaths);
+    assert.ok(adapterPaths.includes('CLAUDE.md'));
+    assert.ok(adapterPaths.includes('AGENTS.md'));
+    for (const path of new Set([...registered, ...adapterPaths])) {
       const filename = path.split('/').pop();
       assert.ok(getDefaults().reviewContextSources.instructions.includes(filename), `${filename} missing from defaults`);
       assert.ok(getDefaults().reviewContextSources.instructions.includes(`**/${filename}`), `**/${filename} missing from defaults`);

@@ -73,6 +73,7 @@ export interface AgentHostAdapterMetadata {
   readonly id: AgentHostId;
   readonly packageName: string | null;
   readonly installed: boolean;
+  readonly instructionPaths: readonly string[];
 }
 
 const AGENTS_INSTRUCTIONS: InstructionTarget = {
@@ -252,10 +253,10 @@ const BUILTIN_PROFILES: Partial<Record<AgentHostId, AgentHostProfile>> = {
 };
 
 const ADAPTERS: readonly AgentHostAdapterMetadata[] = Object.freeze([
-  Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false }),
-  Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true }),
-  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true }),
-  Object.freeze({ id: 'grok-build', packageName: null, installed: true }),
+  Object.freeze({ id: 'opencode', packageName: '@tjalve/qube-adapter-opencode', installed: false, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'codex', packageName: '@tjalve/qube-adapter-codex', installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'claude-code', packageName: '@tjalve/qube-adapter-claude-code', installed: true, instructionPaths: [CLAUDE_INSTRUCTIONS.path] }),
+  Object.freeze({ id: 'grok-build', packageName: null, installed: true, instructionPaths: [AGENTS_INSTRUCTIONS.path] }),
 ]);
 
 let cachedCodexProfile: AgentHostProfile | null | undefined;
@@ -418,10 +419,19 @@ export function defaultInstructionContextSources(): string[] {
 }
 
 function registeredInstructionTargets(): InstructionTarget[] {
-  const targets: InstructionTarget[] = [AGENTS_INSTRUCTIONS, CLAUDE_INSTRUCTIONS];
+  const targets: InstructionTarget[] = [];
+  const seen = new Set<string>();
+  const add = (path: string) => {
+    if (path.trim() === '' || seen.has(path)) return;
+    seen.add(path);
+    targets.push({ id: path, path, description: `Registered host instruction file ${path}.` });
+  };
+  for (const adapter of ADAPTERS) {
+    for (const path of adapter.instructionPaths) add(path);
+  }
   for (const profile of Object.values(BUILTIN_PROFILES)) {
     if (!profile) continue;
-    for (const target of profile.instructionTargets) targets.push(target);
+    for (const target of profile.instructionTargets) add(target.path);
   }
   return targets;
 }
