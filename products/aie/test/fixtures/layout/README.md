@@ -19,5 +19,7 @@ Current fixture shapes:
 - `java-kotlin-gradle`: positive Java/Kotlin multi-project fixture with root `settings.gradle.kts`, root `build.gradle.kts`, included modules, and a GitHub Actions workflow.
 - `java-kotlin-maven`: positive Java/Kotlin multi-project fixture with a root aggregator `pom.xml`, member modules, and a GitHub Actions workflow.
 - `ambiguous-java-kotlin`: negative Java/Kotlin fixture with a nested Gradle module but no root settings file or aggregator `pom.xml`.
+- `dotnet-solution`: positive .NET solution fixture with a root `.sln`, `Directory.Build.props`, two projects, and a GitHub Actions workflow.
+- `ambiguous-dotnet-solution`: negative .NET fixture with a nested `.csproj` but no root solution file.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.

@@ -593,6 +593,144 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.projects.some(project => project.path === 'modules/core'));
   });
 
+  it('inspects a .NET solution layout with projects and local signals', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'dotnet-solution');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'Fixture');
+    assert.equal(result.projects.find(project => project.path === 'src/App').packageName, 'App');
+    assert.equal(result.projects.find(project => project.path === 'src/Core').packageName, 'Core');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Fixture.sln'));
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Directory.Build.props'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected .NET projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['src/Core/Class1.cs', 'src/App/App.csproj', 'Fixture.sln'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'dotnet-solution');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['Fixture', 'App', 'Core']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'Fixture').changedPaths, ['Fixture.sln']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'Core').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'App').gates.includes('dependency-review'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a .NET solution when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'dotnet-solution');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
+  });
+
+  it('reports an ambiguous layout when .NET and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not treat unlisted conventional .NET projects as solution members', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    mkdirSync(join(repo, 'src', 'Unlisted'), { recursive: true });
+    writeFileSync(join(repo, 'src', 'Unlisted', 'Unlisted.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    writeFileSync(join(repo, 'Fixture.sln'), 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'dotnet-solution');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App']);
+    assert.equal(result.projects.some(project => project.path === 'src/Unlisted'), false);
+  });
+
+  it('does not classify nested .NET projects without a root solution as a solution', async () => {
+    const repo = makeFixtureRepo('ambiguous-dotnet-solution');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['src/App']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root .sln or .slnx was found')));
+  });
+
+  it('does not classify a lone root csproj as a .NET solution', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'App.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'app');
+  });
+
+  it('keeps generated .NET bin and obj paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    mkdirSync(join(repo, 'bin'), { recursive: true });
+    writeFileSync(join(repo, 'bin', 'App.dll'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['bin/App.dll'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not expand .NET solution members outside the repository root', async () => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    const outside = join(repo, '..', 'outside-dotnet-leak');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'Leak.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    writeFileSync(join(repo, 'Fixture.sln'), 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\nProject("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Leak", "..\\outside-dotnet-leak\\Leak.csproj", "{33333333-3333-3333-3333-333333333333}"\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App']);
+    assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink .NET members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('dotnet-solution');
+    const outside = join(repo, '..', 'outside-dotnet-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'Escape.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    const link = join(repo, 'src', 'Escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+    writeFileSync(join(repo, 'Fixture.sln'), 'Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "App", "src\\App\\App.csproj", "{11111111-1111-1111-1111-111111111111}"\nProject("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Escape", "src\\Escape\\Escape.csproj", "{44444444-4444-4444-4444-444444444444}"\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'src/Escape'), false);
+  });
+
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('python-workspace');
     writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
