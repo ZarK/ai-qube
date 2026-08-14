@@ -99,6 +99,50 @@ describe('review delta scope', () => {
     assert.equal(missing.reason, 'missing-base-head');
   });
 
+  it('rejects delta evidence whose prior file is missing or mismatches the requested head', () => {
+    const root = mkdtempSync(join(tmpdir(), 'aie-delta-mismatch-'));
+    const missingHeadDir = join(root, '.qube', 'aie', 'reviews', '319', '509', 'aaa111');
+    mkdirSync(missingHeadDir, { recursive: true });
+    writeFileSync(join(missingHeadDir, 'code-quality.json'), JSON.stringify({
+      version: 1,
+      status: 'passed',
+      recommendation: 'approve',
+    }));
+    const missingHead = validateDeltaLaneEvidence({
+      repoRoot: root,
+      issueNumber: 319,
+      prNumber: 509,
+      laneId: 'code-quality',
+      reviewScope: 'delta',
+      baseHeadSha: 'aaa111',
+    });
+    writeFileSync(join(missingHeadDir, 'code-quality.json'), JSON.stringify({
+      version: 1,
+      status: 'passed',
+      recommendation: 'approve',
+      headSha: 'bbb222',
+    }));
+    const mismatchedHead = validateDeltaLaneEvidence({
+      repoRoot: root,
+      issueNumber: 319,
+      prNumber: 509,
+      laneId: 'code-quality',
+      reviewScope: 'delta',
+      baseHeadSha: 'aaa111',
+    });
+    assert.equal(missingHead.ok, false);
+    assert.equal(missingHead.reason, 'unreviewed-base-head');
+    assert.equal(mismatchedHead.ok, false);
+    assert.equal(mismatchedHead.reason, 'unreviewed-base-head');
+    assert.equal(countPriorDeltaRounds({
+      repoRoot: root,
+      issueNumber: 319,
+      prNumber: 509,
+      laneId: 'code-quality',
+      currentHeadSha: 'ccc333',
+    }), 0);
+  });
+
   it('counts trailing delta rounds and resets after a full pass', () => {
     const root = mkdtempSync(join(tmpdir(), 'aie-delta-count-'));
     const writeApproved = (headSha, reviewScope, recordedAt) => {

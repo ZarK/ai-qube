@@ -93,13 +93,34 @@ export function validateDeltaLaneEvidence(input: {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return { ok: false, reason: 'unreviewed-base-head' };
     const record = parsed as Record<string, unknown>;
     if (record.status !== 'passed' || record.recommendation !== 'approve') return { ok: false, reason: 'unreviewed-base-head' };
-    if (typeof record.headSha === 'string' && record.headSha.trim() !== '' && record.headSha !== input.baseHeadSha) {
+    const storedHead = typeof record.headSha === 'string' ? record.headSha.trim() : '';
+    if (storedHead === '' || storedHead !== input.baseHeadSha) {
       return { ok: false, reason: 'unreviewed-base-head' };
     }
     return { ok: true };
   } catch {
     return { ok: false, reason: 'unreviewed-base-head' };
   }
+}
+
+export function readPriorLaneHistory(input: {
+  readonly repoRoot: string;
+  readonly issueNumber: number;
+  readonly prNumber: number;
+  readonly laneId: string;
+  readonly currentHeadSha: string;
+}): { latest: { headSha: string; findings: PriorLaneFinding[] } | null; deltaRoundCount: number } {
+  const records = listPriorApprovedLaneRecords(input);
+  const latest = records[records.length - 1];
+  let deltaRoundCount = 0;
+  for (let index = records.length - 1; index >= 0; index -= 1) {
+    if (records[index].reviewScope !== 'delta') break;
+    deltaRoundCount += 1;
+  }
+  return {
+    latest: latest ? { headSha: latest.headSha, findings: latest.findings } : null,
+    deltaRoundCount,
+  };
 }
 
 export function countPriorDeltaRounds(input: {
@@ -109,13 +130,7 @@ export function countPriorDeltaRounds(input: {
   readonly laneId: string;
   readonly currentHeadSha: string;
 }): number {
-  const records = listPriorApprovedLaneRecords(input);
-  let count = 0;
-  for (let index = records.length - 1; index >= 0; index -= 1) {
-    if (records[index].reviewScope !== 'delta') break;
-    count += 1;
-  }
-  return count;
+  return readPriorLaneHistory(input).deltaRoundCount;
 }
 
 export function readPriorApprovedLane(input: {
@@ -125,9 +140,7 @@ export function readPriorApprovedLane(input: {
   readonly laneId: string;
   readonly currentHeadSha: string;
 }): { headSha: string; findings: PriorLaneFinding[] } | null {
-  const records = listPriorApprovedLaneRecords(input);
-  const latest = records[records.length - 1];
-  return latest ? { headSha: latest.headSha, findings: latest.findings } : null;
+  return readPriorLaneHistory(input).latest;
 }
 
 function listPriorApprovedLaneRecords(input: {
@@ -151,7 +164,7 @@ function listPriorApprovedLaneRecords(input: {
       if (record.status !== 'passed' || record.recommendation !== 'approve') continue;
       if (record.carriedForward && typeof record.carriedForward === 'object') continue;
       const headSha = typeof record.headSha === 'string' ? record.headSha.trim() : '';
-      if (headSha === '' || headSha === input.currentHeadSha) continue;
+      if (headSha === '' || headSha === input.currentHeadSha || entry.name !== safeSegment(headSha)) continue;
       const findings = Array.isArray(record.findings)
         ? record.findings.flatMap(item => {
           if (!item || typeof item !== 'object' || Array.isArray(item)) return [];

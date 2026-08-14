@@ -4,7 +4,7 @@ import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy, ReviewModelHostId, RoutedReviewHostId } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, defaultLaneModelTier, resolveLaneModelTier } from '../review_focus.js';
 import { classifyApprovedLaneDelta, type DeltaTriageLaneResult } from '../review_delta_triage.js';
-import { selectReviewScope, readPriorApprovedLane, countPriorDeltaRounds, type ReviewScopeSelection } from './review_delta_scope.js';
+import { selectReviewScope, readPriorLaneHistory, type ReviewScopeSelection } from './review_delta_scope.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
@@ -284,7 +284,7 @@ function laneConfiguredFragments(config: Config, lane: LocalReviewLaneId): LaneC
 }
 
 async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number): Promise<ReviewScopeSelection> {
-  const prior = readPriorApprovedLane({
+  const priorHistory = readPriorLaneHistory({
     repoRoot: input.repoRoot,
     issueNumber,
     prNumber: input.prNumber,
@@ -307,15 +307,9 @@ async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInp
   return selectReviewScope({
     forceFull: input.forceFullReview === true,
     deltaFullEvery: config.policy.reviews.deltaFullEvery,
-    priorDeltaRoundCount: countPriorDeltaRounds({
-      repoRoot: input.repoRoot,
-      issueNumber,
-      prNumber: input.prNumber,
-      laneId: lane,
-      currentHeadSha: input.headSha,
-    }),
-    priorApprovedHeadSha: prior?.headSha,
-    priorFindings: prior?.findings,
+    priorDeltaRoundCount: priorHistory.deltaRoundCount,
+    priorApprovedHeadSha: priorHistory.latest?.headSha,
+    priorFindings: priorHistory.latest?.findings,
     deltaPaths: decision.deltaPaths,
   });
 }
