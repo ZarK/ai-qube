@@ -16,5 +16,8 @@ Current fixture shapes:
 - `ambiguous-rust-workspace`: negative Rust workspace fixture with `Cargo.lock` and a nested crate but no root `Cargo.toml`.
 - `go-workspace`: positive Go module workspace fixture with a root `go.work`, member `go.mod` files, and a GitHub Actions workflow.
 - `ambiguous-go-workspace`: negative Go workspace fixture with a nested module but no root `go.work`.
+- `java-kotlin-gradle`: positive Java/Kotlin multi-project fixture with root `settings.gradle.kts`, root `build.gradle.kts`, included modules, and a GitHub Actions workflow.
+- `java-kotlin-maven`: positive Java/Kotlin multi-project fixture with a root aggregator `pom.xml`, member modules, and a GitHub Actions workflow.
+- `ambiguous-java-kotlin`: negative Java/Kotlin fixture with a nested Gradle module but no root settings file or aggregator `pom.xml`.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
