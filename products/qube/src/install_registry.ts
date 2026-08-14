@@ -437,17 +437,16 @@ function attestationMatchesIntegrity(document: unknown, integrity: string): bool
     readonly subject?: readonly unknown[];
     readonly subjectDigest?: string;
   };
+  if (!Array.isArray(record.attestations) || !record.attestations.some(isProvenanceAttestation)) {
+    return false;
+  }
   if (typeof record.subjectDigest === "string" && normalizeHex(record.subjectDigest) === expectedHex) {
-    return Array.isArray(record.attestations) ? record.attestations.some(isProvenanceAttestation) : true;
+    return true;
   }
   const subjects = [
     ...(Array.isArray(record.subject) ? record.subject : []),
-    ...(Array.isArray(record.attestations) ? record.attestations.flatMap(attestationSubjects) : []),
+    ...record.attestations.flatMap(attestationSubjects),
   ];
-  const hasProvenance = Array.isArray(record.attestations)
-    ? record.attestations.some(isProvenanceAttestation)
-    : subjects.length > 0;
-  if (!hasProvenance) return false;
   return subjects.some(subject => subjectDigestHex(subject) === expectedHex);
 }
 

@@ -34,9 +34,11 @@ import {
   listGrokBuildInstallFiles,
   listGrokBuildInstallNotes,
   adapterPackageVersions as runtimeAdapterPackageVersions,
+  createPackumentFetch,
   createPassingPackument,
   requiredPublishAgeDays,
   verifyInstallRegistryGate,
+  verifyInstallRegistryPackages,
   planQubeCli,
   probeHostToolkits,
   composeHostToolkitManifests,
@@ -1951,6 +1953,23 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     });
     assert.equal(result.status, "plan-only");
     assert.match(result.reason ?? result.summary, /dist-tag/);
+  });
+
+  it("downgrades apply when a matching subject has no provenance attestation", async () => {
+    const result = await verifyInstallRegistryPackages(
+      [`${qubePackageName}@${qubePackageVersion}`],
+      {
+        now: () => Date.now(),
+        fetchImpl: createPackumentFetch({
+          [qubePackageName]: createPassingPackument(qubePackageName, qubePackageVersion, {
+            subjectDigest: Buffer.from(`${qubePackageName}@${qubePackageVersion}`, "utf8").toString("hex"),
+            attestationPredicateType: "https://in-toto.io/Statement/v1"
+          })
+        })
+      }
+    );
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /provenance/);
   });
 
   it("fails registry verification when provenance is missing", async () => {
