@@ -300,7 +300,7 @@ function layoutReportsUncertainty(
     return true;
   }
   return [...inspect.warnings, ...(affected?.warnings ?? [])].some((warning) =>
-    /ambiguous|could not be classified|Affected-scope mapping is conservative/i.test(warning),
+    /could not be classified|Affected-scope mapping is conservative/i.test(warning),
   );
 }
 
@@ -574,7 +574,7 @@ function projectPath(entry: RepoProject | RepoAffectedProject): string {
 }
 
 function projectGates(entry: RepoProject | RepoAffectedProject): readonly string[] {
-  return "project" in entry ? entry.gates : entry.gates;
+  return entry.gates;
 }
 
 function uniqueStrings(values: readonly string[]): string[] {

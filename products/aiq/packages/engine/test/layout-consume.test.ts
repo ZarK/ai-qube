@@ -194,6 +194,42 @@ describe("layout consumption", () => {
     );
   });
 
+  it("keeps proven workspace member scope when a secondary layout warning says ambiguous", () => {
+    const inspect = parseLayoutInspectJson(
+      JSON.stringify({
+        ...jsWorkspaceInspect(),
+        warnings: [
+          "Docs content marker(s) were detected (docs) but no root Docusaurus, MkDocs, Hugo, Sphinx, or mdBook proof was found; workspace layout is ambiguous.",
+        ],
+      }),
+    );
+    const core = inspect.projects.find((project) => project.id === "@fixture/core");
+    expect(core).toBeDefined();
+    const layout = createLayoutConsumption({
+      inspect,
+      affected: parseLayoutAffectedJson(
+        JSON.stringify({
+          layout: inspect,
+          changedPaths: ["packages/core/src/index.ts"],
+          affectedProjects: [
+            {
+              project: core,
+              changedPaths: ["packages/core/src/index.ts"],
+              gates: ["build", "typecheck", "test"],
+            },
+          ],
+          suggestedGates: ["build", "typecheck", "test"],
+          warnings: inspect.warnings,
+        }),
+      ),
+      source: "layout-affected-json",
+    });
+
+    expect(layout.scope.kind).toBe("affected-projects");
+    expect(layout.scope.affectedProjectIds).toEqual(["@fixture/core"]);
+    expect(layout.scope.avoidRepoRoot).toBe(false);
+  });
+
   it("avoids a repository-root gate when layout is unknown", () => {
     const inspect = parseLayoutInspectJson(
       JSON.stringify({
