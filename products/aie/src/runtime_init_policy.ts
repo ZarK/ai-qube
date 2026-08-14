@@ -3,11 +3,11 @@ import type { InitPolicyOptions } from './init/index.js';
 import {
   assertInstalledRoutingHost,
   buildModelRoutingFromSelections,
-  detectInstalledRoutingHosts,
   isModelRoutingHost,
   parseHostModel,
   type ModelRoutingHostId,
 } from './core/model_routing.js';
+import { detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
 import { numberFlag, stringFlag, stringListFlag } from './runtime_result.js';
 
 function readBooleanFlag(context: RuntimeCommandContext, name: string): boolean | undefined {
@@ -85,7 +85,7 @@ function addModelRoutingPolicy(context: RuntimeCommandContext, policy: InitPolic
   if (!primaryHost || !primaryModel || !isModelRoutingHost(primaryHost)) {
     throw new Error('modelRouting setup requires --primary-host and --primary-model. Use an installed host: codex, claude-code, opencode, or grok.');
   }
-  const installed = detectInstalledRoutingHosts();
+  const installed = detectInstalledRoutingHostsOnPath();
   assertInstalledRoutingHost(primaryHost, installed);
   const parsedMechanical = parseOptionalHostModel(mechanical, 'route-mechanical-implementation', installed);
   const parsedExploration = parseOptionalHostModel(exploration, 'route-exploration-investigation', installed);

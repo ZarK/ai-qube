@@ -8,10 +8,10 @@ import { createCliError } from "@tjalve/qube-cli/errors";
 import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { promptConfirm } from "@tjalve/qube-cli/prompts";
+import { promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
-import { detectInstalledRoutingHosts, isModelRoutingHost, resolveModelRouting, validateConfig } from "@tjalve/aie";
+import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "@tjalve/aie";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
 import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
@@ -1702,7 +1702,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     yes: yes || defaults
   });
 
-  const promptedPrimaryHost = await promptPrimaryRoutingHost(flags, json, yes, defaults, initCommand);
+  const routingSelections = await collectModelRoutingSelections(flags, json, yes, defaults, initCommand);
   const aieToolTargets = resolveAieInitToolTargets(hosts);
   const aiuToolTargets = resolveAiuInitToolTargets(hosts);
   const reviewProvider = workProviders[0] === "gitlab" ? "gitlab" : "github";
@@ -1714,12 +1714,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     workProvider: workProviders[0],
     reviewProvider,
     ciProvider: ciProviders[0],
-    primaryHost: readString(flags["primary-host"]) ?? promptedPrimaryHost,
-    primaryModel: readString(flags["primary-model"]) ?? (promptedPrimaryHost ? "default" : undefined),
-    mechanical: readString(flags["route-mechanical-implementation"]),
-    exploration: readString(flags["route-exploration-investigation"]),
-    synthesis: readString(flags["route-synthesis-judgment"]),
-    independentReview: readString(flags["route-independent-review"]),
+    primaryHost: routingSelections.primaryHost,
+    primaryModel: routingSelections.primaryModel,
+    mechanical: routingSelections.mechanical,
+    exploration: routingSelections.exploration,
+    synthesis: routingSelections.synthesis,
+    independentReview: routingSelections.independentReview,
   };
   const aiuOptions = { dryRun, force };
   const aieRuns = aieToolTargets.length === 0
@@ -4226,7 +4226,7 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
 }
 
 function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): string | null {
-  const installed = detectInstalledRoutingHosts();
+  const installed = detectInstalledRoutingHostsOnPath();
   const primaryHost = readString(flags["primary-host"]);
   if (primaryHost) {
     if (!isModelRoutingHost(primaryHost)) {
@@ -4254,17 +4254,43 @@ function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): st
   return null;
 }
 
-async function promptPrimaryRoutingHost(
+export function modelRoutingPromptPlan(installedHosts: readonly string[]): readonly string[] {
+  return Object.freeze([
+    "primary-host",
+    "primary-model",
+    "mechanical-implementation",
+    "exploration-investigation",
+    "synthesis-judgment",
+    "independent-review",
+  ].filter((item, index) => index === 0 ? installedHosts.length > 0 : true));
+}
+
+async function collectModelRoutingSelections(
   flags: Readonly<Record<string, unknown>>,
   json: boolean,
   yes: boolean,
   defaults: boolean,
   command: typeof initCommand,
-): Promise<string | undefined> {
-  if (json || yes || defaults || readString(flags["primary-host"])) return undefined;
-  const installed = detectInstalledRoutingHosts();
-  if (installed.length === 0) return undefined;
-  return promptInstallerChoice({
+): Promise<{
+  primaryHost?: string;
+  primaryModel?: string;
+  mechanical?: string;
+  exploration?: string;
+  synthesis?: string;
+  independentReview?: string;
+}> {
+  const fromFlags = {
+    primaryHost: readString(flags["primary-host"]),
+    primaryModel: readString(flags["primary-model"]),
+    mechanical: readString(flags["route-mechanical-implementation"]),
+    exploration: readString(flags["route-exploration-investigation"]),
+    synthesis: readString(flags["route-synthesis-judgment"]),
+    independentReview: readString(flags["route-independent-review"]),
+  };
+  if (json || yes || defaults || fromFlags.primaryHost) return fromFlags;
+  const installed = detectInstalledRoutingHostsOnPath();
+  if (installed.length === 0) return fromFlags;
+  const primaryHost = await promptInstallerChoice({
     command,
     promptName: "primary modelRouting host",
     message: "Which installed host should be the primary modelRouting target?",
@@ -4273,6 +4299,66 @@ async function promptPrimaryRoutingHost(
     jsonMode: false,
     yes: false,
   });
+  const primaryModel = await promptText({
+    command,
+    promptName: "primary model",
+    jsonMode: false,
+    clack: { message: "Primary model identifier for fallback chains:", defaultValue: "default" },
+  });
+  const mechanical = await promptDelegatedRoute(command, "mechanical-implementation", installed, primaryHost, primaryModel);
+  const exploration = await promptDelegatedRoute(command, "exploration-investigation", installed, primaryHost, primaryModel);
+  const synthesis = await promptDelegatedRoute(command, "synthesis-judgment", installed, primaryHost, primaryModel);
+  const independentReview = await promptInstallerChoice({
+    command,
+    promptName: "independent-review tier",
+    message: "Which reviewModels tier should independent-review use?",
+    choices: [
+      { value: "review", label: "review", description: "Use the review tier from policy.reviews.models." },
+      { value: "economy", label: "economy", description: "Use the economy tier from policy.reviews.models." },
+      { value: "synthesis", label: "synthesis", description: "Use the synthesis tier from policy.reviews.models." },
+    ],
+    defaultValue: "review",
+    jsonMode: false,
+    yes: false,
+  });
+  return {
+    primaryHost,
+    primaryModel,
+    mechanical,
+    exploration,
+    synthesis,
+    independentReview,
+  };
+}
+
+async function promptDelegatedRoute(
+  command: typeof initCommand,
+  routeClass: "mechanical-implementation" | "exploration-investigation" | "synthesis-judgment",
+  installed: readonly string[],
+  primaryHost: string,
+  primaryModel: string,
+): Promise<string> {
+  const host = await promptInstallerChoice({
+    command,
+    promptName: `${routeClass} host`,
+    message: `Which installed host should ${routeClass} prefer?`,
+    choices: installed.map(value => ({
+      value,
+      label: value,
+      description: value === primaryHost ? "Use the primary host." : `Use the installed ${value} CLI.`,
+    })),
+    defaultValue: primaryHost,
+    jsonMode: false,
+    yes: false,
+  });
+  if (host === primaryHost) return `${primaryHost}:${primaryModel}`;
+  const model = await promptText({
+    command,
+    promptName: `${routeClass} model`,
+    jsonMode: false,
+    clack: { message: `Model identifier for ${routeClass} on ${host}:`, defaultValue: "default" },
+  });
+  return `${host}:${model}`;
 }
 
 function readString(value: unknown): string | undefined {

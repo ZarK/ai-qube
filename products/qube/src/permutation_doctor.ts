@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { detectInstalledRoutingHosts, resolveModelRouting, validateConfig, type ModelRoutingResolution } from "@tjalve/aie";
+import { detectInstalledRoutingHostsOnPath, resolveModelRouting, validateConfig, type ModelRoutingResolution } from "@tjalve/aie";
 
 interface CapabilityObservation {
   readonly role: "work" | "review" | "ci";
@@ -54,7 +54,7 @@ export async function runModelRoutingDoctor(cwd: string): Promise<ModelRoutingDo
   if (!validated.ok || !validated.config) {
     return { status: "invalid", summary: "Executor config is invalid; model routing cannot be resolved.", resolution: null };
   }
-  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, detectInstalledRoutingHosts());
+  const resolution = resolveModelRouting(validated.config.modelRouting, validated.config.reviewModels, detectInstalledRoutingHostsOnPath());
   const substitutions = resolution.substitutions.length;
   return {
     status: "ok",

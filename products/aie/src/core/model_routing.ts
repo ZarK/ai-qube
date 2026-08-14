@@ -1,5 +1,3 @@
-import { execFileSync } from 'node:child_process';
-
 import type { ReviewModelHostId, ReviewModelTierId, ReviewModelsPolicy } from './policy.js';
 import { resolveReviewModelTier } from '../app/local_review_runner_support.js';
 
@@ -341,35 +339,21 @@ function firstInstalledReviewHost(installed: Set<ModelRoutingHostId>): ReviewMod
   return null;
 }
 
+export const MODEL_ROUTING_HOST_COMMANDS: Readonly<Record<ModelRoutingHostId, readonly string[]>> = Object.freeze({
+  codex: Object.freeze(['codex']),
+  'claude-code': Object.freeze(['claude']),
+  opencode: Object.freeze(['opencode']),
+  grok: Object.freeze(['grok']),
+});
+
 export function detectInstalledRoutingHosts(
-  lookup: (command: string) => boolean = commandExistsOnPath,
+  lookup: (command: string) => boolean,
 ): readonly ModelRoutingHostId[] {
   const installed: ModelRoutingHostId[] = [];
-  const commands: Record<ModelRoutingHostId, readonly string[]> = {
-    codex: ['codex'],
-    'claude-code': ['claude'],
-    opencode: ['opencode'],
-    grok: ['grok'],
-  };
   for (const host of MODEL_ROUTING_HOSTS) {
-    if (commands[host].some(lookup)) installed.push(host);
+    if (MODEL_ROUTING_HOST_COMMANDS[host].some(lookup)) installed.push(host);
   }
   return installed;
-}
-
-export function commandExistsOnPath(command: string): boolean {
-  const locator = process.platform === 'win32' ? 'where.exe' : 'which';
-  try {
-    const result = execFileSync(locator, [command], {
-      encoding: 'utf8',
-      timeout: 10_000,
-      windowsHide: true,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    return result.split(/\r?\n/).some(line => line.trim() !== '');
-  } catch {
-    return false;
-  }
 }
 
 export function assertInstalledRoutingHost(

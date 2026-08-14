@@ -11,6 +11,7 @@ export {
   isModelRoutingHost,
   resolveModelRouting,
 } from './core/model_routing.js';
+export { detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
 export type {
   ModelRoutingPolicy,
   ModelRoutingResolution,

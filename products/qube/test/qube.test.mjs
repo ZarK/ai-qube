@@ -49,6 +49,7 @@ import {
   QUBE_INIT_RECORD_PATH,
   qubeComponents,
   renderCommandSurfacesDoc,
+  modelRoutingPromptPlan,
   runConnectionDoctor,
   resolveCommand,
   resolveComponentCommand,
@@ -3282,6 +3283,17 @@ describe("qube init composer orchestrator", () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.equal(parsed.aie[0].ok, false);
+  });
+
+  it("plans TTY prompts for every modelRouting route class", () => {
+    assert.deepEqual(modelRoutingPromptPlan(["claude-code", "grok"]), [
+      "primary-host",
+      "primary-model",
+      "mechanical-implementation",
+      "exploration-investigation",
+      "synthesis-judgment",
+      "independent-review",
+    ]);
   });
 
   it("refuses an uninstalled modelRouting host during init", () => {
