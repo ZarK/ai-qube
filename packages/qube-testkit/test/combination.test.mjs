@@ -112,6 +112,20 @@ describe("curated live combinations", () => {
     assert.equal(passed.status, "passed");
     assert.deepEqual(passed.verifiedWork, ["queue", "review"]);
   });
+
+  it("does not pass saas-split when GitHub review and CI are unavailable", async () => {
+    const saas = LIVE_COMBINATION_ARCHETYPES.find(entry => entry.id === "saas-split");
+    assert.ok(saas);
+    const result = await runLiveCombination(saas, {
+      adapters: { linear: gitlabAdapter },
+      createProvisioner: () => memoryProvisioner(),
+      env: { [LIVE_SUITE_ENV_VAR]: "1", LINEAR_API_KEY: "key", LINEAR_TEAM_ID: "team" },
+      probe: async () => ({ status: "pass", summary: "linear" }),
+    });
+    assert.notEqual(result.status, "passed");
+    assert.equal(result.status, "skipped");
+    assert.match(result.summary, /GitHub/);
+  });
 });
 
 const linearAdapter = {

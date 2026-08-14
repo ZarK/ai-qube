@@ -48,30 +48,15 @@ export async function runLiveCombination(
       });
     }
   }
+  const githubResult = await observeGithubRoles(archetype, options);
+  if (githubResult && githubResult.status !== "passed") {
+    return githubResult;
+  }
   if (archetype.liveProviders.length === 0) {
-    const live = options.env?.[LIVE_SUITE_ENV_VAR] === "1";
-    const token = options.env?.GITHUB_TOKEN ?? options.env?.GH_TOKEN;
-    if (!live || !token || !options.probeGithub) {
-      return combinationResult({
-        status: "skipped",
-        reason: live ? "no-live-credentials" : "no-live-flag",
-        summary: "skipped: no live credentials for the GitHub all-in-one combination.",
-      });
-    }
-    const probe = await options.probeGithub();
-    if (!probe.ok || probe.workIds.length < 2) {
-      return combinationResult({
-        status: "failed",
-        reason: "verify-failed",
-        summary: "GitHub all-in-one live combination did not observe a work cycle.",
-        verifiedWork: probe.workIds,
-      });
-    }
-    return combinationResult({
-      status: "passed",
-      reason: "ok",
-      summary: "GitHub all-in-one live combination observed a work cycle.",
-      verifiedWork: probe.workIds,
+    return githubResult ?? combinationResult({
+      status: "skipped",
+      reason: "no-live-credentials",
+      summary: "skipped: no live credentials for the GitHub all-in-one combination.",
     });
   }
 
@@ -129,7 +114,10 @@ export async function runLiveCombination(
     reason: "ok",
     summary: `${archetype.id} constructed, verified, and deconstructed ${archetype.liveProviders.join(", ")}.`,
     residue: results.flatMap(result => result.residue),
-    verifiedWork: results.flatMap(result => result.verifiedWork),
+    verifiedWork: Object.freeze([
+      ...results.flatMap(result => result.verifiedWork),
+      ...(githubResult?.verifiedWork ?? []),
+    ]),
   });
 }
 
@@ -182,6 +170,38 @@ export function runLiveCombinationSuite(options: CombinationSuiteOptions): void 
       assert.equal(gate.status, "error");
       assert.equal(gate.reason, "unsupported-provider");
     });
+  });
+}
+
+async function observeGithubRoles(
+  archetype: LiveCombinationArchetype,
+  options: CombinationSuiteOptions,
+): Promise<LiveSuiteResult | undefined> {
+  const needsGithub = [archetype.work, archetype.review, archetype.ci].includes("github");
+  if (!needsGithub) return undefined;
+  const live = options.env?.[LIVE_SUITE_ENV_VAR] === "1";
+  const token = options.env?.GITHUB_TOKEN ?? options.env?.GH_TOKEN;
+  if (!live || !token || !options.probeGithub) {
+    return combinationResult({
+      status: "skipped",
+      reason: live ? "no-live-credentials" : "no-live-flag",
+      summary: `skipped: no live credentials for GitHub roles in ${archetype.id}.`,
+    });
+  }
+  const probe = await options.probeGithub();
+  if (!probe.ok || probe.workIds.length < 2) {
+    return combinationResult({
+      status: "failed",
+      reason: "verify-failed",
+      summary: `${archetype.id} did not observe a GitHub work cycle for the declared review or CI roles.`,
+      verifiedWork: probe.workIds,
+    });
+  }
+  return combinationResult({
+    status: "passed",
+    reason: "ok",
+    summary: `${archetype.id} observed a GitHub work cycle.`,
+    verifiedWork: probe.workIds,
   });
 }
 
