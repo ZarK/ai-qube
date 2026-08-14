@@ -1,5 +1,21 @@
 import { createHash } from 'node:crypto';
-import { type ReviewDiffIndex, type ReviewFinding, partitionReviewFindings } from '@tjalve/qube-core';
+import {
+  DEGRADED_REVIEW_RENDER_PROFILE,
+  GITHUB_REVIEW_RENDER_PROFILE,
+  classifyReviewLaneState,
+  renderInlineReviewComment,
+  renderLaneChips,
+  renderRoundReviewBody,
+  renderSuggestionFence as renderSharedSuggestionFence,
+  suggestionFenceSafety as sharedSuggestionFenceSafety,
+  type ReviewFinding,
+  type ReviewDiffIndex,
+  type ReviewLaneRenderInput,
+  type ReviewPublishTransport,
+  type ReviewRepositoryRef,
+  type ReviewRoundDeltaInput,
+  partitionReviewFindings,
+} from '@tjalve/qube-core';
 import { redact } from './redact.js';
 
 export type RoundVerdict = 'approve' | 'request-changes' | 'pending' | 'inconclusive';
@@ -14,7 +30,12 @@ export interface RoundSummaryLaneInput {
   readonly preconditions: readonly string[];
   readonly evidenceHeadSha: string;
   readonly carriedForwardFromHeadSha: string | null;
+  readonly origin?: 'local' | 'trusted-provider';
+  readonly notRunReason?: string | null;
   readonly withheld: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
+  readonly host?: string;
+  readonly profile?: string;
+  readonly evidencePath?: string;
 }
 
 export interface RoundSummaryInput {
@@ -24,6 +45,11 @@ export interface RoundSummaryInput {
   readonly round: string;
   readonly expectedLanes: readonly string[];
   readonly lanes: readonly RoundSummaryLaneInput[];
+  readonly roundOrdinal?: number;
+  readonly repository?: ReviewRepositoryRef;
+  readonly priorRound?: ReviewRoundDeltaInput;
+  readonly rerunCommand?: string;
+  readonly transport?: ReviewPublishTransport;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,38 +142,17 @@ export interface SuggestionSafety {
   readonly reason: string | null;
 }
 
-const MAX_SUGGESTION_SPAN_LINES = 40;
-const MAX_SUGGESTION_LENGTH = 2000;
-
-// "Safe" here means: line-anchored to the current diff, replaces only
-// current-side lines (never a deleted/source line), is a bounded span, and
-// cannot smuggle its own fence delimiter to break out of the rendered block.
 export function suggestionFenceSafety(anchor: FindingAnchor): SuggestionSafety {
-  if (!anchor.anchored) return { safe: false, reason: 'Suggestion is not line-anchored to the current diff.' };
-  const suggestion = anchor.finding.suggestion;
-  if (!suggestion || suggestion.trim() === '') return { safe: false, reason: 'No suggestion text was recorded.' };
-  const location = anchor.finding.location;
-  if (!location || typeof location.line !== 'number') return { safe: false, reason: 'Suggestion has no anchored line.' };
-  if (location.side === 'source') return { safe: false, reason: 'Suggestions can only replace current-diff lines, not deleted lines.' };
-  const span = (location.endLine ?? location.line) - location.line;
-  if (span < 0 || span > MAX_SUGGESTION_SPAN_LINES) return { safe: false, reason: `Suggestion spans more than ${MAX_SUGGESTION_SPAN_LINES} lines and is not minimal.` };
-  if (suggestion.includes('```')) return { safe: false, reason: 'Suggestion text contains a code fence and cannot be rendered safely.' };
-  if (suggestion.length > MAX_SUGGESTION_LENGTH) return { safe: false, reason: `Suggestion exceeds ${MAX_SUGGESTION_LENGTH} characters and is not minimal.` };
-  return { safe: true, reason: null };
+  return sharedSuggestionFenceSafety(anchor);
 }
 
 export function renderSuggestionFence(anchor: FindingAnchor): string | null {
-  const safety = suggestionFenceSafety(anchor);
-  if (!safety.safe) return null;
-  return ['```suggestion', sanitizeText((anchor.finding.suggestion ?? '').replace(/\r\n/g, '\n')), '```'].join('\n');
+  return renderSharedSuggestionFence(anchor, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
 }
 
 /** Full inline review-comment body: finding text plus a safe suggestion fence when one applies. */
 export function renderInlineCommentBody(anchor: FindingAnchor): string {
-  const confidence = typeof anchor.finding.confidence === 'number' ? ` (confidence ${anchor.finding.confidence.toFixed(2)})` : '';
-  const header = `${anchor.finding.severity} [${anchor.laneId}]: ${sanitizeText(anchor.finding.message)}${confidence}`;
-  const fence = renderSuggestionFence(anchor);
-  return fence ? `${header}\n\n${fence}` : header;
+  return renderInlineReviewComment(anchor, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
 }
 
 export const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';
@@ -250,57 +255,31 @@ export function computeRoundFindingDigest(inline: readonly FindingAnchor[], unan
     .slice(0, 16);
 }
 
-function laneVerdictLabel(lane: RoundSummaryLaneInput): string {
-  return `${lane.recommendation} (${lane.status})`;
+function toLaneRenderInput(lane: RoundSummaryLaneInput): ReviewLaneRenderInput {
+  return {
+    laneId: lane.laneId,
+    status: lane.status,
+    recommendation: lane.recommendation,
+    summary: lane.summary,
+    findings: lane.findings,
+    preconditions: lane.preconditions,
+    evidenceHeadSha: lane.evidenceHeadSha,
+    carriedForwardFromHeadSha: lane.carriedForwardFromHeadSha,
+    origin: lane.origin,
+    notRunReason: lane.notRunReason,
+    withheld: lane.withheld,
+    host: lane.host,
+    profile: lane.profile,
+    evidencePath: lane.evidencePath,
+  };
 }
 
 export function renderLaneRollupTable(lanes: readonly RoundSummaryLaneInput[], expectedLanes: readonly string[]): string {
-  const byLane = new Map(lanes.map(lane => [lane.laneId, lane] as const));
-  const rows = expectedLanes.map(laneId => {
-    const lane = byLane.get(laneId);
-    if (!lane) return `| ${laneId} | missing | — | — | — | — |`;
-    const blocking = lane.findings.filter(finding => finding.severity === 'blocking').length;
-    const advisory = lane.findings.filter(finding => finding.severity === 'advisory').length;
-    const carried = lane.carriedForwardFromHeadSha ? `carried from ${lane.carriedForwardFromHeadSha.slice(0, 12)}` : 'no';
-    return `| ${laneId} | ${laneVerdictLabel(lane)} | ${carried} | ${lane.evidenceHeadSha.slice(0, 12)} | ${blocking} | ${advisory} |`;
-  });
-  return [
-    '| Lane | Verdict | Carried forward | Evidence head | Blocking | Advisory |',
-    '| --- | --- | --- | --- | --- | --- |',
-    ...rows,
-  ].join('\n');
+  return renderLaneChips(lanes.map(toLaneRenderInput), expectedLanes);
 }
 
 export function renderCollapsibleLaneDetails(lanes: readonly RoundSummaryLaneInput[], expectedLanes: readonly string[]): string {
-  const byLane = new Map(lanes.map(lane => [lane.laneId, lane] as const));
-  return expectedLanes.map(laneId => {
-    const lane = byLane.get(laneId);
-    if (!lane) {
-      return ['<details>', `<summary>${laneId} — missing evidence</summary>`, '', 'No evidence was recorded for this lane at this head.', '', '</details>'].join('\n');
-    }
-    const findingLines = lane.findings.length === 0
-      ? ['- None recorded.']
-      : lane.findings.map(finding => `- ${finding.severity}${finding.location ? ` (${finding.location.path}${finding.location.line ? `:${finding.location.line}` : ''})` : ''}: ${sanitizeText(finding.message)}`);
-    const withheldTotal = lane.withheld.duplicates + lane.withheld.offDiff + lane.withheld.byCap;
-    return [
-      '<details>',
-      `<summary>${laneId} — ${laneVerdictLabel(lane)}</summary>`,
-      '',
-      sanitizeText(lane.summary),
-      '',
-      'Findings:',
-      ...findingLines,
-      ...(withheldTotal > 0 ? ['', `Synthesis withheld ${withheldTotal} finding(s) from this lane's own report (${lane.withheld.duplicates} duplicate, ${lane.withheld.offDiff} off-diff, ${lane.withheld.byCap} beyond cap); see the lane's own review for detail.`] : []),
-      '',
-      '</details>',
-    ].join('\n');
-  }).join('\n\n');
-}
-
-function findingLine(anchor: FindingAnchor): string {
-  const location = anchor.finding.location ? ` (${anchor.finding.location.path}${anchor.finding.location.line ? `:${anchor.finding.location.line}` : ''})` : '';
-  const anchorNote = anchor.anchored ? ' (posted inline)' : ` (unanchored: ${anchor.unanchoredReason})`;
-  return `- ${anchor.finding.severity}${location} [${anchor.laneId}]: ${sanitizeText(anchor.finding.message)}${anchorNote}`;
+  return renderLaneChips(lanes.map(toLaneRenderInput), expectedLanes);
 }
 
 export interface RoundSummaryRenderOptions {
@@ -308,6 +287,8 @@ export interface RoundSummaryRenderOptions {
   readonly diffIndex?: ReviewDiffIndex | null;
   readonly publisherDowngradeReason?: string | null;
   readonly supersededPriorSummaries?: number;
+  readonly transport?: ReviewPublishTransport;
+  readonly profile?: 'github' | 'degraded';
 }
 
 export interface RoundSummaryRender {
@@ -331,6 +312,10 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
   const allBlocking = [...rankedInline.blocking, ...rankedUnanchored.blocking];
   const allAdvisory = [...rankedInline.advisory, ...rankedUnanchored.advisory];
   const findingDigest = computeRoundFindingDigest(inline, unanchored, preconditions);
+  const transport = options.transport ?? input.transport ?? (options.publisherDowngradeReason ? 'issue-comment' : 'review-api');
+  const profile = options.profile === 'degraded' || transport === 'issue-comment'
+    ? { ...DEGRADED_REVIEW_RENDER_PROFILE, sanitizeText }
+    : { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText };
 
   const metadata: RoundSummaryMarkerMetadata = {
     version: 1,
@@ -347,43 +332,40 @@ export function renderRoundSummaryBody(input: RoundSummaryInput, options: RoundS
     findingDigest,
   };
   const marker = roundSummaryMarker(metadata);
-
-  const body = [
+  const expectedLanes = [...input.expectedLanes];
+  const renderedLanes = expectedLanes.map(laneId => {
+    const lane = input.lanes.find(entry => entry.laneId === laneId);
+    return lane
+      ? toLaneRenderInput(lane)
+      : toLaneRenderInput({
+        laneId,
+        status: 'missing',
+        recommendation: 'pending',
+        summary: '',
+        findings: [],
+        preconditions: [],
+        evidenceHeadSha: input.headSha,
+        carriedForwardFromHeadSha: null,
+        notRunReason: 'no evidence at this head',
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      });
+  });
+  const rendered = renderRoundReviewBody({
     marker,
-    '',
-    `# QUBE review round summary: ${verdict}`,
-    '',
-    `Blocking findings (${allBlocking.length}):`,
-    ...(allBlocking.length === 0 ? ['- None.'] : allBlocking.map(findingLine)),
-    '',
-    `Advisory findings (${allAdvisory.length}, ranked):`,
-    ...(allAdvisory.length === 0 ? ['- None.'] : allAdvisory.map(findingLine)),
-    '',
-    'Preconditions observed:',
-    ...(preconditions.length === 0 ? ['- None recorded.'] : preconditions.map(precondition => `- ${sanitizeText(precondition)}`)),
-    '',
-    'Lane rollup:',
-    '',
-    renderLaneRollupTable(input.lanes, input.expectedLanes),
-    '',
-    ...(options.publisherDowngradeReason ? [`Publisher downgrade: ${sanitizeText(options.publisherDowngradeReason)}`, ''] : []),
-    ...(options.supersededPriorSummaries ? [`This summary superseded ${options.supersededPriorSummaries} prior-head summary comment(s); see history for the replaced verdicts.`, ''] : []),
-    '<details>',
-    '<summary>Lane details</summary>',
-    '',
-    renderCollapsibleLaneDetails(input.lanes, input.expectedLanes),
-    '',
-    '</details>',
-    '',
-    'Metadata:',
-    `- PR: #${input.prNumber}`,
-    `- issue: #${input.issueNumber}`,
-    `- head: ${input.headSha}`,
-    `- round: ${input.round}`,
-    `- inline comments: ${inline.length}`,
-    `- unanchored findings: ${unanchored.length}`,
-    `- finding digest: ${findingDigest}`,
-  ].join('\n');
+    verdict,
+    headSha: input.headSha,
+    expectedLanes,
+    lanes: renderedLanes,
+    findings: [...allBlocking, ...allAdvisory],
+    transport,
+    roundOrdinal: input.roundOrdinal,
+    repository: input.repository,
+    priorRound: input.priorRound,
+    rerunCommand: input.rerunCommand ?? `aie pr gate ${input.prNumber}`,
+    publisherDowngradeReason: options.publisherDowngradeReason ?? null,
+  }, profile);
 
-  return { body, marker, verdict, inline, unanchored, blockingCount: allBlocking.length, advisoryCount: allAdvisory.length, findingDigest };
+  return { body: rendered.body, marker, verdict, inline, unanchored, blockingCount: allBlocking.length, advisoryCount: allAdvisory.length, findingDigest };
 }
+
+export { classifyReviewLaneState };

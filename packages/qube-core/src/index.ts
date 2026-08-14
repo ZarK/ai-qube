@@ -180,6 +180,43 @@ export type {
 } from "./review_forge.js";
 export { normalizeReviewFinding, partitionReviewFindings, supportsReviewStats } from "./review_forge.js";
 export type {
+  ReviewFindingRenderRow,
+  ReviewLaneBodyRenderInput,
+  ReviewLaneRenderInput,
+  ReviewLaneRenderState,
+  ReviewPublishTransport,
+  ReviewRenderCapabilityProfile,
+  ReviewRenderedBody,
+  ReviewRepositoryRef,
+  ReviewRoundDelta,
+  ReviewRoundDeltaInput,
+  ReviewRoundRenderInput,
+  ReviewRoundVerdict,
+  ReviewSuggestionFenceKind,
+  ReviewSuggestionSafety,
+} from "./review_body.js";
+export {
+  CLEAN_ROUND_PHRASE,
+  DEGRADED_REVIEW_RENDER_PROFILE,
+  DEGRADED_TRANSPORT_LABEL,
+  GITHUB_REVIEW_RENDER_PROFILE,
+  classifyReviewLaneState,
+  computeReviewRoundDelta,
+  isSelfAuthoredReviewBody,
+  renderInlineReviewComment,
+  renderLaneChips,
+  renderLaneReviewBody,
+  renderRoundReviewBody,
+  renderSuggestionFence,
+  renderVerdictSentence,
+  reviewFindingDigest,
+  reviewFindingKey,
+  stripReviewMarkupComments,
+  suggestionFenceSafety,
+  truncatedVisibleReviewProse,
+  visibleReviewProse,
+} from "./review_body.js";
+export type {
   ReviewParticipant,
   ReviewParticipantAgentAdapter,
   ReviewParticipantKind,

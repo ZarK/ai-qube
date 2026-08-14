@@ -1,5 +1,8 @@
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { normalizeReviewFinding, reviewFindingKey, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
-import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, type LocalReviewLaneId } from '../local_review_evidence.js';
+import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
 import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '../review_focus.js';
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
@@ -10,6 +13,76 @@ import { loadValidatedRoundLanes } from './pr_review_publish.js';
 import type { PrGateExec } from './pr_gate.js';
 
 const DEFAULT_REVIEW_NIT_CAP = 10;
+
+function safeHeadSegment(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function loadPriorRoundDelta(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, expectedLanes: readonly LocalReviewLaneId[]): ReviewRoundDeltaInput | undefined {
+  const prDir = join(repoRoot, '.qube', 'aie', 'reviews', String(issueNumber), String(prNumber));
+  try {
+    verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], prDir);
+    if (!lstatSync(prDir).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
+  const currentSeg = safeHeadSegment(headSha);
+  let newest: { name: string; mtime: number } | null = null;
+  try {
+    for (const entry of readdirSync(prDir, { withFileTypes: true })) {
+      if (!entry.isDirectory() || entry.name === currentSeg || entry.name.includes('..')) continue;
+      const path = join(prDir, entry.name);
+      try {
+        verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], path);
+        const stats = lstatSync(path);
+        if (stats.isSymbolicLink() || !stats.isDirectory()) continue;
+        if (!newest || stats.mtimeMs > newest.mtime) newest = { name: entry.name, mtime: stats.mtimeMs };
+      } catch {
+        // Skip unreadable sibling head directories.
+      }
+    }
+  } catch {
+    return undefined;
+  }
+  if (!newest) return undefined;
+  const keys: string[] = [];
+  for (const laneId of expectedLanes) {
+    const evidencePath = join(prDir, newest.name, `${laneId}.json`);
+    try {
+      verifyTrustedStoreChain(repoRoot, ['.qube', 'aie', 'reviews'], evidencePath);
+      if (!lstatSync(evidencePath).isFile()) continue;
+      const parsed: unknown = JSON.parse(readFileSync(evidencePath, 'utf8'));
+      if (!isRecord(parsed) || !Array.isArray(parsed.findings)) continue;
+      for (const item of parsed.findings) {
+        if (!isRecord(item)) continue;
+        try {
+          const finding = normalizeReviewFinding({
+            id: typeof item.id === 'string' ? item.id : undefined,
+            severity: item.severity === 'blocking' ? 'blocking' : 'advisory',
+            message: typeof item.message === 'string' ? item.message : '',
+            ...(isRecord(item.location) && typeof item.location.path === 'string'
+              ? { location: { path: item.location.path, line: typeof item.location.line === 'number' ? item.location.line : undefined, side: item.location.side === 'source' ? 'source' : 'destination' } }
+              : {}),
+          });
+          keys.push(reviewFindingKey(laneId, finding));
+        } catch {
+          // Skip malformed prior findings.
+        }
+      }
+    } catch {
+      // Skip unreadable prior-head evidence.
+    }
+  }
+  return {
+    priorHeadSha: newest.name,
+    priorFindingKeys: keys,
+    commitRange: `${newest.name.slice(0, 12)}..${headSha.slice(0, 12)}`,
+  };
+}
 
 export interface PrReviewSummaryPublishOptions {
   prNumber: number;
@@ -99,7 +172,11 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
       preconditions: lane.preconditions,
       evidenceHeadSha: lane.evidenceHeadSha,
       carriedForwardFromHeadSha: lane.carriedForwardFromHeadSha,
+      origin: lane.origin,
       withheld: { duplicates: plan?.withheldDuplicates ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
+      host: lane.host,
+      profile: lane.profile,
+      evidencePath: lane.path,
     };
   });
 
@@ -109,7 +186,16 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
   // unanchored instead of guessing at diff coverage.
   const diffIndex = provider.loadReviewDiffIndex ? await provider.loadReviewDiffIndex(options.prNumber) : null;
   const render = renderRoundSummaryBody(
-    { prNumber: options.prNumber, issueNumber, headSha, round, expectedLanes: expectedLaneIds, lanes: roundSummaryLanes },
+    {
+      prNumber: options.prNumber,
+      issueNumber,
+      headSha,
+      round,
+      expectedLanes: expectedLaneIds,
+      lanes: roundSummaryLanes,
+      priorRound: loadPriorRoundDelta(repoRoot, issueNumber, options.prNumber, headSha, expectedLaneIds),
+      rerunCommand: `aie pr gate ${options.prNumber}`,
+    },
     { diffIndex },
   );
   const inlineFindings = render.inline.map(anchor => ({ laneId: anchor.laneId, finding: anchor.finding, commentBody: renderInlineCommentBody(anchor) }));

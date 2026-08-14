@@ -32,6 +32,11 @@ import {
   type ReviewForgeStatsProvider,
   type ReviewItem,
   type ReviewItemKey,
+  GITHUB_REVIEW_RENDER_PROFILE,
+  DEGRADED_REVIEW_RENDER_PROFILE,
+  isSelfAuthoredReviewBody,
+  renderInlineReviewComment,
+  renderLaneReviewBody,
 } from '@tjalve/qube-core';
 
 import {
@@ -691,7 +696,7 @@ function laneReviewRecords(input: { comments: RawComment[]; latestReviews: RawRe
 }
 
 function laneReviewSummary(comment: LaneReviewComment): string {
-  return `QUBE review (${comment.metadata.lane}): ${comment.metadata.recommendation} — ${summarize(comment.body)}`;
+  return `QUBE review (${comment.metadata.lane}): ${comment.metadata.recommendation} — ${comment.metadata.summary}`;
 }
 
 function expectedLaneNames(input: GitHubLaneReviewPublishInput): string[] {
@@ -779,40 +784,33 @@ function laneReviewBody(
     findingDigest: digest,
   };
   const marker = laneReviewMarker(metadata);
-  const findings = bodyFindings.length === 0 ? ['- None recorded in the review body.'] : bodyFindings.map(item => `- ${findingBodyText(item, input.evidencePath)}`);
-  const withheld = input.withheld;
-  const withheldTotal = withheld ? withheld.duplicates + withheld.offDiff + withheld.byCap : 0;
-  const withheldNote = withheldTotal > 0
-    ? `Synthesis withheld ${withheldTotal} finding(s): ${withheld!.duplicates} cross-lane duplicate(s), ${withheld!.offDiff} outside the current diff, ${withheld!.byCap} beyond the advisory cap; see local evidence.`
-    : null;
-  const body = [
+  const transport = publishKind === 'issue-comment' ? 'issue-comment' : 'review-api';
+  const profile = transport === 'issue-comment'
+    ? { ...DEGRADED_REVIEW_RENDER_PROFILE, sanitizeText: sanitizePublishedText }
+    : { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText: sanitizePublishedText };
+  const rendered = renderLaneReviewBody({
     marker,
-    '',
-    `QUBE review (${input.lane}): ${input.recommendation}`,
-    '',
-    'Summary:',
-    summary,
-    '',
-    'Findings:',
-    ...findings,
-    inlineCount > 0 ? `- ${inlineCount} finding(s) were published as inline review comments on the PR diff.` : '- Inline findings: none.',
-    ...(withheldNote ? ['', withheldNote] : []),
-    '',
-    'Completeness self-check:',
-    input.completeness && input.completeness.trim() !== '' ? truncatePublishedFinding(input.completeness, input.evidencePath) : '- Not recorded.',
-    '',
-    'Metadata:',
-    `- lane: ${redact(input.lane)}`,
-    `- host: ${redact(input.host)}`,
-    `- profile: ${redact(input.profile)}`,
-    `- issue: #${input.issueNumber}`,
-    `- run id: ${runId}`,
-    `- finding digest: ${digest}`,
-    `- publish kind: ${publishKind}`,
-    `- inline comments: ${inlineCount}`,
-    input.evidencePath ? `- evidence: ${redact(input.evidencePath)}` : '- evidence: optional local audit only',
-  ].join('\n');
-  return { body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount, blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length };
+    lane: {
+      laneId: input.lane,
+      status: input.status,
+      recommendation: input.recommendation,
+      summary,
+      findings: allFindings,
+      evidenceHeadSha: input.headSha,
+      carriedForwardFromHeadSha: null,
+      origin: 'local',
+      withheld: input.withheld,
+      host: input.host,
+      profile: input.profile,
+      evidencePath: input.evidencePath ?? undefined,
+    },
+    bodyFindings,
+    inlineCount,
+    transport,
+    headSha: input.headSha,
+    completeness: input.completeness ? truncatePublishedFinding(input.completeness, input.evidencePath) : null,
+  }, profile);
+  return { body: rendered.body, marker, runId, bodyFindingCount: bodyFindings.length, inlineCommentCount: inlineCount, blockingFindingCount: allFindings.filter(finding => finding.severity === 'blocking').length };
 }
 
 // A marker belongs to the same round when head, lane, PR, and round id all
@@ -953,13 +951,11 @@ function truncatePublishedFinding(value: string, evidencePath: string | null): s
   return `${text.slice(0, limit).trimEnd()}${suffix}`;
 }
 
-function findingBodyText(finding: ReviewFinding, evidencePath: string | null): string {
-  const location = finding.location
-    ? ` (${redact(finding.location.path)}${finding.location.line ? `:${finding.location.line}` : ''})`
-    : '';
-  const confidence = typeof finding.confidence === 'number' ? ` (confidence ${finding.confidence.toFixed(2)})` : '';
-  const suggestion = finding.suggestion ? ` Suggestion: ${finding.suggestion}` : '';
-  return truncatePublishedFinding(`${finding.severity}${location}: ${finding.message}${suggestion}${confidence}`, evidencePath);
+function findingInlineBody(finding: ReviewFinding, laneId: string): string {
+  return renderInlineReviewComment(
+    { laneId, finding, anchored: Boolean(finding.location && typeof finding.location.line === 'number') },
+    { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText: sanitizePublishedText },
+  );
 }
 
 function localReviewBody(input: GitHubLocalReviewPublishInput): { body: string; marker: string; runId: string } {
@@ -1164,8 +1160,8 @@ function inlineFindingComment(location: ReviewFinding['location'], body: string)
   return comment;
 }
 
-function inlineReviewComment(finding: ReviewFinding, evidencePath: string | null): JsonObject | null {
-  return inlineFindingComment(finding.location, findingBodyText(finding, evidencePath));
+function inlineReviewComment(finding: ReviewFinding, laneId: string): JsonObject | null {
+  return inlineFindingComment(finding.location, findingInlineBody(finding, laneId));
 }
 
 function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding): JsonObject | null {
@@ -1458,7 +1454,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
   }
   for (const review of raw.latestReviews) {
     const state = review.state ?? 'UNKNOWN';
-    if (authorIsTrusted(review.author?.login, raw.trustedMarkerAuthor) && parseLaneReviewMetadata(review.body)) continue;
+    if (authorIsTrusted(review.author?.login, raw.trustedMarkerAuthor) && (parseLaneReviewMetadata(review.body) || isSelfAuthoredReviewBody(review.body))) continue;
     if (isStaleChangeRequest(review, raw.headRefOid, raw.unresolvedThreads)) continue;
     if (raw.unresolvedThreads.length === 0 && isResolvedProviderReviewSummary(review.body)) continue;
     if (state === 'CHANGES_REQUESTED' || (state === 'COMMENTED' && !isNonActionableSummary(review.body, review.author?.login, { agents: raw.reviewAgents }))) items.push({ source: 'review', author: actorName(review.author), state, summary: summarize(review.body), url: review.url ? redact(review.url) : null, trust: 'untrusted' });
@@ -1467,6 +1463,7 @@ function feedback(raw: { comments: RawComment[]; latestReviews: RawReview[]; rev
     const body = comment.body ?? '';
     if (trustedLocalReviewComment(comment, raw.trustedMarkerAuthor)) continue;
     if (trustedLaneReviewComment(comment, raw.trustedMarkerAuthor)) continue;
+    if (authorIsTrusted(comment.author?.login, raw.trustedMarkerAuthor) && isSelfAuthoredReviewBody(body)) continue;
     if ((!trustedMarkerComment(comment, raw.trustedMarkerAuthor) || !body.includes(`<!-- ${MARKER_PREFIX}:`)) && !isNonActionableSummary(body, comment.author?.login, { agents: raw.reviewAgents })) items.push({ source: 'comment', author: actorName(comment.author), summary: summarize(comment.body), url: comment.url ? redact(comment.url) : null, state: null, trust: 'untrusted' });
   }
   for (const thread of raw.unresolvedThreads) {
@@ -2278,7 +2275,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       }
     }
     const inlineComments = inlineFindings
-      .map(finding => inlineReviewComment(finding, input.evidencePath))
+      .map(finding => inlineReviewComment(finding, input.lane))
       .filter((comment): comment is JsonObject => comment !== null);
     const { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
     const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
@@ -3013,7 +3010,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       '',
       '</details>',
       '',
-      'Rerun: `aie pr gate ' + String(input.prNumber) + '`.',
+      `Rerun: \`aie pr gate ${input.prNumber}\`.`,
     ].join('\n');
     const existing = input.comments.find(comment => authorIsTrusted(comment.author?.login, input.trustedMarkerAuthor) && (comment.body ?? '').includes(`<!-- ${ROUND_STATUS_MARKER_PREFIX}:`));
     const commentId = existing ? issueCommentIdFromUrl(existing.url) : null;
@@ -3089,7 +3086,7 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
   private async getUnresolvedThreads(repoName: string, prNumber: number): Promise<RawThreadNode[]> {
     const [owner, repo] = repoName.split('/');
     if (!owner || !repo) return [];
-    const query = `query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(last: 1) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }`;
+    const query = "query($owner: String!, $repo: String!, $pr: Int!, $after: String) { repository(owner: $owner, name: $repo) { pullRequest(number: $pr) { reviewThreads(first: 100, after: $after) { nodes { id isResolved isOutdated viewerCanResolve viewerCanUnresolve comments(last: 1) { nodes { id databaseId body url path line originalLine diffHunk outdated createdAt author { login } } } } pageInfo { hasNextPage endCursor } } } } }";
     const nodes: RawThreadNode[] = [];
     let cursor: string | null = null;
     for (;;) {
