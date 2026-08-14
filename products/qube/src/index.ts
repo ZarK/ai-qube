@@ -90,5 +90,16 @@ export {
   selectedAdapterInstallSpecs
 } from "./install_packages.js";
 export type { AdapterInstallSpec, AdapterPackageName, InstallPackageSelections } from "./install_packages.js";
+export {
+  INSTALL_REGISTRY_DEFAULT_AGE_DAYS,
+  INSTALL_REGISTRY_SENSITIVE_AGE_DAYS,
+  createPackumentFetch,
+  createPassingPackument,
+  parseExactPackageSpec,
+  requiredPublishAgeDays,
+  verifyInstallRegistryGate,
+  verifyInstallRegistryPackages,
+} from "./install_registry.js";
+export type { InstallPackageRef, Packument, RegistryCheckResult, RegistryGateResult, RegistryPackageCheck } from "./install_registry.js";
 export { planQubeCli, renderCommandSurfacesDoc, resolveCommand, resolveComponentCommand, runQubeCli } from "./runtime.js";
 export type { CliEnvironment, CliExecution, CommandResolution, DispatchRequest } from "./runtime.js";

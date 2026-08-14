@@ -34,6 +34,11 @@ import {
   listGrokBuildInstallFiles,
   listGrokBuildInstallNotes,
   adapterPackageVersions as runtimeAdapterPackageVersions,
+  createPackumentFetch,
+  createPassingPackument,
+  requiredPublishAgeDays,
+  verifyInstallRegistryGate,
+  verifyInstallRegistryPackages,
   planQubeCli,
   probeHostToolkits,
   composeHostToolkitManifests,
@@ -583,6 +588,18 @@ describe("qube composer CLI", () => {
     }
   }
 
+  function writePassingRegistryFixture(root, overrides = {}) {
+    const packages = {
+      [qubePackageName]: createPassingPackument(qubePackageName, qubePackageVersion, overrides[qubePackageName])
+    };
+    for (const [name, version] of Object.entries(adapterPackageVersions)) {
+      packages[name] = createPassingPackument(name, version, overrides[name]);
+    }
+    const file = path.join(root, "registry.json");
+    writeFileSync(file, `${JSON.stringify(packages)}\n`);
+    return file;
+  }
+
   function createInstallApplyHarness(root) {
     const cwd = path.join(root, "repo");
     const tools = path.join(root, "tools");
@@ -697,11 +714,13 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     return {
       cwd,
       pmLog,
+      root,
       env: {
         ...process.env,
         PATH: `${tools}${path.delimiter}${process.env.PATH ?? ""}`,
         QUBE_TEST_PACKAGE_ROOT: packageRootDir,
-        QUBE_TEST_PM_LOG: pmLog
+        QUBE_TEST_PM_LOG: pmLog,
+        QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root)
       }
     };
   }
@@ -1748,6 +1767,229 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.equal(parsed.apply.components.error, "Cannot find qube to run components --json after apply.");
+  });
+
+  it("downgrades apply to plan when a package is too new", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-too-new-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+      [qubePackageName]: { publishedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }
+    }) } });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, false);
+    assert.equal(parsed.installPlan.mode, "copy-commands");
+    assert.equal(parsed.apply.registry.status, "plan-only");
+    assert.match(parsed.apply.registry.reason, /publish-age gate/);
+    assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
+    assert.equal(parsed.apply.executed.some(step => step.stage === "workspace-init" && step.status === "executed"), true);
+    assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
+    assert.ok(existsSync(path.join(harness.cwd, ".qube", "aie", "config.json")));
+  });
+
+  it("does not let --force override a failed registry age gate", () => {
+    const help = runCli(["install", "--help"]);
+    assert.equal(help.status, 0, help.stderr);
+    assert.match(help.stdout, /Does not override registry identity, age, provenance, or lifecycle gates/);
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-force-age-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--force",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+      [qubePackageName]: { publishedAt: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString() }
+    }) } });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.apply.registry.status, "plan-only");
+    assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
+    assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
+  });
+
+  it("downgrades apply to plan when registry metadata is unverifiable", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-offline-reg-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--offline",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: harness.env });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.apply.registry.status, "plan-only");
+    assert.match(parsed.apply.registry.reason, /unverifiable/);
+    assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
+    assert.equal(existsSync(harness.pmLog) ? readFileSync(harness.pmLog, "utf8").trim() : "", "");
+  });
+
+  it("downgrades apply when the resolved manifest has install lifecycle scripts", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-scripts-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+      [qubePackageName]: { scripts: { postinstall: "node ./postinstall.js" } }
+    }) } });
+    assert.equal(result.status, 1, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.match(parsed.apply.registry.reason, /lifecycle scripts/);
+    assert.equal(parsed.apply.executed.find(step => step.stage === "package-install").status, "plan-only");
+  });
+
+  it("uses a 14-day age gate for scoped QUBE packages and 7 days otherwise", () => {
+    assert.equal(requiredPublishAgeDays("@tjalve/qube"), 14);
+    assert.equal(requiredPublishAgeDays("@tjalve/qube-adapter-github"), 14);
+    assert.equal(requiredPublishAgeDays("left-pad"), 7);
+  });
+
+  it("rejects a forged provenance subject that does not match the integrity digest", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-registry-forged-prov-"));
+    const result = await verifyInstallRegistryGate({
+      selections: {
+        scope: "local",
+        packageManager: "pnpm",
+        hosts: ["generic"],
+        workProviders: ["github"],
+        ciProviders: ["github"]
+      },
+      env: {
+        QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+          [qubePackageName]: { subjectDigest: "deadbeef" }
+        })
+      }
+    });
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /does not match the registry integrity digest/);
+  });
+
+  it("downgrades apply when packument dist-tags do not identify an exact version", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-registry-dist-tag-"));
+    const result = await verifyInstallRegistryGate({
+      selections: {
+        scope: "local",
+        packageManager: "pnpm",
+        hosts: ["generic"],
+        workProviders: ["github"],
+        ciProviders: ["github"]
+      },
+      env: {
+        QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+          [qubePackageName]: { omitDistTags: true }
+        })
+      }
+    });
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /dist-tag/);
+  });
+
+  it("downgrades apply when a matching subject has no provenance attestation", async () => {
+    const result = await verifyInstallRegistryPackages(
+      [`${qubePackageName}@${qubePackageVersion}`],
+      {
+        now: () => Date.now(),
+        fetchImpl: createPackumentFetch({
+          [qubePackageName]: createPassingPackument(qubePackageName, qubePackageVersion, {
+            subjectDigest: Buffer.from(`${qubePackageName}@${qubePackageVersion}`, "utf8").toString("hex"),
+            attestationPredicateType: "https://in-toto.io/Statement/v1"
+          })
+        })
+      }
+    );
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /provenance/);
+  });
+
+  it("fails registry verification when provenance is missing", async () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-registry-no-prov-"));
+    const result = await verifyInstallRegistryGate({
+      selections: {
+        scope: "local",
+        packageManager: "pnpm",
+        hosts: ["generic"],
+        workProviders: ["github"],
+        ciProviders: ["github"]
+      },
+      env: {
+        QUBE_TEST_INSTALL_PACKAGES: writePassingRegistryFixture(root, {
+          [qubePackageName]: { omitAttestations: true }
+        })
+      }
+    });
+    assert.equal(result.status, "plan-only");
+    assert.match(result.reason ?? result.summary, /provenance/);
   });
 
   it("pins every workspace adapter package in the shipped catalog", () => {

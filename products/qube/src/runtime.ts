@@ -31,6 +31,7 @@ import {
 } from "./host_toolkit.js";
 import { probeInstallState, type InstallStepStatus } from "./install_state.js";
 import { formatPackageInstallCommand, packageInstallArgv } from "./install_packages.js";
+import { verifyInstallRegistryGate, type RegistryGateResult } from "./install_registry.js";
 import { packageDescription, packageName, packageVersion } from "./package.js";
 
 export interface CliExecution {
@@ -535,6 +536,12 @@ const installCommand = defineCommand({
     dryRunFlag,
     yesFlag,
     applyFlag,
+    offlineFlag,
+    defineFlag({
+      name: "force",
+      description: "Accepted for compatibility. Does not override registry identity, age, provenance, or lifecycle gates.",
+      type: "boolean"
+    }),
     defineFlag({
       name: "scope",
       description: "Install scope to plan.",
@@ -4520,7 +4527,7 @@ function mapDirectArgs(definition: DirectQubeCommand, args: readonly string[]): 
 interface InstallApplyStepResult {
   readonly stage: InstallCommandStage;
   readonly command: string;
-  readonly status: "executed" | "skipped" | "failed";
+  readonly status: "executed" | "skipped" | "failed" | "plan-only";
   readonly exitCode?: number;
   readonly error?: string;
 }
@@ -4528,6 +4535,7 @@ interface InstallApplyStepResult {
 interface InstallApplyReport {
   readonly confirmed: true;
   readonly executed: readonly InstallApplyStepResult[];
+  readonly registry?: RegistryGateResult;
   readonly components?: unknown;
   readonly doctor?: unknown;
   readonly mismatches: readonly string[];
@@ -4765,9 +4773,13 @@ function renderApplyReport(report: InstallApplyReport): string {
     : report.executed.map(step => `- ${step.stage}: ${step.status}${step.error ? ` — ${step.error}` : ` (${step.command})`}`);
   const mismatches = report.mismatches.length === 0 ? ["- none"] : report.mismatches.map(item => `- ${item}`);
   const findings = report.findings.length === 0 ? ["- none"] : report.findings.map(item => `- ${item}`);
+  const registry = report.registry?.status === "plan-only" && report.registry.reason
+    ? ["", "Registry gate:", `- ${report.registry.reason}`]
+    : [];
   return [
     "Apply result:",
     ...executed,
+    ...registry,
     "",
     "Component mismatches:",
     ...mismatches,
@@ -4836,7 +4848,21 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
 
   const executed: InstallApplyStepResult[] = [];
   const packageStep = remainingApplySteps(selections, environment.cwd).find(step => step.stage === "package-install");
-  if (packageStep) {
+  const registry = packageStep
+    ? await verifyInstallRegistryGate({
+      selections,
+      env: environment.env,
+      offline: flags.offline === true
+    })
+    : undefined;
+  if (packageStep && registry?.status === "plan-only") {
+    executed.push({
+      stage: "package-install",
+      command: formatPackageInstallCommand(selections),
+      status: "plan-only",
+      error: registry.reason ?? "Registry verification downgraded the package install to plan-only."
+    });
+  } else if (packageStep) {
     const result = await runApplyPackageInstall(selections, environment);
     executed.push(result);
   }
@@ -4856,14 +4882,20 @@ async function executeQubeInstall(flags: Readonly<Record<string, unknown>>, envi
 
   const verification = await collectApplyVerification(selections, environment);
   const failedStep = executed.some(step => step.status === "failed");
+  const registryBlocked = executed.some(step => step.status === "plan-only");
   const verificationFailed = verification.mismatches.length > 0
     || isVerificationError(verification.components, "components")
     || isVerificationError(verification.doctor, "doctor");
-  const exitCode = failedStep || verificationFailed ? 1 : 0;
-  const appliedPlan: InstallPlan = { ...plan, mode: "apply", dryRun: false };
+  const exitCode = failedStep || verificationFailed || registryBlocked ? 1 : 0;
+  const appliedPlan: InstallPlan = {
+    ...plan,
+    mode: registryBlocked ? "copy-commands" : "apply",
+    dryRun: false
+  };
   const apply: InstallApplyReport = {
     confirmed: true,
     executed,
+    registry,
     components: verification.components,
     doctor: verification.doctor,
     mismatches: verification.mismatches,
@@ -5566,6 +5598,10 @@ function parseInstallArgs(args: readonly string[]):
     }
     if (token === "--apply") {
       flags.apply = true;
+      continue;
+    }
+    if (token === "--offline") {
+      flags.offline = true;
       continue;
     }
     if (token === "--docs") {
