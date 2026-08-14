@@ -28,5 +28,7 @@ Current fixture shapes:
 - `ambiguous-cmake-superbuild`: negative CMake fixture with a nested `CMakeLists.txt` but no root `add_subdirectory` or FetchContent proof.
 - `mobile-app`: positive mobile app fixture with Expo `app.json`, Android and iOS platform trees, and a GitHub Actions workflow.
 - `ambiguous-mobile-app`: negative mobile fixture with a nested Android tree but no root mobile proof file.
+- `infrastructure-repo`: positive infrastructure fixture with root Terraform files, two modules, and a GitHub Actions workflow.
+- `ambiguous-infrastructure-repo`: negative infrastructure fixture with a nested Terraform module but no root Terraform, Helm, Kubernetes, Ansible, Pulumi, or CDK proof.
 - `single-app-service`: positive single app service fixture with exactly one root package/build signal.
 - `ambiguous-single-app`: negative fixture with conflicting root package/build signals that must not be classified as a single app service.
