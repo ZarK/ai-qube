@@ -1222,6 +1222,18 @@ describe('repo layout inspection and affected scope', () => {
     assert.notEqual(result.kind, 'mobile-app-repo');
   });
 
+  it('classifies Expo config plus an ios source tree as a mobile app repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ name: 'expo-ios', expo: { name: 'expo-ios' } }, null, 2));
+    mkdirSync(join(repo, 'ios'), { recursive: true });
+    writeFileSync(join(repo, 'ios', 'App.swift'), 'print("app")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'mobile-app-repo');
+    assert.ok(result.projects.some(project => project.path === 'ios'));
+  });
+
   it('does not classify Expo config plus an empty android directory as a mobile app', async () => {
     const repo = makeGitRepo();
     writeFileSync(join(repo, 'app.json'), JSON.stringify({ name: 'empty-android', expo: { name: 'empty-android' } }, null, 2));

@@ -953,6 +953,14 @@ function directoryTreeLooksLikeIos(root: string, relativePath: string): boolean 
   return directoryLooksLikeIos(root, relativePath) || childProjectPaths(root, relativePath).some(path => directoryLooksLikeIos(root, path));
 }
 
+function directoryContainsFiles(root: string, relativePath: string): boolean {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return false;
+  const entries = readdirSync(directory, { withFileTypes: true });
+  if (entries.some(entry => entry.isFile())) return true;
+  return childProjectPaths(root, relativePath).some(path => directoryContainsFiles(root, path));
+}
+
 function expoConfigName(root: string): string | null {
   for (const path of MOBILE_EXPO_CONFIG_FILES) {
     const text = readTextFile(root, path);
@@ -993,11 +1001,12 @@ function detectMobileWorkspaceSignals(root: string | null): MobileWorkspaceSigna
     ...platformDirs.filter(path => directoryTreeLooksLikeAndroid(root, path)),
   ])];
   const iosMembers = platformDirs.filter(path => directoryTreeLooksLikeIos(root, path));
+  const expoPlatformMembers = platformDirs.filter(path => directoryContainsFiles(root, path));
   const packageSwift = readTextFile(root, 'Package.swift');
   const hasAndroidProof = settingsPaths.length > 0 && androidMembers.length > 0;
   const hasMobilePackageSwift = Boolean(packageSwift && packageSwiftLooksMobile(packageSwift));
   const hasIosProof = xcodeBundles.length > 0 || supporting.includes('Podfile') || hasMobilePackageSwift;
-  const hasExpoProof = expoConfigs.length > 0 && (androidMembers.length > 0 || iosMembers.length > 0);
+  const hasExpoProof = expoConfigs.length > 0 && expoPlatformMembers.length > 0;
   const hasProof = hasAndroidProof || hasIosProof || hasExpoProof;
   const markerPaths = [...new Set([
     ...xcodeBundles,
@@ -1007,10 +1016,17 @@ function detectMobileWorkspaceSignals(root: string | null): MobileWorkspaceSigna
     ...(supporting.includes('Podfile.lock') && hasIosProof ? ['Podfile.lock'] : []),
     ...(hasMobilePackageSwift ? ['Package.swift'] : []),
   ])].sort();
-  const provenMembers = [...new Set([...androidMembers, ...iosMembers])];
+  const provenMembers = [...new Set([
+    ...androidMembers,
+    ...iosMembers,
+    ...((hasExpoProof || hasIosProof) ? expoPlatformMembers : []),
+  ])];
   const nestedPlatforms = MOBILE_PLATFORM_DIRS.flatMap(directoryName => {
     const relative = containedProjectPath(root, join(root, directoryName));
-    return relative && existsSync(join(root, relative)) ? [relative] : [];
+    return relative && existsSync(join(root, relative))
+      && (directoryTreeLooksLikeAndroid(root, relative) || directoryTreeLooksLikeIos(root, relative) || directoryContainsFiles(root, relative))
+      ? [relative]
+      : [];
   });
   const resolvedProjectPaths = [...new Set(hasProof ? provenMembers.filter(path => path !== '.') : nestedPlatforms)].sort();
   return { declaredPatterns: [...new Set([...settingsPatterns, ...platformDirs])].sort(), markerPaths, resolvedProjectPaths };
