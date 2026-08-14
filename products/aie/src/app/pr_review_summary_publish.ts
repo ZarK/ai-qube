@@ -7,7 +7,7 @@ import { activeLocalReviewFocusesForConfig, reviewLanePublicationPolicy } from '
 import { reviewRoundId } from '../review_round.js';
 import { createReviewForgeProvider } from '../providers/review_forge_adapters.js';
 import type { ReviewForgeProvider, ReviewForgeRoundSummaryPublishResult } from '../providers/review_forge_provider.js';
-import { planFindingPublication, type SynthesisLaneInput } from '../review_synthesis.js';
+import { planFindingPublication, threadDispositionsFromPlans, type SynthesisLaneInput } from '../review_synthesis.js';
 import { renderInlineCommentBody, renderRoundSummaryBody, type RoundSummaryLaneInput } from '../review_round_summary.js';
 import { loadValidatedRoundLanes } from './pr_review_publish.js';
 import type { PrGateExec } from './pr_gate.js';
@@ -287,6 +287,7 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
     inlineFindings,
     unanchoredFindingCount: render.unanchored.length,
     findingDigest: render.findingDigest,
+    dispositions: threadDispositionsFromPlans(plans),
   });
 
   return { ok: true, command: 'pr review publish-summary', prNumber: options.prNumber, publish };

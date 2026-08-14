@@ -60,6 +60,8 @@ describe('cross-lane finding synthesis', () => {
 
     assert.equal(plans[0].published.length, 0);
     assert.equal(plans[0].withheldOffDiff, 1);
+    assert.equal(plans[0].withheldFindings.length, 1);
+    assert.match(plans[0].withheldFindings[0].disposition, /off the current diff/);
   });
 
   it('always publishes a blocking finding regardless of diff location', () => {

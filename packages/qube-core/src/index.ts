@@ -230,6 +230,21 @@ export {
   visibleReviewProse,
 } from "./review_body.js";
 export type {
+  PlanReviewThreadLifecycleInput,
+  ReviewFindingThread,
+  ReviewThreadLifecycleAction,
+  ReviewThreadLifecycleKind,
+} from "./review_thread_lifecycle.js";
+export {
+  dispositionClosingReply,
+  extractFindingFingerprints,
+  fixedClosingReply,
+  isPublisherAuthoredThread,
+  loginsMatch,
+  planReviewThreadLifecycle,
+  stillPresentReply,
+} from "./review_thread_lifecycle.js";
+export type {
   ReviewParticipant,
   ReviewParticipantAgentAdapter,
   ReviewParticipantKind,

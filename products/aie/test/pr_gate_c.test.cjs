@@ -2896,7 +2896,7 @@ describe('PR gate service: routed lanes and failover', { concurrency: 4 }, () =>
     assert.equal(result.counts.reviewComments, 2);
     assert.equal(result.counts.unresolvedThreads, 2);
     assert.equal(result.status, 'failed');
-    assert.ok(graphqlQueries.filter(query => query.includes('reviewThreads')).every(query => query.includes('comments(last: 1)')));
+    assert.ok(graphqlQueries.filter(query => query.includes('reviewThreads')).every(query => query.includes('comments(first: 20)')));
   });
 
 });

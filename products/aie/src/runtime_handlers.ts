@@ -407,8 +407,8 @@ async function handleReviewDoctor(context: Parameters<RuntimeCommandHandler>[0])
 
 async function handlePrThreadResolve(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
-  if (isHelpToken(pr)) return usageResult(context, 'pr thread resolve', 'aie pr thread resolve <pr> (--thread <id>|--all) [--dry-run] [--json]', [
-    'Usage: aie pr thread resolve <pr> (--thread <id>|--all) [--dry-run] [--json]',
+  if (isHelpToken(pr)) return usageResult(context, 'pr thread resolve', 'aie pr thread resolve <pr> (--thread <id>|--all) [--include-other-authors] [--dry-run] [--json]', [
+    'Usage: aie pr thread resolve <pr> (--thread <id>|--all) [--include-other-authors] [--dry-run] [--json]',
     '',
     'Resolve addressed GitHub pull request review conversation threads so provider merge blockers can clear.',
     'Use `aie pr view <pr> --json` to inspect reviewThreads ids before resolving selected feedback.',
@@ -440,6 +440,7 @@ async function handlePrThreadResolve(context: Parameters<RuntimeCommandHandler>[
       prNumber,
       threadIds,
       all,
+      includeOtherAuthors: readBooleanFlag(context, 'include-other-authors'),
       dryRun: readBooleanFlag(context, 'dry-run'),
       repoRoot: loaded.root,
     });

@@ -630,4 +630,34 @@ describe('review publisher avatar doctor', () => {
     assert.equal(skipped.probe.avatar.status, 'not-run');
     assert.equal(skipped.login, 'review-app[bot]');
   });
+
+  it('warns when a github-app publisher lacks Contents write', async () => {
+    const result = await runReviewDoctor({
+      config: githubAppConfig(),
+      mintProbe: true,
+      probeRepositoryAccess: successfulRepositoryProbe,
+      probePublisherAvatar: async () => ({
+        botAvatarUrl: 'https://avatars.githubusercontent.com/in/4573671?v=4',
+        ownerAvatarUrl: 'https://avatars.githubusercontent.com/u/39051?v=4',
+      }),
+      resolvePublisher: async () => ({
+        accessToken: 'fixture-access-token',
+        identity: {
+          mode: 'github-app',
+          identityClass: 'github-app-installation',
+          login: 'review-app[bot]',
+          permissionStatus: 'ok',
+          formalEventCapability: true,
+          fallbackReason: null,
+          publishTransport: 'pull-request-review',
+          authSource: 'github-app-installation',
+          credentialVerified: true,
+          contentsPermission: 'missing',
+        },
+      }),
+    });
+    assert.equal(result.readiness, 'ready');
+    assert.equal(result.probe.contentsPermission, 'missing');
+    assert.match(result.nextAction, /Contents write/);
+  });
 });

@@ -113,6 +113,37 @@ describe('GitHub round summary publish', () => {
     assert.ok(reviewPost, 'expected a POST to create the pull request review');
   });
 
+  it('does not skip a same-round republish when thread lifecycle still fails', async () => {
+    const current = findingAnchor();
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
+    const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
+    const fixture = makePrExec({
+      prViews: [basePr({ reviews: [publishedReview], latestReviews: [publishedReview] })],
+      pullReviews: [publishedReview],
+      resolveThreadResults: [{ exitCode: 1, stdout: '', stderr: 'contents write denied' }],
+      threads: [{
+        id: 'PRRT_stuck',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_stuck',
+          databaseId: 77,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /resolve review thread/i);
+  });
+
   it('skip-matches an unchanged same-round republish', async () => {
     const render = renderRoundSummaryBody(roundInput(), { diffIndex: null });
     const publishedReview = { id: 555, author: { login: 'executor' }, body: render.body, state: 'COMMENTED', url: 'https://github.com/example/repo/pull/12#pullrequestreview-555', commit: { oid: 'abc123' } };
@@ -387,6 +418,132 @@ describe('GitHub round summary publish', () => {
     assert.equal(result.status, 'planned');
     const mutatingCall = fixture.events.find(event => event.includes('--method POST') || event.includes('--method PUT') || event.includes('--method PATCH'));
     assert.equal(mutatingCall, undefined, 'a dry run must not mutate GitHub');
+  });
+
+  it('replies in an existing fingerprint thread instead of posting a second inline comment', async () => {
+    const current = findingAnchor();
+    const render = renderRoundSummaryBody(roundInput({
+      lanes: [{
+        laneId: 'code-quality',
+        status: 'request-changes',
+        recommendation: 'request-changes',
+        summary: 'still broken',
+        findings: [current.finding],
+        preconditions: [],
+        evidenceHeadSha: 'abc123',
+        carriedForwardFromHeadSha: null,
+        withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
+      }],
+    }), { diffIndex: { hasLine: () => true } });
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const fixture = makePrExec({
+      prViews: [basePr()],
+      diff: manyLineDiff('src/review.ts', 5),
+      threads: [{
+        id: 'PRRT_same',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_same',
+          databaseId: 44,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'published');
+    const reviewPosts = fixture.reviewPayloads.filter(payload => Array.isArray(payload.comments));
+    assert.ok(reviewPosts.every(payload => payload.comments.length === 0));
+    assert.ok(fixture.events.some(event => event.includes('/comments/44/replies')));
+    assert.match(JSON.stringify(fixture.reviewPayloads), /Still present at `abc123`/);
+  });
+
+  it('resolves a withheld finding with its disposition instead of a fixed-in message', async () => {
+    const current = findingAnchor();
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({
+      prViews: [basePr()],
+      threads: [{
+        id: 'PRRT_drop',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_drop',
+          databaseId: 55,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render, {
+      dispositions: { [marker]: 'Dropped: advisory nit cap.' },
+    }));
+
+    assert.equal(result.status, 'published');
+    assert.match(JSON.stringify(fixture.reviewPayloads), /Dropped: advisory nit cap\. — resolved by round round-1\./);
+    assert.doesNotMatch(JSON.stringify(fixture.reviewPayloads), /Fixed in `/);
+  });
+
+  it('fails closed when review thread history cannot be loaded', async () => {
+    const fixture = makePrExec({ prViews: [basePr()] });
+    const exec = async (args) => {
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        const queryArg = args.find(arg => typeof arg === 'string' && arg.startsWith('query='));
+        if (queryArg && queryArg.includes('reviewThreads')) {
+          return { args, exitCode: 1, stdout: '', stderr: 'thread list unavailable' };
+        }
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: { hasLine: () => true } });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /thread/i);
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.equal(reviewPost, undefined);
+  });
+
+  it('fails the publish when a thread resolve mutation fails', async () => {
+    const current = findingAnchor();
+    const commentBody = renderInlineCommentBody(current);
+    const marker = (commentBody.match(/qube-finding:v1:([a-f0-9]{16})/) || [])[1];
+    const render = renderRoundSummaryBody(roundInput(), { diffIndex: { hasLine: () => true } });
+    const fixture = makePrExec({
+      prViews: [basePr()],
+      resolveThreadResults: [{ exitCode: 1, stdout: '', stderr: 'contents write denied' }],
+      threads: [{
+        id: 'PRRT_fail',
+        isResolved: false,
+        isOutdated: false,
+        viewerCanResolve: true,
+        comments: { nodes: [{
+          id: 'IC_fail',
+          databaseId: 66,
+          author: { login: 'executor' },
+          body: `<!-- qube-finding:v1:${marker} -->`,
+        }] },
+      }],
+    });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
+
+    assert.equal(result.status, 'failed');
+    assert.match(String(result.failure), /resolve review thread/i);
   });
 });
 

@@ -427,7 +427,7 @@ describe("qube composer CLI", () => {
 
     assert.equal(githubApp.status, 0, githubApp.stderr);
     assert.match(githubApp.stdout, /Pull requests: Read and write/);
-    assert.match(githubApp.stdout, /Contents: Read-only/);
+    assert.match(githubApp.stdout, /Contents: Read and write/);
     assert.match(githubApp.stdout, /private key.*outside repository files/i);
     assert.match(githubApp.stdout, /installation id/i);
     assert.match(githubApp.stdout, /Review compute remains host-run/);

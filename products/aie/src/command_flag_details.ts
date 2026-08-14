@@ -203,7 +203,8 @@ export const PR_THREAD_RESOLVE_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--json', type: 'boolean', description: 'Emit machine-readable review-thread resolution output', default: false },
   { name: '--dry-run', type: 'boolean', description: 'Show selected review threads without mutating GitHub', default: false },
   { name: '--thread', type: 'string', description: 'GitHub review thread node id to resolve; repeat or comma-separate', multiple: true },
-  { name: '--all', type: 'boolean', description: 'Resolve every currently unresolved review thread that the authenticated user can resolve', default: false },
+  { name: '--all', type: 'boolean', description: 'Resolve unresolved publisher-authored review threads; other authors require --include-other-authors', default: false },
+  { name: '--include-other-authors', type: 'boolean', description: 'Allow --all to resolve review threads authored by identities other than the publisher', default: false },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

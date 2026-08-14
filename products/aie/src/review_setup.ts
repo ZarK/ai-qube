@@ -55,6 +55,7 @@ export interface ReviewPublisherProbe {
   readonly fallbackReason: string | null;
   readonly repository: ReviewRepositoryProbe;
   readonly avatar: ReviewAvatarProbe;
+  readonly contentsPermission: 'write' | 'read' | 'missing' | 'unknown' | 'not-run';
 }
 
 export interface ReviewDoctorResult {
@@ -118,9 +119,9 @@ export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
     mode: 'github-app',
     title: 'GitHub App reviewer publisher setup (preferred)',
     summary: 'Use a GitHub App installation as a distinct provider publishing identity for formal pull request review events.',
-    requiredPermissions: ['Pull requests: Read and write', 'Contents: Read-only'],
+    requiredPermissions: ['Pull requests: Read and write', 'Contents: Read and write'],
     steps: [
-      'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read-only repository permissions.',
+      'Create or choose a user-owned GitHub App and grant Pull requests read/write plus Contents read/write repository permissions. Thread resolve and minimize need Contents write.',
       'Install the app only on the repositories where it may publish reviews; avoid broader installation scope than needed.',
       'Generate a private key and keep it outside repository files. Prefer an environment variable name containing the PEM; use a local filesystem path only when an environment variable is not practical.',
       'Find the installation id in the GitHub App installation URL or with `gh api /app/installations` while authenticated as the app owner.',
@@ -504,6 +505,11 @@ function nextActionFor(readiness: ReviewPublisherReadiness, mode: GitHubReviewPu
   if (readiness === 'ready' && probe.avatar.status === 'unknown') {
     return 'Publisher permissions are ready, but the github-app avatar could not be compared with the repository owner avatar. Confirm the app logo in GitHub App display settings, then rerun `qube review doctor --json`.';
   }
+  if (readiness === 'ready' && mode === 'github-app' && probe.contentsPermission !== 'write' && probe.contentsPermission !== 'not-run') {
+    return probe.contentsPermission === 'unknown'
+      ? 'Publisher permissions for pull-request reviews are ready, but Contents write could not be proven. Confirm the GitHub App has Contents write, refresh the installation, then rerun `qube review doctor --json`.'
+      : 'Grant the GitHub App Contents write permission so review threads can be resolved, refresh the installation, then rerun `qube review doctor --json`.';
+  }
   if (readiness === 'ready') return 'Publisher is ready. Continue using host-run review agents/subagents and publish their results through the configured provider identity.';
   if (probe.permissionStatus === 'same-author') return 'Use a GitHub App installation or token owned by an identity different from the pull request author.';
   // Credential resolution failures take priority over repository-access messaging.
@@ -674,6 +680,9 @@ export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<
     fallbackReason: attempted ? fallbackReason : null,
     repository,
     avatar,
+    contentsPermission: attempted && mode === 'github-app'
+      ? (identity.contentsPermission ?? 'not-run')
+      : 'not-run',
   };
   return {
     ok: true,
@@ -707,6 +716,7 @@ export function formatReviewDoctor(result: ReviewDoctorResult): string {
     `Repository probe: ${result.probe.repository.status}${result.probe.repository.repository ? ` (${result.probe.repository.repository})` : ''}`,
     `Pull requests permission: ${result.probe.repository.pullRequestPermission}`,
     `Avatar probe: ${result.probe.avatar.status}`,
+    `Contents permission: ${result.probe.contentsPermission}`,
     ...(result.fallbackReason ? [`Reason: ${result.fallbackReason}`] : []),
     `Next action: ${result.nextAction}`,
     result.roleBoundary,
