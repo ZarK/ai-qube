@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync } = require('node:child_process');
-const { cpSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, mkdirSync } = require('node:fs');
+const { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { getDefaults } = require('../dist/config/index.js');
@@ -1079,6 +1079,129 @@ describe('repo layout inspection and affected scope', () => {
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
     assert.equal(result.projects.some(project => project.path === 'packages/escape'), false);
+  });
+
+  it('inspects a mobile app repo layout with platform projects and local signals', async () => {
+    const repo = makeFixtureRepo('mobile-app');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.command, 'repo inspect');
+    assert.equal(result.kind, 'mobile-app-repo');
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'android', 'ios']);
+    assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'fixture-mobile');
+    assert.equal(result.projects.find(project => project.path === 'android').packageName, 'android');
+    assert.equal(result.projects.find(project => project.path === 'ios').packageName, 'ios');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'app.json'));
+    assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
+    assert.ok(!result.warnings.some(warning => warning.includes('Affected-scope mapping is conservative')));
+  });
+
+  it('maps changed paths to affected mobile platform projects and suggested gates', async () => {
+    const repo = makeFixtureRepo('mobile-app');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['android/app/src/main/AndroidManifest.xml', 'ios/App.swift', 'app.json'],
+    });
+
+    assert.equal(result.command, 'repo affected');
+    assert.equal(result.layout.kind, 'mobile-app-repo');
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['fixture-mobile', 'android', 'ios']);
+    assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'fixture-mobile').changedPaths, ['app.json']);
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'android').gates.includes('dependency-review'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'ios').gates.includes('test'));
+    assert.ok(result.suggestedGates.includes('dependency-review'));
+  });
+
+  it('keeps a mobile app repo when incidental Node tooling exists at the root', async () => {
+    const repo = makeFixtureRepo('mobile-app');
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'mobile-app-repo');
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'android', 'ios']);
+  });
+
+  it('reports an ambiguous layout when mobile and JavaScript workspaces both resolve members', async () => {
+    const repo = makeFixtureRepo('mobile-app');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true, workspaces: ['tools/*'] }, null, 2));
+    mkdirSync(join(repo, 'tools', 'cli'), { recursive: true });
+    writeFileSync(join(repo, 'tools', 'cli', 'package.json'), JSON.stringify({ name: 'fixture-node-cli', private: true }, null, 2));
+
+    const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(inspected.kind, 'unknown');
+    assert.ok(inspected.warnings.some(warning => /both or neither resolve member projects; repository layout is ambiguous/.test(warning)));
+  });
+
+  it('does not classify nested Android trees without a root mobile proof as a mobile app', async () => {
+    const repo = makeFixtureRepo('ambiguous-mobile-app');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'unknown');
+    assert.deepEqual(result.projects.map(project => project.path), ['android']);
+    assert.ok(result.warnings.some(warning => warning.includes('no root Android settings')));
+  });
+
+  it('classifies a native Android Gradle app as a mobile app repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'settings.gradle'), 'rootProject.name = "native-android"\ninclude(":app")\n');
+    mkdirSync(join(repo, 'app', 'src', 'main'), { recursive: true });
+    writeFileSync(join(repo, 'app', 'build.gradle'), 'plugins { id("com.android.application") }\n');
+    writeFileSync(join(repo, 'app', 'src', 'main', 'AndroidManifest.xml'), '<manifest package="fixture.android" />\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'mobile-app-repo');
+    assert.ok(result.projects.some(project => project.path === 'app'));
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'native-android');
+  });
+
+  it('does not classify a generic Java/Kotlin workspace as a mobile app repo', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+  });
+
+  it('keeps generated mobile DerivedData paths out of mutation scope', async () => {
+    const repo = makeFixtureRepo('mobile-app');
+    mkdirSync(join(repo, 'DerivedData'), { recursive: true });
+    writeFileSync(join(repo, 'DerivedData', 'build.log'), 'generated\n');
+
+    const result = await runRepoAffected({
+      config: getDefaults(),
+      cwd: repo,
+      changedPaths: ['DerivedData/build.log'],
+    });
+
+    assert.deepEqual(result.affectedProjects, []);
+    assert.ok(result.warnings.some(warning => warning.includes('did not map to a detected project')));
+  });
+
+  it('does not follow symlink mobile members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('mobile-app');
+    const outside = join(repo, '..', 'outside-mobile-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'App.swift'), 'print("escape")\n');
+    const link = join(repo, 'ios');
+    try {
+      // Replace the in-repo ios tree with an escaped junction/symlink.
+      rmSync(link, { recursive: true, force: true });
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.path === 'ios'), false);
   });
 
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {
