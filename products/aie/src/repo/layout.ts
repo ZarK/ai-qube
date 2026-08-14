@@ -1205,7 +1205,9 @@ function detectDocsWorkspaceSignals(root: string | null): DocsWorkspaceSignals {
   const proofFiles = DOCS_PROOF_FILES.filter(path => existsSync(join(root, path)));
   const contentDirs = DOCS_CONTENT_DIRS.filter(path => containedProjectPath(root, join(root, path)) === path && directoryLooksLikeDocs(root, path));
   const hasToolProof = proofFiles.length > 0;
-  const hasDocsOnlyProof = contentDirs.includes('docs') && !ROOT_BUILD_SIGNAL_FILES.some(signal => existsSync(join(root, signal.path)));
+  const hasRootAppSignal = ROOT_BUILD_SIGNAL_FILES.some(signal => existsSync(join(root, signal.path)))
+    || readdirSync(root, { withFileTypes: true }).some(entry => entry.isFile() && (entry.name.endsWith('.csproj') || entry.name.endsWith('.fsproj')));
+  const hasDocsOnlyProof = contentDirs.includes('docs') && !hasRootAppSignal;
   const hasProof = hasToolProof || hasDocsOnlyProof;
   const markerPaths = hasProof ? [...new Set([...proofFiles, ...(hasDocsOnlyProof ? ['docs'] : [])])].sort() : [];
   return { declaredPatterns: [...contentDirs].sort(), markerPaths, resolvedProjectPaths: [...contentDirs].sort() };
@@ -1504,7 +1506,7 @@ function warningsForLayout(root: string | null, kind: RepoLayoutKind, projects: 
   if (kind === 'mobile-app-repo' && mobileWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Mobile app signals were detected, but no platform project roots were resolved.');
   if ((infrastructureWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasInfrastructureWorkspaceBoundary(infrastructureWorkspaceSignals)) warnings.push(`Infrastructure marker(s) were detected (${infrastructureWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Terraform, Helm, Kubernetes, Ansible, Pulumi, or CDK proof was found; workspace layout is ambiguous.`);
   if (kind === 'infrastructure-repo' && infrastructureWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Infrastructure signals were detected, but no module or chart roots were resolved.');
-  if ((docsWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasDocsWorkspaceBoundary(docsWorkspaceSignals)) warnings.push(`Docs content marker(s) were detected (${docsWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Docusaurus, MkDocs, Hugo, Sphinx, mdBook, or Astro proof was found; workspace layout is ambiguous.`);
+  if ((docsWorkspaceSignals.resolvedProjectPaths.length > 0) && !hasDocsWorkspaceBoundary(docsWorkspaceSignals)) warnings.push(`Docs content marker(s) were detected (${docsWorkspaceSignals.resolvedProjectPaths.join(', ')}) but no root Docusaurus, MkDocs, Hugo, Sphinx, or mdBook proof was found; workspace layout is ambiguous.`);
   if (kind === 'docs-content-repo' && docsWorkspaceSignals.resolvedProjectPaths.length === 0) warnings.push('Docs content signals were detected, but no docs or content roots were resolved.');
   if (kind === 'unknown') warnings.push('Repository layout could not be classified from supported local signals.');
   if (projects.length === 0) warnings.push('No package or workspace projects were detected.');

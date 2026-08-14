@@ -1516,6 +1516,18 @@ describe('repo layout inspection and affected scope', () => {
     assert.ok(result.warnings.some(warning => warning.includes('no root Docusaurus')));
   });
 
+  it('does not classify a root app project plus docs as a docs content repo', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'App.csproj'), '<Project Sdk="Microsoft.NET.Sdk"></Project>\n');
+    mkdirSync(join(repo, 'docs'), { recursive: true });
+    writeFileSync(join(repo, 'docs', 'index.md'), '# docs\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'single-app-service');
+    assert.notEqual(result.kind, 'docs-content-repo');
+  });
+
   it('does not classify a generic JavaScript workspace as a docs content repo', async () => {
     const repo = makeFixtureRepo('js-workspace');
 
