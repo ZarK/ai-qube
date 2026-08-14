@@ -600,11 +600,11 @@ describe('repo layout inspection and affected scope', () => {
 
     assert.equal(result.command, 'repo inspect');
     assert.equal(result.kind, 'dotnet-solution');
-    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Lib']);
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
     assert.equal(result.projects.find(project => project.path === '.').kind, 'workspace');
     assert.equal(result.projects.find(project => project.path === '.').packageName, 'Fixture');
     assert.equal(result.projects.find(project => project.path === 'src/App').packageName, 'App');
-    assert.equal(result.projects.find(project => project.path === 'src/Lib').packageName, 'Lib');
+    assert.equal(result.projects.find(project => project.path === 'src/Core').packageName, 'Core');
     assert.ok(result.rootMarkers.some(marker => marker.path === 'Fixture.sln'));
     assert.ok(result.rootMarkers.some(marker => marker.path === 'Directory.Build.props'));
     assert.ok(result.ciHints.some(hint => hint.path === '.github/workflows/ci.yml'));
@@ -617,14 +617,14 @@ describe('repo layout inspection and affected scope', () => {
     const result = await runRepoAffected({
       config: getDefaults(),
       cwd: repo,
-      changedPaths: ['src/Lib/Class1.cs', 'src/App/App.csproj', 'Fixture.sln'],
+      changedPaths: ['src/Core/Class1.cs', 'src/App/App.csproj', 'Fixture.sln'],
     });
 
     assert.equal(result.command, 'repo affected');
     assert.equal(result.layout.kind, 'dotnet-solution');
-    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['Fixture', 'App', 'Lib']);
+    assert.deepEqual(result.affectedProjects.map(project => project.project.id), ['Fixture', 'App', 'Core']);
     assert.deepEqual(result.affectedProjects.find(project => project.project.id === 'Fixture').changedPaths, ['Fixture.sln']);
-    assert.ok(result.affectedProjects.find(project => project.project.id === 'Lib').gates.includes('test'));
+    assert.ok(result.affectedProjects.find(project => project.project.id === 'Core').gates.includes('test'));
     assert.ok(result.affectedProjects.find(project => project.project.id === 'App').gates.includes('dependency-review'));
     assert.ok(result.suggestedGates.includes('dependency-review'));
   });
@@ -636,7 +636,7 @@ describe('repo layout inspection and affected scope', () => {
     const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
     assert.equal(inspected.kind, 'dotnet-solution');
-    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'src/App', 'src/Lib']);
+    assert.deepEqual(inspected.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
   });
 
   it('reports an ambiguous layout when .NET and JavaScript workspaces both resolve members', async () => {
@@ -695,7 +695,7 @@ describe('repo layout inspection and affected scope', () => {
 
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
-    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Lib']);
+    assert.deepEqual(result.projects.map(project => project.path), ['.', 'src/App', 'src/Core']);
     assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
   });
 
