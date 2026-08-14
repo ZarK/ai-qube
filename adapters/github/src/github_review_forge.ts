@@ -2164,14 +2164,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       }
     }
 
-    await this.dismissSupersededRequestChanges({
-      repositoryName,
-      prNumber: input.prNumber,
-      headSha: input.headSha,
-      reviews: existingReviews,
-      trustedMarkerAuthor,
-      ghOptions,
-    });
+    try {
+      await this.dismissSupersededRequestChanges({
+        repositoryName,
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        reviews: existingReviews,
+        trustedMarkerAuthor,
+        ghOptions,
+      });
+    } catch {
+      // Dismissal failure must not block the current-head review event.
+    }
 
     // Same-author or missing-permission identities degrade to issue comments with the configured identity when possible.
     if (!publisher.identity.formalEventCapability) {
@@ -2450,14 +2454,18 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       });
     }
 
-    await this.dismissSupersededRequestChanges({
-      repositoryName,
-      prNumber: input.prNumber,
-      headSha: input.headSha,
-      reviews,
-      trustedMarkerAuthor,
-      ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
-    });
+    try {
+      await this.dismissSupersededRequestChanges({
+        repositoryName,
+        prNumber: input.prNumber,
+        headSha: input.headSha,
+        reviews,
+        trustedMarkerAuthor,
+        ghOptions: { ...this.options, token: publisher.accessToken ?? undefined },
+      });
+    } catch {
+      // Dismissal failure must not block the current-head round summary.
+    }
 
     const existingRecords = roundSummaryRecords(comments, reviews, trustedMarkerAuthor);
     const live = existingRecords.filter(record => record.superseded !== true && record.prNumber === input.prNumber);

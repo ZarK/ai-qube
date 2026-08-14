@@ -163,6 +163,35 @@ describe('GitHub round summary publish', () => {
     assert.match(String(payload?.message ?? ''), /Superseded by head new222/);
   });
 
+  it('still publishes the current-head summary when prior-head dismissal fails', async () => {
+    const priorReview = {
+      id: 888,
+      author: { login: 'executor' },
+      body: 'prior request-changes',
+      state: 'CHANGES_REQUESTED',
+      url: 'https://github.com/example/repo/pull/12#pullrequestreview-888',
+      commit: { oid: 'prior111' },
+    };
+    const fixture = makePrExec({
+      prViews: [basePr({ headRefOid: 'new222', reviews: [priorReview], latestReviews: [priorReview] })],
+      pullReviews: [priorReview],
+    });
+    const exec = async (args) => {
+      if (typeof args[1] === 'string' && args[1].includes('/reviews/888/dismissals')) {
+        return { args, exitCode: 1, stdout: '', stderr: 'dismissal unavailable' };
+      }
+      return fixture.exec(args);
+    };
+    const provider = createGitHubReviewForgeProvider({ exec });
+    const newRender = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+
+    const result = await provider.publishRoundReviewSummary(publishInputFromRender(newRender, { headSha: 'new222', round: 'round-new' }));
+
+    assert.equal(result.status, 'published');
+    const reviewPost = fixture.events.find(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
+    assert.ok(reviewPost, 'the current-head summary must still publish when dismissal fails');
+  });
+
   it('fails closed when the prior-review list fetch throws', async () => {
     const fixture = makePrExec({ prViews: [basePr()] });
     const exec = async (args) => {

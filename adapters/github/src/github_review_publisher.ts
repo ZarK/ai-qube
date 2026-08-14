@@ -516,7 +516,8 @@ export async function resolveGitHubReviewPublisher(
       const identityLookup = options.fetchTokenIdentity
         ? await options.fetchTokenIdentity(minted.token)
         : await fetchInstallationIdentity(minted.token, options.cwd, options.exec, probeLimits);
-      const login = normalizeLogin(identityLookup.login ?? null);
+      const configuredLogin = normalizeLogin(app.login ?? null);
+      const login = normalizeLogin(identityLookup.login ?? configuredLogin ?? null);
       if (!login) {
         return {
           accessToken: minted.token,
