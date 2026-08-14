@@ -242,6 +242,7 @@ function toResolvedRunRequest(request: EngineContext): ResolvedRunRequest {
     selection: request.selection,
     writeArtifacts: request.writeArtifacts,
     ...(request.signal === undefined ? {} : { signal: request.signal }),
+    ...(request.layout === undefined ? {} : { layout: request.layout }),
   };
 }
 

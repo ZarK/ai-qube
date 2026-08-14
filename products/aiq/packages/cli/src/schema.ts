@@ -58,6 +58,19 @@ const manifestFlags = [
   },
 ] as const satisfies readonly FlagMetadata[];
 
+const layoutFlags = [
+  {
+    name: "layout-inspect",
+    description: "Read trusted layout inspect JSON instead of detecting repository layout.",
+    type: "string",
+  },
+  {
+    name: "layout-affected",
+    description: "Read trusted layout affected JSON for affected-scope mapping.",
+    type: "string",
+  },
+] as const satisfies readonly FlagMetadata[];
+
 const outputFlags = [
   {
     name: "format",
@@ -107,6 +120,7 @@ export const aiqCommandMetadata = [
     ],
     flags: [
       ...manifestFlags,
+      ...layoutFlags,
       ...stageSelectionFlags,
       ...outputFlags,
       {
@@ -177,6 +191,7 @@ export const aiqCommandMetadata = [
     ],
     flags: [
       ...manifestFlags,
+      ...layoutFlags,
       ...stageSelectionFlags,
       ...outputFlags,
       {
@@ -262,6 +277,7 @@ export const aiqCommandMetadata = [
     ],
     flags: [
       ...manifestFlags,
+      ...layoutFlags,
       ...stageSelectionFlags,
       ...outputFlags,
       {
@@ -286,7 +302,8 @@ export const aiqCommandMetadata = [
     supplyChain: {
       sensitive: true,
       kinds: ["package-manager", "dependency"],
-      reason: "AIQ watch may repeatedly execute project quality tools selected by repository configuration.",
+      reason:
+        "AIQ watch may repeatedly execute project quality tools selected by repository configuration.",
     },
     exitCodes: commonExitCodes,
     extensions: { aiq: { capability: "quality-watch", contexts: ["standalone"] } },

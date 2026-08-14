@@ -28,6 +28,37 @@ export type {
 } from "./contracts.js";
 export { artifactSchemaVersion } from "./contracts.js";
 export type {
+  LayoutClassifiedPath,
+  LayoutConsumption,
+  LayoutConsumptionSource,
+  LayoutGateScope,
+  LayoutGateScopeKind,
+  LayoutPathClass,
+  RepoAffectedProject,
+  RepoAffectedResult,
+  RepoCiHint,
+  RepoCiHintKind,
+  RepoLayoutInspection,
+  RepoLayoutKind,
+  RepoPackageManager,
+  RepoPackageManagerKind,
+  RepoPathSignal,
+  RepoProject,
+  RepoProjectKind,
+  RepoRootMarker,
+  RepoRootMarkerKind,
+} from "./layout.js";
+export {
+  layoutConsumptionSources,
+  layoutGateScopeKinds,
+  layoutPathClasses,
+  repoCiHintKinds,
+  repoLayoutKinds,
+  repoPackageManagerKinds,
+  repoProjectKinds,
+  repoRootMarkerKinds,
+} from "./layout.js";
+export type {
   LanguageId,
   ManifestSource,
   StageId,

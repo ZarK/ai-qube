@@ -63,6 +63,8 @@ export interface ParsedArgs {
   format: OutputFormat;
   help: boolean;
   host: string;
+  layoutAffected?: string;
+  layoutInspect?: string;
   outDir?: string;
   port: number;
   profile?: AiqProfileName;
@@ -105,6 +107,8 @@ Usage:
   aiq serve [--host <host>] [--port <port>]
 
 The bare aiq command is the configured project gate. It looks for a supported project in the current directory and runs cumulative stages up to the current stage when it is safe to infer one.
+When layout inspect or affected JSON is present, aiq uses that layout-proven affected scope. It does not detect repository layout itself.
+If layout JSON reports uncertainty, aiq warns and does not run a repository-root gate.
 Run is the explicit target command for files and subtrees. A leading file path is treated as aiq run.
 Check accepts the same explicit target inputs as run.
 
@@ -142,6 +146,8 @@ Options:
   --host <host>
   --files <files...>
   --files-from <path>
+  --layout-inspect <path>
+  --layout-affected <path>
   --port <port>
   --stdin-file-list
   -h, --help

@@ -19,6 +19,15 @@ interface AiuTrustedStateCommandRef {
   timeoutMs?: number;
 }
 
+interface AiqLayoutEvidence {
+  kind: string;
+  scope: string;
+  source: string;
+  affectedProjects: string[];
+  suggestedGates: string[];
+  classifiedPaths: Array<{ path: string; classification: string }>;
+}
+
 interface AiqQualityEvidence {
   schemaVersion: typeof aiqEvidenceSchemaVersion;
   result: AieGateResult;
@@ -35,6 +44,7 @@ interface AiqQualityEvidence {
       finishedAt?: string;
       ageMs?: number;
       staleAfterMs: number;
+      layout?: AiqLayoutEvidence;
     };
   };
   states: [AiuQualityTrustedState];
@@ -168,7 +178,7 @@ function createReportEvidence(
   const stale = ageMs === undefined || ageMs > staleAfterMs;
   if (stale) {
     return buildEvidence({
-      affectedPaths: report.request.manifest.files,
+      affectedPaths: evidenceAffectedPaths(report),
       lastRunStatus: "stale",
       recordedAt,
       reportPath,
@@ -183,7 +193,7 @@ function createReportEvidence(
   }
 
   if (report.summary.status === "passed") {
-    const command = createRunCommand(report.request.manifest.files);
+    const command = createRunCommand(evidenceAffectedPaths(report));
     return {
       schemaVersion: aiqEvidenceSchemaVersion,
       result: "passed",
@@ -200,11 +210,12 @@ function createReportEvidence(
           finishedAt: report.finishedAt,
           ...(ageMs === undefined ? {} : { ageMs }),
           staleAfterMs,
+          ...layoutEvidenceMetadata(report),
         },
       },
       states: [
         createState({
-          affectedPaths: report.request.manifest.files,
+          affectedPaths: evidenceAffectedPaths(report),
           failingChecks: [],
           findings: [],
           lastRunStatus: "pass",
@@ -229,9 +240,9 @@ function createReportEvidence(
   const firstStage = failingStages[0];
   const selectedPaths =
     firstStage === undefined
-      ? report.request.manifest.files
+      ? evidenceAffectedPaths(report)
       : stageAffectedPaths(firstStage, report);
-  const command = createRunCommand(report.request.manifest.files);
+  const command = createRunCommand(evidenceAffectedPaths(report));
   const findings = failingStages.flatMap((stage) => stageFindings(stage, report, command));
   const stages = report.stages.map((stage) => ({
     affectedPaths: stageAffectedPaths(stage, report),
@@ -257,6 +268,7 @@ function createReportEvidence(
         finishedAt: report.finishedAt,
         ...(ageMs === undefined ? {} : { ageMs }),
         staleAfterMs,
+        ...layoutEvidenceMetadata(report),
       },
     },
     states: [
@@ -484,8 +496,42 @@ function stageFindings(
 function stageAffectedPaths(stage: RunResult["stages"][number], report: RunResult): string[] {
   const diagnosticPaths = stage.diagnostics.map((diagnostic) => diagnostic.file);
   return uniqueStrings(
-    diagnosticPaths.length > 0 ? diagnosticPaths : report.request.manifest.files,
+    diagnosticPaths.length > 0 ? diagnosticPaths : evidenceAffectedPaths(report),
   );
+}
+
+function evidenceAffectedPaths(report: RunResult): string[] {
+  const layout = report.request.layout;
+  if (layout === undefined) {
+    return [...report.request.manifest.files];
+  }
+
+  const projectPaths = [...layout.scope.affectedProjectPaths];
+  const classified = layout.scope.classifiedPaths
+    .filter((entry) => entry.classification === "project")
+    .map((entry) => entry.path);
+  return uniqueStrings([...projectPaths, ...classified]);
+}
+
+function layoutEvidenceMetadata(report: RunResult): { layout?: AiqLayoutEvidence } {
+  const layout = report.request.layout;
+  if (layout === undefined) {
+    return {};
+  }
+
+  return {
+    layout: {
+      kind: layout.inspect.kind,
+      scope: layout.scope.kind,
+      source: layout.scope.source,
+      affectedProjects: [...layout.scope.affectedProjectIds],
+      suggestedGates: [...layout.scope.suggestedGates],
+      classifiedPaths: layout.scope.classifiedPaths.map((entry) => ({
+        path: entry.path,
+        classification: entry.classification,
+      })),
+    },
+  };
 }
 
 function createRunCommand(files: readonly string[]): AiuTrustedStateCommandRef {

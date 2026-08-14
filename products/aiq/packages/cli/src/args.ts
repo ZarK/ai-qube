@@ -187,6 +187,16 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       continue;
     }
 
+    if (argument === "--layout-inspect") {
+      parsed.layoutInspect = requireValue(argument, args[++index]);
+      continue;
+    }
+
+    if (argument === "--layout-affected") {
+      parsed.layoutAffected = requireValue(argument, args[++index]);
+      continue;
+    }
+
     if (argument === "--stdin-file-list") {
       parsed.stdinFileList = true;
       continue;
@@ -228,7 +238,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
     (parsed.files.length > 0 ||
       parsed.filesFrom !== undefined ||
       parsed.setupSubcommand !== undefined ||
-      parsed.stdinFileList)
+      parsed.stdinFileList ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined)
   ) {
     throw new Error(
       "The serve command receives files per request and does not accept startup manifest inputs.",
@@ -242,7 +254,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.setupSubcommand !== undefined ||
       parsed.stdinFileList ||
       parsed.stages.length > 0 ||
-      parsed.profile !== undefined)
+      parsed.profile !== undefined ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined)
   ) {
     throw new Error(
       `The ${parsed.command} command manages its own corpus and only accepts benchmark filters plus output options.`,
@@ -264,7 +278,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.benchmarkKinds.length > 0 ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error(
         "The config command only accepts --print-config, --set-stage, and --format options.",
@@ -291,7 +307,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.benchmarkKinds.length > 0 ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error(
         "The doctor command accepts --format, --verbose, --up-to, --only, --stage, and --profile.",
@@ -312,7 +330,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.benchmarkKinds.length > 0 ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error(
         "The setup command accepts --format, --verbose, --up-to, --only, --stage, and --profile.",
@@ -341,7 +361,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.configSetStage !== undefined ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error("The evidence command only accepts --format.");
     }
@@ -364,7 +386,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.benchmarkKinds.length > 0 ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error("The status command only accepts --format.");
     }
@@ -391,7 +415,9 @@ export function parseArgs(argv: string[], cwd = process.cwd()): ParsedArgs {
       parsed.configSetStage !== undefined ||
       parsed.debounceMs !== defaultWatchDebounceMs ||
       parsed.host !== defaultServeHost ||
-      parsed.port !== defaultServePort
+      parsed.port !== defaultServePort ||
+      parsed.layoutInspect !== undefined ||
+      parsed.layoutAffected !== undefined
     ) {
       throw new Error("The schema command only accepts --format.");
     }
@@ -445,6 +471,8 @@ function hasSetupGuidanceUnsupportedOptions(parsed: ParsedArgs): boolean {
     parsed.debounceMs !== defaultWatchDebounceMs,
     parsed.host !== defaultServeHost,
     parsed.port !== defaultServePort,
+    parsed.layoutInspect !== undefined,
+    parsed.layoutAffected !== undefined,
   ].some(Boolean);
 }
 
@@ -540,6 +568,8 @@ function flagConsumesNextValue(flag: string): boolean {
       "--files-from",
       "--format",
       "--host",
+      "--layout-affected",
+      "--layout-inspect",
       "--only",
       "--out-dir",
       "--port",
@@ -555,6 +585,8 @@ function flagConsumesNextValue(flag: string): boolean {
 function argsAreOnlyImplicitFirstRunOptions(args: readonly string[]): boolean {
   const allowedValueFlags = new Set([
     "--format",
+    "--layout-affected",
+    "--layout-inspect",
     "--only",
     "--out-dir",
     "--profile",

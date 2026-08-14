@@ -7,18 +7,23 @@ import {
 import { existsSync } from "node:fs";
 import path from "node:path";
 
+import type { BenchmarkScenarioKind } from "@tjalve/aiq/benchmark";
 import {
+  type AiqProfileName,
+  type AiqProgressStageIndex,
+  aiqProfileNames,
+} from "@tjalve/aiq/config";
+import { type StageId, stageIds } from "@tjalve/aiq/model";
+import type { CommandMetadata } from "@tjalve/qube-cli/metadata";
+import {
+  type RuntimeCommand,
+  type RuntimeCommandContext,
   createCli,
   createCommand,
   runCli as runSharedCli,
-  type RuntimeCommand,
-  type RuntimeCommandContext,
 } from "@tjalve/qube-cli/runtime";
-import type { CommandMetadata } from "@tjalve/qube-cli/metadata";
-import type { BenchmarkScenarioKind } from "@tjalve/aiq/benchmark";
-import { type AiqProfileName, type AiqProgressStageIndex, aiqProfileNames } from "@tjalve/aiq/config";
-import { type StageId, stageIds } from "@tjalve/aiq/model";
 
+import { parseArgs } from "./args.js";
 import {
   runBenchCommand,
   runCheckCommand,
@@ -32,13 +37,12 @@ import {
   runSetupGuidanceCommand,
   runStatusCommand,
 } from "./commands.js";
+import { aiqCommandMetadata, aiqCommandRegistry } from "./schema.js";
 import { runServeCommand } from "./serve.js";
 import { formatError } from "./shared.js";
 import { type CliIo, type CliRunOptions, type ParsedArgs, cliHelp } from "./types.js";
 import { aiqPackageName, aiqPackageVersion } from "./version.js";
 import { runWatchCommand } from "./watch.js";
-import { aiqCommandMetadata, aiqCommandRegistry } from "./schema.js";
-import { parseArgs } from "./args.js";
 
 export * from "./api.js";
 export * from "./schema.js";
@@ -92,6 +96,16 @@ const firstRunCommandMetadata = {
       name: "verbose",
       description: "Include command and tool details in text output.",
       type: "boolean",
+    },
+    {
+      name: "layout-inspect",
+      description: "Read trusted layout inspect JSON instead of detecting repository layout.",
+      type: "string",
+    },
+    {
+      name: "layout-affected",
+      description: "Read trusted layout affected JSON for affected-scope mapping.",
+      type: "string",
     },
   ],
   examples: [
@@ -157,7 +171,9 @@ export async function runCli(
   }
 
   if (isUnsupportedFlagFirstRunInput(normalizedHelpInput, io.cwd)) {
-    io.stderr.write("aiq run requires explicit files or paths. Use aiq for the configured project gate, or use aiq run <paths...>.\n");
+    io.stderr.write(
+      "aiq run requires explicit files or paths. Use aiq for the configured project gate, or use aiq run <paths...>.\n",
+    );
     return 2;
   }
 
@@ -281,17 +297,27 @@ async function dispatchParsedCommand(
 }
 
 function resolveParsedCommandName(context: RuntimeCommandContext): ParsedArgs["command"] {
-  const matchedName = (context as RuntimeCommandContext & { readonly matchedName?: string }).matchedName ?? context.command.name;
+  const matchedName =
+    (context as RuntimeCommandContext & { readonly matchedName?: string }).matchedName ??
+    context.command.name;
   if (context.command.name === "run" && matchedName === "check") {
     return "check";
   }
   return context.command.name as ParsedArgs["command"];
 }
 
-function createParsedArgs(command: ParsedArgs["command"], context: RuntimeCommandContext): ParsedArgs {
+function createParsedArgs(
+  command: ParsedArgs["command"],
+  context: RuntimeCommandContext,
+): ParsedArgs {
   const benchmarkCorpusRoot = readOptionalString(context.flags["corpus-root"]);
-  const configSetStage = typeof context.flags["set-stage"] === "number" ? readStageIndex(context.flags["set-stage"]) : undefined;
+  const configSetStage =
+    typeof context.flags["set-stage"] === "number"
+      ? readStageIndex(context.flags["set-stage"])
+      : undefined;
   const filesFrom = readOptionalString(context.flags["files-from"]);
+  const layoutAffected = readOptionalString(context.flags["layout-affected"]);
+  const layoutInspect = readOptionalString(context.flags["layout-inspect"]);
   const outDir = readOptionalString(context.flags["out-dir"]);
   const profile = readOptionalString(context.flags.profile);
   const setupSubcommand = readOptionalString(context.args.subcommand);
@@ -301,7 +327,8 @@ function createParsedArgs(command: ParsedArgs["command"], context: RuntimeComman
     benchmarkTags: readStringArray(context.flags.tag),
     command,
     configPrint: context.flags["print-config"] === true,
-    debounceMs: typeof context.flags["debounce-ms"] === "number" ? context.flags["debounce-ms"] : 75,
+    debounceMs:
+      typeof context.flags["debounce-ms"] === "number" ? context.flags["debounce-ms"] : 75,
     diffOnly: context.flags["diff-only"] === true,
     dryRun: context.flags["dry-run"] === true,
     files: readFiles(context),
@@ -316,6 +343,8 @@ function createParsedArgs(command: ParsedArgs["command"], context: RuntimeComman
   if (benchmarkCorpusRoot !== undefined) parsed.benchmarkCorpusRoot = benchmarkCorpusRoot;
   if (configSetStage !== undefined) parsed.configSetStage = configSetStage;
   if (filesFrom !== undefined) parsed.filesFrom = filesFrom;
+  if (layoutAffected !== undefined) parsed.layoutAffected = layoutAffected;
+  if (layoutInspect !== undefined) parsed.layoutInspect = layoutInspect;
   if (outDir !== undefined) parsed.outDir = outDir;
   if (profile !== undefined) parsed.profile = readProfile(profile);
   if (setupSubcommand !== undefined) parsed.setupSubcommand = setupSubcommand;
@@ -345,7 +374,18 @@ function readSelectedStages(context: RuntimeCommandContext): StageId[] {
 }
 
 function cliStageIds(): readonly StageId[] {
-  return ["e2e", "lint", "format", "typecheck", "unit", "sloc", "complexity", "maintainability", "coverage", "security"];
+  return [
+    "e2e",
+    "lint",
+    "format",
+    "typecheck",
+    "unit",
+    "sloc",
+    "complexity",
+    "maintainability",
+    "coverage",
+    "security",
+  ];
 }
 
 function readStageIndex(value: number): AiqProgressStageIndex {
@@ -392,7 +432,11 @@ function normalizeAiqInput(input: readonly string[], cwd: string): string[] {
     return ["first-run", ...args];
   }
   const commandToken = resolveCommandToken(args[0], cwd);
-  if (commandToken === undefined && args[0]?.startsWith("-") === true && hasPositionalPathInput(args, cwd)) {
+  if (
+    commandToken === undefined &&
+    args[0]?.startsWith("-") === true &&
+    hasPositionalPathInput(args, cwd)
+  ) {
     return ["run", ...normalizeFlagFirstExplicitRunInput(args)];
   }
   return commandToken === undefined ? ["run", ...args] : args;
@@ -407,7 +451,10 @@ function stripLeadingSeparators(input: readonly string[]): string[] {
 }
 
 function isVersionInput(args: readonly string[]): boolean {
-  return args.some((arg) => arg === "--version" || arg === "-v") && args.every((arg) => arg === "--version" || arg === "-v" || arg === "--json");
+  return (
+    args.some((arg) => arg === "--version" || arg === "-v") &&
+    args.every((arg) => arg === "--version" || arg === "-v" || arg === "--json")
+  );
 }
 
 const knownCommandNames = new Set([
@@ -453,7 +500,10 @@ function isImplicitFirstRun(args: readonly string[], cwd: string): boolean {
 }
 
 function hasExplicitManifestInput(args: readonly string[]): boolean {
-  return args.some((argument) => argument === "--files" || argument === "--files-from" || argument === "--stdin-file-list");
+  return args.some(
+    (argument) =>
+      argument === "--files" || argument === "--files-from" || argument === "--stdin-file-list",
+  );
 }
 
 function hasPositionalPathInput(args: readonly string[], cwd: string): boolean {
@@ -476,7 +526,13 @@ function hasPositionalPathInput(args: readonly string[], cwd: string): boolean {
 }
 
 function isUnsupportedFlagFirstRunInput(args: readonly string[], cwd: string): boolean {
-  return args[0]?.startsWith("-") === true && !isVersionInput(args) && !isImplicitFirstRun(args, cwd) && !hasPositionalPathInput(args, cwd) && !hasExplicitManifestInput(args);
+  return (
+    args[0]?.startsWith("-") === true &&
+    !isVersionInput(args) &&
+    !isImplicitFirstRun(args, cwd) &&
+    !hasPositionalPathInput(args, cwd) &&
+    !hasExplicitManifestInput(args)
+  );
 }
 
 function normalizeFlagFirstExplicitRunInput(args: readonly string[]): string[] {
@@ -504,11 +560,40 @@ function normalizeFlagFirstExplicitRunInput(args: readonly string[]): string[] {
 }
 
 function flagConsumesNextValue(flag: string): boolean {
-  return !flag.includes("=") && ["--config", "--corpus-root", "--files", "--files-from", "--format", "--host", "--only", "--out-dir", "--port", "--profile", "--scenario", "--stage", "--tag", "--up-to"].includes(flag);
+  return (
+    !flag.includes("=") &&
+    [
+      "--config",
+      "--corpus-root",
+      "--files",
+      "--files-from",
+      "--format",
+      "--host",
+      "--layout-affected",
+      "--layout-inspect",
+      "--only",
+      "--out-dir",
+      "--port",
+      "--profile",
+      "--scenario",
+      "--stage",
+      "--tag",
+      "--up-to",
+    ].includes(flag)
+  );
 }
 
 function argsAreOnlyImplicitFirstRunOptions(args: readonly string[]): boolean {
-  const allowedValueFlags = new Set(["--format", "--only", "--out-dir", "--profile", "--stage", "--up-to"]);
+  const allowedValueFlags = new Set([
+    "--format",
+    "--layout-affected",
+    "--layout-inspect",
+    "--only",
+    "--out-dir",
+    "--profile",
+    "--stage",
+    "--up-to",
+  ]);
   const allowedBooleanFlags = new Set(["--dry-run", "--verbose"]);
   for (let index = 0; index < args.length; index += 1) {
     const argument = args[index];

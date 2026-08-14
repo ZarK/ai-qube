@@ -28,6 +28,7 @@ import {
   inferFirstRunProjects,
   writeFirstRunJsonPrelude,
 } from "./first-run.js";
+import { loadLayoutConsumption, scopeFilesWithLayout } from "./layout-source.js";
 import { detectNativeConfigs, resolveDoctorNativeConfigChecks } from "./native-config.js";
 import {
   type DoctorCheckOutput,
@@ -204,36 +205,68 @@ export async function runFirstRunCommand(parsed: ParsedArgs, io: CliIo): Promise
 
   let manifestCollection: Awaited<ReturnType<typeof collectFirstRunManifestFiles>>;
   try {
+    const layout = await loadLayoutConsumption({
+      cwd: io.cwd,
+      required: true,
+      ...(parsed.layoutInspect === undefined ? {} : { inspectPath: parsed.layoutInspect }),
+      ...(parsed.layoutAffected === undefined ? {} : { affectedPath: parsed.layoutAffected }),
+    });
+    if (layout === undefined) {
+      throw new Error(
+        "Layout inspect JSON is missing. Provide --layout-inspect or AIQ_LAYOUT_INSPECT, or run aie repo inspect --json.",
+      );
+    }
+    if (layout.scope.avoidRepoRoot) {
+      throw new Error(
+        `${layout.scope.warnings.at(-1) ?? "Repository layout is uncertain, so AIQ will not run a repository-root gate."} Use aiq run with explicit project paths.`,
+      );
+    }
+
     manifestCollection = await collectFirstRunManifestFiles(io.cwd, projects);
+    const scoped = await scopeFilesWithLayout({
+      files: manifestCollection.files,
+      cwd: io.cwd,
+      layout,
+      requireProvenScope: true,
+    });
     const firstRunParsed: ParsedArgs = {
       ...parsed,
       command: "run",
-      files: manifestCollection.files,
+      files: scoped.files,
     };
     request = await createRunRequest(firstRunParsed, io, {
       context: "cli",
       includeProgressStage: !initialization.progressCreated,
+      layout: scoped.layout,
       mode: "check",
+      requireLayout: true,
       surface: "cli",
     });
+
+    io.stdout.write(
+      formatFirstRunDetectionOutput(parsed.format, {
+        configCreated: initialization.configCreated,
+        configPath: initialization.configPath,
+        detectedProjects: formatFirstRunDetectedProjects(projects, io.cwd),
+        layout: {
+          affectedProjects: [...scoped.layout.scope.affectedProjectIds],
+          kind: scoped.layout.inspect.kind,
+          scope: scoped.layout.scope.kind,
+          source: scoped.layout.scope.source,
+          suggestedGates: [...scoped.layout.scope.suggestedGates],
+        },
+        progressCreated: initialization.progressCreated,
+        progressPath: initialization.progressPath,
+        stages: [...(request.stages ?? [])],
+        target: scoped.layout.scope.affectedProjectPaths[0] ?? ".",
+        truncated: manifestCollection.truncated,
+        warnings: uniqueFirstRunWarnings([...manifestCollection.warnings, ...scoped.warnings]),
+      }),
+    );
   } catch (error) {
     io.stderr.write(`${formatError(error)}\n`);
     return 2;
   }
-
-  io.stdout.write(
-    formatFirstRunDetectionOutput(parsed.format, {
-      configCreated: initialization.configCreated,
-      configPath: initialization.configPath,
-      detectedProjects: formatFirstRunDetectedProjects(projects, io.cwd),
-      progressCreated: initialization.progressCreated,
-      progressPath: initialization.progressPath,
-      stages: [...(request.stages ?? [])],
-      target: ".",
-      truncated: manifestCollection.truncated,
-      warnings: manifestCollection.warnings,
-    }),
-  );
 
   return executeFirstRunRequest(parsed, io, request);
 }
@@ -320,6 +353,10 @@ export async function runCheckCommand(parsed: ParsedArgs, io: CliIo): Promise<nu
     io.stderr.write(`${formatError(error)}\n`);
     return 1;
   }
+}
+
+function uniqueFirstRunWarnings(warnings: readonly string[]): string[] {
+  return [...new Set(warnings)];
 }
 
 function createSetupGuidanceOutput(command: SetupGuidanceCommand, subcommand?: string) {

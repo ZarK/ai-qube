@@ -53,10 +53,19 @@ export interface DoctorCommandOutput {
   stages: string[];
 }
 
+export interface FirstRunLayoutOutput {
+  affectedProjects: string[];
+  kind: string;
+  scope: string;
+  source: string;
+  suggestedGates: string[];
+}
+
 export interface FirstRunDetectionOutput {
   configCreated: boolean;
   configPath: string;
   detectedProjects: string[];
+  layout?: FirstRunLayoutOutput;
   progressCreated: boolean;
   progressPath: string;
   stages: string[];
@@ -364,6 +373,9 @@ export function formatFirstRunDetectionOutput(
   return [
     "AIQ first run",
     `Detected project: ${output.detectedProjects.join(", ")}`,
+    output.layout === undefined
+      ? undefined
+      : `Layout: ${output.layout.kind} (${output.layout.scope})`,
     `Target: ${output.target}`,
     `Stages: ${output.stages.join(", ")}`,
     `${output.configCreated ? "Wrote" : "Found"} config: ${output.configPath}`,
@@ -378,7 +390,9 @@ export function formatFirstRunDetectionOutput(
     "Prepare missing tools/config: aiq setup",
     "Run a specific path: aiq run <files...>",
     "",
-  ].join("\n");
+  ]
+    .filter((line): line is string => line !== undefined)
+    .join("\n");
 }
 
 export function formatFirstRunSetupOutput(

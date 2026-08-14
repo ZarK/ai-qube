@@ -43,6 +43,7 @@ export async function resolveRunRequest(request: RunRequest): Promise<ResolvedRu
       profile: request.profile ?? "fast",
     },
     writeArtifacts: request.writeArtifacts !== false,
+    ...(request.layout === undefined ? {} : { layout: request.layout }),
   };
 
   if (request.signal !== undefined) {

@@ -60,6 +60,7 @@ export function buildRunPlan(request: EngineContext | ResolvedRunRequest): RunPl
         stageId,
       };
     }),
+    ...(request.layout === undefined ? {} : { layout: request.layout }),
   };
 }
 
