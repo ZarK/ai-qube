@@ -202,7 +202,7 @@ describe('local app runner service', () => {
     assert.equal(existsSync(planned.paths.directory), false);
   });
 
-  it('keeps a failed start out of a later successful default log tail', async () => {
+  it('covers fail-then-success sequences: default tail excludes the prior failure', async () => {
     const { runPaths, runStatus, runStop, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
     const failed = runPaths(root, 'ui-audit', '20260618T000000000Z');
@@ -256,7 +256,7 @@ describe('local app runner service', () => {
     assert.ok(existsSync(failed.stderrPath));
   });
 
-  it('keeps a successful start out of a later failed default log tail', async () => {
+  it('covers success-then-fail sequences: default tail excludes the prior success', async () => {
     const { runPaths, runStatus, runStop, runWait } = await import('../dist/local_app_runner.js');
     const root = repo();
     const succeeded = runPaths(root, 'ui-audit', '20260618T000000000Z');
