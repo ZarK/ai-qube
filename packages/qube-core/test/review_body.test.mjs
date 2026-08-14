@@ -9,6 +9,7 @@ import {
   UNTRUSTED_FIX_GUARDRAIL,
   classifyReviewLaneState,
   clipReviewAnchorSpan,
+  clipReviewAnchorSpanToDiff,
   computeReviewRoundDelta,
   isSelfAuthoredReviewBody,
   renderInlineReviewComment,
@@ -347,6 +348,37 @@ describe("renderLaneReviewBody and renderInlineReviewComment", () => {
     });
     assert.equal(safety.safe, false);
     assert.match(safety.reason ?? "", /prose/);
+    const multilineProse = suggestionFenceSafety({
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, endLine: 6, side: "destination" },
+        suggestion: "Please rewrite this function.\nIt should be clearer.",
+      }),
+    });
+    assert.equal(multilineProse.safe, false);
+    assert.match(multilineProse.reason ?? "", /prose/);
+    assert.doesNotMatch(renderInlineReviewComment({
+      laneId: "code-quality",
+      anchored: true,
+      finding: finding({
+        location: { path: "src/a.ts", line: 5, endLine: 6, side: "destination" },
+        suggestion: "Please rewrite this function.\nIt should be clearer.",
+      }),
+    }), /```suggestion/);
+  });
+
+  it("stops a published selection at the first off-diff line", () => {
+    const findingOnPartialRange = finding({
+      location: { path: "src/a.ts", line: 10, endLine: 20, side: "destination" },
+    });
+    const span = clipReviewAnchorSpanToDiff(findingOnPartialRange, {
+      hasLine(path, line) {
+        return path === "src/a.ts" && line >= 10 && line <= 12;
+      },
+    });
+    assert.equal(span?.line, 10);
+    assert.equal(span?.endLine, 12);
+    assert.equal(span?.clipped, true);
   });
 
   it("clips published selections to ten lines and keeps a stable fingerprint", () => {

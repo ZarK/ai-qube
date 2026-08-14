@@ -35,9 +35,12 @@ import {
   GITHUB_REVIEW_RENDER_PROFILE,
   DEGRADED_REVIEW_RENDER_PROFILE,
   clipReviewAnchorSpan,
+  clipReviewAnchorSpanToDiff,
+  findingWithPublishedAnchor,
   isSelfAuthoredReviewBody,
   renderInlineReviewComment,
   renderLaneReviewBody,
+  type ReviewDiffIndex,
 } from '@tjalve/qube-core';
 
 import {
@@ -1170,6 +1173,14 @@ function parseUnifiedDiffIndex(diff: string): ParsedDiffIndex {
   };
 }
 
+function publishedInlineFinding(finding: ReviewFinding, diffIndex?: ReviewDiffIndex | null): ReviewFinding | null {
+  const span = diffIndex
+    ? clipReviewAnchorSpanToDiff(finding, diffIndex)
+    : clipReviewAnchorSpan(finding);
+  if (!span) return null;
+  return findingWithPublishedAnchor(finding, span);
+}
+
 function inlineFindingComment(location: ReviewFinding['location'], body: string): JsonObject | null {
   if (!location || typeof location.line !== 'number') return null;
   const span = clipReviewAnchorSpan({ id: 'anchor', severity: 'advisory', message: 'anchor', location });
@@ -1188,12 +1199,19 @@ function inlineFindingComment(location: ReviewFinding['location'], body: string)
   return comment;
 }
 
-function inlineReviewComment(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string } } = {}): JsonObject | null {
-  return inlineFindingComment(finding.location, findingInlineBody(finding, laneId, context));
+function inlineReviewComment(finding: ReviewFinding, laneId: string, context: { headSha?: string; repository?: { owner: string; name: string }; diffIndex?: ReviewDiffIndex | null } = {}): JsonObject | null {
+  const published = publishedInlineFinding(finding, context.diffIndex);
+  if (!published) return null;
+  return inlineFindingComment(published.location, findingInlineBody(published, laneId, context));
 }
 
-function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding): JsonObject | null {
-  return inlineFindingComment(entry.finding.location, entry.commentBody);
+function inlineSummaryReviewComment(entry: GitHubRoundSummaryInlineFinding, context: { headSha?: string; repository?: { owner: string; name: string }; diffIndex?: ReviewDiffIndex | null } = {}): JsonObject | null {
+  const published = publishedInlineFinding(entry.finding, context.diffIndex);
+  if (!published) return null;
+  const body = context.diffIndex
+    ? findingInlineBody(published, entry.laneId, context)
+    : entry.commentBody;
+  return inlineFindingComment(published.location, body);
 }
 
 function hasInlineFindingCandidates(findings: readonly ReviewFinding[]): boolean {
@@ -2291,19 +2309,22 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
 
     let bodyFindings = allFindings;
     let inlineFindings: ReviewFinding[] = [];
+    let inlineDiffIndex: ReviewDiffIndex | null = null;
     if (hasInlineFindingCandidates(allFindings)) {
       try {
         const diff = await this.getPullRequestDiff(input.prNumber);
-        const partitioned = partitionReviewFindings(allFindings, parseUnifiedDiffIndex(diff));
+        inlineDiffIndex = parseUnifiedDiffIndex(diff);
+        const partitioned = partitionReviewFindings(allFindings, inlineDiffIndex);
         bodyFindings = [...partitioned.body];
         inlineFindings = [...partitioned.inline];
       } catch {
         bodyFindings = allFindings;
         inlineFindings = [];
+        inlineDiffIndex = null;
       }
     }
     const inlineComments = inlineFindings
-      .map(finding => inlineReviewComment(finding, input.lane, { headSha: input.headSha, repository: repositoryRefFromName(repositoryName) }))
+      .map(finding => inlineReviewComment(finding, input.lane, { headSha: input.headSha, repository: repositoryRefFromName(repositoryName), diffIndex: inlineDiffIndex }))
       .filter((comment): comment is JsonObject => comment !== null);
     const { body, marker, runId, bodyFindingCount, inlineCommentCount, blockingFindingCount } = laneReviewBody(input, bodyFindings, inlineComments.length);
     const submitReview = async (payload: JsonObject): Promise<GhRunResult> => {
@@ -2702,8 +2723,9 @@ export class GitHubReviewForgeProvider implements ReviewForgeStatsProvider {
       }
     }
 
+    const summaryDiffIndex = await this.loadReviewDiffIndex(input.prNumber);
     const inlineComments = input.inlineFindings
-      .map(entry => inlineSummaryReviewComment(entry))
+      .map(entry => inlineSummaryReviewComment(entry, { headSha: input.headSha, repository: repositoryRefFromName(repositoryName), diffIndex: summaryDiffIndex }))
       .filter((comment): comment is JsonObject => comment !== null);
     const roundReviewEvent = (verdict: GitHubRoundSummaryPublishInput['verdict']): 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT' => {
       if (verdict === 'approve') return 'APPROVE';

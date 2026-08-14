@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import type { ReviewFinding } from "./review_forge.js";
+import type { ReviewDiffIndex, ReviewFinding } from "./review_forge.js";
 
 export type ReviewRoundVerdict = "approve" | "request-changes" | "pending" | "inconclusive";
 export type ReviewLaneRenderState = "approved" | "request-changes" | "inconclusive" | "reused" | "carried" | "not-run";
@@ -504,6 +504,40 @@ export function clipReviewAnchorSpan(finding: ReviewFinding, maxLines = DEFAULT_
   };
 }
 
+export function clipReviewAnchorSpanToDiff(
+  finding: ReviewFinding,
+  diffIndex: ReviewDiffIndex,
+  maxLines = DEFAULT_INLINE_SPAN_LINES,
+): ReviewAnchorSpan | null {
+  const span = clipReviewAnchorSpan(finding, maxLines);
+  const location = finding.location;
+  if (!span || !location) return null;
+  const side = location.side ?? "destination";
+  if (!diffIndex.hasLine(location.path, span.line, side)) return null;
+  let endLine = span.line;
+  for (let line = span.line + 1; line <= span.endLine; line += 1) {
+    if (!diffIndex.hasLine(location.path, line, side)) break;
+    endLine = line;
+  }
+  return {
+    ...span,
+    endLine,
+    clipped: span.clipped || endLine < span.endLine,
+  };
+}
+
+export function findingWithPublishedAnchor(finding: ReviewFinding, span: ReviewAnchorSpan): ReviewFinding {
+  if (!finding.location) return finding;
+  return {
+    ...finding,
+    location: {
+      ...finding.location,
+      line: span.line,
+      endLine: span.endLine,
+    },
+  };
+}
+
 function normalizeFindingIdentityText(value: string): string {
   return value.replace(/\s+/g, " ").trim().toLowerCase();
 }
@@ -529,10 +563,10 @@ const CODE_SHAPE = /(?:^|\n)\s*(?:import |export |from |const |let |var |functio
 export function suggestionLooksLikeCode(text: string): boolean {
   const trimmed = text.trim();
   if (trimmed === "") return false;
-  if (CODE_SHAPE.test(trimmed)) return true;
-  const lines = trimmed.split(/\n/);
-  if (lines.length === 1 && /^[A-Z][\s\S]*[.!?]$/.test(trimmed) && !/[;{}=]/.test(trimmed)) return false;
-  return lines.length > 1 && lines.every((line) => line.trim() === "" || /^[\s]*[a-zA-Z0-9_./`'"]/.test(line));
+  const lines = trimmed.split(/\n/).map((line) => line.trim()).filter((line) => line !== "");
+  const proseLine = (line: string): boolean => /^[A-Z].*[.!?]$/.test(line) && !CODE_SHAPE.test(line);
+  if (lines.length > 0 && lines.every(proseLine)) return false;
+  return CODE_SHAPE.test(trimmed);
 }
 
 export function suggestionFenceSafety(input: {
