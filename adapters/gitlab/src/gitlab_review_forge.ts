@@ -1014,7 +1014,10 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
           });
         }
       }
-      if (action.kind === "new-inline" && action.finding?.location && this.client.createMergeRequestDiscussion) {
+      if (action.kind === "new-inline" && action.finding?.location) {
+        if (!this.client.createMergeRequestDiscussion) {
+          return "GitLab client cannot create positioned discussions; failing closed instead of dropping inline findings. Use a review client with createMergeRequestDiscussion support.";
+        }
         const path = action.finding.location.path;
         const position = discussionPosition({
           diffRefs: mergeRequest.diff_refs,
@@ -1070,7 +1073,10 @@ export class GitLabReviewForgeProvider implements ReviewForgeProvider {
     const prior = existing ? parseStatusNoteRounds(existing.body) : [];
     const next = [...prior.filter((round) => round.head !== input.headSha), { head: input.headSha, verdict: input.verdict }];
     const body = renderStatusNote(next, input.prNumber);
-    if (existing && this.client.updateMergeRequestNote) {
+    if (existing) {
+      if (!this.client.updateMergeRequestNote) {
+        throw new Error("A GitLab status note already exists and the client cannot update notes; failing closed instead of creating a second status note.");
+      }
       await this.client.updateMergeRequestNote({ projectId: this.projectId, iid: String(input.prNumber), noteId: String(existing.id), body });
       return;
     }

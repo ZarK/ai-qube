@@ -1818,6 +1818,75 @@ describe("GitLab round summary publish", () => {
     assert.match(String(result.failure), /head changed/);
   });
 
+  it("fails closed when positioned discussions cannot be created", async () => {
+    const finding = {
+      id: "f1",
+      severity: "advisory",
+      message: "Tighten this check.",
+      location: { path: "src/a.ts", line: 12, side: "destination" },
+    };
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest({ diff_refs: { base_sha: "base", start_sha: "start", head_sha: "head-sha" } });
+        },
+        async listMergeRequestNotes() {
+          return [];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          return { id: 1, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/1" };
+        },
+        async approveMergeRequest() {},
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const result = await provider.publishRoundReviewSummary(summaryInput({
+      inlineFindings: [{ laneId: "code-quality", finding, commentBody: "Tighten this check." }],
+    }));
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /cannot create positioned discussions/);
+  });
+
+  it("fails closed instead of creating a second status note", async () => {
+    const created = [];
+    const provider = createGitLabReviewForgeProvider({
+      projectId: "acme/qube",
+      client: {
+        async getMergeRequest() {
+          return makeGitLabMergeRequest();
+        },
+        async listMergeRequestNotes() {
+          return [{
+            id: 9,
+            body: "<!-- qube-pr-status:{\"version\":1,\"rounds\":[{\"head\":\"old\",\"verdict\":\"approve\"}]} -->\nReview status: approve.",
+            author: { username: "executor" },
+          }];
+        },
+        async listMergeRequestDiscussions() {
+          return [];
+        },
+        async createMergeRequestNote({ body }) {
+          created.push(body);
+          return { id: 10, body, author: { username: "executor" }, web_url: "https://gitlab.example.com/note/10" };
+        },
+        async approveMergeRequest() {},
+        async getCurrentUser() {
+          return { username: "executor" };
+        },
+      },
+    });
+    const result = await provider.publishRoundReviewSummary(summaryInput());
+    assert.equal(result.status, "failed");
+    assert.match(String(result.failure), /second status note/);
+    assert.equal(created.some((body) => body.includes("qube-pr-status")), false);
+  });
+
   it("creates a status note once and edits it in place", async () => {
     const notes = [];
     const updates = [];
