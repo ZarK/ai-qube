@@ -249,6 +249,24 @@ describe('GitHub round summary publish', () => {
     assert.ok(updates.length >= 1, 'the second run must update the status comment in place');
     const statusBodies = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status'));
     assert.ok(statusBodies.some(body => body.includes('Round history') && body.includes('abc123')));
+    const lastStatus = statusBodies.at(-1) ?? '';
+    assert.match(lastStatus, /"rounds":\[\{"head":"abc123","verdict":"/);
+  });
+
+  it('parses nested status-comment rounds instead of truncating at the first brace', async () => {
+    const existing = {
+      author: { login: 'executor' },
+      body: '<!-- qube-pr-status:{"version":1,"prNumber":12,"rounds":[{"head":"old111","verdict":"approve"}]} -->\nReview status: approve.\n',
+      url: 'https://github.com/example/repo/pull/12#issuecomment-91',
+    };
+    const fixture = makePrExec({ prViews: [basePr({ headRefOid: 'new222', comments: [existing] })] });
+    const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
+    const render = renderRoundSummaryBody(roundInput({ headSha: 'new222', round: 'round-new' }), { diffIndex: null });
+    await provider.publishRoundReviewSummary(publishInputFromRender(render, { headSha: 'new222', round: 'round-new' }));
+    const statusBodies = fixture.reviewPayloads.map(payload => String(payload.body ?? '')).filter(body => body.includes('qube-pr-status'));
+    const lastStatus = statusBodies.at(-1) ?? '';
+    assert.match(lastStatus, /old111/);
+    assert.match(lastStatus, /new222/);
   });
 
   it('still publishes the current-head summary when prior-head dismissal fails', async () => {

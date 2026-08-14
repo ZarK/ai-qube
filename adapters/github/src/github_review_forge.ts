@@ -71,14 +71,20 @@ const LANE_REVIEW_MARKER_PREFIX = 'qube-pr-review';
 const ROUND_STATUS_MARKER_PREFIX = 'qube-pr-status';
 
 function parseStatusCommentRounds(body: string | undefined): Array<{ head: string; verdict: string }> {
-  const match = (body ?? '').match(/<!--\s*qube-pr-status:(\{[\s\S]*?\})\s*-->/);
-  if (!match) return [];
+  const text = body ?? '';
+  const prefix = '<!-- qube-pr-status:';
+  const start = text.indexOf(prefix);
+  if (start < 0) return [];
+  const jsonStart = start + prefix.length;
+  const end = text.indexOf(' -->', jsonStart);
+  if (end < 0) return [];
   try {
-    const parsed: unknown = JSON.parse(match[1]);
+    const parsed: unknown = JSON.parse(text.slice(jsonStart, end));
     if (!isRecord(parsed) || !Array.isArray(parsed.rounds)) return [];
     return parsed.rounds
       .filter((entry): entry is { head: string; verdict: string } => isRecord(entry) && typeof entry.head === 'string' && entry.head.trim() !== '' && typeof entry.verdict === 'string' && entry.verdict.trim() !== '')
-      .map(entry => ({ head: entry.head, verdict: entry.verdict }));
+      .map(entry => ({ head: entry.head, verdict: entry.verdict }))
+      .slice(-20);
   } catch {
     return [];
   }
