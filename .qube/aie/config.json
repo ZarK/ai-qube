@@ -214,7 +214,7 @@
             "host": "grok",
             "tier": "review",
             "timeoutSeconds": 900,
-            "maxTurns": 8
+            "maxTurns": 16
           }
         }
       ],
@@ -244,7 +244,7 @@
         "host": "grok",
         "tier": "review",
         "timeoutSeconds": 900,
-        "maxTurns": 8
+        "maxTurns": 16
       },
       "failover": {
         "faults": 1,
