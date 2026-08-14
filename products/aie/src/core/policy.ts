@@ -1,4 +1,5 @@
 import type { GateDefinition } from './gate_evidence.js';
+import { defaultInstructionContextSources } from '../agent_host_adapters.js';
 
 export interface PolicyLabel {
   name: string;
@@ -214,7 +215,7 @@ export function normalizeExecutorPolicy(input: ExecutorPolicy): ExecutorPolicy {
   const packageAgeDays = nonNegativeNumber(input.supplyChain.packageAgeDays, 'supplyChain.packageAgeDays');
   const highRiskPackageAgeDays = nonNegativeNumber(input.supplyChain.highRiskPackageAgeDays, 'supplyChain.highRiskPackageAgeDays');
   const promptFragments = input.reviews.promptFragments ?? { repository: [], safety: [], style: [], adapter: [], reviewer: [], commandAddendum: [] };
-  const contextSources = input.reviews.contextSources ?? { instructions: ['AGENTS.md', '**/AGENTS.md'], requirements: [], issues: 'github', issueComments: 'github', linkedIssues: 'github', milestones: 'github', pullRequests: 'github', prComments: 'github', reviewThreads: 'github' };
+  const contextSources = input.reviews.contextSources ?? { instructions: defaultInstructionContextSources(), requirements: [], issues: 'github', issueComments: 'github', linkedIssues: 'github', milestones: 'github', pullRequests: 'github', prComments: 'github', reviewThreads: 'github' };
   const lanes = input.reviews.lanes ?? [];
   if (highRiskPackageAgeDays < packageAgeDays) {
     throw new Error('normalize executor policy failed: supplyChain.highRiskPackageAgeDays must be greater than or equal to supplyChain.packageAgeDays.');

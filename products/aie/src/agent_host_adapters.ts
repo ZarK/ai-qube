@@ -81,6 +81,12 @@ const AGENTS_INSTRUCTIONS: InstructionTarget = {
   description: 'Always-loaded Executor instructions for AGENTS.md hosts.',
 };
 
+const CLAUDE_INSTRUCTIONS: InstructionTarget = {
+  id: 'claude-instructions',
+  path: 'CLAUDE.md',
+  description: 'Always-loaded Executor instructions for Claude Code hosts.',
+};
+
 const OPENCODE_COMMAND: CommandTarget = {
   id: 'opencode-make-it-so',
   path: pathPosix.join('.opencode', 'commands', 'make-it-so.md'),
@@ -389,4 +395,33 @@ export async function hostIdsForInstructionPath(path: string): Promise<AgentHost
 export async function getInstructionTargetPaths(ids?: AgentHostId[]): Promise<string[]> {
   const profiles = ids ? await getAgentHostProfiles(ids) : await getAvailableAgentHostProfiles();
   return [...new Set(profiles.flatMap(profile => profile.instructionTargets.map(target => target.path)))];
+}
+
+export function registeredInstructionPaths(): string[] {
+  const paths = new Set<string>();
+  for (const target of registeredInstructionTargets()) {
+    if (target.path.trim() !== '') paths.add(target.path);
+  }
+  return [...paths];
+}
+
+export function defaultInstructionContextSources(): string[] {
+  const sources: string[] = [];
+  const seen = new Set<string>();
+  for (const path of registeredInstructionPaths()) {
+    const filename = path.split('/').pop() ?? path;
+    if (filename === '' || seen.has(filename)) continue;
+    seen.add(filename);
+    sources.push(filename, `**/${filename}`);
+  }
+  return sources;
+}
+
+function registeredInstructionTargets(): InstructionTarget[] {
+  const targets: InstructionTarget[] = [AGENTS_INSTRUCTIONS, CLAUDE_INSTRUCTIONS];
+  for (const profile of Object.values(BUILTIN_PROFILES)) {
+    if (!profile) continue;
+    for (const target of profile.instructionTargets) targets.push(target);
+  }
+  return targets;
 }
