@@ -1,4 +1,5 @@
 import type { ExecutorPolicy, ReviewModelsPolicy } from '../core/policy.js';
+import { cloneModelRoutingPolicy, defaultModelRoutingPolicy } from '../core/model_routing.js';
 import { expandGateConfigs } from '../gate_config.js';
 import { isSupplyChainSensitive } from '../gate_sensitivity.js';
 import type { Config, ConfigFileShape, GateConfig, GatePolicyConfig, WorkProviderSelection } from './types.js';
@@ -129,6 +130,7 @@ export const DEFAULT_CONFIG_FILE: ConfigFileShape = {
       requireApprovalForUnverifiedRisk: true,
       writePackageManagerDefaults: false,
     },
+    modelRouting: defaultModelRoutingPolicy(),
   },
 };
 
@@ -271,6 +273,7 @@ export function cloneConfigFile(input: ConfigFileShape): ConfigFileShape {
       instructions: { ...input.policy.instructions },
       migration: { ...input.policy.migration },
       supplyChain: { ...input.policy.supplyChain },
+      modelRouting: cloneModelRoutingPolicy(input.policy.modelRouting ?? defaultModelRoutingPolicy()),
     },
   };
 }
@@ -431,6 +434,7 @@ export function configFromFile(input: ConfigFileShape): Config {
       economy: { ...policy.reviews.models.economy },
       synthesis: { ...policy.reviews.models.synthesis },
     },
+    modelRouting: cloneModelRoutingPolicy(policy.modelRouting ?? defaultModelRoutingPolicy()),
     reviewRoute: policy.reviews.route ? { ...policy.reviews.route } : null,
     reviewFailover: policy.reviews.failover ? { faults: policy.reviews.failover.faults, route: { ...policy.reviews.failover.route } } : null,
     opencodeCommandAlias: policy.instructions.opencodeCommandAlias,

@@ -5,6 +5,18 @@
 export const name = '@tjalve/aie';
 export { validateConfig } from './config/schema.js';
 export {
+  buildModelRoutingFromSelections,
+  defaultModelRoutingPolicy,
+  detectInstalledRoutingHosts,
+  isModelRoutingHost,
+  resolveModelRouting,
+} from './core/model_routing.js';
+export { detectInstalledRoutingHostsOnPath } from './app/model_routing_hosts.js';
+export type {
+  ModelRoutingPolicy,
+  ModelRoutingResolution,
+} from './core/model_routing.js';
+export {
   composeProviderPermutation,
   compositionUsesSelectedKinds,
   resolveCompositionFixturePath,

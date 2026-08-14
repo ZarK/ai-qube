@@ -65,7 +65,7 @@ function writeUsage(input: readonly string[]): number | undefined {
       ].join('\n'),
     },
     init: {
-      usage: 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--defaults] [--yes] [--dry-run] [--force] [--json]',
+      usage: 'aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--primary-host codex|claude-code|opencode|grok] [--primary-model <id>] [--defaults] [--yes] [--dry-run] [--force] [--json]',
       examples: ['aie init . --dry-run', 'aie init . --json', 'aie init . --defaults --yes', 'aie init . --tool all --naming-rules', 'aie init . --tool opencode --opencode-command-alias', 'aie init . --no-milestone-ordering --package-age-days 7'],
       human: 'Usage: aie init <target> [--tool opencode|codex|claude-code|grok-build|all] [--work-provider github|gitlab|linear|jira] [--review-provider github|gitlab] [--ci-provider github|gitlab|jenkins] [--defaults] [--yes] [--dry-run] [--force] [--json]\nInitialize Executor config and managed instruction files in a repository. This command mutates local files.\n',
     },

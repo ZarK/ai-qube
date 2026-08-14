@@ -1,4 +1,5 @@
 import type { CiProviderKind, GateConfig, InstructionConfig, MigrationConfig, MilestoneOrderingConfig, ReviewProviderKind, SupplyChainConfig, WorkProviderKind } from '../config/index.js';
+import type { ModelRoutingPolicy, ModelRoutingResolution } from '../core/model_routing.js';
 import type { InitTool } from '../init_content.js';
 import type { LegacyCategory } from '../legacy.js';
 
@@ -45,6 +46,7 @@ export interface InitResult {
   warnings: string[];
   errors: string[];
   nextCommand: string;
+  modelRouting?: ModelRoutingResolution;
 }
 
 export interface InitPolicySummary {
@@ -88,6 +90,7 @@ export interface InitPolicyOptions {
   instructions?: Partial<InstructionConfig>;
   migration?: Partial<MigrationConfig>;
   supplyChain?: Partial<SupplyChainConfig>;
+  modelRouting?: ModelRoutingPolicy;
 }
 
 export interface InitOptions {

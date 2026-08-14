@@ -102,6 +102,12 @@ export const INIT_FLAG_DETAILS: CommandFlagSchema[] = [
   { name: '--no-unverified-risk-approval', type: 'boolean', description: 'Follow repository policy for unverifiable package risk' },
   { name: '--package-manager-defaults', type: 'boolean', description: 'Write project-level npm secure defaults' },
   { name: '--no-package-manager-defaults', type: 'boolean', description: 'Do not write project-level package-manager defaults' },
+  { name: '--primary-host', type: 'string', description: 'Primary modelRouting host', options: ['codex', 'claude-code', 'opencode', 'grok'] },
+  { name: '--primary-model', type: 'string', description: 'Primary model identifier for modelRouting fallback' },
+  { name: '--route-mechanical-implementation', type: 'string', description: 'Preferred mechanical-implementation host:model' },
+  { name: '--route-exploration-investigation', type: 'string', description: 'Preferred exploration-investigation host:model' },
+  { name: '--route-synthesis-judgment', type: 'string', description: 'Preferred synthesis-judgment host:model' },
+  { name: '--route-independent-review', type: 'string', description: 'ReviewModels tier used for independent-review', options: ['review', 'economy', 'synthesis'] },
   { name: '--help', type: 'boolean', description: 'Show command help' },
 ];
 

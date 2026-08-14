@@ -363,9 +363,13 @@ for (const spec of specs) {
     const scriptBody = "process.stdout.write(JSON.stringify({ ok: true, command: \\"components\\", components: [{ id: \\"executor\\" }] }) + \\"\\\\n\\");";
     writeFileSync(path.join(binDir, "qube.mjs"), scriptBody);
     if (process.platform === "win32") {
-      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nnode \\"%~dp0qube.mjs\\" %*\\r\\n");
+      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\n\\"" + process.execPath + "\\" \\"%~dp0qube.mjs\\" %*\\r\\n");
     } else {
-      writeFileSync(path.join(binDir, "qube"), "#!/usr/bin/env node\\n" + scriptBody);
+      writeFileSync(path.join(binDir, "qube"), [
+        "#!/bin/sh",
+        "exec " + JSON.stringify(process.execPath) + " " + JSON.stringify(path.join(binDir, "qube.mjs")) + " \\"$@\\"",
+        ""
+      ].join("\\n"));
       chmodSync(path.join(binDir, "qube"), 0o755);
     }
   }

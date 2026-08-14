@@ -1,6 +1,6 @@
 import type { Config } from './config/index.js';
 import type { AgentHostId, AgentHostProfile, CommandRenderer, CommandTarget, InstructionTarget } from './agent_hosts.js';
-import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderGrokEconomyAgent, renderGrokReviewFocusAgent, renderMakeItSoCommand, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
+import { commandTargetEnabled, renderAgentInstructions, renderClaudeEconomyAgent, renderClaudeReviewFocusAgent, renderCodexEconomyAgent, renderCodexReviewFocusAgent, renderGrokEconomyAgent, renderGrokReviewFocusAgent, renderMakeItSoCommand, renderModelRoutingRunnerFiles, renderOpenCodeEconomyAgent, renderOpenCodeReviewFocusAgent } from './init_content.js';
 import { economyCatalogAgent } from './review_catalog.js';
 
 export interface InitRenderContext {
@@ -104,6 +104,18 @@ export function renderInitFiles(config: Config, profiles: AgentHostProfile[], co
         description: target.description,
       });
     }
+  }
+
+  for (const runner of renderModelRoutingRunnerFiles(config)) {
+    files.push({
+      id: runner.id,
+      relativePath: runner.relativePath,
+      kind: 'command',
+      body: runner.body,
+      allowAppend: false,
+      hosts: [],
+      description: runner.description,
+    });
   }
 
   return { files, warnings };

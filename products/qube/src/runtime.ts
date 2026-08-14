@@ -8,16 +8,17 @@ import { createCliError } from "@tjalve/qube-cli/errors";
 import { defineInstallerChoiceGroup, promptInstallerChoice, promptInstallerChoices, type InstallerChoice, type InstallerChoiceGroup } from "@tjalve/qube-cli/installer";
 import { defineArgument, defineCommand, defineExtensions, defineFlag } from "@tjalve/qube-cli/metadata";
 import { defineMutationMetadata, mutationCategories } from "@tjalve/qube-cli/mutation";
-import { promptConfirm } from "@tjalve/qube-cli/prompts";
+import { promptConfirm, promptText } from "@tjalve/qube-cli/prompts";
 import { createCommandRegistry } from "@tjalve/qube-cli/registry";
 import { createCli, createCommand as createRuntimeCommand, createSchemaCommand, runCli, type RuntimeCommandResult } from "@tjalve/qube-cli/runtime";
+import { detectInstalledRoutingHostsOnPath, isModelRoutingHost } from "./model_routing_local.js";
 import { synthesizeAutoresearchArena } from "@tjalve/aib";
 import type { AutoresearchArena, AutoresearchEvaluator, ConnectionContract } from "@tjalve/qube-core";
 import { qubeCommandSurfaceContracts } from "@tjalve/qube-core";
 
 import { listClaudeCodeInstallFiles, listClaudeCodeInstallNotes } from "./claude_code_host.js";
 import { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
-import { formatPermutationDoctor, runPermutationDoctor } from "./permutation_doctor.js";
+import { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
 import { listCodexInstallFiles, listCodexInstallNotes } from "./codex_host.js";
 import { executorCiProviders, executorHostSurfaces, executorWorkProviders, findQubeComponent, qubeComponents, type QubeComponent, type QubeDiscoveryOption } from "./components.js";
 import { listGrokBuildInstallFiles, listGrokBuildInstallNotes } from "./grok_build_host.js";
@@ -989,6 +990,36 @@ const initCommand = defineCommand({
       name: "mcp",
       description: "Opt in to host MCP wiring for exploratory reading. Default: off. Provider access stays on qube commands.",
       type: "boolean"
+    }),
+    defineFlag({
+      name: "primary-host",
+      description: "Primary modelRouting host: codex, claude-code, opencode, or grok. Must be installed.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "primary-model",
+      description: "Primary model identifier. Delegated routes fall back to this model.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "route-mechanical-implementation",
+      description: "Preferred mechanical-implementation host:model, for example grok:grok-4.5.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "route-exploration-investigation",
+      description: "Preferred exploration-investigation host:model.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "route-synthesis-judgment",
+      description: "Preferred synthesis-judgment host:model.",
+      type: "string"
+    }),
+    defineFlag({
+      name: "route-independent-review",
+      description: "reviewModels tier for independent-review: review, economy, or synthesis.",
+      type: "string"
     })
   ],
   examples: [
@@ -1498,12 +1529,13 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
     mode: offline ? "offline" : "live",
   });
   const permutationPromise = runPermutationDoctor(environment.cwd);
+  const modelRoutingPromise = runModelRoutingDoctor(environment.cwd);
   const workflowPromise = collectWorkflowReadiness(offline, environment);
   const continuationPromise = collectContinuationHealth(offline, environment);
   const hosts = probeHostToolkits({ cwd: environment.cwd, env: environment.env, offline });
   const planned = planQubeDispatch("aiq", ["doctor", ...(json ? ["--format", "json"] : [])], environment);
   if (!planned.dispatch) {
-    const [connections, permutation, workflow, continuation] = await Promise.all([connectionsPromise, permutationPromise, workflowPromise, continuationPromise]);
+    const [connections, permutation, modelRouting, workflow, continuation] = await Promise.all([connectionsPromise, permutationPromise, modelRoutingPromise, workflowPromise, continuationPromise]);
     const connectionExitCode = connections.status === "fail" ? 1 : 0;
     const exitCode = planned.exitCode === 0
       ? Math.max(connectionExitCode, continuationExitCode(continuation), toolkitExitCode(hosts))
@@ -1517,6 +1549,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         continuation,
         hosts,
         permutation,
+        modelRouting,
         connectionStatus: connections.status,
         connections,
       };
@@ -1525,12 +1558,13 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
         jsonStdout: `${JSON.stringify(payload)}\n`,
       };
     }
-    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
+    return { exitCode, stdout: `${planned.stdout}${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`, stderr: planned.stderr };
   }
 
-  const [connections, permutation, quality, workflow, continuation] = await Promise.all([
+  const [connections, permutation, modelRouting, quality, workflow, continuation] = await Promise.all([
     connectionsPromise,
     permutationPromise,
+    modelRoutingPromise,
     dispatchCommandCaptured(planned.dispatch),
     workflowPromise,
     continuationPromise,
@@ -1559,6 +1593,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
       continuation,
       hosts,
       permutation,
+      modelRouting,
       connectionStatus: connections.status,
       connections,
     };
@@ -1566,7 +1601,7 @@ async function executeQubeDoctor(json: boolean, offline: boolean, environment: C
   }
   return {
     exitCode,
-    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatConnectionDoctor(connections)}`,
+    stdout: `${quality.stdout.trimEnd()}\n\n${formatWorkflowReadiness(workflow)}${formatContinuationHealth(continuation)}${formatHostToolkits(hosts)}${formatPermutationDoctor(permutation)}${formatModelRoutingDoctor(modelRouting)}${formatConnectionDoctor(connections)}`,
     stderr: `${planned.stderr}${quality.stderr}`,
   };
 }
@@ -1610,12 +1645,18 @@ async function dispatchInitChild(componentName: string, args: readonly string[],
   };
 }
 
-function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string }): readonly string[] {
+function buildAieInitArgs(target: string, tool: AieInitTool | undefined, options: { readonly dryRun: boolean; readonly force: boolean; readonly yes: boolean; readonly defaults: boolean; readonly workProvider?: string; readonly reviewProvider?: string; readonly ciProvider?: string; readonly primaryHost?: string; readonly primaryModel?: string; readonly mechanical?: string; readonly exploration?: string; readonly synthesis?: string; readonly independentReview?: string }): readonly string[] {
   const args = ["init", target, "--json"];
   if (tool) args.push("--tool", tool);
   if (options.workProvider && options.workProvider !== "local") args.push("--work-provider", options.workProvider);
   if (options.reviewProvider) args.push("--review-provider", options.reviewProvider);
   if (options.ciProvider && options.ciProvider !== "local") args.push("--ci-provider", options.ciProvider);
+  if (options.primaryHost) args.push("--primary-host", options.primaryHost);
+  if (options.primaryModel) args.push("--primary-model", options.primaryModel);
+  if (options.mechanical) args.push("--route-mechanical-implementation", options.mechanical);
+  if (options.exploration) args.push("--route-exploration-investigation", options.exploration);
+  if (options.synthesis) args.push("--route-synthesis-judgment", options.synthesis);
+  if (options.independentReview) args.push("--route-independent-review", options.independentReview);
   if (options.dryRun) args.push("--dry-run");
   if (options.force) args.push("--force");
   if (options.yes) args.push("--yes");
@@ -1640,6 +1681,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
   const defaults = flags.defaults === true;
   const mcpOptIn = flags.mcp === true;
 
+  const routingFlagError = validateModelRoutingFlags(flags);
+  if (routingFlagError) {
+    return json
+      ? { exitCode: 2, jsonStdout: `${JSON.stringify({ ok: false, command: "init", error: routingFlagError })}\n` }
+      : { exitCode: 2, stdout: "", stderr: `${routingFlagError}\n` };
+  }
   const hosts = await resolveInstallChoices(hostChoices, readOptionList<InstallHost>(flags, "host"), flags, initCommand);
   const workProviders = await resolveInstallChoices(workProviderChoices, readOptionList<InstallWorkProvider>(flags, "work-provider"), flags, initCommand);
   const ciProviders = await resolveInstallChoices(ciProviderChoices, readOptionList<InstallCiProvider>(flags, "ci-provider"), flags, initCommand);
@@ -1655,6 +1702,7 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     yes: yes || defaults
   });
 
+  const routingSelections = await collectModelRoutingSelections(flags, json, yes, defaults, initCommand);
   const aieToolTargets = resolveAieInitToolTargets(hosts);
   const aiuToolTargets = resolveAiuInitToolTargets(hosts);
   const reviewProvider = workProviders[0] === "gitlab" ? "gitlab" : "github";
@@ -1666,6 +1714,12 @@ async function executeQubeInit(flags: Readonly<Record<string, unknown>>, args: R
     workProvider: workProviders[0],
     reviewProvider,
     ciProvider: ciProviders[0],
+    primaryHost: routingSelections.primaryHost,
+    primaryModel: routingSelections.primaryModel,
+    mechanical: routingSelections.mechanical,
+    exploration: routingSelections.exploration,
+    synthesis: routingSelections.synthesis,
+    independentReview: routingSelections.independentReview,
   };
   const aiuOptions = { dryRun, force };
   const aieRuns = aieToolTargets.length === 0
@@ -4150,11 +4204,39 @@ function planQubeDispatch(componentName: string | undefined, componentArgs: read
   };
 }
 
+function isRegularFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function hasNodeShebang(filePath: string): boolean {
+  try {
+    const head = readFileSync(filePath, { encoding: "utf8" }).slice(0, 80);
+    return /^#!\s*(?:\/usr\/bin\/env\s+node|\/usr\/bin\/node|\/bin\/node)\b/.test(head);
+  } catch {
+    return false;
+  }
+}
+
+function resolveNodeScriptForCommand(commandPath: string): string | undefined {
+  const companion = path.join(
+    path.dirname(commandPath),
+    `${path.basename(commandPath).replace(/\.(?:cmd|bat|exe)$/i, "")}.mjs`
+  );
+  if (isRegularFile(companion)) return companion;
+  if (/\.(?:js|mjs|cjs)$/i.test(commandPath) && isRegularFile(commandPath)) return commandPath;
+  if (isRegularFile(commandPath) && hasNodeShebang(commandPath)) return commandPath;
+  return undefined;
+}
+
 function resolveCommandFromEntries(command: string, entries: readonly string[], environment: CliEnvironment): string | undefined {
   for (const entry of entries) {
     for (const name of commandNames(command, environment)) {
       const candidate = path.join(entry, name);
-      if (existsSync(candidate)) return candidate;
+      if (isRegularFile(candidate)) return candidate;
     }
   }
   return undefined;
@@ -4169,6 +4251,149 @@ function defaultPackageRoot(env: NodeJS.ProcessEnv): string {
     return env.QUBE_TEST_PACKAGE_ROOT;
   }
   return fileURLToPath(new URL("..", import.meta.url));
+}
+
+function validateModelRoutingFlags(flags: Readonly<Record<string, unknown>>): string | null {
+  const primaryHost = readString(flags["primary-host"]);
+  const routeFlags = [
+    readString(flags["route-mechanical-implementation"]),
+    readString(flags["route-exploration-investigation"]),
+    readString(flags["route-synthesis-judgment"]),
+    readString(flags["route-independent-review"]),
+  ];
+  if (!primaryHost && routeFlags.every(value => value === undefined)) return null;
+  const installed = detectInstalledRoutingHostsOnPath();
+  if (primaryHost) {
+    if (!isModelRoutingHost(primaryHost)) {
+      return `Unknown modelRouting host ${primaryHost}. Use one of: codex, claude-code, opencode, grok.`;
+    }
+    if (!installed.includes(primaryHost)) {
+      return `Host CLI for ${primaryHost} is not installed. Install and authenticate that host, or choose an installed host.`;
+    }
+  }
+  for (const flag of ["route-mechanical-implementation", "route-exploration-investigation", "route-synthesis-judgment"] as const) {
+    const value = readString(flags[flag]);
+    if (!value) continue;
+    const host = value.split(":")[0];
+    if (!isModelRoutingHost(host)) {
+      return `--${flag} must be host:model using codex, claude-code, opencode, or grok.`;
+    }
+    if (!installed.includes(host)) {
+      return `Host CLI for ${host} is not installed. Install and authenticate that host, or choose an installed host.`;
+    }
+  }
+  const independent = readString(flags["route-independent-review"]);
+  if (independent && independent !== "review" && independent !== "economy" && independent !== "synthesis") {
+    return "--route-independent-review must be review, economy, or synthesis.";
+  }
+  return null;
+}
+
+export function modelRoutingPromptPlan(installedHosts: readonly string[]): readonly string[] {
+  return Object.freeze([
+    "primary-host",
+    "primary-model",
+    "mechanical-implementation",
+    "exploration-investigation",
+    "synthesis-judgment",
+    "independent-review",
+  ].filter((item, index) => index === 0 ? installedHosts.length > 0 : true));
+}
+
+async function collectModelRoutingSelections(
+  flags: Readonly<Record<string, unknown>>,
+  json: boolean,
+  yes: boolean,
+  defaults: boolean,
+  command: typeof initCommand,
+): Promise<{
+  primaryHost?: string;
+  primaryModel?: string;
+  mechanical?: string;
+  exploration?: string;
+  synthesis?: string;
+  independentReview?: string;
+}> {
+  const fromFlags = {
+    primaryHost: readString(flags["primary-host"]),
+    primaryModel: readString(flags["primary-model"]),
+    mechanical: readString(flags["route-mechanical-implementation"]),
+    exploration: readString(flags["route-exploration-investigation"]),
+    synthesis: readString(flags["route-synthesis-judgment"]),
+    independentReview: readString(flags["route-independent-review"]),
+  };
+  if (json || yes || defaults || fromFlags.primaryHost) return fromFlags;
+  const installed = detectInstalledRoutingHostsOnPath();
+  if (installed.length === 0) return fromFlags;
+  const primaryHost = await promptInstallerChoice({
+    command,
+    promptName: "primary modelRouting host",
+    message: "Which installed host should be the primary modelRouting target?",
+    choices: installed.map(host => ({ value: host, label: host, description: `Use the installed ${host} CLI.` })),
+    defaultValue: installed[0],
+    jsonMode: false,
+    yes: false,
+  });
+  const primaryModel = await promptText({
+    command,
+    promptName: "primary model",
+    jsonMode: false,
+    clack: { message: "Primary model identifier for fallback chains:", defaultValue: "default" },
+  });
+  const mechanical = await promptDelegatedRoute(command, "mechanical-implementation", installed, primaryHost, primaryModel);
+  const exploration = await promptDelegatedRoute(command, "exploration-investigation", installed, primaryHost, primaryModel);
+  const synthesis = await promptDelegatedRoute(command, "synthesis-judgment", installed, primaryHost, primaryModel);
+  const independentReview = await promptInstallerChoice({
+    command,
+    promptName: "independent-review tier",
+    message: "Which reviewModels tier should independent-review use?",
+    choices: [
+      { value: "review", label: "review", description: "Use the review tier from policy.reviews.models." },
+      { value: "economy", label: "economy", description: "Use the economy tier from policy.reviews.models." },
+      { value: "synthesis", label: "synthesis", description: "Use the synthesis tier from policy.reviews.models." },
+    ],
+    defaultValue: "review",
+    jsonMode: false,
+    yes: false,
+  });
+  return {
+    primaryHost,
+    primaryModel,
+    mechanical,
+    exploration,
+    synthesis,
+    independentReview,
+  };
+}
+
+async function promptDelegatedRoute(
+  command: typeof initCommand,
+  routeClass: "mechanical-implementation" | "exploration-investigation" | "synthesis-judgment",
+  installed: readonly string[],
+  primaryHost: string,
+  primaryModel: string,
+): Promise<string> {
+  const host = await promptInstallerChoice({
+    command,
+    promptName: `${routeClass} host`,
+    message: `Which installed host should ${routeClass} prefer?`,
+    choices: installed.map(value => ({
+      value,
+      label: value,
+      description: value === primaryHost ? "Use the primary host." : `Use the installed ${value} CLI.`,
+    })),
+    defaultValue: primaryHost,
+    jsonMode: false,
+    yes: false,
+  });
+  if (host === primaryHost) return `${primaryHost}:${primaryModel}`;
+  const model = await promptText({
+    command,
+    promptName: `${routeClass} model`,
+    jsonMode: false,
+    clack: { message: `Model identifier for ${routeClass} on ${host}:`, defaultValue: "default" },
+  });
+  return `${host}:${model}`;
 }
 
 function readString(value: unknown): string | undefined {
@@ -4722,7 +4947,11 @@ async function runApplyComponents(environment: CliEnvironment, scope: InstallSco
   if (!commandPath) {
     return { error: "Cannot find qube to run components --json after apply." };
   }
-  const spawned = await spawnCapturedPath(commandPath, ["components", "--json"], environment);
+  const nodeScript = resolveNodeScriptForCommand(commandPath);
+  const spawned = nodeScript
+    ? await spawnCapturedPath(process.execPath, [nodeScript, "components", "--json"], environment)
+    : await spawnCapturedPath(commandPath, ["components", "--json"], environment);
+  const launched = nodeScript ?? commandPath;
   if (spawned.truncated) {
     return { error: "qube components --json output exceeded the capture limit." };
   }
@@ -4731,7 +4960,9 @@ async function runApplyComponents(environment: CliEnvironment, scope: InstallSco
   }
   const stdout = spawned.stdout.trim();
   if (stdout === "") {
-    return { error: spawned.stderr.trim() || "qube components --json did not return a JSON envelope." };
+    return {
+      error: spawned.stderr.trim() || `qube components --json did not return a JSON envelope (${launched}).`
+    };
   }
   try {
     const parsed = JSON.parse(stdout) as unknown;

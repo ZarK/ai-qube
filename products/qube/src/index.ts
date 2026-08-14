@@ -49,7 +49,8 @@ export type {
 export { findQubeComponent, qubeComponents } from "./components.js";
 export type { QubeComponent } from "./components.js";
 export { formatConnectionDoctor, runConnectionDoctor } from "./connection_doctor.js";
-export { formatPermutationDoctor, runPermutationDoctor } from "./permutation_doctor.js";
+export { formatModelRoutingDoctor, formatPermutationDoctor, runModelRoutingDoctor, runPermutationDoctor } from "./permutation_doctor.js";
+export { modelRoutingPromptPlan } from "./runtime.js";
 export type { ConnectionDoctorOptions, ConnectionDoctorResult } from "./connection_doctor.js";
 export {
   composeHostToolkitManifests,

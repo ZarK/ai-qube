@@ -73,6 +73,8 @@ describe('config validation', () => {
     assert.equal(defaults.supplyChain.writePackageManagerDefaults, false);
     assert.ok(defaults.priorityLabels.includes('P1-Critical'));
     assert.ok(defaults.statusLabels.includes('S-Ready'));
+    assert.equal(defaults.modelRouting.primary, 'primary');
+    assert.equal(defaults.modelRouting.routes['independent-review'].reviewTier, 'review');
   });
 
   it('accepts explicit provider selections and nested policy values', () => {

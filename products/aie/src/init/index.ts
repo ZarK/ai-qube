@@ -1,6 +1,8 @@
 import { existsSync } from 'node:fs';
 import { join, relative, resolve } from 'path';
 import { AIE_CONFIG_FILENAME, type Config, configToFileShape, getDefaults, validateConfig } from '../config/index.js';
+import { resolveModelRouting } from '../core/model_routing.js';
+import { detectInstalledRoutingHostsOnPath } from '../app/model_routing_hosts.js';
 import { parseInitTool, uniqueTools } from '../init_content.js';
 import { getAgentHostProfiles } from '../agent_hosts.js';
 import { renderInitFiles } from '../init_renderer.js';
@@ -140,6 +142,7 @@ function applyPolicyToRecord(record: Record<string, unknown>, policy: InitPolicy
   if (policy.milestoneOrdering) policyRecord.milestoneOrdering = mergeNestedRecord(policyRecord.milestoneOrdering, policy.milestoneOrdering as Record<string, unknown>);
   if (policy.migration) policyRecord.migration = mergeNestedRecord(policyRecord.migration, policy.migration as Record<string, unknown>);
   if (policy.supplyChain) policyRecord.supplyChain = mergeNestedRecord(policyRecord.supplyChain, policy.supplyChain as Record<string, unknown>);
+  if (policy.modelRouting) policyRecord.modelRouting = policy.modelRouting as unknown as Record<string, unknown>;
 }
 
 function defaultsRecord(): Record<string, unknown> {
@@ -475,6 +478,7 @@ async function prepareInitPlan(options: InitOptions): Promise<InitPlanBuild> {
       warnings,
       errors,
       nextCommand: nextCommand(errors.length === 0),
+      modelRouting: resolveModelRouting(config.modelRouting, config.reviewModels, detectInstalledRoutingHostsOnPath()),
     },
     writes,
   };

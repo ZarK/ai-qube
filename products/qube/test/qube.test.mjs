@@ -49,7 +49,9 @@ import {
   QUBE_INIT_RECORD_PATH,
   qubeComponents,
   renderCommandSurfacesDoc,
+  modelRoutingPromptPlan,
   runConnectionDoctor,
+  runModelRoutingDoctor,
   resolveCommand,
   resolveComponentCommand,
 } from "../dist/index.js";
@@ -638,10 +640,21 @@ for (const spec of specs) {
     mkdirSync(binDir, { recursive: true });
     const script = "process.stdout.write(JSON.stringify({ ok: true, command: \\"components\\", components: [{ id: \\"executor\\" }] }) + \\"\\\\n\\");";
     writeFileSync(path.join(binDir, "qube.mjs"), script);
-    if (process.platform === "win32") {
-      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nnode \\"%~dp0qube.mjs\\" %*\\r\\n");
+    if (process.env.QUBE_TEST_SILENT_QUBE_SHIM === "1") {
+      if (process.platform === "win32") {
+        writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\nexit /b 0\\r\\n");
+      } else {
+        writeFileSync(path.join(binDir, "qube"), "#!/bin/sh\\nexit 0\\n");
+        chmodSync(path.join(binDir, "qube"), 0o755);
+      }
+    } else if (process.platform === "win32") {
+      writeFileSync(path.join(binDir, "qube.cmd"), "@echo off\\r\\n\\"" + process.execPath + "\\" \\"%~dp0qube.mjs\\" %*\\r\\n");
     } else {
-      writeFileSync(path.join(binDir, "qube"), "#!/usr/bin/env node\\n" + script);
+      writeFileSync(path.join(binDir, "qube"), [
+        "#!/bin/sh",
+        "exec " + JSON.stringify(process.execPath) + " " + JSON.stringify(path.join(binDir, "qube.mjs")) + " \\"$@\\"",
+        ""
+      ].join("\\n"));
       chmodSync(path.join(binDir, "qube"), 0o755);
     }
   }
@@ -982,6 +995,33 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
       assert.ok(parsed.permutation.work.capabilities.every(item => item.support === "supported" || item.support === "unsupported" || item.support === "unknown"));
       assert.ok(parsed.permutation.missing.every(item => item.support !== "supported"));
     }
+  });
+
+  it("reports modelRouting decisions and substitutions in doctor JSON", async () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-model-routing-doctor-"));
+    const qualityRoot = mkdtempSync(path.join(tmpdir(), "qube-model-routing-quality-"));
+    createQualityDoctorShim(qualityRoot);
+    mkdirSync(path.join(cwd, ".qube", "aie"), { recursive: true });
+    writeFileSync(path.join(cwd, ".qube", "aie", "config.json"), `${JSON.stringify({
+      version: 1,
+      providers: {
+        work: { kind: "github" },
+        review: { kind: "github" },
+        ci: { kind: "github" },
+      },
+    })}\n`, "utf8");
+    const result = runCli(["doctor", "--offline", "--json"], { cwd, env: { PATH: "", QUBE_TEST_PACKAGE_ROOT: qualityRoot } });
+    const parsed = JSON.parse(result.stdout);
+    assert.ok(parsed.modelRouting);
+    assert.ok(["ok", "unavailable"].includes(parsed.modelRouting.status));
+    assert.equal(parsed.modelRouting.resolution.routes["independent-review"].reviewTier, "review");
+    assert.ok(Array.isArray(parsed.modelRouting.resolution.substitutions));
+
+    const unavailable = await runModelRoutingDoctor(cwd, () => false);
+    assert.equal(unavailable.status, "unavailable");
+    assert.notEqual(unavailable.status, "ok");
+    assert.match(unavailable.summary, /No installed modelRouting host/);
+    assert.ok(unavailable.resolution.substitutions.length >= 1);
   });
 
   it("preserves staged workflow readiness from the Executor doctor without flattening", () => {
@@ -1776,6 +1816,38 @@ process.stdout.write(JSON.stringify({ ok: true, doctor: { status: "ok" } }) + "\
     const secondParsed = JSON.parse(second.stdout);
     assert.deepEqual(secondParsed.apply.executed, []);
     assert.equal(readFileSync(harness.pmLog, "utf8").trim().split(/\r?\n/).length, 1);
+  });
+
+  it("reads apply components from a Node companion when the qube shim prints nothing", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "qube-install-apply-silent-bin-"));
+    const harness = createInstallApplyHarness(root);
+    const result = runCli([
+      "install",
+      "--apply",
+      "--yes",
+      "--json",
+      "--scope",
+      "local",
+      "--package-manager",
+      "pnpm",
+      "--host",
+      "generic",
+      "--work-provider",
+      "github",
+      "--ci-provider",
+      "github",
+      "--lifecycle-scripts",
+      "disabled",
+      "--docs",
+      "--migration",
+      "none"
+    ], { cwd: harness.cwd, env: { ...harness.env, QUBE_TEST_SILENT_QUBE_SHIM: "1" } });
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    const parsed = JSON.parse(result.stdout);
+    assert.equal(parsed.ok, true);
+    assert.equal(parsed.apply.components.ok, true);
+    assert.equal(parsed.apply.components.command, "components");
+    assert.ok(Array.isArray(parsed.apply.components.components));
   });
 
   it("reports a loud components error when qube is missing after apply", () => {
@@ -3259,6 +3331,32 @@ describe("qube init composer orchestrator", () => {
     const parsed = JSON.parse(result.stdout);
     assert.equal(parsed.ok, false);
     assert.equal(parsed.aie[0].ok, false);
+  });
+
+  it("plans TTY prompts for every modelRouting route class", () => {
+    assert.deepEqual(modelRoutingPromptPlan(["claude-code", "grok"]), [
+      "primary-host",
+      "primary-model",
+      "mechanical-implementation",
+      "exploration-investigation",
+      "synthesis-judgment",
+      "independent-review",
+    ]);
+  });
+
+  it("refuses an uninstalled modelRouting host during init", () => {
+    const cwd = mkdtempSync(path.join(tmpdir(), "qube-routing-init-"));
+    const result = runCli([
+      "init", ".",
+      "--host", "claude-code",
+      "--yes",
+      "--json",
+      "--primary-host", "opencode",
+      "--primary-model", "default",
+    ], { cwd, env: { PATH: "" } });
+    assert.notEqual(result.status, 0);
+    const parsed = result.stdout.trim() ? JSON.parse(result.stdout) : { error: result.stderr };
+    assert.match(String(parsed.error ?? result.stderr), /not installed/i);
   });
 
   it("blocks JSON init prompts unless flags or safe defaults are supplied", () => {
