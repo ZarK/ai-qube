@@ -1583,7 +1583,7 @@ function gatesForChangedPath(path: string): string[] {
   if (/package\.json$|pnpm-lock\.yaml$|package-lock\.json$|yarn\.lock$|bun\.lockb?$|pyproject\.toml$|uv\.lock$|poetry\.lock$|pdm\.lock$|tox\.ini$|noxfile\.py$|Cargo\.toml$|Cargo\.lock$|go\.mod$|go\.work$|go\.sum$|pom\.xml$|settings\.gradle(?:\.kts)?$|build\.gradle(?:\.kts)?$|CMakeLists\.txt$|CMake(?:User)?Presets\.json$|toolchain\.cmake$|\.slnx?$|Directory\.Build\.props$|\.(cs|fs)proj$|MODULE\.bazel(?:\.lock)?$|WORKSPACE(?:\.bazel)?$|(?:^|\/)BUILD(?:\.bazel)?$|(?:^|\/)BUCK$|pants\.toml$|\.buckconfig$|app\.json$|app\.config\.(js|ts)$|Podfile(?:\.lock)?$|Package\.swift$|AndroidManifest\.xml$|\.xcodeproj\/|\.xcworkspace\/|\.tf$|\.tofu$|Chart\.yaml$|kustomization\.ya?ml$|Pulumi\.yaml$|cdk\.json$|ansible\.cfg$|(?:^|\/)(?:playbook|site)\.yml$|mkdocs\.ya?ml$|docusaurus\.config\.(js|ts)$|hugo\.(toml|ya?ml|json)$|book\.toml$|(?:^|\/)conf\.py$/i.test(path)) return ['build', 'typecheck', 'test', 'dependency-review'];
   if (/(\.test\.|\.spec\.)/.test(path) || path.includes('/test/')) return ['test'];
   if (/\.(ts|tsx|js|jsx|mjs|cjs|py|rs|go|java|kt|kts|cs|c|cc|cpp|cxx|h|hpp|bzl|swift|m|mm)$/.test(path)) return ['build', 'typecheck', 'test'];
-  if (/\.(md|mdx)$/.test(path)) return ['docs'];
+  if (/\.(md|mdx|rst)$/i.test(path)) return ['docs'];
   return ['test'];
 }
 
