@@ -49,6 +49,8 @@ export interface ReviewLaneRenderInput {
   readonly notRunReason?: string | null;
   readonly withheld?: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
   readonly host?: string;
+  readonly model?: string | null;
+  readonly effort?: string | null;
   readonly profile?: string;
   readonly evidencePath?: string;
 }
@@ -308,6 +310,31 @@ function wrapCollapsed(profile: ReviewRenderCapabilityProfile, title: string, co
   return ["<details>", `<summary>${title}</summary>`, "", content, "", "</details>"].join("\n");
 }
 
+export function reviewHostDisplayName(host: string): string {
+  if (host === "grok" || host === "grok-build") return "Grok Build";
+  if (host === "claude-code") return "Claude Code";
+  if (host === "opencode") return "OpenCode";
+  if (host === "codex") return "Codex";
+  if (host === "local-host") return "local host";
+  if (host === "trusted-provider") return "trusted provider";
+  return host;
+}
+
+function looksLikeAbsolutePath(path: string): boolean {
+  return /^(?:[A-Za-z]:[\\/]|\\\\|\/(?:Users|home|tmp|var|private|mnt|Volumes|workspace|workspaces|code)\/)/.test(path);
+}
+
+export function formatLaneRun(lane: ReviewLaneRenderInput): string {
+  const host = lane.host && lane.host.trim() !== "" ? reviewHostDisplayName(lane.host.trim()) : null;
+  const model = lane.model && lane.model.trim() !== "" ? lane.model.trim() : null;
+  const effort = lane.effort && lane.effort.trim() !== "" ? lane.effort.trim() : null;
+  if (!host && !model) return "host not recorded";
+  if (host && model && effort) return `${host} / ${model} (${effort})`;
+  if (host && model) return `${host} / ${model}`;
+  if (host) return host;
+  return model ?? "host not recorded";
+}
+
 function laneNoteText(
   profile: ReviewRenderCapabilityProfile,
   lane: ReviewLaneRenderInput,
@@ -342,14 +369,19 @@ function renderCollapsedNotes(
     return `- ${laneId}: ${laneNoteText(profile, lane, input.findings)}`;
   });
   const preconditions = [...new Set(input.lanes.flatMap((lane) => lane.preconditions ?? []).map((item) => item.trim()).filter((item) => item !== ""))];
-  const hosts = [...new Set(input.lanes.map((lane) => lane.host).filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
   const profiles = [...new Set(input.lanes.map((lane) => lane.profile).filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
-  const evidence = [...new Set(input.lanes.map((lane) => lane.evidencePath).filter((item): item is string => typeof item === "string" && item.trim() !== ""))];
+  const evidence = [...new Set(input.lanes.map((lane) => lane.evidencePath).filter((item): item is string => typeof item === "string" && item.trim() !== "" && !looksLikeAbsolutePath(item)))];
+  const laneRuns = input.expectedLanes.map((laneId) => {
+    const lane = byLane.get(laneId);
+    if (!lane) return `- ${laneId}: not run`;
+    return `- ${laneId}: ${formatLaneRun(lane)}`;
+  });
   const provenance = [
     `- head: ${input.headSha}`,
-    ...(hosts.length > 0 ? [`- hosts: ${hosts.join(", ")}`] : []),
-    ...(profiles.length > 0 ? [`- profiles: ${profiles.join(", ")}`] : []),
-    ...(evidence.length > 0 ? [`- evidence: ${evidence.join(", ")}`] : []),
+    ...(profiles.length > 0 ? [`- profile: ${profiles.join(", ")}`] : []),
+    "- lanes:",
+    ...laneRuns,
+    ...(evidence.length > 0 ? ["- evidence:", ...evidence.map((path) => `  - ${path}`)] : []),
     ...(input.rerunCommand ? [`- rerun: \`${input.rerunCommand}\``] : []),
   ];
   return [

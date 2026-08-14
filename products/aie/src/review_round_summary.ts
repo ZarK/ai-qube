@@ -33,6 +33,8 @@ export interface RoundSummaryLaneInput {
   readonly notRunReason?: string | null;
   readonly withheld: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
   readonly host?: string;
+  readonly model?: string | null;
+  readonly effort?: string | null;
   readonly profile?: string;
   readonly evidencePath?: string;
 }
@@ -268,6 +270,8 @@ function toLaneRenderInput(lane: RoundSummaryLaneInput): ReviewLaneRenderInput {
     notRunReason: lane.notRunReason,
     withheld: lane.withheld,
     host: lane.host,
+    model: lane.model,
+    effort: lane.effort,
     profile: lane.profile,
     evidencePath: lane.evidencePath,
   };

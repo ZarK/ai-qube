@@ -1,5 +1,5 @@
 import { lstatSync, readdirSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { normalizeReviewFinding, reviewFindingKey, type ReviewRepositoryRef, type ReviewRoundDeltaInput } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
 import { COMPREHENSIVE_LOCAL_REVIEW_LANES, gitDeltaPathsSync, verifyTrustedStoreChain, type LocalReviewLaneId } from '../local_review_evidence.js';
@@ -16,6 +16,14 @@ const DEFAULT_REVIEW_NIT_CAP = 10;
 
 function safeHeadSegment(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || 'unknown';
+}
+
+function publishedEvidencePath(repoRoot: string, path: string): string | undefined {
+  if (path.trim() === '') return undefined;
+  if (!isAbsolute(path)) return path.replace(/\\/g, '/');
+  const relativePath = relative(repoRoot, path);
+  if (relativePath.startsWith('..') || isAbsolute(relativePath)) return undefined;
+  return relativePath.replace(/\\/g, '/');
 }
 
 export function reviewRepositoryFromPullRequestUrl(url: string | undefined): ReviewRepositoryRef | undefined {
@@ -186,8 +194,10 @@ export async function runPrReviewSummaryPublishWithProvider(provider: ReviewForg
       origin: lane.origin,
       withheld: { duplicates: plan?.withheldDuplicates ?? 0, offDiff: plan?.withheldOffDiff ?? 0, byCap: plan?.withheldByCap ?? 0 },
       host: lane.host,
+      model: lane.model,
+      effort: lane.effort,
       profile: lane.profile,
-      evidencePath: lane.path,
+      evidencePath: publishedEvidencePath(repoRoot, lane.path),
     };
   });
 

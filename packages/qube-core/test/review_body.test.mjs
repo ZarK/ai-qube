@@ -46,6 +46,10 @@ function lane(overrides = {}) {
     origin: overrides.origin ?? "local",
     notRunReason: overrides.notRunReason ?? null,
     withheld: overrides.withheld ?? { duplicates: 0, offDiff: 0, byCap: 0 },
+    host: overrides.host,
+    model: overrides.model,
+    effort: overrides.effort,
+    evidencePath: overrides.evidencePath,
   };
 }
 
@@ -216,6 +220,40 @@ describe("renderRoundReviewBody", () => {
     });
     assert.equal(delta.clean, true);
     assert.equal(delta.fixed, 1);
+  });
+
+  it("renders per-lane host and model in provenance and omits absolute evidence paths", () => {
+    const render = renderRoundReviewBody({
+      marker: marker(),
+      verdict: "approve",
+      headSha: "headsha1234567",
+      expectedLanes: ["issue-compliance", "code-quality"],
+      lanes: [
+        lane({
+          laneId: "issue-compliance",
+          host: "grok",
+          model: "grok-4.6",
+          effort: "high",
+          evidencePath: "F:\\\\code\\\\ai-qube\\\\.qube\\\\aie\\\\reviews\\\\1\\\\2\\\\abc\\\\issue-compliance.json",
+        }),
+        lane({
+          laneId: "code-quality",
+          host: "codex",
+          model: "gpt-5.6-luna",
+          effort: "medium",
+          evidencePath: ".qube/aie/reviews/1/2/abc/code-quality.json",
+        }),
+      ],
+      findings: [],
+      transport: "review-api",
+      rerunCommand: "aie pr gate 528",
+    });
+    assert.match(render.body, /issue-compliance: Grok Build \/ grok-4\.6 \(high\)/);
+    assert.match(render.body, /code-quality: Codex \/ gpt-5\.6-luna \(medium\)/);
+    assert.doesNotMatch(render.body, /hosts: codex/);
+    assert.doesNotMatch(render.body, /F:\\\\code\\\\ai-qube/);
+    assert.match(render.body, /\.qube\/aie\/reviews\/1\/2\/abc\/code-quality\.json/);
+    assert.match(render.body, /rerun: `aie pr gate 528`/);
   });
 
   it("names issue-comment transport and never claims posted inline", () => {

@@ -348,8 +348,8 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   }
   const publishCommand = buildLocalReviewPublishCommand(cliPrefix, prNumber, lane, issueNumber);
   // Risk-card reviewer faces are part of both rendered and stable stacks so promptStackHash tracks activation.
-  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
-  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand), riskCardFragments, repoRoot, configuredFragments);
+  const rendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, contextLines, repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
+  const stableRendered = promptStack(lane, laneContextLines(lane, issueNumbers, prNumber, headSha, evidencePaths, [], repoRoot, publishCommand, route?.host), riskCardFragments, repoRoot, configuredFragments);
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
@@ -691,7 +691,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             continue;
           }
           const publishCommand = buildLocalReviewPublishCommand(cliPrefix, input.prNumber, lane, issueNumber);
-          const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand), riskCardFragments, input.repoRoot, laneConfiguredFragments(config, lane));
+          const rendered = promptStack(lane, laneContextLines(lane, [issueNumber], input.prNumber, input.headSha, [path], contextLines, input.repoRoot, publishCommand, route.host), riskCardFragments, input.repoRoot, laneConfiguredFragments(config, lane));
           // Defer execution to the bounded pool; the placeholder keeps the lane's
           // deterministic position and is replaced in the serial completion phase.
           // The job reads route and routeSource at execution time so the probe
