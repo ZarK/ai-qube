@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { describe, it } = require('node:test');
 const { cloneGitRepo } = require('./support/git_fixture.cjs');
 const { execFileSync } = require('node:child_process');
-const { cpSync, existsSync, mkdtempSync, readFileSync, writeFileSync, mkdirSync } = require('node:fs');
+const { cpSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync, mkdirSync } = require('node:fs');
 const { join } = require('node:path');
 const { tmpdir } = require('node:os');
 const { getDefaults } = require('../dist/config/index.js');
@@ -410,6 +410,26 @@ describe('repo layout inspection and affected scope', () => {
     assert.deepEqual(result.projects.map(project => project.path), ['.', 'modules/cli', 'modules/core']);
     assert.equal(result.projects.some(project => project.packageName === 'example.com/outside'), false);
     assert.equal(result.projects.some(project => project.path.startsWith('..')), false);
+  });
+
+  it('does not follow symlink workspace members out of the repository root', async (t) => {
+    const repo = makeFixtureRepo('go-workspace');
+    const outside = join(repo, '..', 'outside-go-symlink');
+    mkdirSync(outside, { recursive: true });
+    writeFileSync(join(outside, 'go.mod'), 'module example.com/outside\n\ngo 1.22\n');
+    const link = join(repo, 'modules', 'escape');
+    try {
+      symlinkSync(outside, link, process.platform === 'win32' ? 'junction' : 'dir');
+    } catch {
+      t.skip('this environment cannot create a directory symlink or junction');
+      return;
+    }
+    writeFileSync(join(repo, 'go.work'), 'go 1.22\n\nuse (\n\t./modules/core\n\t./modules/escape\n)\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.projects.some(project => project.packageName === 'example.com/outside'), false);
+    assert.equal(result.projects.some(project => project.path === 'modules/escape'), false);
   });
 
   it('keeps Python root metadata when incidental Node tooling exists at the root', async () => {

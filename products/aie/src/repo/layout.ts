@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { RepoAffectedProject, RepoAffectedResult, RepoCiHint, RepoLayoutInspection, RepoLayoutKind, RepoPackageManager, RepoPathSignal, RepoProject, RepoProjectKind, RepoRootMarker } from '@tjalve/qube-core';
 import type { Config } from '../config/index.js';
@@ -149,6 +149,29 @@ function repoRelativePath(root: string, path: string): string | null {
   return portablePath(relativePath);
 }
 
+function containedProjectPath(root: string, candidate: string): string | null {
+  try {
+    const resolvedRoot = realpathSync(root);
+    const resolvedCandidate = existsSync(candidate) ? realpathSync(candidate) : resolve(candidate);
+    return repoRelativePath(resolvedRoot, resolvedCandidate);
+  } catch {
+    return null;
+  }
+}
+
+function containedChildProjects(root: string, directoryName: string, manifestName: string): string[] {
+  const directory = join(root, directoryName);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const projectPath = resolve(directory, entry.name);
+      const relativePath = containedProjectPath(root, projectPath);
+      return relativePath !== null && existsSync(join(projectPath, manifestName)) ? relativePath : null;
+    })
+    .filter((path): path is string => path !== null);
+}
+
 function readPackageJson(root: string, path = 'package.json'): PackageJson | null {
   try {
     return JSON.parse(readFileSync(join(root, path), 'utf8')) as PackageJson;
@@ -286,19 +309,19 @@ function expandWorkspacePattern(root: string, pattern: string, manifestName: str
   if (normalized.includes('**') || normalized.startsWith('!')) return [];
   if (!normalized.includes('*')) {
     const projectPath = resolve(root, normalized);
-    const relativeProjectPath = repoRelativePath(root, projectPath);
+    const relativeProjectPath = containedProjectPath(root, projectPath);
     return relativeProjectPath !== null && existsSync(join(projectPath, manifestName)) ? [relativeProjectPath] : [];
   }
   const starIndex = normalized.indexOf('*');
   const prefix = normalized.slice(0, starIndex).replace(/\/+$/, '');
   const suffix = normalized.slice(starIndex + 1).replace(/^\/+/, '');
   const base = prefix === '' ? root : resolve(root, prefix);
-  if (repoRelativePath(root, base) === null) return [];
+  if (containedProjectPath(root, base) === null) return [];
   if (!existsSync(base)) return [];
   return readdirSync(base, { withFileTypes: true })
     .filter(entry => entry.isDirectory())
     .map(entry => resolve(base, entry.name, suffix))
-    .map(path => ({ path, relativePath: repoRelativePath(root, path) }))
+    .map(path => ({ path, relativePath: containedProjectPath(root, path) }))
     .filter(candidate => candidate.relativePath !== null && existsSync(join(candidate.path, manifestName)))
     .map(candidate => candidate.relativePath as string);
 }
@@ -385,11 +408,7 @@ function detectPackageManagers(root: string | null): RepoPackageManager[] {
   }
   if (existsSync(join(repoRoot, 'package.json'))) addPackage('.');
   for (const top of JS_WORKSPACE_PROJECT_DIRS) {
-    const directory = join(repoRoot, top);
-    if (!existsSync(directory)) continue;
-    for (const entry of readdirSync(directory, { withFileTypes: true })) {
-      if (entry.isDirectory() && existsSync(join(directory, entry.name, 'package.json'))) addPackage(portablePath(join(top, entry.name)));
-    }
+    for (const path of containedChildProjects(repoRoot, top, 'package.json')) addPackage(path);
   }
   return managers;
 }
@@ -400,13 +419,7 @@ function detectJsWorkspaceSignals(root: string | null, rootPackage: PackageJson 
   const markerPaths = JS_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path)));
   const resolvedProjectPaths = [...new Set([
     ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'package.json')),
-    ...JS_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
-      const directory = join(root, directoryName);
-      if (!existsSync(directory)) return [];
-      return readdirSync(directory, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'package.json')))
-        .map(entry => portablePath(join(directoryName, entry.name)));
-    }),
+    ...JS_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => containedChildProjects(root, directoryName, 'package.json')),
   ])].sort();
   return { declaredPatterns, markerPaths, resolvedProjectPaths };
 }
@@ -422,13 +435,7 @@ function detectPythonWorkspaceSignals(root: string | null, rootPyProject: PyProj
   const toolSections = [...(rootPyProject?.toolSections ?? [])].sort();
   const resolvedProjectPaths = [...new Set([
     ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'pyproject.toml')),
-    ...PYTHON_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
-      const directory = join(root, directoryName);
-      if (!existsSync(directory)) return [];
-      return readdirSync(directory, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'pyproject.toml')))
-        .map(entry => portablePath(join(directoryName, entry.name)));
-    }),
+    ...PYTHON_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => containedChildProjects(root, directoryName, 'pyproject.toml')),
   ])].sort();
   return { declaredPatterns, markerPaths, toolSections, resolvedProjectPaths };
 }
@@ -443,13 +450,7 @@ function detectRustWorkspaceSignals(root: string | null, rootCargo: CargoProject
   const markerPaths = RUST_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path))).sort();
   const resolvedProjectPaths = [...new Set([
     ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'Cargo.toml')),
-    ...RUST_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
-      const directory = join(root, directoryName);
-      if (!existsSync(directory)) return [];
-      return readdirSync(directory, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'Cargo.toml')))
-        .map(entry => portablePath(join(directoryName, entry.name)));
-    }),
+    ...RUST_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => containedChildProjects(root, directoryName, 'Cargo.toml')),
   ])].sort();
   return { declaredPatterns, markerPaths, resolvedProjectPaths };
 }
@@ -496,13 +497,7 @@ function detectGoWorkspaceSignals(root: string | null): GoWorkspaceSignals {
   const markerPaths = GO_WORKSPACE_MARKER_FILES.filter(path => existsSync(join(root, path))).sort();
   const resolvedProjectPaths = [...new Set([
     ...declaredPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'go.mod')),
-    ...GO_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => {
-      const directory = join(root, directoryName);
-      if (!existsSync(directory)) return [];
-      return readdirSync(directory, { withFileTypes: true })
-        .filter(entry => entry.isDirectory() && existsSync(join(directory, entry.name, 'go.mod')))
-        .map(entry => portablePath(join(directoryName, entry.name)));
-    }),
+    ...GO_WORKSPACE_PROJECT_DIRS.flatMap(directoryName => containedChildProjects(root, directoryName, 'go.mod')),
   ])].sort();
   return { declaredPatterns, markerPaths, resolvedProjectPaths };
 }
