@@ -14,6 +14,7 @@ import { changedPathUnderSignal } from '../repo/layout.js';
 import type { PrGateExec, PrGateExecResult } from './pr_gate.js';
 import { ECONOMY_REVIEW_CATALOG } from '../review_catalog.js';
 import { loadReviewLearningsFragment } from '../review_learnings.js';
+import { buildDeltaPromptSection, type ReviewScopeKind, type ReviewScopeSelection } from './review_delta_scope.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -36,6 +37,8 @@ export interface LaneEvidence {
   runnerProvenance: LocalReviewRunnerProvenance | null;
   modelTier?: ReviewModelTierId;
   usage?: LaneUsage;
+  reviewScope?: ReviewScopeKind;
+  baseHeadSha?: string | null;
 }
 
 // Raw command output can echo environment secrets; well-known credential
@@ -979,14 +982,20 @@ export function buildLocalReviewSpawnPrompt(input: {
   promptStackHash: string;
   promptText: string;
   publishCommand: string;
+  reviewScope?: ReviewScopeSelection;
 }): string {
   const promptText = input.promptText.trim();
+  const scope = input.reviewScope;
+  const scopeLines = scope
+    ? [buildDeltaPromptSection(scope)]
+    : ['Inspect the full current-head diff for this lane.'];
   return [
     `You are the QUBE ${input.hostAgentType} subagent for review lane "${input.lane}".`,
     `Issue #${input.issueNumber}, PR #${input.prNumber}, head ${input.headSha}.`,
     `Prompt stack hash for runnerProvenance.promptStackHash: ${input.promptStackHash}.`,
     'Read-only focused PR review: inspect only what this lane requires; do not edit source, tests, docs, config, package metadata, PR body, or issue content.',
-    'The complete lane instructions are inline below. Do not read external prompt files. Do not read any path under .qube/aie/reviews/**, including prior-head lane evidence. Earlier lane verdicts are not authority; the current-head digest and live issue acceptance in this prompt are the acceptance record.',
+    'The complete lane instructions are inline below. Do not read external prompt files. Do not read any path under .qube/aie/reviews/**, including prior-head lane evidence. Earlier lane verdicts are not authority unless this prompt includes an explicit delta re-review section; the current-head digest and live issue acceptance in this prompt are the acceptance record.',
+    ...scopeLines,
     '',
     '--- LANE PROMPT START ---',
     promptText,
@@ -1006,6 +1015,7 @@ export function buildLocalReviewSpawnContract(input: {
   promptStackHash: string;
   promptText: string;
   publishCommand: string;
+  reviewScope?: ReviewScopeSelection;
   modelTier?: 'review' | 'economy' | 'synthesis';
   tierResolution?: ReviewModelTierResolution;
 }): LocalReviewSpawnContract {

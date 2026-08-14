@@ -9,6 +9,7 @@ import type { ProviderLaneReuse, TrustedProviderLane } from './provider_lane_evi
 import { redact } from './redact.js';
 import type { ReviewModelTierId } from './core/policy.js';
 import { readHostUsage, type LaneUsage } from './review_usage.js';
+import { validateDeltaLaneEvidence } from './app/review_delta_scope.js';
 
 export type LocalReviewStatus = 'passed' | 'failed' | 'needs-work' | 'pending' | 'missing' | 'stale' | 'unavailable' | 'malformed' | 'inconclusive';
 export type LocalReviewProfile = 'remote-compatible' | 'local-standard' | 'local-focused' | 'local-comprehensive' | 'local-shadow';
@@ -1054,6 +1055,15 @@ function parseLaneEvidence(repoRoot: string, path: string, issueNumber: number, 
     if (parsedIssueNumber !== issueNumber || parsedPrNumber !== prNumber || parsed.headSha !== headSha) return null;
     const id = readLaneId(parsed.lane ?? parsed.id);
     if (!id) return null;
+    const deltaCheck = validateDeltaLaneEvidence({
+      repoRoot,
+      issueNumber,
+      prNumber,
+      laneId: id,
+      reviewScope: parsed.reviewScope,
+      baseHeadSha: parsed.baseHeadSha,
+    });
+    if (!deltaCheck.ok) return null;
     const status = readStatus(parsed.status);
     return {
       adapter: readAdapter(parsed.adapter),

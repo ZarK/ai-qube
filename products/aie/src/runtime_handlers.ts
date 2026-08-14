@@ -750,12 +750,13 @@ async function handlePrReviewPublishSummary(context: Parameters<RuntimeCommandHa
 
 async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   const pr = stringArg(context, 'pr');
-  if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', [
-    'Usage: aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]',
+  if (isHelpToken(pr)) return usageResult(context, 'pr gate', 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--full-review] [--json]', [
+    'Usage: aie pr gate <pr> [--dry-run] [--local-review-prompts] [--full-review] [--json]',
     '',
     'Request configured PR reviewers idempotently, wait the configured duration, and inspect review state before merge.',
     'Required local review quality depends on independent fresh-context reviewer execution; prompt rendering alone is fallback guidance and cannot satisfy required local review gates.',
     'Use --local-review-prompts to include explicit lane prompt bodies for a host subagent/task/session, then record local-host evidence with matching provenance.',
+    'Use --full-review to force a full-diff pass instead of a delta re-review.',
     'Examples:',
     ...commandExamples('pr gate').map(example => `  ${example}`),
   ]);
@@ -769,7 +770,7 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
   }
   if (prNumber === null) {
     const message = 'Failed to run `aie pr gate`: missing pull request number. Likely cause: no PR argument was provided. Next action: run `aie pr gate 12 --dry-run` or `aie pr gate --help`.';
-    return commandFailure(context, { ok: false, command: 'pr gate', error: message, usage: 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--json]', examples: commandExamples('pr gate') }, message);
+    return commandFailure(context, { ok: false, command: 'pr gate', error: message, usage: 'aie pr gate <pr> [--dry-run] [--local-review-prompts] [--full-review] [--json]', examples: commandExamples('pr gate') }, message);
   }
   const loaded = await loadConfigFile();
   if (!loaded.ok) return configLoadFailure(context, 'pr gate', loaded, 'Fix the selected Executor config, then run the PR gate again.');
@@ -779,6 +780,7 @@ async function handlePrGate(context: Parameters<RuntimeCommandHandler>[0]) {
       prNumber,
       dryRun: readBooleanFlag(context, 'dry-run'),
       includeLocalReviewPrompts: readBooleanFlag(context, 'local-review-prompts'),
+      forceFullReview: readBooleanFlag(context, 'full-review'),
       repoRoot: loaded.root,
       onBeforeMutate: message => {
         warnings.push(message);

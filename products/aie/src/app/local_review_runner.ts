@@ -4,6 +4,7 @@ import type { Config } from '../config/index.js';
 import type { ReviewLanePolicy, ReviewModelHostId, RoutedReviewHostId } from '../core/policy.js';
 import { activeLocalReviewFocusesForConfig, defaultCarryForwardContext, defaultLaneModelTier, resolveLaneModelTier } from '../review_focus.js';
 import { classifyApprovedLaneDelta, type DeltaTriageLaneResult } from '../review_delta_triage.js';
+import { selectReviewScope, readPriorApprovedLane, countPriorDeltaRounds, type ReviewScopeSelection } from './review_delta_scope.js';
 import { readCurrentHeadLaneEvidence, type LocalReviewLaneId, type LocalReviewProfile } from '../local_review_evidence.js';
 import { acceptedProviderLane, type ProviderLaneReuse } from '../provider_lane_evidence.js';
 import { renderAieCliPrefix } from '../init_content.js';
@@ -43,6 +44,7 @@ export interface LocalReviewLaneRun {
   promptOutputContract: string;
   spawnPrompt: string;
   spawnContract: LocalReviewSpawnContract | null;
+  reviewScope: ReviewScopeSelection | null;
   route: ModelReviewRoutePlan | null;
   modelTier: 'review' | 'economy' | 'synthesis';
   summary: string;
@@ -116,6 +118,7 @@ interface LocalReviewRunnerInput {
   shadow: boolean;
   dryRun: boolean;
   includePrompts?: boolean;
+  forceFullReview?: boolean;
   exec?: PrGateExec;
   contextLines?: readonly string[];
   changedPaths?: readonly string[];
@@ -261,6 +264,7 @@ interface RoutedLaneJob {
   probedExecutable: ModelHostExecutable | null;
   path: string;
   runner: ReviewLanePolicy['runner'];
+  reviewScope: ReviewScopeSelection;
   run: () => Promise<RoutedOutcome>;
 }
 
@@ -279,12 +283,49 @@ function laneConfiguredFragments(config: Config, lane: LocalReviewLaneId): LaneC
   };
 }
 
+async function resolveFreshLaneScope(config: Config, input: LocalReviewRunnerInput, lane: LocalReviewLaneId, issueNumber: number): Promise<ReviewScopeSelection> {
+  const prior = readPriorApprovedLane({
+    repoRoot: input.repoRoot,
+    issueNumber,
+    prNumber: input.prNumber,
+    laneId: lane,
+    currentHeadSha: input.headSha,
+  });
+  const decision = await evaluateCarryForwardDecision({
+    repoRoot: input.repoRoot,
+    issueNumber,
+    prNumber: input.prNumber,
+    headSha: input.headSha,
+    lane,
+    matchPatterns: config.reviewLanes.find(item => item.id === lane)?.match ?? [],
+    contextPatterns: [],
+    contextMode: config.reviewLanes.find(item => item.id === lane)?.carryForwardContext ?? defaultCarryForwardContext(lane),
+    expectedFragmentDigest: expectedLaneFragmentDigest(lane),
+    expectedAdapter: 'local-host',
+    requiredCommand: null,
+  });
+  return selectReviewScope({
+    forceFull: input.forceFullReview === true,
+    deltaFullEvery: config.policy.reviews.deltaFullEvery,
+    priorDeltaRoundCount: countPriorDeltaRounds({
+      repoRoot: input.repoRoot,
+      issueNumber,
+      prNumber: input.prNumber,
+      laneId: lane,
+      currentHeadSha: input.headSha,
+    }),
+    priorApprovedHeadSha: prior?.headSha,
+    priorFindings: prior?.findings,
+    deltaPaths: decision.deltaPaths,
+  });
+}
+
 function localAieCliPrefix(config: Config, repoRoot: string): string {
   const workspaceRunner = existsSync(join(repoRoot, 'products', 'aie', 'bin', 'run')) ? 'node products/aie/bin/run' : null;
   return renderAieCliPrefix(config, workspaceRunner);
 }
 
-function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane), configuredFragments?: LaneConfiguredFragments): LocalReviewLaneRun {
+function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId, runner: ReviewLanePolicy['runner'], command: string | null, status: LocalReviewLaneRunStatus, evidencePath: string, summary: string, blocker: string | null, cliPrefix: string, contextLines: readonly string[], includePrompt: boolean, issueNumbers: readonly number[] = [issueNumber], evidencePaths: readonly string[] = [evidencePath], tierResolution?: ReviewModelTierResolution, riskCardFragments: readonly string[] = [], route: ModelReviewRoutePlan | null = null, renderPrompts = true, plannedTier: LocalReviewLaneRun['modelTier'] = route?.tier ?? defaultLaneModelTier(lane), configuredFragments?: LaneConfiguredFragments, reviewScope?: ReviewScopeSelection): LocalReviewLaneRun {
   if (!renderPrompts) {
     // Trusted-provider reuse spawns nothing and validates no local evidence, so prompt
     // rendering and hashing would be dead work for the reused lane.
@@ -303,6 +344,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
       promptOutputContract: '',
       spawnPrompt: '',
       spawnContract: null,
+      reviewScope: reviewScope ?? null,
       route,
       modelTier: plannedTier,
       summary,
@@ -317,7 +359,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
   const promptStackHash = hash(stableRendered.text);
   const promptText = includePrompt ? rendered.text : '';
   const spawnContract = includePrompt && runner === 'local-host' && route === null && promptText.trim() !== ''
-    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, modelTier: plannedTier, tierResolution })
+    ? buildLocalReviewSpawnContract({ hostAgentType: 'qube-review-focus', lane, issueNumber, prNumber, headSha, promptStackHash, promptText, publishCommand, reviewScope, modelTier: plannedTier, tierResolution })
     : null;
   return {
     issueNumber,
@@ -335,6 +377,7 @@ function laneRun(repoRoot: string, issueNumber: number, prNumber: number, headSh
     modelTier: plannedTier,
     spawnPrompt: spawnContract?.taskPrompt ?? '',
     spawnContract,
+    reviewScope: reviewScope ?? null,
     route,
     summary,
     blocker,
@@ -598,7 +641,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const summary = codexSubagentSummary(lane, issueNumber, input.issueNumbers, input.prNumber, input.headSha, path, publishCommand);
       const status = input.dryRun ? 'planned' : 'pending';
       const blocker = input.dryRun ? null : 'codex-subagent-review-required';
-      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], plannedLaneTierResolution(config, lane, modelTiers, null), riskCardFragments, null, true, plannedLaneModelTier(config, lane), laneConfiguredFragments(config, lane)));
+      const reviewScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
+      lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, 'local-host', null, status, path, summary, blocker, cliPrefix, contextLines, includePrompt, linkedIssueNumbers, [path], plannedLaneTierResolution(config, lane, modelTiers, null), riskCardFragments, null, true, plannedLaneModelTier(config, lane), laneConfiguredFragments(config, lane), reviewScope));
     }
   }
 
@@ -626,7 +670,8 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       const plannedSummary = route
         ? `${route.host} model route would run ${route.model ?? 'the host default model'} in read-only isolation and write current-head evidence.${routeSource === 'fallback' ? ' This lane reached the configured host-fault threshold and executes through the fallback route.' : ''}`
         : runner === 'local-host' ? 'Codex local-host lane would run and write current-head evidence.' : 'Local-command lane would run and write current-head evidence.';
-      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane));
+      const plannedScope = await resolveFreshLaneScope(config, input, lane, issueNumber);
+      const plannedRun = laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'planned', path, plannedSummary, null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], plannedLaneTierResolution(config, lane, modelTiers, route), riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane), plannedScope);
       if (!input.dryRun && command && !commandTrust) {
         const summary = 'Executable local review command is unavailable because review runner configuration changed outside the trusted base.';
         const blocker = 'review runner command is not trusted for current PR head';
@@ -670,6 +715,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
             probedExecutable: null,
             path,
             runner,
+            reviewScope: plannedScope,
             run: () => runModelReview({
               plan: job.route,
               repoRoot: input.repoRoot,
@@ -682,6 +728,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
               promptText: rendered.text,
               promptStack: rendered.promptStack.map(fragment => ({ id: fragment.id, source: fragment.source, sourceCategory: fragment.sourceCategory, path: fragment.path, sha256: fragment.sha256, trust: fragment.trust })),
               coverageAreas: riskCardCoverageAreas,
+              reviewScope: plannedScope,
               routeSource: job.routeSource,
               // The probed resolution is reused at spawn time so the executed
               // CLI is exactly the one the probe verified; an injected resolver
@@ -707,7 +754,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
           lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Codex local-host output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-host output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
           continue;
         }
-        const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route) }, 'local-host');
+        const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route), reviewScope: plannedScope.scope, baseHeadSha: plannedScope.baseHeadSha }, 'local-host');
         written.push(writtenPath);
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
         continue;
@@ -728,7 +775,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
         lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'failed', path, 'Local-command output was unavailable, non-zero, malformed, stale, or for the wrong lane.', 'invalid local-command output', cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
         continue;
       }
-      const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route) }, 'local-command');
+      const writtenPath = writeLane(input.repoRoot, issueNumber, input.prNumber, input.headSha, profile, { ...evidence, modelTier: plannedLaneModelTier(config, lane, route), reviewScope: plannedScope.scope, baseHeadSha: plannedScope.baseHeadSha }, 'local-command');
       written.push(writtenPath);
       lanes.push(laneRun(input.repoRoot, issueNumber, input.prNumber, input.headSha, lane, runner, command, 'completed', path, evidence.summary, evidence.blockers[0] ?? null, cliPrefix, contextLines, includePrompt, [issueNumber], [path], undefined, riskCardFragments, route, true, plannedLaneModelTier(config, lane, route), laneConfiguredFragments(config, lane)));
     }
@@ -821,7 +868,7 @@ export async function runLocalReviewRunner(config: Config, input: LocalReviewRun
       // Any valid completed verdict clears the lane's host-fault tally; review
       // verdicts are evidence, never faults, and never advance failover.
       clearRouteFault(input.repoRoot, job.issueNumber, input.prNumber, job.lane);
-      const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, { ...routed.evidence, modelTier: job.route.tier }, 'local-host');
+      const writtenPath = writeLane(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, profile, { ...routed.evidence, modelTier: job.route.tier, reviewScope: job.reviewScope.scope, baseHeadSha: job.reviewScope.baseHeadSha }, 'local-host');
       const provenancePath = writeTrustedRoutedProvenance(input.repoRoot, job.issueNumber, input.prNumber, input.headSha, routed.evidence);
       written.push(writtenPath);
       if (provenancePath) written.push(provenancePath);
