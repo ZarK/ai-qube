@@ -88,13 +88,17 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
     currentByFingerprint.set(reviewFindingFingerprint(finding), finding);
   }
   const claimedThreads = new Set<string>();
+  const threadsByFingerprint = new Map<string, ReviewFindingThread>();
+  for (const candidate of publisherThreads) {
+    for (const fingerprint of candidate.fingerprints) {
+      if (!threadsByFingerprint.has(fingerprint)) threadsByFingerprint.set(fingerprint, candidate);
+    }
+  }
   const actions: ReviewThreadLifecycleAction[] = [];
 
   for (const [fingerprint, finding] of currentByFingerprint) {
-    const thread = publisherThreads.find((candidate) => (
-      !claimedThreads.has(candidate.threadId) && candidate.fingerprints.includes(fingerprint)
-    ));
-    if (!thread) {
+    const thread = threadsByFingerprint.get(fingerprint);
+    if (!thread || claimedThreads.has(thread.threadId)) {
       actions.push({
         kind: "new-inline",
         threadId: null,
@@ -121,31 +125,36 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
       });
       continue;
     }
-    if (thread.outdated && !thread.canResolve && thread.replyToDatabaseId == null) {
+    if (thread.outdated && !thread.canResolve) {
       if (thread.minimizeSubjectId) {
         actions.push({
           kind: "minimize-outdated",
           threadId: thread.threadId,
           fingerprint,
-          replyToDatabaseId: null,
+          replyToDatabaseId: thread.replyToDatabaseId,
           minimizeSubjectId: thread.minimizeSubjectId,
           unresolve: false,
           body: null,
           finding: null,
         });
       }
-      actions.push({
-        kind: "new-inline",
-        threadId: null,
-        fingerprint,
-        replyToDatabaseId: null,
-        minimizeSubjectId: null,
-        unresolve: false,
-        body: null,
-        finding,
-      });
-      continue;
+      if (thread.replyToDatabaseId == null) {
+        actions.push({
+          kind: "new-inline",
+          threadId: null,
+          fingerprint,
+          replyToDatabaseId: null,
+          minimizeSubjectId: null,
+          unresolve: false,
+          body: null,
+          finding,
+        });
+        continue;
+      }
     }
+    const locationNote = finding.location
+      ? `${finding.location.path}${finding.location.line ? `:${finding.location.line}` : ""}`
+      : null;
     actions.push({
       kind: "reply-still-present",
       threadId: thread.threadId,
@@ -153,7 +162,7 @@ export function planReviewThreadLifecycle(input: PlanReviewThreadLifecycleInput)
       replyToDatabaseId: thread.replyToDatabaseId,
       minimizeSubjectId: thread.minimizeSubjectId,
       unresolve: thread.resolved,
-      body: stillPresentReply(input.headSha, input.round, finding.message),
+      body: stillPresentReply(input.headSha, input.round, [finding.message, locationNote].filter(Boolean).join(" ")),
       finding,
     });
   }

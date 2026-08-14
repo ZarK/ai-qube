@@ -81,6 +81,27 @@ describe("planReviewThreadLifecycle", () => {
     assert.ok(actions.some((action) => action.kind === "new-inline"));
   });
 
+  it("minimizes an unresolvable outdated comment even when a reply id is present", () => {
+    const current = finding();
+    const fingerprint = reviewFindingFingerprint(current);
+    const actions = planReviewThreadLifecycle({
+      findings: [current],
+      threads: [thread({
+        fingerprints: [fingerprint],
+        outdated: true,
+        canResolve: false,
+        replyToDatabaseId: 11,
+        minimizeSubjectId: "IC_stale_reply",
+      })],
+      publisherLogins: ["qube-review[bot]"],
+      headSha: "abc1234567890",
+      round: "2",
+    });
+    assert.ok(actions.some((action) => action.kind === "minimize-outdated" && action.minimizeSubjectId === "IC_stale_reply"));
+    assert.ok(actions.some((action) => action.kind === "reply-still-present" && action.threadId === "PRRT_1"));
+    assert.equal(actions.some((action) => action.kind === "new-inline"), false);
+  });
+
   it("unresolves a returning fingerprint on a previously resolved publisher thread", () => {
     const current = finding();
     const fingerprint = reviewFindingFingerprint(current);
