@@ -214,6 +214,40 @@ describe('review publisher setup execution', () => {
 });
 
 describe('review publisher doctor', () => {
+  it('reports GitLab token scope and approval permission diagnostics', async () => {
+    const config = getDefaults();
+    config.providers.review.kind = 'gitlab';
+    const missingToken = await runReviewDoctor({
+      config,
+      mintProbe: true,
+      probeGitLabReview: async () => ({
+        login: null,
+        tokenPresent: false,
+        apiScope: 'missing',
+        approvalPermission: 'missing',
+        failure: 'GITLAB_TOKEN is not set. Set a project or group access token with api scope.',
+      }),
+    });
+    assert.equal(missingToken.readiness, 'unconfigured');
+    assert.match(missingToken.nextAction, /GITLAB_TOKEN/);
+    assert.ok(missingToken.missingFields.includes('GITLAB_TOKEN'));
+
+    const missingApproval = await runReviewDoctor({
+      config,
+      mintProbe: true,
+      probeGitLabReview: async () => ({
+        login: 'executor',
+        tokenPresent: true,
+        apiScope: 'ok',
+        approvalPermission: 'missing',
+        failure: 'GitLab token cannot approve merge requests.',
+      }),
+    });
+    assert.equal(missingApproval.readiness, 'degraded');
+    assert.match(missingApproval.nextAction, /approve merge requests/);
+    assert.match(JSON.stringify(missingApproval), /approval permission/);
+  });
+
   it('reports secret-free readiness, missing fields, probe results, and exact next action', async () => {
     const config = getDefaults();
     config.providers.review.publisher = {

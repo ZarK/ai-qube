@@ -21,11 +21,20 @@ export type {
   GitLabPipelineCheckResult,
   GitLabPipelineCheckStatus,
 } from "./gitlab_ci_provider.js";
+export { FetchGitLabReviewRestClient } from "./gitlab_review_client.js";
 export {
   createGitLabReviewForgeProvider,
   createGitLabReviewProvider,
   GitLabReviewForgeProvider,
 } from "./gitlab_review_forge.js";
+export {
+  classifyGitLabPublishError,
+  discussionPosition,
+  parseGitLabDiffIndex,
+  parseRoundSummaryMarker,
+  parseStatusNoteRounds,
+  renamedOldPath,
+} from "./gitlab_review_publish.js";
 export type {
   GitLabReviewProvider,
 } from "./gitlab_review_forge.js";
@@ -34,7 +43,7 @@ export type {
   GitLabDiscussion,
   GitLabMergeRequest,
   GitLabNote,
-  GitLabReviewFetch, GitLabReviewProviderOptions,
+  GitLabReviewFetch, GitLabReviewPermissionDiagnosis, GitLabReviewProviderOptions,
   GitLabReviewPullRequest,
   GitLabReviewRestClient,
   GitLabReviewSnapshot,

@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process';
 import type { Config, GitHubReviewPublisherConfig, GitHubReviewPublisherMode } from './config/index.js';
 import type { GitHubReviewPublisherIdentity, ResolvedGitHubReviewPublisher } from '@tjalve/qube-adapter-github';
 import { resolveGitHubReviewPublisher, runGh } from './providers/github_adapter_exports.js';
+import { runGitLabReviewDoctor, type GitLabReviewDoctorProber } from './gitlab_review_doctor.js';
 
 export const REVIEW_PUBLISHER_ROLE_BOUNDARY = 'QUBE and Executor guide setup and provider publishing only. Review compute remains host-run through local agents/subagents. Never send host/subagent credentials to GitHub; publisher credentials are provider communication credentials only.';
 
@@ -112,6 +113,7 @@ export interface RunReviewDoctorOptions {
   readonly resolvePublisher?: ReviewPublisherResolver;
   readonly probeRepositoryAccess?: ReviewRepositoryAccessProber;
   readonly probePublisherAvatar?: ReviewAvatarProber;
+  readonly probeGitLabReview?: GitLabReviewDoctorProber;
 }
 
 export function buildGitHubAppSetupGuidance(): ReviewSetupGuidance {
@@ -565,6 +567,9 @@ async function withProbeTimeout<T>(
 }
 
 export async function runReviewDoctor(options: RunReviewDoctorOptions): Promise<ReviewDoctorResult> {
+  if (options.config?.providers.review.kind === 'gitlab') {
+    return runGitLabReviewDoctor(options);
+  }
   const publisher = options.config?.providers.review.publisher;
   const mode = publisher?.mode ?? 'user';
   const configured = Boolean(publisher && mode !== 'user');

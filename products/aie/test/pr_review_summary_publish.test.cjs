@@ -7,7 +7,7 @@ const { createGitHubReviewForgeProvider, makePrExec, basePr } = require('./suppo
 const { mkdtempSync, mkdirSync, rmSync, utimesSync, writeFileSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
-const { reviewRepositoryFromPullRequestUrl, loadPriorRoundDelta, MAX_PRIOR_REVIEW_HEADS } = require('../dist/app/pr_review_summary_publish.js');
+const { reviewRepositoryFromPullRequestUrl, loadPriorRoundDelta, MAX_PRIOR_REVIEW_HEADS, runPrReviewSummaryPublishWithProvider } = require('../dist/app/pr_review_summary_publish.js');
 const { renderRoundSummaryBody, renderInlineCommentBody } = require('../dist/review_round_summary.js');
 
 function findingAnchor(overrides = {}) {
@@ -617,6 +617,28 @@ describe('GitHub lane review publish fail-closed', () => {
     assert.ok(second.status === 'skipped' || second.status === 'published');
     const reviewPosts = fixture.events.filter(event => event.startsWith('api repos/example/repo/pulls/12/reviews --method POST'));
     assert.equal(reviewPosts.length, 1, 'two same-head publishes must not create a second review event');
+  });
+});
+
+describe('round summary capability skip', () => {
+  it('skips when the provider declares publishRoundReviewSummary false', async () => {
+    let called = false;
+    const provider = {
+      id: 'stub',
+      capabilities() {
+        return { publishRoundReviewSummary: false };
+      },
+      async publishRoundReviewSummary() {
+        called = true;
+        return { status: 'published', runId: null, marker: null, body: null, url: null, failure: null, nextAction: 'should not run' };
+      },
+    };
+    const result = await runPrReviewSummaryPublishWithProvider(provider, {
+      prNumber: 12,
+      expectedLanes: ['code-quality'],
+    });
+    assert.equal(result.publish.status, 'skipped');
+    assert.equal(called, false);
   });
 });
 
