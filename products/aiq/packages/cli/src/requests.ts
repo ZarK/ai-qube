@@ -10,9 +10,16 @@ import {
   resolveAiqConfig,
   resolveAiqProgressStageIds,
 } from "@tjalve/aiq/config";
-import { resolveRunRequest } from "@tjalve/aiq/engine";
-import type { FileManifestInput, RunContext, RunRequest, StageId } from "@tjalve/aiq/model";
+import { resolveRunRequest, toRepoRelativePath } from "@tjalve/aiq/engine";
+import type {
+  FileManifestInput,
+  LayoutConsumption,
+  RunContext,
+  RunRequest,
+  StageId,
+} from "@tjalve/aiq/model";
 
+import { loadLayoutConsumption, scopeFilesWithLayout } from "./layout-source.js";
 import { isErrorCode, readStdin, splitLines } from "./shared.js";
 import type { CliIo, ParsedArgs } from "./types.js";
 
@@ -29,7 +36,9 @@ const diffOnlySafeStages = new Set<StageId>([
 export interface RunRequestOptions {
   context: RunContext;
   includeProgressStage?: boolean;
+  layout?: LayoutConsumption;
   mode: RunRequest["mode"];
+  requireLayout?: boolean;
   surface: AiqSurfaceId;
 }
 
@@ -162,10 +171,23 @@ export async function createRunRequest(
         }
       : manifest;
 
+  const loadedLayout = await resolveRequestLayout(parsed, io, options, requestManifest.files);
+  const scoped =
+    loadedLayout === undefined
+      ? undefined
+      : await scopeFilesWithLayout({
+          files: requestManifest.files,
+          cwd: io.cwd,
+          layout: loadedLayout,
+          requireProvenScope: options.requireLayout === true,
+        });
+  const scopedManifest =
+    scoped === undefined ? requestManifest : { ...requestManifest, files: scoped.files };
+
   const request: RunRequest = {
     context: options.context,
     cwd: resolvedConfig.cwd,
-    manifest: requestManifest,
+    manifest: scopedManifest,
     mode: options.mode,
     stages: resolvedConfig.stages,
     diffOnly: parsed.diffOnly,
@@ -175,6 +197,7 @@ export async function createRunRequest(
       : { stageConfigurations: resolvedConfig.stageConfigurations }),
     profile: resolvedConfig.profile,
     writeArtifacts: true,
+    ...(scoped === undefined ? {} : { layout: scoped.layout }),
   };
 
   if (parsed.outDir !== undefined) {
@@ -183,6 +206,27 @@ export async function createRunRequest(
 
   await resolveRunRequest(request);
   return request;
+}
+
+async function resolveRequestLayout(
+  parsed: ParsedArgs,
+  io: CliIo,
+  options: RunRequestOptions,
+  files: readonly string[],
+): Promise<LayoutConsumption | undefined> {
+  if (options.layout !== undefined) {
+    return options.layout;
+  }
+
+  return loadLayoutConsumption({
+    cwd: io.cwd,
+    required: options.requireLayout === true,
+    ...(parsed.layoutInspect === undefined ? {} : { inspectPath: parsed.layoutInspect }),
+    ...(parsed.layoutAffected === undefined ? {} : { affectedPath: parsed.layoutAffected }),
+    changedPaths: files
+      .map((file) => toRepoRelativePath(file, io.cwd))
+      .filter((file): file is string => file !== null),
+  });
 }
 
 function hasDiffOnlyFullRunStages(stages: readonly StageId[]): boolean {

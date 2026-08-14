@@ -12,6 +12,19 @@ export { engineVersion } from "./contracts.js";
 export { createCacheService } from "./cache.js";
 export { normalizeFileManifest } from "./files.js";
 export {
+  LayoutConsumptionError,
+  applyLayoutToCandidateFiles,
+  assertSafeRepoRelativePath,
+  classifyLayoutPath,
+  createLayoutConsumption,
+  parseLayoutAffectedJson,
+  parseLayoutInspectJson,
+  sanitizeLayoutForOutput,
+  toContainedRepoRelativePath,
+  toRepoRelativePath,
+  workspaceLayoutKind,
+} from "./layout-consume.js";
+export {
   buildProjectGraph,
   buildProjectGraphWithModules,
   createGraphLanguageModuleRegistry,

@@ -348,8 +348,131 @@ export async function createTypeScriptFixtureProject(
   );
   const filePath = path.join(root, "src", "index.ts");
   await writeFile(filePath, "export const value = 1;\n", "utf8");
+  await writeSingleAppLayoutFiles(root, ["src/index.ts", "tsconfig.json"]);
 
   return { filePath, root };
+}
+
+export function createSingleAppLayoutInspect(projectId = "app") {
+  return {
+    kind: "single-app-service" as const,
+    root: null,
+    remotes: [],
+    rootMarkers: [{ path: "tsconfig.json", kind: "build" as const }],
+    projects: [
+      {
+        id: projectId,
+        path: ".",
+        kind: "app" as const,
+        packageName: null,
+        packageManager: null,
+        gates: ["build", "typecheck", "test"],
+      },
+    ],
+    packageManagers: [],
+    lockfiles: [],
+    ciHints: [],
+    generatedPaths: [] as Array<{ path: string; reason: string }>,
+    vendorPaths: [] as Array<{ path: string; reason: string }>,
+    warnings: [],
+  };
+}
+
+export function createJsWorkspaceLayoutInspect() {
+  return {
+    kind: "javascript-typescript-workspace" as const,
+    root: null,
+    remotes: [],
+    rootMarkers: [
+      { path: "pnpm-workspace.yaml", kind: "workspace" as const },
+      { path: "package.json", kind: "package" as const },
+    ],
+    projects: [
+      {
+        id: "fixture-root",
+        path: ".",
+        kind: "workspace" as const,
+        packageName: "fixture-root",
+        packageManager: "pnpm",
+        gates: ["build", "typecheck", "test"],
+      },
+      {
+        id: "@fixture/web",
+        path: "apps/web",
+        kind: "package" as const,
+        packageName: "@fixture/web",
+        packageManager: "pnpm",
+        gates: ["build", "typecheck", "test"],
+      },
+      {
+        id: "@fixture/core",
+        path: "packages/core",
+        kind: "package" as const,
+        packageName: "@fixture/core",
+        packageManager: "pnpm",
+        gates: ["build", "typecheck", "test"],
+      },
+      {
+        id: "@fixture/cli",
+        path: "tools/cli",
+        kind: "package" as const,
+        packageName: "@fixture/cli",
+        packageManager: "pnpm",
+        gates: ["build", "typecheck", "test"],
+      },
+    ],
+    packageManagers: [
+      { kind: "pnpm" as const, manifestPath: "package.json", lockfilePath: "pnpm-lock.yaml" },
+    ],
+    lockfiles: ["pnpm-lock.yaml"],
+    ciHints: [],
+    generatedPaths: [],
+    vendorPaths: [],
+    warnings: [],
+  };
+}
+
+export async function writeLayoutContractFiles(
+  root: string,
+  inspect: unknown,
+  affected: unknown,
+): Promise<void> {
+  const directory = path.join(root, ".qube", "aiq");
+  await mkdir(directory, { recursive: true });
+  await writeFile(
+    path.join(directory, "layout-inspect.json"),
+    `${JSON.stringify(inspect, null, 2)}\n`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(directory, "layout-affected.json"),
+    `${JSON.stringify(affected, null, 2)}\n`,
+    "utf8",
+  );
+}
+
+export async function writeSingleAppLayoutFiles(
+  root: string,
+  changedPaths: readonly string[] = ["src/index.ts"],
+): Promise<void> {
+  const inspect = createSingleAppLayoutInspect();
+  const rootProject = inspect.projects[0];
+  if (rootProject === undefined) {
+    throw new Error("Single-app layout contract is missing the root project.");
+  }
+  await writeLayoutContractFiles(root, inspect, {
+    layout: inspect,
+    changedPaths,
+    affectedProjects: [
+      {
+        project: rootProject,
+        changedPaths,
+        gates: ["build", "typecheck", "test"],
+      },
+    ],
+    suggestedGates: ["build", "typecheck", "test"],
+    warnings: [],
+  });
 }
 
 export async function initializeGitRepository(root: string): Promise<void> {

@@ -6,10 +6,13 @@ import {
   loadAiqProgress,
   resolveAiqProgressStageIds,
 } from "@tjalve/aiq/config";
-import { resolveRunRequest, runEngine } from "@tjalve/aiq/engine";
+import { resolveRunRequest, runEngine, toRepoRelativePath } from "@tjalve/aiq/engine";
 import type { RunRequest, StageId } from "@tjalve/aiq/model";
 
+import { loadLayoutConsumption, scopeFilesWithLayout } from "./layout-source.js";
+
 import { writeServeListeningOutput } from "./output.js";
+import { resolveCliConfig } from "./requests.js";
 import {
   ServeRequestCancelledError,
   ServeRequestTooLargeError,
@@ -18,10 +21,9 @@ import {
   destroyRequestAfterResponse,
   parseProfile,
   parseServeRunRequestBody,
-  readJsonRequest,
   parseStageList,
+  readJsonRequest,
 } from "./serve-request.js";
-import { resolveCliConfig } from "./requests.js";
 import {
   type ActiveSignal,
   createActiveSignal,
@@ -176,11 +178,28 @@ async function createServeRunRequest(
     ...(profileOverride === undefined ? {} : { profileOverride }),
   });
 
+  const layout = await loadLayoutConsumption({
+    cwd: io.cwd,
+    required: false,
+    changedPaths: body.manifest.files
+      .map((file) => toRepoRelativePath(file, io.cwd))
+      .filter((file): file is string => file !== null),
+  });
+  const scoped =
+    layout === undefined
+      ? undefined
+      : await scopeFilesWithLayout({
+          files: body.manifest.files,
+          cwd: io.cwd,
+          layout,
+          requireProvenScope: false,
+        });
+
   const runRequest: RunRequest = {
     context: "serve",
     cwd: resolvedConfig.cwd,
     manifest: {
-      files: body.manifest.files,
+      files: scoped?.files ?? body.manifest.files,
       source: body.manifest.source ?? "direct",
     },
     mode: "check",
@@ -189,6 +208,7 @@ async function createServeRunRequest(
     profile: resolvedConfig.profile,
     signal,
     writeArtifacts: true,
+    ...(scoped === undefined ? {} : { layout: scoped.layout }),
   };
 
   try {

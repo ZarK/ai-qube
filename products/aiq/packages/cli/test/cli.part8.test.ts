@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  os,
+  path,
   MemoryInput,
   MemoryOutput,
   chmod,
@@ -7,12 +9,11 @@ import {
   fixtureFile,
   mkdir,
   mkdtemp,
-  os,
-  path,
   rm,
   runCli,
   tempDirs,
   writeFile,
+  writeSingleAppLayoutFiles,
 } from "./cli-test-support.js";
 describe("CLI foundation", () => {
   it("rejects aiq run project-root aliases with guidance to use the configured project gate", async () => {
@@ -84,6 +85,7 @@ describe("CLI foundation", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-first-run-truncated-"));
     tempDirs.push(tempDir);
     await writeFile(path.join(tempDir, "package.json"), '{"name":"truncated"}\n', "utf8");
+    await writeSingleAppLayoutFiles(tempDir, ["package.json"]);
     for (let index = 0; index < 505; index += 1) {
       await writeFile(path.join(tempDir, `file-${index}.sql`), "select 1;\n", "utf8");
     }
@@ -110,6 +112,7 @@ describe("CLI foundation", () => {
     const tempDir = await mkdtemp(path.join(os.tmpdir(), "aiq-cli-first-run-unreadable-"));
     tempDirs.push(tempDir);
     await writeFile(path.join(tempDir, "package.json"), '{"name":"unreadable"}\n', "utf8");
+    await writeSingleAppLayoutFiles(tempDir, ["package.json"]);
     const unreadableDir = path.join(tempDir, "src", "private");
     await mkdir(unreadableDir, { recursive: true });
     await writeFile(path.join(unreadableDir, "hidden.ts"), "export const hidden = true;\n", "utf8");

@@ -6,6 +6,7 @@ import type {
   RunTelemetryEventType,
   StageId,
 } from "./ids.js";
+import type { LayoutConsumption } from "./layout.js";
 
 export const artifactSchemaVersion = 1 as const;
 
@@ -56,6 +57,7 @@ export interface RunRequest {
   profile?: string;
   signal?: AbortSignal;
   writeArtifacts?: boolean;
+  layout?: LayoutConsumption;
 }
 
 export interface RunSelection {
@@ -79,6 +81,7 @@ export interface ResolvedRunRequest {
   selection: RunSelection;
   signal?: AbortSignal;
   writeArtifacts: boolean;
+  layout?: LayoutConsumption;
 }
 
 export interface PlannedTask {
@@ -107,6 +110,7 @@ export interface RunPlan {
   runId: string;
   summary: RunPlanSummary;
   tasks: PlannedTask[];
+  layout?: LayoutConsumption;
 }
 
 export type StageStatus = "failed" | "not_implemented" | "passed";

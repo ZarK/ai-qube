@@ -13,6 +13,7 @@ import type {
 } from "./contracts.js";
 import { normalizeFileManifest } from "./files.js";
 import { buildProjectGraph } from "./graph.js";
+import { sanitizeLayoutForOutput } from "./layout-consume.js";
 
 type CachedEngineSetup = {
   cache: CacheService;
@@ -43,6 +44,7 @@ export async function resolveRunRequest(request: RunRequest): Promise<ResolvedRu
       profile: request.profile ?? "fast",
     },
     writeArtifacts: request.writeArtifacts !== false,
+    ...(request.layout === undefined ? {} : { layout: sanitizeLayoutForOutput(request.layout) }),
   };
 
   if (request.signal !== undefined) {
