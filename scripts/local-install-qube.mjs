@@ -299,7 +299,7 @@ function resolveWorkspaceCore(repoRoot, qubePackageDir) {
   return resolvedCore;
 }
 
-function verifyFreshShell(prefix, repoRoot) {
+function verifyFreshShell(prefix, repoRoot, qubeScriptPath) {
   const binDir = prefixBinDir(prefix);
   const pathEntries = (process.env.PATH ?? "").split(path.delimiter).filter(entry => {
     const normalized = path.normalize(entry);
@@ -308,17 +308,17 @@ function verifyFreshShell(prefix, repoRoot) {
   });
   const childPath = [binDir, ...pathEntries].join(path.delimiter);
   const cwd = os.tmpdir();
-  const result = spawnSync("qube", ["components", "--json"], {
+  const result = spawnSync(process.execPath, [qubeScriptPath, "components", "--json"], {
     cwd,
     env: { ...process.env, PATH: childPath },
     encoding: "utf8",
-    shell: process.platform === "win32",
+    shell: false,
     timeout: 30_000,
     windowsHide: true,
   });
   if (result.status !== 0) {
     throw Object.assign(
-      new Error(result.stderr.trim() || result.stdout.trim() || "qube components --json failed in a fresh shell."),
+      new Error((result.stderr ?? "").trim() || (result.stdout ?? "").trim() || result.error?.message || "qube components --json failed in a fresh shell."),
       { reasonCode: "verify-failed" }
     );
   }
@@ -355,6 +355,17 @@ function verifyFreshShell(prefix, repoRoot) {
     throw Object.assign(new Error("Installed qube version does not match the checkout."), {
       reasonCode: "version-mismatch",
     });
+  }
+  const locator = process.platform === "win32" ? "where" : "which";
+  const located = spawnSync(locator, ["qube"], {
+    cwd,
+    env: { ...process.env, PATH: childPath },
+    encoding: "utf8",
+    shell: false,
+    windowsHide: true,
+  });
+  if (located.status !== 0) {
+    throw Object.assign(new Error("Fresh shell cannot resolve qube on PATH."), { reasonCode: "verify-failed" });
   }
   return parsed;
 }
@@ -398,9 +409,13 @@ export async function runLocalQubeInstall(input = {}) {
     const binDir = prefixBinDir(prefix);
     mkdirSync(binDir, { recursive: true });
     let qubePackageDir;
+    let qubeScriptPath;
     for (const component of COMPONENT_LINKS) {
       const resolved = resolveComponentBin(repoRoot, component);
-      if (component.command === "qube") qubePackageDir = resolved.packageDir;
+      if (component.command === "qube") {
+        qubePackageDir = resolved.packageDir;
+        qubeScriptPath = resolved.binPath;
+      }
       writeBinShim(binDir, component.command, resolved.binPath);
       report.linked.push(component.command);
     }
@@ -411,11 +426,11 @@ export async function runLocalQubeInstall(input = {}) {
         reasonCode: "missing-component",
       });
     }
-    if (!qubePackageDir) {
+    if (!qubePackageDir || !qubeScriptPath) {
       throw Object.assign(new Error("Missing qube executable."), { reasonCode: "missing-component" });
     }
     report.coreModule = resolveWorkspaceCore(repoRoot, qubePackageDir);
-    report.components = verifyFreshShell(prefix, repoRoot);
+    report.components = verifyFreshShell(prefix, repoRoot, qubeScriptPath);
     report.cleaned = cleanupGeneratedInstallArtifacts(repoRoot);
     const finishedGit = trackedGitStatus(repoRoot);
     if (finishedGit !== startedGit) {

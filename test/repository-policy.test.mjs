@@ -59,6 +59,7 @@ describe("repository policy", () => {
     assert.match(rootPackage.scripts.verify, /verify:manifests/);
     assert.match(qubePackage.scripts.verify, /check-strict-package-json\.mjs/);
     assert.match(workflow, /pnpm run verify:manifests/);
+    assert.match(workflow, /node --test --test-concurrency=1 test\/\*\.test\.mjs/);
     assert.match(qubePackage.scripts.postpack, /restore-publish-dependencies\.mjs/);
   });
 
