@@ -1118,6 +1118,7 @@ describe('repo layout inspection and affected scope', () => {
 
   it('keeps a mobile app repo when incidental Node tooling exists at the root', async () => {
     const repo = makeFixtureRepo('mobile-app');
+    writeFileSync(join(repo, 'package.json'), JSON.stringify({ name: 'node-tooling-root', private: true }, null, 2));
 
     const inspected = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
@@ -1185,6 +1186,62 @@ describe('repo layout inspection and affected scope', () => {
     const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
 
     assert.equal(result.kind, 'java-kotlin-multi-project');
+  });
+
+  it('does not treat an empty android directory as mobile proof over a Java workspace', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    mkdirSync(join(repo, 'android'), { recursive: true });
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+    assert.equal(result.projects.some(project => project.path === 'android'), false);
+  });
+
+  it('classifies a root Xcode project as a mobile app repo', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'Fixture.xcodeproj'), { recursive: true });
+    writeFileSync(join(repo, 'Fixture.xcodeproj', 'project.pbxproj'), '// !$*UTF8*$!\n');
+    mkdirSync(join(repo, 'ios'), { recursive: true });
+    writeFileSync(join(repo, 'ios', 'App.swift'), 'print("fixture")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'mobile-app-repo');
+    assert.ok(result.rootMarkers.some(marker => marker.path === 'Fixture.xcodeproj'));
+    assert.ok(result.projects.some(project => project.path === 'ios'));
+  });
+
+  it('does not classify Java/Kotlin settings plus an empty android directory as a mobile app', async () => {
+    const repo = makeFixtureRepo('java-kotlin-gradle');
+    mkdirSync(join(repo, 'android'), { recursive: true });
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'java-kotlin-multi-project');
+    assert.notEqual(result.kind, 'mobile-app-repo');
+  });
+
+  it('does not classify Expo config plus an empty android directory as a mobile app', async () => {
+    const repo = makeGitRepo();
+    writeFileSync(join(repo, 'app.json'), JSON.stringify({ name: 'empty-android', expo: { name: 'empty-android' } }, null, 2));
+    mkdirSync(join(repo, 'android'), { recursive: true });
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.notEqual(result.kind, 'mobile-app-repo');
+  });
+
+  it('classifies a root Xcode project as a mobile app repo', async () => {
+    const repo = makeGitRepo();
+    mkdirSync(join(repo, 'Fixture.xcodeproj'), { recursive: true });
+    writeFileSync(join(repo, 'Fixture.xcodeproj', 'project.pbxproj'), '// xcode\n');
+    writeFileSync(join(repo, 'App.swift'), 'print("app")\n');
+
+    const result = await runRepoInspect({ config: getDefaults(), cwd: repo });
+
+    assert.equal(result.kind, 'mobile-app-repo');
+    assert.equal(result.projects.find(project => project.path === '.').packageName, 'Fixture');
   });
 
   it('keeps generated mobile DerivedData paths out of mutation scope', async () => {

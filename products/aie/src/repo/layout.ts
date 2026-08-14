@@ -933,6 +933,26 @@ function directoryLooksLikeIos(root: string, relativePath: string): boolean {
   return readdirSync(directory, { withFileTypes: true }).some(entry => entry.name.endsWith('.xcodeproj') || entry.name.endsWith('.xcworkspace') || entry.name === 'Podfile');
 }
 
+function childProjectPaths(root: string, relativePath: string): string[] {
+  const directory = relativePath === '.' ? root : join(root, relativePath);
+  if (!existsSync(directory)) return [];
+  return readdirSync(directory, { withFileTypes: true })
+    .filter(entry => entry.isDirectory())
+    .map(entry => {
+      const child = relativePath === '.' ? entry.name : `${relativePath}/${entry.name}`;
+      return containedProjectPath(root, join(root, child)) === child ? child : null;
+    })
+    .filter((path): path is string => path !== null);
+}
+
+function directoryTreeLooksLikeAndroid(root: string, relativePath: string): boolean {
+  return directoryLooksLikeAndroid(root, relativePath) || childProjectPaths(root, relativePath).some(path => directoryLooksLikeAndroid(root, path));
+}
+
+function directoryTreeLooksLikeIos(root: string, relativePath: string): boolean {
+  return directoryLooksLikeIos(root, relativePath) || childProjectPaths(root, relativePath).some(path => directoryLooksLikeIos(root, path));
+}
+
 function expoConfigName(root: string): string | null {
   for (const path of MOBILE_EXPO_CONFIG_FILES) {
     const text = readTextFile(root, path);
@@ -968,13 +988,16 @@ function detectMobileWorkspaceSignals(root: string | null): MobileWorkspaceSigna
     ...settingsPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'build.gradle.kts')),
     ...settingsPatterns.flatMap(pattern => expandWorkspacePattern(root, pattern, 'build.gradle')),
   ])].filter(path => path !== '.');
-  const androidMembers = [...new Set([...gradleMembers.filter(path => directoryLooksLikeAndroid(root, path)), ...platformDirs.filter(path => path === 'android' || directoryLooksLikeAndroid(root, path))])];
-  const iosMembers = platformDirs.filter(path => path === 'ios' || directoryLooksLikeIos(root, path));
+  const androidMembers = [...new Set([
+    ...gradleMembers.filter(path => directoryLooksLikeAndroid(root, path)),
+    ...platformDirs.filter(path => directoryTreeLooksLikeAndroid(root, path)),
+  ])];
+  const iosMembers = platformDirs.filter(path => directoryTreeLooksLikeIos(root, path));
   const packageSwift = readTextFile(root, 'Package.swift');
   const hasAndroidProof = settingsPaths.length > 0 && androidMembers.length > 0;
   const hasMobilePackageSwift = Boolean(packageSwift && packageSwiftLooksMobile(packageSwift));
   const hasIosProof = xcodeBundles.length > 0 || supporting.includes('Podfile') || hasMobilePackageSwift;
-  const hasExpoProof = expoConfigs.length > 0 && platformDirs.length > 0;
+  const hasExpoProof = expoConfigs.length > 0 && (androidMembers.length > 0 || iosMembers.length > 0);
   const hasProof = hasAndroidProof || hasIosProof || hasExpoProof;
   const markerPaths = [...new Set([
     ...xcodeBundles,
