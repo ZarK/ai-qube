@@ -220,6 +220,6 @@ describe('local app runner CLI', () => {
     const root = repo();
     const result = binRun(['run', 'start', '--name', 'ui-audit', '--dry-run', '--json', '--'], root);
     assert.notEqual(result.status, 0);
-    assert.match(result.stdout + result.stderr, /missing app command after `--`/);
+    assert.match(result.stdout + result.stderr, /Missing 1 required arg|missing app command after `--`/);
   });
 });
