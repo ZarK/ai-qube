@@ -869,7 +869,7 @@ export function layoutReviewContextLines(affected: RepoAffectedResult | undefine
   return lines.length > 0 ? [framing, ...lines] : lines;
 }
 
-export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string, publishCommand?: string): string[] {
+export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly number[], prNumber: number, headSha: string, evidencePaths: readonly string[], extraContext: readonly string[], repoRoot: string, publishCommand?: string, host = 'codex'): string[] {
   const primaryIssue = issueNumbers[0] ?? 0;
   const primaryEvidencePath = evidencePaths[0] ?? '';
   const lanePublishCommand = publishCommand?.trim() || 'qube aie pr review publish <pr> --lane <lane> --issue <issue>';
@@ -886,7 +886,7 @@ export function laneContextLines(lane: LocalReviewLaneId, issueNumbers: readonly
     'Report the admissible blocking findings for this lane at this head, then at most a few high-confidence advisories. A blocker must name a violated acceptance criterion with a concrete failing scenario or a defect introduced by this diff with a concrete wrong outcome; pre-existing adjacent code and speculative hardening are advisory at most.',
     'The completeness field must be a non-empty self-check stating what you inspected and what you did not have capacity to inspect for this lane at this head; publishing fails without it.',
     'Your verdict is scoped to this lane. Record observed gate-level facts (CI or check state, issue checklist completion, checkout/head freshness, uncommitted changes, other lanes) as preconditions entries; do not turn them into lane blockers or let them change the lane recommendation. The PR gate and the final-gate lane translate gate-level conditions into merge blockers.',
-    'Include runnerProvenance with runnerKind local-host, host codex, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, and the subagent task/session/thread id when the host exposes one.',
+    `Include runnerProvenance with runnerKind local-host, host ${host}, freshContext true, promptOnly false, the current PR head SHA, promptStackHash, the model id that executed this lane, and the subagent task/session/thread id when the host exposes one.`,
     `Bind local-host evidence to same-user host provenance at this exact path: ${trustedLocalHostProvenancePath(repoRoot, primaryIssue, prNumber, headSha, lane)}.`,
     ...reviewSessionLockLines(repoRoot, primaryIssue, prNumber, headSha, evidencePaths),
     'The host provenance JSON must include version 1, issueNumber, prNumber, headSha, lane, evidenceSha256, runnerKind local-host, host, freshContext, promptOnly, taskId, sessionId, threadId, promptStackHash, and recordedAt. evidenceSha256 is the canonical SHA-256 digest of the evidence JSON object using QUBE localReviewEvidenceSha256 semantics: object keys sorted recursively, arrays ordered as written, JSON string escaping, and no trailing newline.',

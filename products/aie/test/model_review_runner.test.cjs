@@ -172,6 +172,8 @@ describe('model review runner', () => {
     // re-opening the full surface.
     assert.match(prompt, /Blocker admissibility/);
     assert.match(prompt, /a diff does not need to be perfect/);
+    assert.match(prompt, /endLine to at most line\+9/);
+    assert.match(prompt, /Never put English instructions in suggestion/);
     assert.match(prompt, /do not re-open the full review surface/);
     assert.match(prompt, /Do not read any path under \.qube\/aie\/reviews\/\*\*/);
     assert.match(prompt, /Inspect the full current-head diff for this lane/);

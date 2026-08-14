@@ -270,6 +270,8 @@ export interface ValidatedRoundLane {
   readonly carriedForwardFromHeadSha: string | null;
   readonly origin: 'local' | 'trusted-provider';
   readonly host: string;
+  readonly model: string | null;
+  readonly effort: string | null;
   readonly profile: string;
   readonly path: string;
 }
@@ -301,6 +303,8 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
         carriedForwardFromHeadSha,
         origin: 'local',
         host: validated.host,
+        model: validated.model,
+        effort: validated.effort,
         profile: validated.profile,
         path: validated.path,
       });
@@ -317,6 +321,8 @@ export function loadValidatedRoundLanes(repoRoot: string, issueNumber: number, p
           carriedForwardFromHeadSha: null,
           origin: 'trusted-provider',
           host: 'trusted-provider',
+          model: null,
+          effort: null,
           profile: 'local-focused',
           path: '',
         });
@@ -433,7 +439,7 @@ function validateTrustedHostProvenance(repoRoot: string, issueNumber: number, pr
   }
 }
 
-function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; recommendation: ReviewForgeLocalReviewRecommendation } {
+function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: number, headSha: string, lane: LocalReviewLaneId): { evidence: Record<string, unknown>; path: string; status: string; summary: string; blockers: string[]; findings: ReviewFinding[]; completeness: string; profile: string; host: string; model: string | null; effort: string | null; recommendation: ReviewForgeLocalReviewRecommendation } {
   const { path, raw } = loadLaneEvidence(repoRoot, issueNumber, prNumber, headSha, lane);
   if ((raw.version ?? raw.schemaVersion) !== 1) throw laneEvidenceFailure(path, 'version must be 1.');
   if ((raw.issueNumber ?? raw.issue) !== issueNumber || (raw.prNumber ?? raw.pr) !== prNumber || raw.headSha !== headSha || (raw.lane ?? raw.id) !== lane) {
@@ -504,6 +510,8 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
   }
   const host = stringField(provenance, 'host') || 'local-review';
   if (!validPublishIdentifier(host)) throw laneEvidenceFailure(path, 'runnerProvenance host must be a short identifier of letters, digits, dot, underscore, or dash; it serializes into provider-visible marker metadata.');
+  const model = typeof provenance.model === 'string' && provenance.model.trim() !== '' ? provenance.model.trim() : null;
+  const effort = typeof provenance.effort === 'string' && provenance.effort.trim() !== '' ? provenance.effort.trim() : null;
   return {
     evidence: raw,
     path,
@@ -514,6 +522,8 @@ function validateLaneEvidence(repoRoot: string, issueNumber: number, prNumber: n
     completeness,
     profile,
     host,
+    model,
+    effort,
     recommendation,
   };
 }

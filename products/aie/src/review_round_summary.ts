@@ -33,6 +33,8 @@ export interface RoundSummaryLaneInput {
   readonly notRunReason?: string | null;
   readonly withheld: { readonly duplicates: number; readonly offDiff: number; readonly byCap: number };
   readonly host?: string;
+  readonly model?: string | null;
+  readonly effort?: string | null;
   readonly profile?: string;
   readonly evidencePath?: string;
 }
@@ -150,8 +152,8 @@ export function renderSuggestionFence(anchor: FindingAnchor): string | null {
 }
 
 /** Full inline review-comment body: finding text plus a safe suggestion fence when one applies. */
-export function renderInlineCommentBody(anchor: FindingAnchor): string {
-  return renderInlineReviewComment(anchor, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
+export function renderInlineCommentBody(anchor: FindingAnchor, context: { readonly repository?: ReviewRepositoryRef; readonly headSha?: string } = {}): string {
+  return renderInlineReviewComment({ ...anchor, repository: context.repository, headSha: context.headSha }, { ...GITHUB_REVIEW_RENDER_PROFILE, sanitizeText });
 }
 
 export const ROUND_SUMMARY_MARKER_PREFIX = 'qube-pr-review-summary';
@@ -268,6 +270,8 @@ function toLaneRenderInput(lane: RoundSummaryLaneInput): ReviewLaneRenderInput {
     notRunReason: lane.notRunReason,
     withheld: lane.withheld,
     host: lane.host,
+    model: lane.model,
+    effort: lane.effort,
     profile: lane.profile,
     evidencePath: lane.evidencePath,
   };

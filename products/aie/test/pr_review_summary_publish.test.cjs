@@ -16,7 +16,7 @@ function findingAnchor(overrides = {}) {
       id: overrides.id ?? 'f1',
       severity: overrides.severity ?? 'advisory',
       message: overrides.message ?? 'Tighten this check.',
-      location: overrides.location ?? { path: 'src/a.ts', line: 3, side: 'destination' },
+      location: overrides.location ?? { path: 'src/review.ts', line: 3, side: 'destination' },
       ...(overrides.confidence !== undefined ? { confidence: overrides.confidence } : {}),
     },
   };
@@ -41,6 +41,17 @@ function roundInput(overrides = {}) {
       withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
     }],
   };
+}
+
+function manyLineDiff(path, count) {
+  const added = Array.from({ length: count }, (_, index) => `+export const n${index + 1} = ${index + 1};`);
+  return [
+    `diff --git a/${path} b/${path}`,
+    `--- a/${path}`,
+    `+++ b/${path}`,
+    `@@ -0,0 +1,${count} @@`,
+    ...added,
+  ].join('\n');
 }
 
 function publishInputFromRender(render, overrides = {}) {
@@ -200,7 +211,7 @@ describe('GitHub round summary publish', () => {
         withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
       }],
     }), { diffIndex: { hasLine: () => true } });
-    const fixture = makePrExec({ prViews: [basePr()] });
+    const fixture = makePrExec({ prViews: [basePr()], diff: manyLineDiff('src/a.ts', 21) });
     let reviewPosts = 0;
     const exec = async (args) => {
       if (args[0] === 'api' && args[1] === 'repos/example/repo/pulls/12/reviews' && args.includes('POST')) {
@@ -237,7 +248,7 @@ describe('GitHub round summary publish', () => {
         withheld: { duplicates: 0, offDiff: 0, byCap: 0 },
       }],
     }), { diffIndex: { hasLine: () => true } });
-    const fixture = makePrExec({ prViews: [basePr()] });
+    const fixture = makePrExec({ prViews: [basePr()], diff: manyLineDiff('src/a.ts', 21) });
     const provider = createGitHubReviewForgeProvider({ exec: fixture.exec });
 
     const result = await provider.publishRoundReviewSummary(publishInputFromRender(render));
