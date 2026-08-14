@@ -1,0 +1,8 @@
+[GLOBAL]
+pants_version = "2.22.0"
+
+[source]
+root_patterns = [
+  "/apps",
+  "/packages",
+]
